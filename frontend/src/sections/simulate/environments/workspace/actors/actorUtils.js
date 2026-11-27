@@ -31,6 +31,8 @@ export const TRIGGER_INPUTS = {
   seconds: "triggerSeconds",
   collection: "triggerCollection",
   where: "triggerWhere",
+  p: "triggerChance",
+  on_call: "triggerCall",
 };
 const TRIGGER_FIELDS = ["mode", ...Object.values(TRIGGER_INPUTS)];
 
@@ -39,6 +41,9 @@ const typed = (value) => (value == null ? "" : value);
 const orNull = (text) => (String(text).trim() === "" ? null : text);
 const numberOrNull = (text) =>
   String(text).trim() === "" ? null : Number(text);
+// Left out when blank: the server takes no null for these, and a missing `on_call` is the first call.
+const numberOrNone = (text) =>
+  String(text ?? "").trim() === "" ? undefined : Number(text);
 
 // How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a match as
 // JSON (only read once `whereProblem` is "").
@@ -51,21 +56,58 @@ const TRIGGER_VALUES = {
   turn: numberOrNull,
   seconds: numberOrNull,
   where: (text) => (String(text).trim() ? JSON.parse(text) : {}),
+  // Typed as a percent, sent as a share; rounded so 33.3 is 0.333, not 0.33299…
+  p: (text) => {
+    const percent = numberOrNone(text);
+    return percent === undefined
+      ? undefined
+      : Math.round(percent * 100) / 10000;
+  },
+  on_call: numberOrNone,
 };
 
 // The trigger the form's fields make: its kind and each key the cast's `trigger_fields` lists for that kind.
 export const triggerOf = (read, keys) => ({
   kind: read("mode"),
   ...Object.fromEntries(
-    keys.map((key) => {
-      const typedIn = read(TRIGGER_INPUTS[key]);
-      return [
-        key,
-        TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn,
-      ];
-    }),
+    keys
+      .map((key) => {
+        const typedIn = read(TRIGGER_INPUTS[key]);
+        return [
+          key,
+          TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn,
+        ];
+      })
+      .filter(([, value]) => value !== undefined),
   ),
 });
+
+// The join presets, each the trigger kinds it stands for; labels are in ACTORS_COPY.
+export const JOIN_PRESETS = [
+  { id: "start", kinds: ["always"] },
+  { id: "partway", kinds: ["on_tool", "on_keyword", "conditional"] },
+  { id: "chance", kinds: ["probability"] },
+  { id: "contacted", kinds: ["contacted"] },
+  { id: "moment", kinds: ["mid_journey", "after_seconds"] },
+];
+
+// The presets a way of joining offers, narrowed to its kinds; a kind no preset covers stays its own choice.
+export const presetsFor = (offered) => {
+  const values = offered.map((one) => one.value);
+  const covered = new Set(JOIN_PRESETS.flatMap((one) => one.kinds));
+  return [
+    ...JOIN_PRESETS.map((one) => ({
+      id: one.id,
+      kinds: one.kinds.filter((kind) => values.includes(kind)),
+    })).filter((one) => one.kinds.length > 0),
+    ...offered
+      .filter((one) => !covered.has(one.value))
+      .map((one) => ({ id: one.value, kinds: [one.value], label: one.label })),
+  ];
+};
+
+export const presetOf = (kind, presets) =>
+  presets.find((one) => one.kinds.includes(kind))?.id ?? kind;
 
 export const whereProblem = (text) => {
   if (!String(text || "").trim()) return "";
@@ -101,6 +143,7 @@ export const fallbackActs = (key) => key.startsWith("action:");
 const triggerInput = (trigger, key) => {
   if (!(key in trigger)) return "";
   if (key === "words") return trigger.words.join(", ");
+  if (key === "p") return String(Math.round(trigger.p * 10000) / 100);
   if (key === "where")
     return Object.keys(trigger.where).length
       ? JSON.stringify(trigger.where)

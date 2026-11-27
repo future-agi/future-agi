@@ -106,8 +106,12 @@ describe("changesOf", () => {
   });
 
   it("sends the trigger only when how they come in really changes, built from its own fields", () => {
-    expect(changesOf(MANAGER, { triggerSeconds: "30" }, TRIGGER_FIELDS)).toEqual({});
-    expect(changesOf(MANAGER, { triggerSeconds: "45" }, TRIGGER_FIELDS)).toEqual({
+    expect(
+      changesOf(MANAGER, { triggerSeconds: "30" }, TRIGGER_FIELDS),
+    ).toEqual({});
+    expect(
+      changesOf(MANAGER, { triggerSeconds: "45" }, TRIGGER_FIELDS),
+    ).toEqual({
       trigger: { kind: "after_seconds", seconds: 45 },
     });
     expect(
@@ -144,6 +148,34 @@ describe("changesOf", () => {
         where: { status: "pending" },
       },
     });
+  });
+
+  it("sends a chance as a share and which call of the action only when given, as the cast's fields ask", () => {
+    const FIELDS = {
+      ...TRIGGER_FIELDS,
+      on_tool: ["tool", "on_call"],
+      probability: ["p"],
+    };
+    const chance = typedActor({
+      id: "lead",
+      trigger: { kind: "probability", p: 0.29 },
+    });
+    expect(initialFields(chance).triggerChance).toBe("29");
+    expect(changesOf(chance, { triggerChance: "29" }, FIELDS)).toEqual({});
+    expect(changesOf(chance, { triggerChance: "33.3" }, FIELDS)).toEqual({
+      trigger: { kind: "probability", p: 0.333 },
+    });
+    const second = typedActor({
+      id: "ops",
+      trigger: { kind: "on_tool", tool: "crm.approve", on_call: 2 },
+    });
+    expect(initialFields(second).triggerCall).toBe(2);
+    expect(changesOf(second, { triggerTool: "crm.other" }, FIELDS)).toEqual({
+      trigger: { kind: "on_tool", tool: "crm.other", on_call: 2 },
+    });
+    // Blank is the first call, which the server reads from the key being left out.
+    const blank = changesOf(second, { triggerCall: "" }, FIELDS).trigger;
+    expect(Object.keys(blank)).toEqual(["kind", "tool"]);
   });
 
   it("keeps a trigger the form cannot make, as the cast marks it, until another way is picked", () => {
@@ -203,10 +235,7 @@ describe("changesOf", () => {
   it("sends a new actor only what was set, with the side it was added on", () => {
     expect(changesOf(NEW("caller"), {})).toEqual({ side: "caller" });
     expect(
-      changesOf(
-        NEW("world"),
-        { name: "Sam", timing: "delayed", seconds: "5" },
-      ),
+      changesOf(NEW("world"), { name: "Sam", timing: "delayed", seconds: "5" }),
     ).toEqual({
       side: "world",
       name: "Sam",

@@ -190,6 +190,18 @@ export const ACTORS_COPY = {
       trigger: "Comes in",
       triggerHelp:
         "When they first take part; a scenario can give them its own",
+      presets: {
+        start: "Present from the start",
+        partway: "Joins partway",
+        chance: "A chance on each call",
+        contacted: "When the agent contacts them",
+        moment: "At a set moment",
+      },
+      presetWay: "What brings them in",
+      triggerChance: "Chance (%)",
+      triggerChanceHelp: "Drawn once per call, from 1 to 100",
+      triggerCall: "Which call of the action (optional)",
+      triggerCallHelp: "Empty is the first call",
       triggerTool: "The action",
       triggerWords: "Words",
       triggerWordsHelp: "Separated by commas",

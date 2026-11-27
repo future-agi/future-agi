@@ -2,12 +2,13 @@ import PropTypes from "prop-types";
 import ActorField from "./ActorField";
 import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
-import { KEPT, whereProblem, words } from "./actorUtils";
+import { KEPT, presetOf, presetsFor, whereProblem, words } from "./actorUtils";
 
 const F = ACTORS_COPY.worldActors.form;
 
-// The trigger kinds the chosen way of joining offers and the cast's labels for them; only the inputs the picked kind
-// takes (`triggerKeys`) show. Waits and the fallback are in ActorFallbackFields.
+// Comes in is a join preset over the trigger kinds the chosen way of joining offers; a preset covering several asks
+// which one. Only the inputs the picked kind takes (`triggerKeys`) show. Waits and the fallback are in
+// ActorFallbackFields.
 export default function ActorTriggerFields({
   form,
   actor,
@@ -25,20 +26,83 @@ export default function ActorTriggerFields({
       : triggerOptions.find((one) => one.value === initial.mode)?.label ||
         words(initial.mode);
   const where = takes("where") ? whereProblem(form.value("triggerWhere")) : "";
+  const presets = presetsFor(triggerOptions);
+  const mode = form.value("mode");
+  const current = presets.find((one) => one.id === presetOf(mode, presets));
+  const several = Boolean(current) && current.kinds.length > 1;
+  // Picking a preset keeps the way already picked inside it, else the stored one, else its first.
+  const choosePreset = (id) => {
+    if (id === KEPT) {
+      form.put("mode", KEPT);
+      return;
+    }
+    const next = presets.find((one) => one.id === id);
+    if (!next || next.kinds.includes(mode)) return;
+    form.put(
+      "mode",
+      next.kinds.includes(initial.mode) ? initial.mode : next.kinds[0],
+    );
+  };
+  const presetForm = {
+    ...form,
+    value: (name) =>
+      name === "preset" ? presetOf(mode, presets) : form.value(name),
+    set: () => (event) => choosePreset(event.target.value),
+    initial: { ...initial, preset: presetOf(initial.mode, presets) },
+    // With a second select, a problem with how they come in shows under that one.
+    problems: several
+      ? form.problems
+      : { ...form.problems, preset: form.problems.mode },
+  };
   const field = (name, label, extra = {}) => (
     <ActorField form={form} name={name} label={label} {...extra} />
   );
   return (
     <>
-      {field("mode", F.trigger, {
-        options: triggerOptions,
-        helperText: F.triggerHelp,
-        startLabel: startModeLabel,
-      })}
+      <ActorField
+        form={presetForm}
+        name="preset"
+        label={F.trigger}
+        options={presets.map((one) => ({
+          value: one.id,
+          label: one.label || F.presets[one.id],
+        }))}
+        helperText={F.triggerHelp}
+        startLabel={startModeLabel}
+      />
+      {several && (
+        <ActorField
+          // The stored way is listed here only when it belongs to this preset.
+          form={{
+            ...form,
+            initial: {
+              ...initial,
+              mode: current.kinds.includes(initial.mode) ? initial.mode : "",
+            },
+          }}
+          name="mode"
+          label={F.presetWay}
+          options={triggerOptions.filter((one) =>
+            current.kinds.includes(one.value),
+          )}
+        />
+      )}
+      {takes("p") &&
+        field("triggerChance", F.triggerChance, {
+          type: "number",
+          helperText: F.triggerChanceHelp,
+          inputProps: { min: 1, max: 100, step: 1 },
+        })}
       {takes("tool") &&
         field("triggerTool", F.triggerTool, {
           options: actionIds.map((id) => ({ value: id, label: id })),
           startLabel: initial.triggerTool,
+        })}
+      {takes("on_call") &&
+        field("triggerCall", F.triggerCall, {
+          type: "number",
+          helperText: F.triggerCallHelp,
+          inputProps: { min: 1, step: 1 },
         })}
       {takes("words") &&
         field("triggerWords", F.triggerWords, {

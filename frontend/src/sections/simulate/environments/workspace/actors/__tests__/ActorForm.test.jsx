@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen } from "src/utils/test-utils";
+import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
 import {
   CHANNEL_OPTIONS,
   CLEAN,
@@ -94,16 +94,83 @@ describe("ActorForm", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers only the ways of coming in the chosen channel takes", () => {
+  it("offers the join presets the chosen way takes, and asks what brings them in when a preset covers several", () => {
     verdict = CLEAN;
     renderForm(newActor("world"));
     fireEvent.mouseDown(screen.getByLabelText("Comes in"));
+    expect(screen.getAllByRole("option").map((one) => one.textContent)).toEqual(
+      [
+        "Present from the start",
+        "Joins partway",
+        "When the agent contacts them",
+        "At a set moment",
+      ],
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Joins partway" }));
+    fireEvent.mouseDown(screen.getByLabelText("What brings them in"));
+    expect(screen.getAllByRole("option").map((one) => one.textContent)).toEqual(
+      ["When the agent calls an action", "Once a record exists"],
+    );
+    fireEvent.click(
+      screen.getByRole("option", { name: "Once a record exists" }),
+    );
+    expect(screen.getByLabelText("Records of")).toBeInTheDocument();
+  });
+
+  it("offers a chance on each call where the cast takes one, and sends the percent as a share", () => {
+    verdict = CLEAN;
+    const onSave = vi.fn();
+    const data = cast([], {
+      channel_options: CHANNEL_OPTIONS.map((one) => ({
+        ...one,
+        trigger_options: [
+          ...one.trigger_options,
+          { value: "probability", label: "By chance" },
+        ],
+      })),
+      trigger_fields: { ...TRIGGER_FIELDS, probability: ["p"] },
+    });
+    renderForm(typedActor({ id: "ops", name: "Ops" }), { data, onSave });
+    fireEvent.mouseDown(screen.getByLabelText("Comes in"));
+    fireEvent.click(
+      screen.getByRole("option", { name: "A chance on each call" }),
+    );
+    fireEvent.change(screen.getByLabelText("Chance (%)"), {
+      target: { value: "25" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(onSave.mock.calls[0][0].changes.trigger).toEqual({
+      kind: "probability",
+      p: 0.25,
+    });
+  });
+
+  it("goes back to the stored way when its preset is picked again, so nothing changed", async () => {
+    verdict = CLEAN;
+    renderForm(
+      typedActor({
+        id: "lead",
+        name: "Lead",
+        channel: "audio_mix",
+        trigger: { kind: "on_keyword", words: ["refund"] },
+      }),
+    );
+    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+      "Joins partway",
+    );
+    fireEvent.mouseDown(screen.getByLabelText("Comes in"));
+    fireEvent.click(
+      screen.getByRole("option", { name: "Present from the start" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    fireEvent.mouseDown(screen.getByLabelText("Comes in"));
+    fireEvent.click(screen.getByRole("option", { name: "Joins partway" }));
+    expect(screen.getByLabelText("What brings them in")).toHaveTextContent(
+      "When the agent says a word",
+    );
     expect(
-      screen.getByRole("option", { name: "When the agent contacts them" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: "When the agent says a word" }),
-    ).toBeNull();
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
   });
 
   it("labels an actor's own cap by the field the chosen way of joining uses, as the cast says", () => {

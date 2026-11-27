@@ -131,6 +131,11 @@ const choose = (label, option) => {
   fireEvent.mouseDown(screen.getByLabelText(label));
   fireEvent.click(screen.getByRole("option", { name: option }));
 };
+// Picks a join preset, then the way inside it when the preset covers several.
+const comeIn = (preset, way) => {
+  choose("Comes in", preset);
+  if (way) choose("What brings them in", way);
+};
 const addActor = () =>
   fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
 // Lets a fold's close transition finish before asserting what is visible.
@@ -801,7 +806,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
     );
-    choose("Comes in", "When the agent calls an action");
+    comeIn("Joins partway", "When the agent calls an action");
     choose("The action", "crm.request_approval");
     fireEvent.click(saveButton());
     expect(sent()).toEqual({
@@ -1236,13 +1241,13 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("30 s after the start")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
-      "At a set time",
+      "At a set moment",
     );
     expect(screen.getByLabelText("Seconds after the start")).toHaveValue(30);
-    choose("Comes in", "When the agent contacts them");
+    comeIn("When the agent contacts them");
     expect(saveButton()).not.toBeDisabled();
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-    choose("Comes in", "At a set time");
+    comeIn("At a set moment");
     expect(saveButton()).toBeDisabled();
   });
 
@@ -1279,7 +1284,7 @@ describe("WorldActorsPanel", () => {
         { field: "trigger", message: "Pick the action that brings them in" },
       ],
     };
-    choose("Comes in", "When the agent calls an action");
+    comeIn("Joins partway", "When the agent calls an action");
     expect(saveButton()).toBeDisabled();
     expect(
       screen.getByText("Pick the action that brings them in"),
@@ -1296,7 +1301,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya Nair" },
     });
-    choose("Comes in", "Once a record exists");
+    comeIn("Joins partway", "Once a record exists");
     fireEvent.change(screen.getByLabelText("Matching (optional)"), {
       target: { value: '{"status": ' },
     });
@@ -1349,7 +1354,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya Nair" },
     });
-    choose("Comes in", "Once a record exists");
+    comeIn("Joins partway", "Once a record exists");
     fireEvent.change(screen.getByLabelText("Matching (optional)"), {
       target: { value: "   " },
     });
