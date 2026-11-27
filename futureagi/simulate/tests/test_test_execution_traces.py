@@ -308,35 +308,6 @@ def test_the_statement_is_bounded_to_the_project_the_job_its_window_and_the_call
     }
 
 
-def test_the_root_span_is_the_one_with_no_parent(
-    auth_client, execution, job, call, hidden_project, clickhouse, source_setup
-):
-    _get(auth_client, execution, call)
-
-    (read,) = clickhouse.calls
-    root = "parent_span_id = ''"
-    assert f"countIf({root}) > 0 AS has_root" in read.query
-    assert f"argMinIf(name, start_time, {root}) AS root_name" in read.query
-    assert f"minIf(start_time, {root}) AS root_start_time" in read.query
-    assert f"argMinIf(status, start_time, {root}) AS root_status" in read.query
-    assert f"argMinIf(latency_ms, start_time, {root}) AS root_latency_ms" in read.query
-    assert "!=" not in read.query
-
-
-def test_the_call_is_the_one_on_the_earliest_span_that_names_one(
-    auth_client, execution, job, call, hidden_project, clickhouse, source_setup
-):
-    _get(auth_client, execution, call)
-
-    (read,) = clickhouse.calls
-    assert (
-        "argMinIf(attrs_string['fi.simulator.call_execution_id'], start_time, "
-        "mapContains(attrs_string, 'fi.simulator.call_execution_id')) "
-        "AS call_execution_id" in read.query
-    )
-    assert "argMax" not in read.query
-
-
 def test_a_first_launch_is_listed_by_the_job_id_alone(
     auth_client, execution, job, call, hidden_project, clickhouse, source_setup
 ):

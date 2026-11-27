@@ -88,6 +88,10 @@ def spans(ch_database, table):
         overflow=None,
         span_id=None,
         service="",
+        parent="",
+        name="",
+        status="",
+        latency_ms=0,
     ):
         writer.insert(
             "spans",
@@ -99,6 +103,10 @@ def spans(ch_database, table):
                     at,
                     trace,
                     span_id or str(uuid.uuid4()),
+                    parent,
+                    name,
+                    status,
+                    latency_ms,
                     model_column or "",
                     cost,
                     {
@@ -119,6 +127,10 @@ def spans(ch_database, table):
                 "start_time",
                 "trace_id",
                 "id",
+                "parent_span_id",
+                "name",
+                "status",
+                "latency_ms",
                 "model",
                 "cost",
                 "attrs_string",
@@ -574,10 +586,20 @@ def test_a_span_exported_twice_counts_for_the_call_either_copy_names(
 
 
 def _owner_case(spans, trace, low, high, case):
-    """Seeds a trace whose call the copies of its marked spans could disagree on, and
-    returns the call it belongs to. An unmarked LLM sibling, m9, counts for it."""
+    """Seeds a trace whose marked spans, or the copies of one, could name two calls,
+    and returns the call it belongs to. An unmarked LLM sibling, m9, counts for it."""
     at = {n: START + timedelta(minutes=n) for n in range(1, 5)}
     span_id = str(uuid.uuid4())
+    if case == "earliest_span_names_the_lesser":
+        # Two spans name two calls: the earliest span's, though its id is the lesser.
+        spans(trace, call=low, at=at[1])
+        spans(trace, call=high, at=at[2])
+        return low
+    if case == "marked_spans_start_together":
+        # Two spans start together and name two calls: the lesser id.
+        spans(trace, call=high, at=at[1])
+        spans(trace, call=low, at=at[1])
+        return low
     if case in ("conflicting_marks_same_start", "conflicting_marks_swapped"):
         # Copies that name two calls: the greater id, whichever exporter sent it.
         swapped = case == "conflicting_marks_swapped"
@@ -602,6 +624,8 @@ def _owner_case(spans, trace, low, high, case):
 @pytest.mark.parametrize(
     "case",
     [
+        "earliest_span_names_the_lesser",
+        "marked_spans_start_together",
         "conflicting_marks_same_start",
         "conflicting_marks_swapped",
         "conflicting_marks_skewed_starts",
@@ -626,6 +650,45 @@ def test_usage_and_the_trace_list_name_the_same_call(spans, monkeypatch, case):
         }
         assert {call for call, one in usage.items() if "m9" in one.models} == {owner}
         assert listed == {owner}
+
+
+@pytest.mark.integration
+def test_a_listed_trace_s_root_is_its_earliest_span_with_no_parent(spans, monkeypatch):
+    _traced(monkeypatch)
+    call = str(uuid.uuid4())
+    at = {n: START + timedelta(minutes=n) for n in range(1, 6)}
+    older, newer, rootless, root_id = (str(uuid.uuid4()) for _ in range(4))
+    # A child that starts first and a later root supply none of the root's fields.
+    spans(older, call=call, parent=root_id, name="child", latency_ms=5, at=at[1])
+    # The root exported twice: its earlier copy's fields.
+    spans(older, span_id=root_id, service="omega", name="late", latency_ms=9, at=at[3])
+    spans(
+        older,
+        span_id=root_id,
+        service="agent",
+        name="book_ride",
+        status="ERROR",
+        latency_ms=1830,
+        at=at[2],
+    )
+    spans(older, name="second_root", status="OK", latency_ms=7, at=at[4])
+    spans(newer, call=call, name="verify_identity", status="OK", latency_ms=3, at=at[5])
+    # Every span of this trace has a parent: it has no root.
+    spans(rootless, call=call, parent=root_id, name="orphan", status="OK", at=at[5])
+
+    listed = run_traces_v3.read_run_traces(
+        run_traces_v3.run_traces_source(None), call_execution_id=call
+    )
+
+    assert [
+        (one.trace_id, one.name, one.start_time, one.status, one.latency_ms)
+        for one in listed
+    ] == [
+        (rootless, None, None, None, None),
+        (newer, "verify_identity", at[5], "OK", 3),
+        (older, "book_ride", at[2], "ERROR", 1830),
+    ]
+    assert {one.call_execution_id for one in listed} == {call}
 
 
 @pytest.mark.integration
