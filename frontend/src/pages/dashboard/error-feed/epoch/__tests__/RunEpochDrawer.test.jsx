@@ -19,6 +19,16 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
   useFeatureAllowed: () => ({ allowed: true }),
 }));
 
+// The toast the drawer hands over with, read without a provider.
+const snack = vi.hoisted(() => ({ enqueue: vi.fn(), close: vi.fn() }));
+vi.mock("src/components/snackbar", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSnackbar: () => ({
+    enqueueSnackbar: snack.enqueue,
+    closeSnackbar: snack.close,
+  }),
+}));
+
 const { default: RunEpochDrawer } = await import("../RunEpochDrawer");
 
 const CLUSTER = "S-1A2B3C4D";
@@ -48,10 +58,17 @@ const DEFAULTS = {
   reply_latency_margin_pct: 25,
   cost_margin_pct: 25,
 };
+// As the server plans it: with none picked, one of the caller's can run it.
 const plan = (environment) => ({
   issue: { cluster_id: CLUSTER, project_id: PROJECT, title: "Quotes a fare" },
   environment,
-  blocked: null,
+  blocked: environment
+    ? null
+    : {
+        code: "environment_not_picked",
+        message: "Pick the environment that tests this issue's agent.",
+      },
+  ship: environment ? { path: "make_default", blocked: null } : null,
   sample: {
     unit: "trace",
     picks: [pick(1, "example"), pick(2, "cited")],
@@ -61,12 +78,14 @@ const plan = (environment) => ({
   issue_scenarios: { held: 4, limit: 36 },
   defaults: DEFAULTS,
 });
-const envRow = (id, name, sourceKind) => ({
+// The server says which ones Run Epoch can pick; a hosted agent never.
+const envRow = (id, name, sourceKind, pickable = true) => ({
   id,
   name,
   source_kind: sourceKind,
   agent_type: "chat",
   status: "completed",
+  epoch_pickable: pickable,
 });
 const parts = { transcript: { status: "present", reason: "", turns: [] } };
 const evidenceCase = (id, status, duplicateOf = null) => ({
@@ -135,7 +154,7 @@ const answer = (url, config) => {
       data: {
         results: [
           envRow(ENV, "Support line", "github"),
-          envRow(VOICE_ENV, "Phone line", "provider"),
+          envRow(VOICE_ENV, "Phone line", "provider", false),
         ],
       },
     });
@@ -143,7 +162,7 @@ const answer = (url, config) => {
   return Promise.reject(new Error(`unexpected GET ${url}`));
 };
 
-const renderDrawer = () => {
+const renderDrawer = ({ onClose = () => {} } = {}) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -151,7 +170,7 @@ const renderDrawer = () => {
     <QueryClientProvider client={client}>
       <RunEpochDrawer
         open
-        onClose={() => {}}
+        onClose={onClose}
         clusterId={CLUSTER}
         projectId={PROJECT}
         issueTitle="Quotes a fare"
@@ -166,6 +185,8 @@ const planReads = () =>
 beforeEach(() => {
   api.get.mockReset().mockImplementation(answer);
   api.post.mockReset();
+  snack.enqueue.mockReset();
+  snack.close.mockReset();
   jobs = [];
   detail = () => Promise.resolve({ data: reviewJob });
   plans = {
@@ -191,6 +212,96 @@ describe("RunEpochDrawer: the plan", () => {
       { cluster_id: CLUSTER, project_id: PROJECT },
       { cluster_id: CLUSTER, project_id: PROJECT, environment_id: ENV },
     ]);
+  });
+
+  it("splits the picker by agent type, with counts, and keeps search within the tab", async () => {
+    const VOICE_CODE = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({
+            data: {
+              results: [
+                envRow(ENV, "Support line", "github"),
+                {
+                  ...envRow(VOICE_CODE, "Booking line", "archive"),
+                  agent_type: "voice",
+                },
+              ],
+            },
+          })
+        : answer(url, config),
+    );
+    const user = userEvent.setup();
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    const types = screen.getByRole("group", { name: "Agent type" });
+    expect(
+      within(types)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["All2", "Chat1", "Voice1"]);
+    expect(within(list).getAllByRole("radio")).toHaveLength(2);
+    await user.click(within(types).getByRole("button", { name: /Voice/ }));
+    const radios = within(list).getAllByRole("radio");
+    expect(radios).toHaveLength(1);
+    expect(radios[0]).toHaveAccessibleName("Booking line");
+  });
+
+  it("searches many environments, shows a no-match message and drops a hidden pick", async () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      ...envRow(
+        `00000000-0000-4000-8000-00000000000${i}`,
+        `Line ${i}`,
+        "github",
+      ),
+      agent_type: i === 0 ? "voice" : "chat",
+    }));
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({ data: { results: many } })
+        : answer(url, config),
+    );
+    const user = userEvent.setup();
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    const search = screen.getByRole("textbox", { name: "Search environments" });
+    const cont = screen.getByRole("button", { name: "Continue" });
+    expect(within(list).getAllByRole("radio")).toHaveLength(9);
+
+    await user.type(search, "Line 3");
+    const radios = within(list).getAllByRole("radio");
+    expect(radios).toHaveLength(1);
+    expect(radios[0]).toHaveAccessibleName("Line 3");
+    await user.click(radios[0]);
+    expect(cont).toBeEnabled();
+
+    // Searching the pick away clears it.
+    await user.clear(search);
+    await user.type(search, "Line 4");
+    expect(within(list).getAllByRole("radio")).toHaveLength(1);
+    expect(cont).toBeDisabled();
+
+    await user.clear(search);
+    await user.type(search, "zzz");
+    expect(
+      screen.getByText('No environment matches "zzz".'),
+    ).toBeInTheDocument();
+
+    // Switching the tab does the same.
+    await user.clear(search);
+    await user.click(within(list).getByRole("radio", { name: "Line 1" }));
+    expect(cont).toBeEnabled();
+    const types = screen.getByRole("group", { name: "Agent type" });
+    await user.click(within(types).getByRole("button", { name: /Voice/ }));
+    expect(cont).toBeDisabled();
+  });
+
+  it("shows no type tabs when every environment is one type", async () => {
+    renderDrawer();
+    await screen.findByTestId("epoch-environments");
+    expect(
+      screen.queryByRole("group", { name: "Agent type" }),
+    ).not.toBeInTheDocument();
   });
 
   it("drafts the picks after a swap, with no launch settings, as the contract takes them", async () => {
@@ -278,6 +389,129 @@ describe("RunEpochDrawer: the plan", () => {
       `/dashboard/simulate/environments/${ENV}?tab=scenarios`,
     );
     expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
+  });
+
+  it("offers to build an environment when the plan says none can run an epoch, without listing them", async () => {
+    plans.none = {
+      ...plan(null),
+      blocked: { code: "environment_none", message: "No environment yet." },
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText("No environment can run an epoch yet"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("epoch-build-environment")).toBeInTheDocument();
+    expect(
+      api.get.mock.calls.some(
+        ([url]) => url === "/simulate/api/harness-environments/",
+      ),
+    ).toBe(false);
+  });
+
+  it("lists an environment still building, so the plan can say what to do once it's picked", async () => {
+    // The server's answers for an only environment still building, with no agent
+    // version yet: pickable, and a plan with none picked asks to pick one.
+    const reads = answer;
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({
+            data: {
+              results: [
+                {
+                  ...envRow(ENV, "Support line", "github"),
+                  status: "building",
+                },
+              ],
+            },
+          })
+        : reads(url, config),
+    );
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    expect(within(list).getByText("Support line")).toBeInTheDocument();
+  });
+
+  it("lists only the environments the server says Run Epoch can pick", async () => {
+    const reads = answer;
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({
+            data: {
+              results: [
+                envRow(ENV, "Support line", "github"),
+                // A GitHub source whose agent runs elsewhere: the server says no.
+                envRow(VOICE_ENV, "Mirror line", "github", false),
+              ],
+            },
+          })
+        : reads(url, config),
+    );
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    expect(within(list).getByText("Support line")).toBeInTheDocument();
+    expect(within(list).queryByText("Mirror line")).toBeNull();
+  });
+
+  it("says an environment with no saved agent version needs a new one, and links to build it", async () => {
+    plans.none = {
+      ...plans[ENV],
+      blocked: {
+        code: "environment_agent_unversioned",
+        message: "This environment has no saved version of its agent.",
+      },
+      ship: null,
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText(
+        "This environment has no saved version of its agent.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Build an environment" }),
+    ).toHaveAttribute("href", "/dashboard/simulate/environments");
+    // Nothing to ship from an agent with no version: no row says how.
+    expect(screen.queryByText("Ships as")).toBeNull();
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
+  });
+
+  it("says the environment is still being built and links to it, and drafts nothing", async () => {
+    plans.none = {
+      ...plans[ENV],
+      blocked: {
+        code: "environment_not_built",
+        message: "This environment is still being built.",
+      },
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText("This environment is still being built."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open the environment" }),
+    ).toHaveAttribute("href", `/dashboard/simulate/environments/${ENV}`);
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
+  });
+
+  it("says how the winner ships, and where to connect GitHub for a pull request", async () => {
+    plans.none = {
+      ...plans[ENV],
+      ship: {
+        path: "pull_request",
+        blocked: {
+          code: "fix_github_not_connected",
+          message: "Connect the agent's repository to get a pull request.",
+        },
+      },
+    };
+    renderDrawer();
+    // Until a pull request can open, the winner ships as a patch.
+    expect(await screen.findByText("A patch to download")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Connect GitHub" }),
+    ).toHaveAttribute("href", "/dashboard/settings/integrations");
+    // A pull request it can't open yet does not stop drafting.
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeEnabled();
   });
 });
 
@@ -368,6 +602,66 @@ describe("RunEpochDrawer: the review", () => {
     await waitFor(() => expect(planReads()).toHaveLength(1));
   });
 
+  const EPOCH = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const withEpoch = (state) => ({
+    ...reviewJob,
+    phase: "launched",
+    epoch: {
+      id: EPOCH,
+      number: 4,
+      environment_id: ENV,
+      state,
+      step: null,
+      failure_code: null,
+      retryable: false,
+      limited_validation: false,
+    },
+  });
+  const measureThen = async (next) => {
+    const measuring = { ...reviewJob, phase: "measuring" };
+    jobs = listed(measuring);
+    detail = () => Promise.resolve({ data: measuring });
+    const onClose = vi.fn();
+    const client = renderDrawer({ onClose });
+    expect(
+      await screen.findByTestId("epoch-step-measuring"),
+    ).toBeInTheDocument();
+    jobs = listed(next);
+    detail = () => Promise.resolve({ data: next });
+    await client.refetchQueries();
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    return onClose;
+  };
+
+  it("hands over to the epoch when it starts with the drawer open: closes, toasts a link, never navigates", async () => {
+    await measureThen(withEpoch("running"));
+    expect(snack.enqueue).toHaveBeenCalledTimes(1);
+    const [message, options] = snack.enqueue.mock.calls[0];
+    expect(message).toBe("Epoch 4 started.");
+    expect(options.variant).toBe("success");
+    render(options.action("toast-1"));
+    expect(
+      screen.getByRole("button", { name: "View Epoch 4" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Epoch 4 started")).not.toBeInTheDocument();
+    expect(planReads()).toEqual([]);
+  });
+
+  it("hands over once, not on every read of the same epoch", async () => {
+    const running = withEpoch("running");
+    const onClose = await measureThen(running);
+    await waitFor(() => expect(snack.enqueue).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("toasts how the epoch ended when it ends with the drawer open", async () => {
+    await measureThen(withEpoch("ready"));
+    const [message, options] = snack.enqueue.mock.calls[0];
+    expect(message).toMatch(/^Epoch 4/);
+    expect(options.variant).toBe("info");
+    expect(screen.queryByText("Run Epoch again")).not.toBeInTheDocument();
+  });
+
   it("runs the kept scenarios with the launch rows, as the contract takes them", async () => {
     api.post.mockResolvedValue({ data: { ...reviewJob, phase: "measuring" } });
     const user = userEvent.setup();
@@ -419,4 +713,44 @@ describe("RunEpochDrawer: the review", () => {
       `/dashboard/simulate/environments/${ENV}?tab=scenarios`,
     );
   });
+
+  it.each([
+    [
+      "issue_epoch_measuring",
+      { cluster_id: "S-OTHER-1" },
+      "Open that issue",
+      "/dashboard/error-feed/S-OTHER-1",
+    ],
+    [
+      "conversation_workspace_not_ready",
+      {},
+      "Open the environment",
+      `/dashboard/simulate/environments/${ENV}`,
+    ],
+    [
+      "fix_variations_source_moved",
+      {},
+      "Open its runs",
+      `/dashboard/simulate/environments/${ENV}?tab=runs`,
+    ],
+  ])(
+    "links a %s refusal to where it is fixed",
+    async (code, details, label, href) => {
+      api.post.mockRejectedValue({
+        statusCode: 409,
+        error: code,
+        message: "Refused.",
+        retryable: false,
+        ...details,
+      });
+      const user = userEvent.setup();
+      renderDrawer();
+      await user.click(await screen.findByTestId("epoch-run"));
+      expect(await screen.findByText("Refused.")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: label })).toHaveAttribute(
+        "href",
+        href,
+      );
+    },
+  );
 });

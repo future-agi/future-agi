@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { DEBUG_FAILURES_REFUSALS } from "src/sections/test-detail/debugFailuresRule";
+import { runResultsKey } from "./runEvals";
 
 /**
  * The Debug-failures data source.
@@ -120,7 +122,18 @@ export function useDebugAnalysis(executionId) {
         // The route's contract is an explicit empty object, not a missing body.
         .post(endpoints.testExecutions.debugAnalysis(executionId), {})
         .then((res) => res.data),
+    // A read still on its way (a reopen re-enables the query) was sent before
+    // this request; if it landed after, it would overwrite the new status.
+    onMutate: () => queryClient.cancelQueries({ queryKey }),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
+    // A refusal means the header's counts were stale; read them again.
+    onError: (error) => {
+      if (DEBUG_FAILURES_REFUSALS[error?.code]) {
+        queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
+      }
+    },
+    // The drawer shows every refusal and failure itself; no second, global toast.
+    meta: { errorHandled: true },
   });
 
   const analysis = useMemo(() => mapDebugAnalysis(query.data), [query.data]);

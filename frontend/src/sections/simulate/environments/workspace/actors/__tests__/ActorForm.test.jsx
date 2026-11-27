@@ -299,6 +299,49 @@ describe("ActorForm", () => {
     });
   });
 
+  it("creates an actor who comes in by chance, typed as a percent", () => {
+    verdict = CLEAN;
+    const onSave = vi.fn();
+    renderForm(newActor("world"), { onSave });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Auditor" },
+    });
+    fireEvent.mouseDown(screen.getByLabelText("Comes in"));
+    fireEvent.click(screen.getByRole("option", { name: "By chance" }));
+    fireEvent.change(screen.getByLabelText("Chance (%)"), {
+      target: { value: "30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(onSave.mock.calls[0][0].changes.trigger).toEqual({
+      kind: "probability",
+      p: 0.3,
+    });
+  });
+
+  it("edits the action of a later-call trigger without losing which call", () => {
+    verdict = CLEAN;
+    const onSave = vi.fn();
+    renderForm(
+      typedActor({
+        id: "ops",
+        name: "Ops",
+        trigger: { kind: "on_tool", tool: "crm.approve_discount", on_call: 2 },
+      }),
+      { onSave },
+    );
+    expect(screen.getByLabelText("On its call number")).toHaveValue(2);
+    fireEvent.mouseDown(screen.getByLabelText("The action"));
+    fireEvent.click(
+      screen.getByRole("option", { name: "crm.request_approval" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(onSave.mock.calls[0][0].changes.trigger).toEqual({
+      kind: "on_tool",
+      tool: "crm.request_approval",
+      on_call: 2,
+    });
+  });
+
   it("labels each way of joining as the cast does", () => {
     verdict = CLEAN;
     const data = cast([], {

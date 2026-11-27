@@ -800,6 +800,15 @@ AVAILABLE_REGIONS = os.environ.get("AVAILABLE_REGIONS", "")
 # CELERY_BROKER_URL set explicitly. The Channels layer never reads it.
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "memory://")
 CELERY_RESULT_BACKEND = "django-db"  # If you want to use Django's ORM
+# While results expire, beat schedules a daily celery.backend_cleanup task that
+# only a worker can run. Celery reads and writes through CELERY_BROKER_READ_URL
+# and CELERY_BROKER_WRITE_URL, each falling back to CELERY_BROKER_URL; when both
+# are the in-process broker no worker exists, so turn expiry off there.
+if all(
+    (os.getenv(name) or CELERY_BROKER_URL).startswith("memory://")
+    for name in ("CELERY_BROKER_READ_URL", "CELERY_BROKER_WRITE_URL")
+):
+    CELERY_RESULT_EXPIRES = None
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -1154,6 +1163,11 @@ ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
 # "Fix my agent": the improvement engine runs in its own E2B template, built on the hosted ALK
 # template (the svc-control user and /opt/alk-venv the E2B bootstrap expects).
 AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE", "")
+# A person's own coding agent submits a fix that an Epoch verifies. Turn it on together with
+# an engine template that runs verify mode; off, its routes answer 404.
+AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED = os.getenv(
+    "AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 AGENT_FIX_ENGINE_COMMAND = os.getenv(
     "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
 )
@@ -1207,6 +1221,10 @@ AGENT_FIX_MAX_TREE_BYTES = int(
     os.getenv("AGENT_FIX_MAX_TREE_BYTES", str(128 * 1024 * 1024))
 )
 AGENT_FIX_MAX_TREE_FILES = int(os.getenv("AGENT_FIX_MAX_TREE_FILES", "20000"))
+# The tar.gz an outside attempt uploads, before it is read: half the unpacked limit.
+AGENT_FIX_MAX_UPLOAD_BYTES = int(
+    os.getenv("AGENT_FIX_MAX_UPLOAD_BYTES", str(64 * 1024 * 1024))
+)
 ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
     os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
 )

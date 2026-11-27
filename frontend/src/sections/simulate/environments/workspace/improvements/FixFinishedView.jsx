@@ -6,12 +6,18 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
+import {
+  isOutsideAttempt,
+  useCodingAgentAttemptsEnabled,
+  usedTheRunsLastAttempt,
+} from "src/api/simulate-environments/codingAgent";
 
 import ViewerLock from "../../components/ViewerLock";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { WORKSPACE_COPY } from "../workspace.constants";
 
 import CandidatesTable from "./CandidatesTable";
+import CopyForCodingAgentButton from "./CopyForCodingAgentButton";
 import EpochEnding from "./EpochEnding";
 import FinishedDiagnosis from "./FinishedDiagnosis";
 import FixVerdict from "./FixVerdict";
@@ -25,7 +31,6 @@ import {
   endingLabel,
   endingSentence,
   endingSpent,
-  flakyProtectedText,
   headline,
   noSafeNumbers,
   winnerOf,
@@ -179,7 +184,28 @@ WhatToTryNext.propTypes = {
 // run it started from. With neither left, the sentence says what to do. A
 // no-safe ending offers only the issue's: its run's is in What to try next.
 // A viewer sees each one locked, with why.
+// An attempt from a person's own coding agent goes on in that agent: its one way on
+// is the brief to paste there, never a retry or Run Epoch. After the run's last
+// counted attempt the brief is refused: the ending says to run the environment again.
+function AttemptPrimary({ fix }) {
+  const enabled = useCodingAgentAttemptsEnabled();
+  if (!enabled || !fix.source_run_id) return null;
+  if (
+    usedTheRunsLastAttempt(fix.request?.outside_candidate?.number, fix.counted)
+  )
+    return null;
+  return (
+    <CopyForCodingAgentButton
+      sourceRunId={fix.source_run_id}
+      variant="contained"
+      data-testid="attempt-copy-for-coding-agent"
+    />
+  );
+}
+AttemptPrimary.propTypes = { fix: PropTypes.object.isRequired };
+
 function endingPrimary(fix, onLaunch, canRun) {
+  if (isOutsideAttempt(fix)) return <AttemptPrimary fix={fix} />;
   // Retry lives here, never in the header: the ending's one primary.
   if (fix.state === "failed" && fix.retryable) return <RetryButton fix={fix} />;
   const again = {
@@ -222,13 +248,16 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const { canRun } = useSimulationAccess();
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
-  const noSafe = fix.state === "no_improvement";
+  // An attempt's no-safe ending names its next step itself: it has no engine search
+  // to show numbers for, or other cases to try.
+  const noSafe = fix.state === "no_improvement" && !isOutsideAttempt(fix);
   const ending = !ready && headline(fix);
   const tabs = ready
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");
   const current = tabs.find((t) => t.id === tab) ? tab : "trials";
-  const flaky = flakyProtectedText(fix);
+  // The server's sentences, as the pull request says them.
+  const flaky = fix.flaky_protected_text || [];
   const launch = () => setLaunching(true);
   return (
     <Box data-testid="fix-finished-view" sx={{ px: 3, py: 2.5 }}>
@@ -250,13 +279,17 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
         </EpochEnding>
       )}
       <FinishedDiagnosis fix={fix} />
-      {flaky && (
-        <Typography
-          data-testid="flaky-protected"
-          sx={{ typography: "s2", color: "text.secondary", mb: 2 }}
-        >
-          {flaky}
-        </Typography>
+      {flaky.length > 0 && (
+        <Box data-testid="flaky-protected" sx={{ mb: 2 }}>
+          {flaky.map((line) => (
+            <Typography
+              key={line}
+              sx={{ typography: "s2", color: "text.secondary" }}
+            >
+              {line}
+            </Typography>
+          ))}
+        </Box>
       )}
       <CustomTabs value={current} onChange={(_, v) => onTab(v)} sx={TABS_SX}>
         {tabs.map((t) => (

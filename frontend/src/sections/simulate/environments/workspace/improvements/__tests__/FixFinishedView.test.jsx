@@ -152,14 +152,34 @@ describe("FixVerdict", () => {
     expect(screen.queryByText("Limited validation")).toBeNull();
   });
 
-  it("lists must-pass breaks, noting what was within noise", () => {
-    renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
-    const breaks = within(screen.getByTestId("must-pass-breaks"));
-    expect(breaks.getByText("on-time-cancel: escalated")).toBeInTheDocument();
-    expect(breaks.getByText(/refund-window/)).toBeInTheDocument();
+  it("shows the server's headline and caveats as written", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.wording = {
+      ...winner.wording,
+      headline: "Held-back pass rate 17% → 83%. Said by the server.",
+      caveats: [
+        "Platform evals did not finish on this candidate, so their results are missing. Review it closely.",
+        "A second caveat.",
+      ],
+    };
+    renderUi(<FixVerdict fix={fix} />);
     expect(
-      breaks.getByText(/within normal noise, not counted/),
+      screen.getByText("Held-back pass rate 17% → 83%. Said by the server."),
     ).toBeInTheDocument();
+    const caveats = within(screen.getByTestId("verdict-caveats"));
+    winner.wording.caveats.forEach((caveat) =>
+      expect(caveats.getByText(caveat)).toBeInTheDocument(),
+    );
+  });
+
+  it("shows no caveats when the server gives none", () => {
+    const fix = fixOf("fix-ready-archive");
+    fix.candidates.forEach((c) => {
+      c.wording = { ...c.wording, caveats: [] };
+    });
+    renderUi(<FixVerdict fix={fix} />);
+    expect(screen.queryByTestId("verdict-caveats")).toBeNull();
   });
 
   it("marks a check the fix could not measure as Unknown, with its own icon", () => {
@@ -542,20 +562,12 @@ describe("FixFinishedView, what to try next", () => {
 });
 
 describe("FixFinishedView, protected cases it could not be held to", () => {
-  it("names them in plain words, and says nothing for a report without them", () => {
-    const fix = fixOf("fix-no-improvement");
-    fix.report = {
-      ...fix.report,
-      flaky_protected: [
-        {
-          key: "s3",
-          name: "Escalate a large order",
-          sub_goal: "a",
-          passed: 2,
-          runs: 3,
-        },
-      ],
-    };
+  it("shows the server's sentences as written, and nothing without them", () => {
+    const said = [
+      "Protected scenario “Escalate a large order” is flaky on the current version, so this epoch wasn't held to it: a check passed 2 of 3 runs.",
+      "1 protected scenario is flaky on the current version, so this epoch wasn't held to it.",
+    ];
+    const fix = fixOf("fix-no-improvement", { flaky_protected_text: said });
     const { unmount } = renderUi(
       <FixFinishedView
         fix={fix}
@@ -564,9 +576,8 @@ describe("FixFinishedView, protected cases it could not be held to", () => {
         renderTab={() => null}
       />,
     );
-    expect(screen.getByTestId("flaky-protected")).toHaveTextContent(
-      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
-    );
+    const flaky = within(screen.getByTestId("flaky-protected"));
+    said.forEach((line) => expect(flaky.getByText(line)).toBeInTheDocument());
     unmount();
 
     renderUi(
@@ -578,6 +589,22 @@ describe("FixFinishedView, protected cases it could not be held to", () => {
       />,
     );
     expect(screen.queryByTestId("flaky-protected")).toBeNull();
+  });
+});
+
+describe("FixDecisionDrawer, must-pass scenarios broken", () => {
+  it("shows the server's count of scenarios, not of checks", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    // Two broken checks on one scenario: one scenario broke.
+    winner.verdict.must_pass_regressions = [
+      "refund-flow: greeted",
+      "refund-flow: refunded",
+    ];
+    winner.wording = { ...winner.wording, must_pass_broken: 1 };
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+    const row = screen.getByText("Must-pass scenarios broken").parentElement;
+    expect(within(row).getByText("1")).toBeInTheDocument();
   });
 });
 
@@ -625,7 +652,7 @@ describe("FixDecisionDrawer without a kept trial", () => {
     const row = trial.getByText("Must-pass scenarios").parentElement;
     expect(
       within(row).getByText(
-        "not run — an earlier check failed: Target scenarios",
+        "Not run: an earlier check failed (Target scenarios)",
       ),
     ).toBeInTheDocument();
     expect(row.getAttribute("data-check")).toBe("not-run");
@@ -886,6 +913,27 @@ describe("FixFinishedView, candidates", () => {
     expect(row.getByText("Not run")).toBeInTheDocument();
   });
 
+  it("shows a candidate's whole change line, wrapped, never cut", () => {
+    const said =
+      "Changes agent.py, config.py, instructions.md and 3 more files: 108 lines added, 30 removed.";
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.wording = { ...winner.wording, changes: said };
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    const line = within(screen.getByTestId("candidate-3")).getByTestId(
+      "candidate-changes",
+    );
+    expect(line).toHaveTextContent(said);
+    expect(line).not.toHaveClass("MuiTypography-noWrap");
+  });
+
   it("opens each candidate's own check run, and keeps the pass-rate chart below", () => {
     view("fix-ready-archive");
     expect(
@@ -1048,16 +1096,25 @@ describe("Ship, while the evals grade the winner", () => {
     );
   });
 
-  it("ships a trial the evals could not finish grading, and says so", async () => {
+  it("ships a trial the evals could not finish grading; the verdict's caveat says so", async () => {
+    const said =
+      "Platform evals did not finish on this candidate, so their results are missing. Review it closely.";
     updateFixtureFixRun("fix-ready-archive", (f) => ({
       ...f,
       eval_grading: "incomplete",
+      candidates: f.candidates.map((c) =>
+        c.outcome === "winner"
+          ? { ...c, wording: { ...c.wording, caveats: [said] } }
+          : c,
+      ),
     }));
     renderPage("fix-ready-archive");
     expect(await shipButton()).toBeEnabled();
-    expect(screen.getByTestId("ship-grading-note")).toHaveTextContent(
-      "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.",
-    );
+    // Said once, in the words the pull request uses.
+    expect(screen.queryByTestId("ship-grading-note")).toBeNull();
+    expect(
+      within(screen.getByTestId("verdict-caveats")).getByText(said),
+    ).toBeInTheDocument();
   });
 
   it("says nothing once grading is done", async () => {

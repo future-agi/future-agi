@@ -38,6 +38,11 @@ import type {
   AccountsErrorResponseApi,
   AccountsGcpMarketplaceVerifyTokenCreateBody,
   AccountsMessageResponseApi,
+  AccountsNotificationsEmailUnsubscribeCreateParams,
+  AccountsNotificationsEmailUnsubscribeListParams,
+  AccountsNotificationsSnoozeCreateParams,
+  AccountsNotificationsSnoozeListParams,
+  AccountsNotificationsUnsubscribeListParams,
   AccountsOrganizationMembersListParams,
   AccountsPaginatedUserResponseApi,
   AccountsRedisDeleteResponseApi,
@@ -93,9 +98,11 @@ import type {
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
   AgentDefinitionResponseApi,
+  AgentFixAttemptVerdictApi,
   AgentFixCandidateCreatedApi,
   AgentFixCheckRunCreatedApi,
   AgentFixCheckRunRequestApi,
+  AgentFixCodingAgentBriefApi,
   AgentFixEngineReportApi,
   AgentFixEngineStateApi,
   AgentFixIssueCreateApi,
@@ -464,6 +471,7 @@ import type {
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
   EditRunPromptColumnApi,
+  EmailUnsubscribeRequestApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
   EnterpriseHeartbeatResponseApi,
@@ -716,6 +724,9 @@ import type {
   HarnessJobCreateApi,
   HarnessJobExtendApi,
   HarnessJobReadApi,
+  HarnessLockPreviewApi,
+  HarnessLockRefusalApi,
+  HarnessLockVersionApi,
   HarnessManifestApi,
   HarnessNudgeAnswerApi,
   HarnessNudgeApi,
@@ -753,6 +764,8 @@ import type {
   HarnessStartingRecordReworkWriteApi,
   HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
+  HarnessUnlockForbiddenApi,
+  HarnessUnlockVersionApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
   HarnessVerifyCreateApi,
@@ -1354,8 +1367,10 @@ import type {
   SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
   SimulateApiAgentFixIssuesListParams,
   SimulateApiAgentFixIssuesPlanParams,
+  SimulateApiAgentFixRunsBriefParams,
   SimulateApiAgentFixRunsLaunchOptionsParams,
   SimulateApiAgentFixRunsListParams,
+  SimulateApiAgentFixRunsSubmitAttemptBody,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
@@ -1423,6 +1438,7 @@ import type {
   SlackChannelsResponseApi,
   SlackInstallApi,
   SlackInstallResponseApi,
+  SnoozeRequestApi,
   SourceBranchesResponseApi,
   SourceRepositoriesResponseApi,
   SpanAttributeDetailResponseApi,
@@ -4543,39 +4559,158 @@ export const accountsMeTimezoneCreate = async (
   );
 };
 
+export type accountsNotificationsEmailUnsubscribeListResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse400 = {
+  data: string;
+  status: 400;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponseSuccess =
+  accountsNotificationsEmailUnsubscribeListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsEmailUnsubscribeListResponseError = (
+  | accountsNotificationsEmailUnsubscribeListResponse400
+  | accountsNotificationsEmailUnsubscribeListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse =
+  | accountsNotificationsEmailUnsubscribeListResponseSuccess
+  | accountsNotificationsEmailUnsubscribeListResponseError;
+
+export const getAccountsNotificationsEmailUnsubscribeListUrl = (
+  params: AccountsNotificationsEmailUnsubscribeListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/email/unsubscribe/?${stringifiedParams}`
+    : `/accounts/notifications/email/unsubscribe/`;
+};
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const accountsNotificationsEmailUnsubscribeList = async (
+  params: AccountsNotificationsEmailUnsubscribeListParams,
+  options?: RequestInit,
+): Promise<accountsNotificationsEmailUnsubscribeListResponse> => {
+  return apiMutator<accountsNotificationsEmailUnsubscribeListResponse>(
+    getAccountsNotificationsEmailUnsubscribeListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse400 = {
+  data: string;
+  status: 400;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponseSuccess =
+  accountsNotificationsEmailUnsubscribeCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsEmailUnsubscribeCreateResponseError = (
+  | accountsNotificationsEmailUnsubscribeCreateResponse400
+  | accountsNotificationsEmailUnsubscribeCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse =
+  | accountsNotificationsEmailUnsubscribeCreateResponseSuccess
+  | accountsNotificationsEmailUnsubscribeCreateResponseError;
+
+export const getAccountsNotificationsEmailUnsubscribeCreateUrl = (
+  params: AccountsNotificationsEmailUnsubscribeCreateParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/email/unsubscribe/?${stringifiedParams}`
+    : `/accounts/notifications/email/unsubscribe/`;
+};
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const accountsNotificationsEmailUnsubscribeCreate = async (
+  emailUnsubscribeRequestApi: EmailUnsubscribeRequestApi,
+  params: AccountsNotificationsEmailUnsubscribeCreateParams,
+  options?: RequestInit,
+): Promise<accountsNotificationsEmailUnsubscribeCreateResponse> => {
+  return apiMutator<accountsNotificationsEmailUnsubscribeCreateResponse>(
+    getAccountsNotificationsEmailUnsubscribeCreateUrl(params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emailUnsubscribeRequestApi),
+    },
+  );
+};
+
 export type accountsNotificationsSnoozeListResponse200 = {
   data: string;
   status: 200;
 };
 
 export type accountsNotificationsSnoozeListResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: string;
   status: 400;
-};
-
-export type accountsNotificationsSnoozeListResponse401 = {
-  data: AccountsErrorResponseApi;
-  status: 401;
-};
-
-export type accountsNotificationsSnoozeListResponse403 = {
-  data: AccountsErrorResponseApi;
-  status: 403;
-};
-
-export type accountsNotificationsSnoozeListResponse404 = {
-  data: AccountsErrorResponseApi;
-  status: 404;
-};
-
-export type accountsNotificationsSnoozeListResponse500 = {
-  data: AccountsErrorResponseApi;
-  status: 500;
 };
 
 export type accountsNotificationsSnoozeListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type accountsNotificationsSnoozeListResponseSuccess =
@@ -4584,10 +4719,6 @@ export type accountsNotificationsSnoozeListResponseSuccess =
   };
 export type accountsNotificationsSnoozeListResponseError = (
   | accountsNotificationsSnoozeListResponse400
-  | accountsNotificationsSnoozeListResponse401
-  | accountsNotificationsSnoozeListResponse403
-  | accountsNotificationsSnoozeListResponse404
-  | accountsNotificationsSnoozeListResponse500
   | accountsNotificationsSnoozeListResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -4597,21 +4728,113 @@ export type accountsNotificationsSnoozeListResponse =
   | accountsNotificationsSnoozeListResponseSuccess
   | accountsNotificationsSnoozeListResponseError;
 
-export const getAccountsNotificationsSnoozeListUrl = () => {
-  return `/accounts/notifications/snooze/`;
+export const getAccountsNotificationsSnoozeListUrl = (
+  params: AccountsNotificationsSnoozeListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/snooze/?${stringifiedParams}`
+    : `/accounts/notifications/snooze/`;
 };
 
 /**
  * Snooze the realtime track for N days (default 7). Daily still fires.
+GET asks first, because link scanners prefetch URLs; POST snoozes.
  */
 export const accountsNotificationsSnoozeList = async (
+  params: AccountsNotificationsSnoozeListParams,
   options?: RequestInit,
 ): Promise<accountsNotificationsSnoozeListResponse> => {
   return apiMutator<accountsNotificationsSnoozeListResponse>(
-    getAccountsNotificationsSnoozeListUrl(),
+    getAccountsNotificationsSnoozeListUrl(params),
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type accountsNotificationsSnoozeCreateResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsSnoozeCreateResponse400 = {
+  data: string;
+  status: 400;
+};
+
+export type accountsNotificationsSnoozeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type accountsNotificationsSnoozeCreateResponseSuccess =
+  accountsNotificationsSnoozeCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsSnoozeCreateResponseError = (
+  | accountsNotificationsSnoozeCreateResponse400
+  | accountsNotificationsSnoozeCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsSnoozeCreateResponse =
+  | accountsNotificationsSnoozeCreateResponseSuccess
+  | accountsNotificationsSnoozeCreateResponseError;
+
+export const getAccountsNotificationsSnoozeCreateUrl = (
+  params: AccountsNotificationsSnoozeCreateParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/snooze/?${stringifiedParams}`
+    : `/accounts/notifications/snooze/`;
+};
+
+/**
+ * Snooze the realtime track for N days (default 7). Daily still fires.
+GET asks first, because link scanners prefetch URLs; POST snoozes.
+ */
+export const accountsNotificationsSnoozeCreate = async (
+  snoozeRequestApi: SnoozeRequestApi,
+  params: AccountsNotificationsSnoozeCreateParams,
+  options?: RequestInit,
+): Promise<accountsNotificationsSnoozeCreateResponse> => {
+  return apiMutator<accountsNotificationsSnoozeCreateResponse>(
+    getAccountsNotificationsSnoozeCreateUrl(params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(snoozeRequestApi),
     },
   );
 };
@@ -4622,33 +4845,13 @@ export type accountsNotificationsUnsubscribeListResponse200 = {
 };
 
 export type accountsNotificationsUnsubscribeListResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: string;
   status: 400;
-};
-
-export type accountsNotificationsUnsubscribeListResponse401 = {
-  data: AccountsErrorResponseApi;
-  status: 401;
-};
-
-export type accountsNotificationsUnsubscribeListResponse403 = {
-  data: AccountsErrorResponseApi;
-  status: 403;
-};
-
-export type accountsNotificationsUnsubscribeListResponse404 = {
-  data: AccountsErrorResponseApi;
-  status: 404;
-};
-
-export type accountsNotificationsUnsubscribeListResponse500 = {
-  data: AccountsErrorResponseApi;
-  status: 500;
 };
 
 export type accountsNotificationsUnsubscribeListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type accountsNotificationsUnsubscribeListResponseSuccess =
@@ -4657,10 +4860,6 @@ export type accountsNotificationsUnsubscribeListResponseSuccess =
   };
 export type accountsNotificationsUnsubscribeListResponseError = (
   | accountsNotificationsUnsubscribeListResponse400
-  | accountsNotificationsUnsubscribeListResponse401
-  | accountsNotificationsUnsubscribeListResponse403
-  | accountsNotificationsUnsubscribeListResponse404
-  | accountsNotificationsUnsubscribeListResponse500
   | accountsNotificationsUnsubscribeListResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -4670,18 +4869,37 @@ export type accountsNotificationsUnsubscribeListResponse =
   | accountsNotificationsUnsubscribeListResponseSuccess
   | accountsNotificationsUnsubscribeListResponseError;
 
-export const getAccountsNotificationsUnsubscribeListUrl = () => {
-  return `/accounts/notifications/unsubscribe/`;
+export const getAccountsNotificationsUnsubscribeListUrl = (
+  params: AccountsNotificationsUnsubscribeListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/unsubscribe/?${stringifiedParams}`
+    : `/accounts/notifications/unsubscribe/`;
 };
 
 /**
- * One-click unsubscribe from both digest tracks. Token is HMAC-signed.
+ * Digest unsubscribe link from older emails. Token is HMAC-signed.
  */
 export const accountsNotificationsUnsubscribeList = async (
+  params: AccountsNotificationsUnsubscribeListParams,
   options?: RequestInit,
 ): Promise<accountsNotificationsUnsubscribeListResponse> => {
   return apiMutator<accountsNotificationsUnsubscribeListResponse>(
-    getAccountsNotificationsUnsubscribeListUrl(),
+    getAccountsNotificationsUnsubscribeListUrl(params),
     {
       ...options,
       method: "GET",
@@ -59898,6 +60116,49 @@ export const simulateApiAgentFixEngineSource = async (
   );
 };
 
+export type simulateApiAgentFixEngineSubmittedResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineSubmittedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineSubmittedResponseSuccess =
+  simulateApiAgentFixEngineSubmittedResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixEngineSubmittedResponseError =
+  simulateApiAgentFixEngineSubmittedResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixEngineSubmittedResponse =
+  | simulateApiAgentFixEngineSubmittedResponseSuccess
+  | simulateApiAgentFixEngineSubmittedResponseError;
+
+export const getSimulateApiAgentFixEngineSubmittedUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/submitted/`;
+};
+
+/**
+ * The tree an outside attempt verifies, `source/`-rooted like ``source``.
+ */
+export const simulateApiAgentFixEngineSubmitted = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineSubmittedResponse> => {
+  return apiMutator<simulateApiAgentFixEngineSubmittedResponse>(
+    getSimulateApiAgentFixEngineSubmittedUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 = {
   data: void;
   status: 200;
@@ -60370,6 +60631,148 @@ export const simulateApiAgentFixRunsCreate = async (
   );
 };
 
+export type simulateApiAgentFixRunsSubmitAttemptResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsSubmitAttemptResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsSubmitAttemptResponseSuccess =
+  simulateApiAgentFixRunsSubmitAttemptResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixRunsSubmitAttemptResponseError =
+  simulateApiAgentFixRunsSubmitAttemptResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixRunsSubmitAttemptResponse =
+  | simulateApiAgentFixRunsSubmitAttemptResponseSuccess
+  | simulateApiAgentFixRunsSubmitAttemptResponseError;
+
+export const getSimulateApiAgentFixRunsSubmitAttemptUrl = () => {
+  return `/simulate/api/agent-fix-runs/coding-agent-attempts/`;
+};
+
+/**
+ * Submit the tree a person's own coding agent made for a finished run. Future AGI
+checks it as a short Epoch: no model proposes a change, but each check runs the
+agent on the run's cases and uses credits. Read its verdict.
+ */
+export const simulateApiAgentFixRunsSubmitAttempt = async (
+  simulateApiAgentFixRunsSubmitAttemptBody?: SimulateApiAgentFixRunsSubmitAttemptBody,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsSubmitAttemptResponse> => {
+  const formData = new FormData();
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.source_run_id !== undefined) {
+    formData.append(
+      `source_run_id`,
+      simulateApiAgentFixRunsSubmitAttemptBody.source_run_id,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.tree !== undefined) {
+    formData.append(`tree`, simulateApiAgentFixRunsSubmitAttemptBody.tree);
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.summary !== undefined) {
+    formData.append(
+      `summary`,
+      simulateApiAgentFixRunsSubmitAttemptBody.summary,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.base_commit !== undefined) {
+    formData.append(
+      `base_commit`,
+      simulateApiAgentFixRunsSubmitAttemptBody.base_commit,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.locked_paths !== undefined) {
+    simulateApiAgentFixRunsSubmitAttemptBody?.locked_paths.forEach((value) =>
+      formData.append(`locked_paths`, value),
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.budget_credits !== undefined) {
+    formData.append(
+      `budget_credits`,
+      simulateApiAgentFixRunsSubmitAttemptBody.budget_credits.toString(),
+    );
+  }
+
+  return apiMutator<simulateApiAgentFixRunsSubmitAttemptResponse>(
+    getSimulateApiAgentFixRunsSubmitAttemptUrl(),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsBriefResponse200 = {
+  data: AgentFixCodingAgentBriefApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsBriefResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsBriefResponseSuccess =
+  simulateApiAgentFixRunsBriefResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixRunsBriefResponseError =
+  simulateApiAgentFixRunsBriefResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixRunsBriefResponse =
+  | simulateApiAgentFixRunsBriefResponseSuccess
+  | simulateApiAgentFixRunsBriefResponseError;
+
+export const getSimulateApiAgentFixRunsBriefUrl = (
+  params: SimulateApiAgentFixRunsBriefParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/coding-agent-brief/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/coding-agent-brief/`;
+};
+
+/**
+ * What a person's own coding agent reads to fix a finished run: its failing cases,
+never a held-back one, the agent's files, the rules, and how to submit.
+ */
+export const simulateApiAgentFixRunsBrief = async (
+  params: SimulateApiAgentFixRunsBriefParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsBriefResponse> => {
+  return apiMutator<simulateApiAgentFixRunsBriefResponse>(
+    getSimulateApiAgentFixRunsBriefUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiAgentFixRunsLaunchOptionsResponse200 = {
   data: AgentFixLaunchOptionsApi;
   status: 200;
@@ -60417,7 +60820,9 @@ export const getSimulateApiAgentFixRunsLaunchOptionsUrl = (
 
 /**
  * What the launch form shows and prefills for a finished run, and what would
-refuse the launch now.
+refuse the launch now. Only a person's signed-in session reads the cases an Epoch
+on the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP
+never.
  */
 export const simulateApiAgentFixRunsLaunchOptions = async (
   params: SimulateApiAgentFixRunsLaunchOptionsParams,
@@ -60715,6 +61120,50 @@ export const simulateApiAgentFixRunsStop = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsVerdictResponse200 = {
+  data: AgentFixAttemptVerdictApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsVerdictResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsVerdictResponseSuccess =
+  simulateApiAgentFixRunsVerdictResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixRunsVerdictResponseError =
+  simulateApiAgentFixRunsVerdictResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixRunsVerdictResponse =
+  | simulateApiAgentFixRunsVerdictResponseSuccess
+  | simulateApiAgentFixRunsVerdictResponseError;
+
+export const getSimulateApiAgentFixRunsVerdictUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/verdict/`;
+};
+
+/**
+ * An outside attempt's verdict: each tier's status, the static and target tiers'
+detail, and its must-pass regressions, none on a held-back case.
+ */
+export const simulateApiAgentFixRunsVerdict = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsVerdictResponse> => {
+  return apiMutator<simulateApiAgentFixRunsVerdictResponse>(
+    getSimulateApiAgentFixRunsVerdictUrl(id),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -62314,9 +62763,14 @@ export type simulateApiHarnessEnvironmentsDeleteResponse403 = {
   status: 403;
 };
 
+export type simulateApiHarnessEnvironmentsDeleteResponse409 = {
+  data: HarnessLockRefusalApi;
+  status: 409;
+};
+
 export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 403>;
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 409>;
 };
 
 export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
@@ -62325,6 +62779,7 @@ export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
   };
 export type simulateApiHarnessEnvironmentsDeleteResponseError = (
   | simulateApiHarnessEnvironmentsDeleteResponse403
+  | simulateApiHarnessEnvironmentsDeleteResponse409
   | simulateApiHarnessEnvironmentsDeleteResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -65555,6 +66010,124 @@ export const simulateApiHarnessEnvironmentsSourceChanges = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponse200 = {
+  data: HarnessLockPreviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsLockPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseError =
+  simulateApiHarnessEnvironmentsVersionsLockPreviewResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponse =
+  | simulateApiHarnessEnvironmentsVersionsLockPreviewResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsLockPreviewResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsLockPreviewUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/lock-preview/`;
+};
+
+/**
+ * Whether the default environment and suite versions can be locked now, why
+not, and the train and test splits a lock would give. It plans as the lock does,
+so it reads the default run's environment contract and scenario documents by
+design, and the agent version's facts its bundle key needs, never its
+credential blob; the versions list stays off them.
+ */
+export const simulateApiHarnessEnvironmentsVersionsLockPreview = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsLockPreviewResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsLockPreviewResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsLockPreviewUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse409 = {
+  data: HarnessLockRefusalApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse422 = {
+  data: HarnessLockRefusalApi;
+  status: 422;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 409 | 422>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsLockVersionResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponse403
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponse409
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponse422
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse =
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsLockVersionUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/lock/`;
+};
+
+/**
+ * Lock the default environment and suite versions with train and test splits;
+returns every version and the locked-version history: every locked one plus
+the newest unlocked ones.
+ */
+export const simulateApiHarnessEnvironmentsVersionsLockVersion = async (
+  id: string,
+  harnessLockVersionApi: HarnessLockVersionApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsLockVersionResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsLockVersionResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsLockVersionUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessLockVersionApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 =
   {
     data: HarnessSuiteMemberApi[];
@@ -65605,6 +66178,64 @@ export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse403 = {
+  data: HarnessUnlockForbiddenApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse403
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse =
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsUnlockVersionUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/unlock/`;
+};
+
+/**
+ * Unlock a locked version, as a workspace admin or owner. Its versions, splits and
+scores stay; returns every version and the locked-version history: every
+locked one plus the newest unlocked ones.
+ */
+export const simulateApiHarnessEnvironmentsVersionsUnlockVersion = async (
+  id: string,
+  harnessUnlockVersionApi: HarnessUnlockVersionApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsUnlockVersionUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUnlockVersionApi),
     },
   );
 };
@@ -74029,6 +74660,11 @@ export type simulateTestExecutionsOptimiserAnalysisListResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsOptimiserAnalysisListResponse409 = {
+  data: TestExecutionDebugAnalysisErrorApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsOptimiserAnalysisListResponse500 = {
   data: ApiTextErrorResponseApi;
   status: 500;
@@ -74036,7 +74672,7 @@ export type simulateTestExecutionsOptimiserAnalysisListResponse500 = {
 
 export type simulateTestExecutionsOptimiserAnalysisListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409 | 500>;
 };
 
 export type simulateTestExecutionsOptimiserAnalysisListResponseSuccess =
@@ -74045,6 +74681,7 @@ export type simulateTestExecutionsOptimiserAnalysisListResponseSuccess =
   };
 export type simulateTestExecutionsOptimiserAnalysisListResponseError = (
   | simulateTestExecutionsOptimiserAnalysisListResponse404
+  | simulateTestExecutionsOptimiserAnalysisListResponse409
   | simulateTestExecutionsOptimiserAnalysisListResponse500
   | simulateTestExecutionsOptimiserAnalysisListResponseDefault
 ) & {
@@ -74093,6 +74730,11 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse409 = {
+  data: TestExecutionDebugAnalysisErrorApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
   data: ApiTextErrorResponseApi;
   status: 500;
@@ -74101,7 +74743,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>;
   };
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess =
@@ -74112,6 +74754,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseError =
   (
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404
+    | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse409
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault
   ) & {

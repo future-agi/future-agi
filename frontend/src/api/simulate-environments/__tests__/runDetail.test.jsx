@@ -1058,6 +1058,40 @@ describe("useRunDetail", () => {
     expect(result.current.identity.readinessSelection).toBeNull();
   });
 
+  it("reads the connected and failing counts Debug failures needs", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-counts",
+          status: "completed",
+          connected_calls: 14,
+          summary: { total: 16, outcomes: { failed: 2, error: 1 } },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+
+    expect(result.current.stats.connected).toBe(14);
+    expect(result.current.stats.failed).toBe(3);
+  });
+
+  it("reads no connected count from a backend that sends none", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { execution: { id: "ex-old", status: "completed" } },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-old"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+
+    expect(result.current.stats.connected).toBeNull();
+  });
+
   it.each([
     ["Pending", "queued"],
     ["Running", "running"],
@@ -1240,6 +1274,48 @@ describe("useRunDetail", () => {
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
   });
+});
+
+describe("useRunDetail while calls are scoring", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it.each([
+    [1, 2],
+    [0, 1],
+  ])(
+    "reads a finished run's header again while %s call is scoring",
+    async (pending, reads) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        axios.get.mockResolvedValue({
+          data: {
+            execution: {
+              id: "ex-scoring",
+              status: "completed",
+              summary: { total: 1, outcomes: {} },
+            },
+            summary: { scoring: { pending } },
+          },
+        });
+        const { unmount } = renderHook(
+          () => useRunDetail("rt1", "ex-scoring"),
+          { wrapper: makeWrapper() },
+        );
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3000);
+        });
+
+        expect(axios.get).toHaveBeenCalledTimes(reads);
+        unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });
 
 describe("call detail evals carry their scoring status", () => {

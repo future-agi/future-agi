@@ -1,4 +1,14 @@
-import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+import {
+  FIX_LIVE_STATES,
+  OUR_FAILURES,
+} from "src/api/simulate-environments/fixRuns";
+import {
+  RUN_AGAIN,
+  attemptNextStep,
+  failedOnOurSide,
+  isOutsideAttempt,
+  usedTheRunsLastAttempt,
+} from "src/api/simulate-environments/codingAgent";
 
 import { mustPassScenarioKeys } from "./scenarioOutcomes";
 
@@ -58,13 +68,36 @@ const stage = (id) => ({ id, label: STAGE_LABEL[id] });
 const VARIATIONS_STAGE = stage("variations");
 const STAGES = ["reproduce", "diagnose", "search", "verify"].map(stage);
 
+// An attempt from a person's own coding agent only checks the change it was given:
+// it never diagnoses or proposes. Its stages come from the same step, in its words.
+export const ATTEMPT_STAGE_LABEL = {
+  reproduce: "Measuring",
+  search: "Checking the change",
+  verify: "Checking held-back",
+};
+// A run with too few failing cases holds none back: the last stage checks only
+// the must-pass cases.
+const heldBackAny = (fix) => !!fix.request?.held_back_scenario_keys?.length;
+const attemptStageLabels = (fix) =>
+  heldBackAny(fix)
+    ? ATTEMPT_STAGE_LABEL
+    : { ...ATTEMPT_STAGE_LABEL, verify: "Checking must-pass" };
+const attemptStages = (fix) => {
+  const labels = attemptStageLabels(fix);
+  return ["reproduce", "search", "verify"].map((id) => ({
+    id,
+    label: labels[id],
+  }));
+};
+
 // The engine has no diagnose step: it diagnoses as its search starts, and names
 // that stage Diagnose. A search reads as diagnosing only while the engine says
 // so and nothing it found has arrived, so one that skipped its diagnosis reads
 // as the search. The issue job's summary of an epoch carries no stage, so it
-// reads as the search.
+// reads as the search. An attempt never diagnoses.
 export function stageOf(fix) {
-  if (fix.step !== "search" || fix.summary) return fix.step;
+  if (fix.step !== "search" || fix.summary || isOutsideAttempt(fix))
+    return fix.step;
   const diagnosing =
     /^Diagnose/.test(fix.stage || "") &&
     !fix.diagnosis &&
@@ -73,7 +106,10 @@ export function stageOf(fix) {
 }
 
 // The stage a running epoch is in, beside its status.
-export const stageLabel = (fix) => STAGE_LABEL[stageOf(fix)] || null;
+export const stageLabel = (fix) =>
+  (isOutsideAttempt(fix) ? attemptStageLabels(fix) : STAGE_LABEL)[
+    stageOf(fix)
+  ] || null;
 
 export const pct = (x) => Math.round(x * 100);
 export const pts = (rate) => Math.round((rate[1] - rate[0]) * 100);
@@ -91,12 +127,10 @@ export function formatMinutes(total) {
 }
 
 // A fix's winner is graded by the platform's evals after the fix ends, and ships only
-// once they finish. The PR body says the same when they could not.
+// once they finish. When they could not, the verdict's caveats say so, as the PR does.
 export function gradingNote(fix) {
   if (fix.eval_grading === "pending")
     return "Platform evals are still scoring this candidate. You can ship it once they finish.";
-  if (fix.eval_grading === "incomplete")
-    return "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.";
   return null;
 }
 
@@ -146,16 +180,6 @@ export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;
 
-// The must-pass scenarios a verdict counted as broken: it names each one once
-// per check, so the count is of scenarios, not checks.
-const brokeCount = (verdict) =>
-  mustPassScenarioKeys(verdict?.must_pass_regressions).size;
-
-const brokeText = (n) =>
-  n
-    ? `${n} must-pass ${n === 1 ? "scenario" : "scenarios"} broke.`
-    : "No must-pass scenario broke.";
-
 const triedText = (fix) => {
   const n = (fix.candidates || []).length;
   return `${n} ${n === 1 ? "candidate" : "candidates"}`;
@@ -167,25 +191,48 @@ const whenEnded = (fix) =>
     ? `after ${triedText(fix)}`
     : "before any candidate ran";
 
-// Failures that are ours, not the agent's: the user can only retry.
-export const OUR_FAILURES = new Set([
-  "fix_engine_failed",
-  "fix_engine_died",
-  "fix_watch_failed",
-  "fix_workflow_lost",
-  "fix_dispatch_failed",
-  "fix_variations_failed",
-  "fix_variations_timeout",
-  "scheduler_unavailable",
-]);
-
 const sentence = (text) =>
   text
     ? `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/\.?$/, ".")}`
     : "";
 
+// How an attempt from a person's own coding agent ended, in attempt words: the next
+// step is always the coding agent's, never Run Epoch or a retry. After the run's
+// last counted attempt, that step is a new run.
+function attemptEndingText(fix) {
+  const code = fix.failure?.code;
+  const number = fix.request?.outside_candidate?.number;
+  const last = usedTheRunsLastAttempt(number, fix.counted);
+  const submitAgain = attemptNextStep({
+    state: fix.state,
+    code,
+    number,
+    counted: fix.counted,
+    budgetCredits: fix.request?.budget_credits,
+  });
+  switch (fix.state) {
+    case "no_improvement":
+      return `Your coding agent's change did not pass every check, so nothing changed. The checks above say which. ${last ? RUN_AGAIN : "Fix the change, then submit it again with fagi epoch submit."}`;
+    case "not_reproduced":
+      return "The run's failing cases did not fail often enough on the current version to check a fix. Nothing changed.";
+    case "out_of_budget":
+      return `This attempt reached its budget. Nothing changed. ${submitAgain}`;
+    case "stopped":
+      return "You stopped this attempt. Nothing changed.";
+    case "failed":
+      if (code === "fix_deadline")
+        return `This attempt ran out of its time limit. Nothing changed. ${submitAgain}`;
+      if (failedOnOurSide(code))
+        return `This attempt stopped because of a problem on our side, not your change. Nothing changed. ${submitAgain}`;
+      return `This attempt stopped on something only you can change: ${sentence(fix.failure.message)}`;
+    default:
+      return null;
+  }
+}
+
 // Why a fix that shipped nothing ended, and what the user can do next.
 export function endingText(fix) {
+  if (isOutsideAttempt(fix)) return attemptEndingText(fix);
   const code = fix.failure?.code;
   if (fix.state === "not_reproduced")
     return "The chosen scenarios did not fail often enough on the current version to fix. Check that they still show the failure, then run a new epoch.";
@@ -215,6 +262,9 @@ export function endingText(fix) {
 
 export function headline(fix) {
   const winner = winnerOf(fix);
+  if (fix.state === "no_improvement" && isOutsideAttempt(fix)) {
+    return endingText(fix);
+  }
   if (fix.state === "no_improvement") {
     return (
       noSafeHeadline(fix) ||
@@ -222,12 +272,8 @@ export function headline(fix) {
     );
   }
   if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
-  const { verdict } = winner;
-  const broke = brokeText(brokeCount(verdict));
-  if (verdict.held_back_pass_rate) {
-    return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}. ${broke}`;
-  }
-  return `Target pass rate ${rateChange(verdict.target_pass_rate)}. ${broke}`;
+  // The server's words, as the pull request says them.
+  return winner.wording?.headline || null;
 }
 
 const rateCard = (id, label, rate, note) => ({
@@ -464,8 +510,8 @@ const rateLine = (rate, gain, tail = "") =>
       : `Not a clear gain${tail}.`;
 
 // One tier's result in plain words, from the verdict's own numbers. The engine's detail
-// (its statistics) is never shown.
-function tierLine(tier, verdict, plan, request) {
+// (its statistics) is never shown. The must-pass line is the server's (`wording`).
+function tierLine(tier, verdict, wording, request) {
   const passed = tier.status === "passed";
   if (tier.status === "pending")
     return "Runs only if this candidate is picked.";
@@ -480,19 +526,12 @@ function tierLine(tier, verdict, plan, request) {
       return rateLine(
         verdict?.held_back_pass_rate,
         passed,
-        " on scenarios the epoch never saw",
+        request?.outside_candidate
+          ? " on scenarios your coding agent wasn't given"
+          : " on scenarios the epoch never saw",
       );
-    case "must-pass": {
-      const broke = brokeCount(verdict);
-      if (!passed)
-        return broke ? brokeText(broke) : "A must-pass scenario broke.";
-      const kept = plan?.protected
-        ? `, including the ${plan.protected} you protected`
-        : "";
-      return plan?.must_pass
-        ? `None of the ${plan.must_pass} must-pass scenarios broke${kept}.`
-        : "No must-pass scenario broke.";
-    }
+    case "must-pass":
+      return wording?.must_pass || "";
     case "repeats":
       return passed
         ? "Held up over the repeat runs."
@@ -529,7 +568,7 @@ export function describeChecks(
   tiers = [],
   request = null,
   verdict = null,
-  plan = null,
+  wording = null,
 ) {
   const failed = tiers.findIndex((t) => t.status === "failed");
   return tiers.map((t, i) => {
@@ -545,7 +584,7 @@ export function describeChecks(
     return {
       ...t,
       label: checkLabel(t.name, request),
-      detail: notRun ? "" : tierLine(t, verdict, plan, request),
+      detail: notRun ? "" : tierLine(t, verdict, wording, request),
       ...(t.status === "skipped" && !notRun && { unknown: "Unknown" }),
       notRun,
       ...(notRun && {
@@ -569,9 +608,9 @@ export function rejectionChecks(
   tiers = [],
   request = null,
   verdict = null,
-  plan = null,
+  wording = null,
 ) {
-  const described = describeChecks(tiers, request, verdict, plan);
+  const described = describeChecks(tiers, request, verdict, wording);
   const rejecting = described.findIndex((t) => t.status === "failed");
   if (rejecting < 0) return described;
   return [described[rejecting], ...described.filter((_, i) => i !== rejecting)];
@@ -643,20 +682,6 @@ export function noSafeHeadline(fix) {
   return `No safe improvement: no candidate passed every check (${each}).`;
 }
 
-// The protected cases the fix could not be held to, in words: each scenario once, by its
-// name, or by its key when the engine sent none. Null for a report without them.
-export function flakyProtectedText(fix) {
-  const rows = fix.report?.flaky_protected || [];
-  const names = [
-    ...new Map(rows.map((r) => [r.key, r.name || r.key])).values(),
-  ];
-  if (!names.length) return null;
-  const quoted = names.map((n) => `“${n}”`).join(", ");
-  return names.length === 1
-    ? `1 protected case is flaky on the current version, so this epoch wasn't held to it: ${quoted}.`
-    : `${names.length} protected cases are flaky on the current version, so this epoch wasn't held to them: ${quoted}.`;
-}
-
 // The numbers behind the no-safe headline: each trial's rejecting check in plain words,
 // from its verdict's own numbers.
 export function noSafeNumbers(fix) {
@@ -666,7 +691,12 @@ export function noSafeNumbers(fix) {
       return {
         attempt: t.attempt,
         label: checkLabel(t.check.name, fix.request),
-        detail: tierLine(t.check, candidate?.verdict, fix.plan, fix.request),
+        detail: tierLine(
+          t.check,
+          candidate?.verdict,
+          candidate?.wording,
+          fix.request,
+        ),
       };
     }),
   };
@@ -715,11 +745,27 @@ const GROUP_HEADING = {
   static: "The change wasn't valid",
 };
 
+// The same groups for an attempt from a person's own coding agent: its one candidate
+// is that agent's change, and the held-back cases are the ones it wasn't given.
+const ATTEMPT_GROUP_HEADING = {
+  "must-pass": "Your coding agent's change broke a must-pass scenario",
+  "held-back":
+    "Your coding agent's change didn't hold on scenarios it wasn't given",
+  repeats: "Your coding agent's change didn't hold over repeat runs",
+  target: "Your coding agent's change didn't improve the target scenarios",
+  ceilings: "Your coding agent's change went over the reply-time or cost limit",
+  "model-lock": "Your coding agent's change didn't keep to the approved models",
+  static: "Your coding agent's change wasn't valid",
+};
+
 function groupLabel(id, fix, live) {
   if (["winner", "finalist", "pending"].includes(id))
     return outcomeLabel(id, live);
   if (id === "rejected") return "Rejected";
-  return GROUP_HEADING[id] || `Stopped at “${checkLabel(id, fix.request)}”`;
+  const headings = isOutsideAttempt(fix)
+    ? ATTEMPT_GROUP_HEADING
+    : GROUP_HEADING;
+  return headings[id] || `Stopped at “${checkLabel(id, fix.request)}”`;
 }
 
 // What stopped a candidate, in the words its verdict's own numbers give.
@@ -728,17 +774,11 @@ function candidateResult(c, group, fix, live) {
     return { result: outcomeLabel(c.outcome, live), broke: false };
   if (group === "rejected")
     return { result: oldVerdictLine(c.verdict), broke: false };
-  if (group === "must-pass") {
-    const n = brokeCount(c.verdict);
-    return {
-      result: n
-        ? `Broke ${n} must-pass ${n === 1 ? "scenario" : "scenarios"}`
-        : "Broke a must-pass scenario",
-      broke: true,
-    };
-  }
+  // The server's words for what it broke, as the pull request says them.
+  if (group === "must-pass")
+    return { result: c.wording?.must_pass || "", broke: true };
   return {
-    result: tierLine(failedTierOf(c), c.verdict, fix.plan, fix.request),
+    result: tierLine(failedTierOf(c), c.verdict, c.wording, fix.request),
     broke: false,
   };
 }
@@ -756,7 +796,10 @@ export function candidateGroups(fix) {
       {
         id: c.id,
         attempt: c.attempt,
-        tried: c.summary || "",
+        // What its patch changes, from the server; the engine's note on its last
+        // round is not the whole change.
+        changes: c.wording?.changes || "",
+        notes: c.summary || "",
         // The candidate's own check run, for its Open run.
         run: c.check_runs?.[0] || null,
         target: Array.isArray(target)
@@ -889,9 +932,33 @@ function diagnoseLines(fix, state) {
   return [`Starts from its diagnosis: ${first}`, ...rest];
 }
 
+// An attempt's stages: the current version measured, the coding agent's change
+// checked on the cases it was given, then on the cases it was not.
+function attemptLines(id, fix, state) {
+  const done = state === "done";
+  if (id === "reproduce") {
+    return [
+      fix.source_run_number != null
+        ? `${done ? "Measured" : "Measures"} the current version on Run ${fix.source_run_number}'s cases`
+        : `${done ? "Measured" : "Measures"} the current version on the run's cases`,
+    ];
+  }
+  if (id === "search") {
+    return [
+      `${done ? "Checked" : "Checks"} that your coding agent's change applies, then runs it on the failing cases it was given`,
+    ];
+  }
+  return [
+    heldBackAny(fix)
+      ? `${done ? "Ran" : "Runs"} it on cases your agent wasn't given and on the must-pass cases`
+      : `${done ? "Ran" : "Runs"} it on the must-pass cases`,
+  ];
+}
+
 function stepLines(id, fix, state) {
   const { plan } = fix;
   const candidates = fix.candidates || [];
+  if (isOutsideAttempt(fix)) return attemptLines(id, fix, state);
   if (id === "variations") return variationLines(fix);
   if (id === "reproduce") {
     return [
@@ -934,7 +1001,8 @@ function stepLines(id, fix, state) {
 // the first stage's place, and a stop in progress reads Stopping on the stage
 // it interrupts.
 export function stepRows(fix) {
-  const stages = hasVariations(fix) ? [VARIATIONS_STAGE, ...STAGES] : STAGES;
+  let stages = hasVariations(fix) ? [VARIATIONS_STAGE, ...STAGES] : STAGES;
+  if (isOutsideAttempt(fix)) stages = attemptStages(fix);
   const current = stages.findIndex((s) => s.id === stageOf(fix));
   const finished = fix.step === "done";
   return stages.map((s, i) => {
@@ -1041,6 +1109,12 @@ export function listResult(fix) {
   if (!result || !strength) return result;
   return { ...result, note: `${strength} · ${result.note}` };
 }
+
+// The must-pass scenarios a verdict counted as broken: it names each one once
+// per check, so the count is of scenarios, not checks. Only the list counts
+// here: its read carries no server wording.
+const brokeCount = (verdict) =>
+  mustPassScenarioKeys(verdict?.must_pass_regressions).size;
 
 function verdictResult(fix) {
   const winner = winnerOf(fix);
