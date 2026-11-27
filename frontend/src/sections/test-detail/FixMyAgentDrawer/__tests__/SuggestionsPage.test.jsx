@@ -59,6 +59,13 @@ describe("Fix My Agent on a run nobody has analysed", () => {
     renderPage();
 
     const refresh = await screen.findByRole("button", { name: /refresh/i });
+    // The wording the E2E flow SIM-E2E-002 reads in this drawer.
+    expect(
+      screen.getByText(
+        "There are no suggestions yet, click the refresh button to get suggestions",
+        { exact: true },
+      ),
+    ).toBeInTheDocument();
     expect(mockGet).toHaveBeenCalledWith(
       endpoints.testExecutions.getOptimizerAnalysis("ex-1"),
     );
