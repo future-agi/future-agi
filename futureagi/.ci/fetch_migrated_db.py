@@ -29,16 +29,10 @@ class FetchError(ValueError):
 
 
 def eligible(run, repository):
-    # TEMPORARY proof scaffold (reverted before review): dispatches of this branch.
-    # A dispatch is checked against main by the update-safety job, which fails
-    # for reasons outside this change; accept that one red job here.
-    scaffold = (
-        run["event"] == "workflow_dispatch"
-        and run["head_branch"] == "perf/ci-backend-db-reuse"
-    )
     return (
-        (scaffold or run["event"] == "push" and run["head_branch"] == "dev")
-        and (scaffold or run["conclusion"] == "success")
+        run["event"] == "push"
+        and run["head_branch"] == "dev"
+        and run["conclusion"] == "success"
         and run["path"] == WORKFLOW
         and (run.get("head_repository") or {}).get("full_name") == repository
         and (run.get("repository") or {}).get("full_name") == repository
@@ -53,8 +47,7 @@ def listed(artifact):
     """
     run = artifact.get("workflow_run") or {}
     return (
-        # TEMPORARY proof scaffold (reverted before review): this branch too.
-        run.get("head_branch") in ("dev", "perf/ci-backend-db-reuse")
+        run.get("head_branch") == "dev"
         and run.get("repository_id") is not None
         and run.get("head_repository_id") == run.get("repository_id")
     )

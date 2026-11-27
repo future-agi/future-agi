@@ -844,7 +844,6 @@ class BackendWorkflowTest(unittest.TestCase):
         self.assertIn("if: steps.saved-db.outcome != 'success'", self.shard)
         self.assertNotIn("backend_cold_fanout", self.workflow)
 
-    @unittest.skip("TEMPORARY proof scaffold saves on dispatch")
     def test_only_a_dev_push_saves_a_dump_and_it_is_named_by_its_inputs(self):
         control_job = self.workflow.split("\n  migrated-database:\n")[1].split(
             "\n  agentic-eval:"

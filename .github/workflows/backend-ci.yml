@@ -32,10 +32,6 @@ on:
         description: Frozen shard dependency/service setup for a paired timing run
         default: baseline
         options: [baseline, overlap, tuned]
-      scaffold_public_only:
-        # TEMPORARY proof scaffold (reverted before review).
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -181,7 +177,6 @@ jobs:
       - id: overlay
         env:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          SCAFFOLD_PUBLIC_ONLY: ${{ inputs.scaffold_public_only }}
         run: |
           # The merge-group event does not attest to the provenance of every member.
           # A call from Retarget proof forwards no secrets: like a merge group,
@@ -190,9 +185,6 @@ jobs:
           case "$GITHUB_EVENT_NAME" in
             pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
             push|workflow_dispatch|schedule) internal=true ;;
-          esac
-          case "$GITHUB_EVENT_NAME:${SCAFFOLD_PUBLIC_ONLY:-}" in
-            workflow_dispatch:true) internal=false ;;
           esac
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
       - id: shards
@@ -745,7 +737,7 @@ jobs:
           profile: ${{ inputs.backend_setup || 'baseline' }}
           artifact: ${{ needs.plan.outputs.db_artifact }}
           recipe: ${{ needs.plan.outputs.db_recipe }}
-          save: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
       - name: Upload the files the fresh migrate touched (observation only)
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
