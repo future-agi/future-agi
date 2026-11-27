@@ -34976,10 +34976,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/v3/test-executions/{test_execution_id}/asks/": {
       get: {
         operationId: "simulate_v3_test_execution_asks",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/AskListResponse",
@@ -35001,6 +35009,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         queryParameters: {},
         responses: {
+          200: {
+            $ref: "#/definitions/AskLaunchResponse",
+          },
           201: {
             $ref: "#/definitions/AskLaunchResponse",
           },
@@ -59384,7 +59395,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AskLaunchRequest: {
-      required: ["selection", "questions", "accepted"],
+      required: ["selection", "questions", "accepted", "launch_key"],
       type: "object",
       properties: {
         selection: {
@@ -59400,6 +59411,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         accepted: {
           $ref: "#/definitions/AskAccepted",
+        },
+        launch_key: {
+          title: "Launch key",
+          type: "string",
+          format: "uuid",
         },
       },
     },
@@ -59420,10 +59436,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AskListResponse: {
-      required: ["asks"],
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
       type: "object",
       properties: {
-        asks: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
           type: "array",
           items: {
             $ref: "#/definitions/AskSummary",
@@ -104861,7 +104908,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         question: {
           title: "Question",
           type: "string",
-          maxLength: 4000,
+          maxLength: 2000,
           minLength: 1,
         },
         answer_type: {
@@ -104874,17 +104921,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             type: "string",
-            maxLength: 400,
+            maxLength: 200,
             minLength: 1,
           },
           default: [],
+          maxItems: 10,
         },
         descriptions: {
           title: "Descriptions",
           type: "object",
           additionalProperties: {
             type: "string",
-            maxLength: 4000,
+            maxLength: 2000,
           },
           default: {},
         },
@@ -135649,6 +135697,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "infrastructure_error",
         "cancelled",
         "pending",
+        "calls_gone",
         "rate",
       ],
       type: "object",
@@ -135683,6 +135732,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         pending: {
           title: "Pending",
+          type: "integer",
+        },
+        calls_gone: {
+          title: "Calls gone",
           type: "integer",
         },
         rate: {

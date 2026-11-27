@@ -55,6 +55,17 @@ class SimulateAsk(BaseModel):
     # The engine that graded it and its own run id (the queued job's id).
     engine = models.CharField(max_length=64)
     engine_run_id = models.CharField(max_length=255, blank=True, default="")
+    # Made once per check by the page and sent with its launch: a repeat of the
+    # same launch (a retry after a lost response) returns this ask instead of
+    # starting and charging a second one.
+    launch_key = models.UUIDField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_ask"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "launch_key"],
+                condition=models.Q(launch_key__isnull=False),
+                name="uniq_simulate_ask_org_launch_key",
+            ),
+        ]

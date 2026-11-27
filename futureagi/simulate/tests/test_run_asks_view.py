@@ -197,12 +197,14 @@ def _check(client, run, **body):
     return client.post(CHECK.format(run.id), _body(**body), format="json")
 
 
-def _launch(client, run, *, requested, credits=None, **body):
+def _launch(client, run, *, requested, credits=None, launch_key=None, **body):
     with TestCase.captureOnCommitCallbacks(execute=True):
         return client.post(
             ASKS.format(run.id),
             _body(
-                accepted={"requested": requested, "credits_estimate": credits}, **body
+                accepted={"requested": requested, "credits_estimate": credits},
+                launch_key=str(launch_key or uuid.uuid4()),
+                **body,
             ),
             format="json",
         )
@@ -423,6 +425,160 @@ def test_a_launch_whose_cost_changed_is_refused_with_the_new_cost(
     queued.assert_not_called()
 
 
+@pytest.fixture
+def priced():
+    """Instant Eval's gate passes and the ask is billed 4 credits."""
+    with (
+        patch("simulate.services.ask_selection._check_capability"),
+        patch("simulate.services.ask_selection._check_key"),
+        patch("simulate.services.ask_selection._check_credits"),
+        patch("simulate.services.ask_selection._credits", return_value=4.0),
+    ):
+        yield
+
+
+@pytest.mark.django_db
+def test_a_priced_launch_starts_at_the_cost_the_person_accepted(
+    auth_client, run, calls, priced, queued
+):
+    response = _launch(auth_client, run, requested=3, credits=4.0)
+
+    assert response.status_code == status.HTTP_201_CREATED, response.data
+    ask = SimulateAsk.objects.get(id=response.data["id"])
+    assert ask.credits_estimate == 4.0
+    queued.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_the_same_launch_sent_twice_starts_and_charges_one_ask(
+    auth_client, run, calls, priced, queued
+):
+    key = uuid.uuid4()
+
+    first = _launch(auth_client, run, requested=3, credits=4.0, launch_key=key)
+    again = _launch(auth_client, run, requested=3, credits=4.0, launch_key=key)
+
+    assert first.status_code == status.HTTP_201_CREATED, first.data
+    assert again.status_code == status.HTTP_200_OK, again.data
+    assert again.data["id"] == first.data["id"]
+    assert SimulateAsk.objects.count() == 1
+    assert SimulateEvalResult.objects.filter(ask_id=first.data["id"]).count() == 3
+    queued.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_a_repeated_launch_returns_its_ask_even_once_the_cost_has_changed(
+    auth_client, run, calls, gate_passes, queued
+):
+    key = uuid.uuid4()
+    first = _launch(auth_client, run, requested=3, launch_key=key)
+
+    with patch("simulate.services.ask_selection._credits", return_value=6.0):
+        again = _launch(auth_client, run, requested=3, launch_key=key)
+
+    assert again.status_code == status.HTTP_200_OK, again.data
+    assert again.data["id"] == first.data["id"]
+    queued.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_a_launch_key_used_for_other_questions_is_refused_unspent(
+    auth_client, run, calls, gate_passes, queued
+):
+    key = uuid.uuid4()
+    _launch(auth_client, run, requested=3, launch_key=key)
+    before = _nothing_written()
+
+    response = _launch(
+        auth_client,
+        run,
+        requested=3,
+        launch_key=key,
+        questions=[{**QUESTION, "question": "Does the agent greet the caller?"}],
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.data
+    assert response.data["code"] == "launch_key_reused"
+    assert _nothing_written() == before
+    queued.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_the_same_launch_sent_twice_at_once_saves_one_ask(
+    auth_client, run, calls, gate_passes, queued
+):
+    from simulate.views import run_asks as view
+
+    key = uuid.uuid4()
+    first = _launch(auth_client, run, requested=3, launch_key=key)
+    real = view.earlier_launch
+    looked = []
+
+    def miss_first_time(*args, **kwargs):
+        # The second launch looks before the first has saved, so it misses.
+        looked.append(1)
+        return None if len(looked) == 1 else real(*args, **kwargs)
+
+    with patch.object(view, "earlier_launch", side_effect=miss_first_time):
+        again = _launch(auth_client, run, requested=3, launch_key=key)
+
+    assert again.status_code == status.HTTP_200_OK, again.data
+    assert again.data["id"] == first.data["id"]
+    assert len(looked) == 2
+    assert SimulateAsk.objects.count() == 1
+    queued.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_a_launch_key_already_used_on_another_run_is_refused(
+    auth_client,
+    organization,
+    workspace,
+    run,
+    calls,
+    agent_definition,
+    agent_version,
+    simulator_agent,
+    scenario,
+    gate_passes,
+    queued,
+):
+    other = _run(
+        organization,
+        workspace,
+        agent_definition,
+        agent_version,
+        simulator_agent,
+        scenario,
+    )
+    _calls(other, scenario, 1)
+    key = uuid.uuid4()
+    elsewhere = _launch(auth_client, other, requested=1, launch_key=key)
+
+    response = _launch(auth_client, run, requested=3, launch_key=key)
+
+    assert elsewhere.status_code == status.HTTP_201_CREATED, elsewhere.data
+    assert response.status_code == status.HTTP_409_CONFLICT, response.data
+    assert response.data["code"] == "launch_key_reused"
+    assert SimulateAsk.objects.count() == 1
+    queued.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_a_launch_without_a_launch_key_is_refused(
+    auth_client, run, calls, gate_passes, queued
+):
+    response = auth_client.post(
+        ASKS.format(run.id),
+        _body(accepted={"requested": 3, "credits_estimate": None}),
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+    assert SimulateAsk.objects.count() == 0
+    queued.assert_not_called()
+
+
 @pytest.mark.django_db
 def test_an_ask_changes_nothing_on_the_calls_or_the_run(
     auth_client, run, calls, gate_passes, queued
@@ -571,6 +727,49 @@ def test_a_deleted_call_drops_out_of_an_asks_rows(
         str(calls[0].id),
         str(calls[2].id),
     ]
+    # The deleted call is counted as gone, in the detail and in the list.
+    assert response.data["questions"][0]["counts"]["calls_gone"] == 1
+    assert response.data["questions"][0]["counts"]["answered"] == 2
+    listed = auth_client.get(ASKS.format(run.id)).data["results"][0]
+    assert listed["questions"][0]["counts"]["calls_gone"] == 1
+
+
+@pytest.mark.django_db
+def test_the_list_holds_20_asks_a_page_and_the_next_page_the_older_ones(
+    auth_client, run, calls, gate_passes, queued
+):
+    made = [_launch(auth_client, run, requested=3).data["id"] for _ in range(22)]
+
+    first = auth_client.get(ASKS.format(run.id))
+    older = auth_client.get(ASKS.format(run.id), {"page": 2})
+
+    assert first.status_code == status.HTTP_200_OK, first.data
+    assert first.data["count"] == 22
+    assert first.data["total_pages"] == 2
+    assert [one["id"] for one in first.data["results"]] == made[::-1][:20]
+    assert [one["id"] for one in older.data["results"]] == made[::-1][20:]
+
+
+@pytest.mark.django_db
+def test_listing_asks_reads_their_counts_in_one_query(
+    auth_client, run, calls, gate_passes, queued
+):
+    def queries_for_list():
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as captured:
+            response = auth_client.get(ASKS.format(run.id))
+        assert response.status_code == status.HTTP_200_OK, response.data
+        return len(captured)
+
+    _launch(auth_client, run, requested=3)
+    one = queries_for_list()
+    for _ in range(4):
+        _launch(auth_client, run, requested=3)
+
+    # Five asks cost what one does: the counts are one grouped read.
+    assert queries_for_list() == one
 
 
 @pytest.mark.django_db
@@ -608,10 +807,10 @@ def test_the_runs_asks_are_listed_newest_first_and_no_other_runs(
     response = auth_client.get(ASKS.format(run.id))
 
     assert response.status_code == status.HTTP_200_OK, response.data
-    listed = [one["id"] for one in response.data["asks"]]
+    listed = [one["id"] for one in response.data["results"]]
     assert listed == [second, first]
     assert elsewhere not in listed
-    newest = response.data["asks"][0]
+    newest = response.data["results"][0]
     assert newest["requested"] == 1
     assert newest["questions"][0]["name"] == QUESTION["question"]
     assert newest["questions"][0]["counts"]["pending"] == 1
@@ -656,6 +855,30 @@ def test_a_run_with_no_calls_is_refused_as_empty(auth_client, run, gate_passes):
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
     assert response.data["code"] == "empty"
+
+
+@pytest.mark.django_db
+def test_a_whole_run_of_more_than_200_calls_is_refused_as_it_stands(
+    auth_client, run, scenario, gate_passes
+):
+    _calls(run, scenario, 201)
+
+    response = _check(auth_client, run)
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.data
+    assert response.data["code"] == "too_many_calls"
+
+
+@pytest.mark.django_db
+def test_a_question_longer_than_the_engine_takes_is_refused_before_anything_is_read(
+    auth_client, run, calls, gate_passes
+):
+    long = {**QUESTION, "question": "x" * (engine.MAX_QUESTION_LENGTH + 1)}
+    with patch("simulate.services.run_asks.check_before_launch") as check:
+        response = _check(auth_client, run, questions=[long])
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+    check.assert_not_called()
 
 
 @pytest.mark.django_db

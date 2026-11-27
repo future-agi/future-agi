@@ -1399,6 +1399,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3CallExecutionWorkersParams,
+  SimulateV3TestExecutionAsksParams,
   SimulateV3TestExecutionCallsParams,
   SimulateV3TestExecutionTracesParams,
   SimulateV3TestExecutionTrialRoutesParams,
@@ -74245,21 +74246,46 @@ export type simulateV3TestExecutionAsksResponse =
   | simulateV3TestExecutionAsksResponseSuccess
   | simulateV3TestExecutionAsksResponseError;
 
-export const getSimulateV3TestExecutionAsksUrl = (testExecutionId: string) => {
-  return `/simulate/v3/test-executions/${testExecutionId}/asks/`;
+export const getSimulateV3TestExecutionAsksUrl = (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionAsksParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/asks/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/asks/`;
 };
 
 export const simulateV3TestExecutionAsks = async (
   testExecutionId: string,
+  params?: SimulateV3TestExecutionAsksParams,
   options?: RequestInit,
 ): Promise<simulateV3TestExecutionAsksResponse> => {
   return apiMutator<simulateV3TestExecutionAsksResponse>(
-    getSimulateV3TestExecutionAsksUrl(testExecutionId),
+    getSimulateV3TestExecutionAsksUrl(testExecutionId, params),
     {
       ...options,
       method: "GET",
     },
   );
+};
+
+export type simulateV3TestExecutionAskLaunchResponse200 = {
+  data: AskLaunchResponseApi;
+  status: 200;
 };
 
 export type simulateV3TestExecutionAskLaunchResponse201 = {
@@ -74289,13 +74315,15 @@ export type simulateV3TestExecutionAskLaunchResponse409 = {
 
 export type simulateV3TestExecutionAskLaunchResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 409>;
+  status: Exclude<HTTPStatusCodes, 200 | 201 | 400 | 403 | 404 | 409>;
 };
 
-export type simulateV3TestExecutionAskLaunchResponseSuccess =
-  simulateV3TestExecutionAskLaunchResponse201 & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateV3TestExecutionAskLaunchResponseSuccess = (
+  | simulateV3TestExecutionAskLaunchResponse200
+  | simulateV3TestExecutionAskLaunchResponse201
+) & {
+  headers: ApiResponseHeaders;
+};
 export type simulateV3TestExecutionAskLaunchResponseError = (
   | simulateV3TestExecutionAskLaunchResponse400
   | simulateV3TestExecutionAskLaunchResponse403

@@ -8,8 +8,12 @@ since the check is refused, and the ask engine refuses a changed cost.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from typing import Any
+
+from django.db import IntegrityError
+from django.db.models import QuerySet
 
 from simulate.models.ask import SimulateAsk
 from simulate.models.test_execution import TestExecution
@@ -94,6 +98,58 @@ def check_run_ask(
     return {**shown, "refusal": refusal}
 
 
+def launch_key_reused() -> LaunchRefused:
+    return LaunchRefused(
+        "launch_key_reused",
+        "This launch was already used for a different question. Check it again.",
+    )
+
+
+class LaunchKeyTaken(Exception):
+    """Another launch under the same key saved first."""
+
+
+def earlier_launch(
+    asks: QuerySet[SimulateAsk],
+    launch_key: uuid.UUID,
+    definitions: Sequence[ask_engine.Definition],
+    selection: dict,
+) -> SimulateAsk | None:
+    """The ask this run already launched under ``launch_key``, or None.
+
+    ``asks`` is this run's asks as the person may read them. A key that launched
+    other calls or other questions is refused: it was not this launch."""
+    ask = asks.filter(launch_key=launch_key).first()
+    if ask is None:
+        return None
+    launched = ask.selection or {}
+    same_calls = launched.get("kind") == selection["kind"] and (
+        selection["kind"] != "calls"
+        or sorted(launched.get("call_ids") or ())
+        == sorted(str(one) for one in selection.get("call_ids") or ())
+    )
+    # Each stored question is its definition plus what the launch filled in: a
+    # typed question's saved template, its version. The rest must be the same.
+    stored = ask.questions or []
+    wanted = [_as_sent(definition) for definition in definitions]
+    same_questions = len(stored) == len(wanted) and all(
+        {key: question.get(key) for key in one} == one
+        for question, one in zip(stored, wanted, strict=True)
+    )
+    if not (same_calls and same_questions):
+        raise launch_key_reused()
+    return ask
+
+
+def _as_sent(definition: ask_engine.Definition) -> dict[str, Any]:
+    """The definition's fields as the person sent them; a typed question has no
+    template until the launch saves one, so its template id is not compared."""
+    fields = definition.as_json()
+    if fields.get("eval_template_id") is None:
+        fields.pop("eval_template_id", None)
+    return fields
+
+
 def launch_run_ask(
     selection: FrozenSelection,
     definitions: Sequence[ask_engine.Definition],
@@ -101,19 +157,29 @@ def launch_run_ask(
     accepted: dict,
     organization: Any,
     asked_by: Any,
+    launch_key: uuid.UUID | None = None,
 ) -> SimulateAsk:
-    """Launches what the person accepted (``requested``, ``credits_estimate``)."""
+    """Launches what the person accepted (``requested``, ``credits_estimate``).
+
+    Raises ``LaunchKeyTaken`` when a launch under the same key saved first;
+    nothing of this one was saved or queued."""
     if len(selection.call_ids) != accepted["requested"]:
         raise LaunchRefused(
             "selection_changed",
             "The calls in this selection changed since it was checked. Check it again.",
             requested=len(selection.call_ids),
         )
-    return ask_engine.launch_ask(
-        selection,
-        definitions,
-        organization=organization,
-        workspace_id=selection.workspace_id,
-        asked_by=asked_by,
-        accepted_credits=accepted["credits_estimate"],
-    )
+    try:
+        return ask_engine.launch_ask(
+            selection,
+            definitions,
+            organization=organization,
+            workspace_id=selection.workspace_id,
+            asked_by=asked_by,
+            accepted_credits=accepted["credits_estimate"],
+            launch_key=launch_key,
+        )
+    except IntegrityError as error:
+        if "uniq_simulate_ask_org_launch_key" not in str(error):
+            raise
+        raise LaunchKeyTaken from error

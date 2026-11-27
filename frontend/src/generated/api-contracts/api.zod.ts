@@ -70706,8 +70706,17 @@ export const SimulateV3TestExecutionAsksParams = zod.object({
   test_execution_id: zod.string(),
 });
 
+export const SimulateV3TestExecutionAsksQueryParams = zod.object({
+  page: zod.number().min(1).optional(),
+});
+
 export const SimulateV3TestExecutionAsksResponse = zod.object({
-  asks: zod.array(
+  count: zod.number(),
+  next: zod.string().min(1),
+  previous: zod.string().min(1),
+  total_pages: zod.number(),
+  current_page: zod.number(),
+  results: zod.array(
     zod.object({
       id: zod.string().uuid(),
       status: zod.string().min(1),
@@ -70734,6 +70743,7 @@ export const SimulateV3TestExecutionAsksResponse = zod.object({
             infrastructure_error: zod.number(),
             cancelled: zod.number(),
             pending: zod.number(),
+            calls_gone: zod.number(),
             rate: zod.object({
               answered: zod.number(),
               labels: zod.record(zod.string(), zod.number()),
@@ -70754,14 +70764,16 @@ export const simulateV3TestExecutionAskLaunchBodySelectionCallIdsMax = 200;
 export const simulateV3TestExecutionAskLaunchBodySelectionNoteDefault = ``;
 export const simulateV3TestExecutionAskLaunchBodySelectionNoteMax = 500;
 
-export const simulateV3TestExecutionAskLaunchBodyQuestionsItemQuestionMax = 4000;
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemQuestionMax = 2000;
 
 export const simulateV3TestExecutionAskLaunchBodyQuestionsItemAnswerTypeDefault = `yes_no`;
-export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax = 400;
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax = 200;
 
 export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsDefault =
   [];
-export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne = 4000;
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsMax = 10;
+
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne = 2000;
 
 export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsDefault =
   {};
@@ -70800,6 +70812,7 @@ export const SimulateV3TestExecutionAskLaunchBody = zod.object({
                 simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax,
               ),
           )
+          .max(simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsMax)
           .default(
             simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsDefault,
           ),
@@ -70839,6 +70852,12 @@ export const SimulateV3TestExecutionAskLaunchBody = zod.object({
     requested: zod.number().min(1),
     credits_estimate: zod.number(),
   }),
+  launch_key: zod.string().uuid(),
+});
+
+export const SimulateV3TestExecutionAskLaunchResponse = zod.object({
+  id: zod.string().uuid(),
+  status: zod.string().min(1),
 });
 
 export const SimulateV3TestExecutionAskCheckParams = zod.object({
@@ -70850,13 +70869,15 @@ export const simulateV3TestExecutionAskCheckBodySelectionCallIdsMax = 200;
 export const simulateV3TestExecutionAskCheckBodySelectionNoteDefault = ``;
 export const simulateV3TestExecutionAskCheckBodySelectionNoteMax = 500;
 
-export const simulateV3TestExecutionAskCheckBodyQuestionsItemQuestionMax = 4000;
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemQuestionMax = 2000;
 
 export const simulateV3TestExecutionAskCheckBodyQuestionsItemAnswerTypeDefault = `yes_no`;
-export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax = 400;
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax = 200;
 
 export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsDefault = [];
-export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne = 4000;
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsMax = 10;
+
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne = 2000;
 
 export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsDefault =
   {};
@@ -70895,6 +70916,7 @@ export const SimulateV3TestExecutionAskCheckBody = zod.object({
                 simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax,
               ),
           )
+          .max(simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsMax)
           .default(
             simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsDefault,
           ),
@@ -70995,6 +71017,7 @@ export const SimulateV3TestExecutionAskDetailResponse = zod.object({
         infrastructure_error: zod.number(),
         cancelled: zod.number(),
         pending: zod.number(),
+        calls_gone: zod.number(),
         rate: zod.object({
           answered: zod.number(),
           labels: zod.record(zod.string(), zod.number()),

@@ -68,6 +68,9 @@ export function costLabel(check) {
   const parts = [];
   if (check?.credits_estimate != null) {
     parts.push(`About ${plural(check.credits_estimate, "credit")}`);
+  } else if (check?.refusal?.code === "credit_check_unavailable") {
+    // No price because billing could not be read, not because it is free.
+    parts.push("Cost unknown right now");
   }
   if (priced.length) {
     parts.push(

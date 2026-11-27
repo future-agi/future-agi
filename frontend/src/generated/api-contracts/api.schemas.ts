@@ -32105,6 +32105,7 @@ export interface AskCountsApi {
   infrastructure_error: number;
   cancelled: number;
   pending: number;
+  calls_gone: number;
   rate: AskRateApi;
 }
 
@@ -32137,7 +32138,14 @@ export interface AskSummaryApi {
 }
 
 export interface AskListResponseApi {
-  asks: AskSummaryApi[];
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: AskSummaryApi[];
 }
 
 export type AskSelectionApiKind =
@@ -32185,10 +32193,11 @@ export type AskQuestionApiDescriptions = { [key: string]: string };
 export interface AskQuestionApi {
   /**
    * @minLength 1
-   * @maxLength 4000
+   * @maxLength 2000
    */
   question: string;
   answer_type?: AskQuestionApiAnswerType;
+  /** @maxItems 10 */
   labels?: string[];
   descriptions?: AskQuestionApiDescriptions;
   /** @minItems 1 */
@@ -32209,6 +32218,7 @@ export interface AskLaunchRequestApi {
    */
   questions: AskQuestionApi[];
   accepted: AskAcceptedApi;
+  launch_key: string;
 }
 
 export interface AskLaunchResponseApi {
@@ -49851,6 +49861,13 @@ export type SimulateV3CallExecutionWorkersParams = {
    * An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept.
    */
   attempt?: string;
+};
+
+export type SimulateV3TestExecutionAsksParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
 };
 
 export type SimulateV3TestExecutionCallsParams = {

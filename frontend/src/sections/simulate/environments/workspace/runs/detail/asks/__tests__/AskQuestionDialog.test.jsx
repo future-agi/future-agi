@@ -125,7 +125,85 @@ describe("AskQuestionDialog", () => {
     const [executionId, body, accepted] = launchAsk.mock.calls[0];
     expect(executionId).toBe("ex1");
     expect(body).toEqual(checkAsk.mock.calls[0][1]);
-    expect(accepted).toBe(CHECK);
+    expect(accepted).toEqual({ ...CHECK, launchKey: expect.any(String) });
+  });
+
+  it("sends the same launch key again when a failed launch is retried", async () => {
+    const user = userEvent.setup();
+    checkAsk.mockResolvedValue(CHECK);
+    launchAsk
+      .mockRejectedValueOnce({ message: "Network Error" })
+      .mockResolvedValueOnce({ id: "ask-1", status: "running" });
+    const { onLaunched } = renderDialog();
+
+    await typeQuestion(user);
+    await user.click(checkButton());
+    await screen.findByTestId("ask-check");
+    await user.click(askButton());
+    expect(await screen.findByTestId("ask-error")).toHaveTextContent(
+      "Network Error",
+    );
+    await user.click(askButton());
+
+    await waitFor(() => expect(onLaunched).toHaveBeenCalledWith("ask-1"));
+    const [first, second] = launchAsk.mock.calls.map(([, , check]) => check);
+    expect(first.launchKey).toEqual(expect.any(String));
+    expect(second.launchKey).toBe(first.launchKey);
+  });
+
+  it("makes a new launch key for each new check", async () => {
+    const user = userEvent.setup();
+    checkAsk.mockResolvedValue(CHECK);
+    launchAsk.mockResolvedValue({ id: "ask-1", status: "running" });
+    renderDialog();
+
+    await typeQuestion(user);
+    await user.click(checkButton());
+    await screen.findByTestId("ask-check");
+    await user.click(askButton());
+    await waitFor(() => expect(launchAsk).toHaveBeenCalledTimes(1));
+    await typeQuestion(user, " Yes?");
+    await user.click(checkButton());
+    await screen.findByTestId("ask-check");
+    await user.click(askButton());
+
+    await waitFor(() => expect(launchAsk).toHaveBeenCalledTimes(2));
+    const [first, second] = launchAsk.mock.calls.map(([, , check]) => check);
+    expect(second.launchKey).not.toBe(first.launchKey);
+  });
+
+  it("keeps a launch that is still starting when the dialog is closed and opened again", async () => {
+    const user = userEvent.setup();
+    checkAsk.mockResolvedValue(CHECK);
+    let land;
+    launchAsk.mockReturnValue(
+      new Promise((resolve) => {
+        land = resolve;
+      }),
+    );
+    const onLaunched = vi.fn();
+    const props = {
+      onClose: vi.fn(),
+      executionId: "ex1",
+      selection: { kind: "runs" },
+      onLaunched,
+    };
+    const { rerender } = render(<AskQuestionDialog open {...props} />);
+
+    await typeQuestion(user);
+    await user.click(checkButton());
+    await screen.findByTestId("ask-check");
+    await user.click(askButton());
+    rerender(<AskQuestionDialog open={false} {...props} />);
+    rerender(<AskQuestionDialog open {...props} />);
+
+    // Reopened while it starts: no second launch can start, and it says why.
+    expect(await screen.findByTestId("ask-starting")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    land({ id: "ask-1", status: "running" });
+
+    await waitFor(() => expect(onLaunched).toHaveBeenCalledWith("ask-1"));
+    expect(launchAsk).toHaveBeenCalledTimes(1);
   });
 
   it("launches once, however often Ask is pressed while it starts", async () => {

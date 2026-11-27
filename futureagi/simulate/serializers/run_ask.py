@@ -2,7 +2,13 @@
 
 from rest_framework import serializers
 
-from simulate.services.ask_engine import AnswerType
+from simulate.services.ask_engine import (
+    MAX_CATEGORIES,
+    MAX_DEFINITION_LENGTH,
+    MAX_LABEL_LENGTH,
+    MAX_QUESTION_LENGTH,
+    AnswerType,
+)
 from simulate.services.ask_selection import MAX_CALLS, MAX_QUESTIONS
 from simulate.services.call_evidence import Kind
 
@@ -27,15 +33,22 @@ class AskSelectionSerializer(serializers.Serializer):
 
 
 class AskQuestionSerializer(serializers.Serializer):
-    question = serializers.CharField(max_length=4000, trim_whitespace=True)
+    # The engine's own limits, so a question too long is refused before Check
+    # reads anything.
+    question = serializers.CharField(
+        max_length=MAX_QUESTION_LENGTH, trim_whitespace=True
+    )
     answer_type = serializers.ChoiceField(
         choices=[one.value for one in AnswerType], default=AnswerType.YES_NO.value
     )
     labels = serializers.ListField(
-        child=serializers.CharField(max_length=400), required=False, default=list
+        child=serializers.CharField(max_length=MAX_LABEL_LENGTH),
+        required=False,
+        default=list,
+        max_length=MAX_CATEGORIES,
     )
     descriptions = serializers.DictField(
-        child=serializers.CharField(allow_blank=True, max_length=4000),
+        child=serializers.CharField(allow_blank=True, max_length=MAX_DEFINITION_LENGTH),
         required=False,
         default=dict,
     )
@@ -61,6 +74,9 @@ class AskAcceptedSerializer(serializers.Serializer):
 
 class AskLaunchRequestSerializer(AskCheckRequestSerializer):
     accepted = AskAcceptedSerializer()
+    # Made once per check by the page. The same launch sent again (a retry after
+    # a lost response) returns the ask it started, instead of a second one.
+    launch_key = serializers.UUIDField()
 
 
 # --- responses ------------------------------------------------------------------------
@@ -122,6 +138,9 @@ class AskCountsSerializer(serializers.Serializer):
     infrastructure_error = serializers.IntegerField()
     cancelled = serializers.IntegerField()
     pending = serializers.IntegerField()
+    # Calls deleted since the ask (a call, its run or run test): their rows are
+    # left out of the other counts.
+    calls_gone = serializers.IntegerField()
     rate = AskRateSerializer()
 
 
@@ -147,8 +166,20 @@ class AskSummarySerializer(serializers.Serializer):
     questions = AskQuestionSummarySerializer(many=True)
 
 
+class AskListQuerySerializer(serializers.Serializer):
+    # Named as ExtendedPageNumberPagination reads it; a page holds 20 asks.
+    page = serializers.IntegerField(required=False, min_value=1)
+
+
 class AskListResponseSerializer(serializers.Serializer):
-    asks = AskSummarySerializer(many=True)
+    """One page of the run's asks, newest first."""
+
+    count = serializers.IntegerField()
+    next = serializers.CharField(allow_null=True)
+    previous = serializers.CharField(allow_null=True)
+    total_pages = serializers.IntegerField()
+    current_page = serializers.IntegerField()
+    results = AskSummarySerializer(many=True)
 
 
 class AskResultRowSerializer(serializers.Serializer):

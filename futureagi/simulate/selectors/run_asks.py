@@ -4,7 +4,7 @@ naming the call the way the run's table does."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from django.db.models import Q, QuerySet
@@ -28,8 +28,17 @@ def asks_of_run(
     ).select_related("asked_by")
 
 
-def ask_summary(ask: SimulateAsk) -> dict[str, Any]:
-    counts = ask_engine.result_counts(ask)
+def ask_summaries(asks: Sequence[SimulateAsk]) -> list[dict[str, Any]]:
+    """Each ask's summary, its counts read for all of them in one query."""
+    counts = ask_engine.results_counts(asks)
+    return [ask_summary(ask, counts=counts[ask.id]) for ask in asks]
+
+
+def ask_summary(
+    ask: SimulateAsk, *, counts: Mapping[str, Mapping[str, Any]] | None = None
+) -> dict[str, Any]:
+    if counts is None:
+        counts = ask_engine.result_counts(ask)
     selection = ask.selection or {}
     description = selection.get("description") or {}
     asked_by = ask.asked_by

@@ -22,6 +22,7 @@ const COUNTS = {
   infrastructure_error: 0,
   cancelled: 0,
   pending: 0,
+  calls_gone: 0,
   rate: { answered: 3, labels: { Yes: 2, No: 1 } },
 };
 const ASK = {
@@ -59,6 +60,26 @@ const row = (id, name, state, answer = null, cause = "") => ({
   finished_at: null,
 });
 
+// One page of the run's asks, as the list returns it.
+const listed = (asks, { count = asks.length, more = false } = {}) => ({
+  data: {
+    pages: [
+      {
+        count,
+        current_page: 1,
+        total_pages: more ? 2 : 1,
+        next: null,
+        previous: null,
+        results: asks,
+      },
+    ],
+  },
+  isLoading: false,
+  hasNextPage: more,
+  fetchNextPage: vi.fn(),
+  isFetchingNextPage: false,
+});
+
 const renderPanel = (props = {}) => {
   const onOpenAsk = vi.fn();
   const onOpenCall = vi.fn();
@@ -76,7 +97,7 @@ const renderPanel = (props = {}) => {
 beforeEach(() => {
   useRunAsks.mockReset();
   useRunAsk.mockReset();
-  useRunAsks.mockReturnValue({ data: { asks: [ASK] }, isLoading: false });
+  useRunAsks.mockReturnValue(listed([ASK]));
   useRunAsk.mockReturnValue({
     data: {
       ...ASK,
@@ -104,29 +125,26 @@ describe("RunAsksPanel", () => {
   });
 
   it("counts what is still pending while the ask runs", () => {
-    useRunAsks.mockReturnValue({
-      data: {
-        asks: [
-          {
-            ...ASK,
-            status: "running",
-            questions: [
-              {
-                ...ASK.questions[0],
-                counts: {
-                  ...COUNTS,
-                  answered: 1,
-                  unmeasured: 0,
-                  pending: 3,
-                  rate: { answered: 1, labels: { Yes: 1 } },
-                },
+    useRunAsks.mockReturnValue(
+      listed([
+        {
+          ...ASK,
+          status: "running",
+          questions: [
+            {
+              ...ASK.questions[0],
+              counts: {
+                ...COUNTS,
+                answered: 1,
+                unmeasured: 0,
+                pending: 3,
+                rate: { answered: 1, labels: { Yes: 1 } },
               },
-            ],
-          },
-        ],
-      },
-      isLoading: false,
-    });
+            },
+          ],
+        },
+      ]),
+    );
     renderPanel();
 
     expect(screen.getByText("Running")).toBeInTheDocument();
@@ -160,7 +178,7 @@ describe("RunAsksPanel", () => {
   });
 
   it("says when nothing has been asked yet", () => {
-    useRunAsks.mockReturnValue({ data: { asks: [] }, isLoading: false });
+    useRunAsks.mockReturnValue(listed([]));
     renderPanel();
 
     expect(screen.getByText(/No questions asked yet/)).toBeInTheDocument();
@@ -185,5 +203,62 @@ describe("RunAsksPanel", () => {
     expect(
       screen.getByRole("button", { name: "Ask about every call" }),
     ).toBeDisabled();
+  });
+
+  it("shows why asking about every call is held back", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      onAsk: vi.fn(),
+      askDisabledReason:
+        "Wait for this run to finish before asking about its calls",
+    });
+
+    await user.hover(screen.getByTestId("ask-every-call"));
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Wait for this run to finish before asking about its calls",
+    );
+  });
+
+  it("offers the older questions when there are more than one page", async () => {
+    const user = userEvent.setup();
+    const list = listed([ASK], { count: 21, more: true });
+    useRunAsks.mockReturnValue(list);
+    renderPanel();
+
+    expect(screen.getByText("1 of 21 questions shown")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Show older questions" }),
+    );
+    expect(list.fetchNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no older questions when every one is shown", () => {
+    renderPanel();
+
+    expect(
+      screen.queryByRole("button", { name: "Show older questions" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says how many calls were deleted since the ask", () => {
+    useRunAsks.mockReturnValue(
+      listed([
+        {
+          ...ASK,
+          questions: [
+            {
+              ...ASK.questions[0],
+              counts: { ...COUNTS, answered: 2, calls_gone: 1 },
+            },
+          ],
+        },
+      ]),
+    );
+    renderPanel();
+
+    expect(screen.getByTestId("ask-counts")).toHaveTextContent(
+      "1 call deleted since",
+    );
   });
 });

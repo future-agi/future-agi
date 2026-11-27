@@ -1,11 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import axios, { endpoints } from "src/utils/axios";
 
-// The backend's own limits (ask_selection.MAX_CALLS and MAX_QUESTIONS). The
-// backend refuses past them anyway; these let the page say so before sending.
+// The backend's own limits (ask_selection.MAX_CALLS and MAX_QUESTIONS,
+// ask_engine.MAX_QUESTION_LENGTH). The backend refuses past them anyway; these
+// let the page say so before sending.
 export const MAX_ASK_CALLS = 200;
 export const MAX_ASK_QUESTIONS = 5;
+export const MAX_ASK_QUESTION_LENGTH = 2000;
 
 // An ask still grading is read again this often, until it finishes or stops.
 const RUNNING_POLL_MS = 5000;
@@ -17,17 +19,27 @@ const running = (ask) => ask?.status === "running";
 // The page shows a refusal where it happened, so the app-wide toast stays quiet.
 const QUIET = { errorHandled: true };
 
-/** This run's asks, newest first. */
+/**
+ * This run's asks, newest first, a page (20) at a time: `fetchNextPage` reads
+ * the older ones. While any shown ask is running, the shown pages are read again.
+ */
 export function useRunAsks(executionId, { enabled = true } = {}) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: runAsksKey(executionId),
-    queryFn: () =>
+    queryFn: ({ pageParam }) =>
       axios
-        .get(endpoints.runResultsV3.asks(executionId))
+        .get(endpoints.runResultsV3.asks(executionId), {
+          params: { page: pageParam },
+        })
         .then((response) => response.data),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.current_page < last.total_pages ? last.current_page + 1 : undefined,
     enabled: !!executionId && enabled,
     refetchInterval: (query) =>
-      query.state.data?.asks?.some(running) ? RUNNING_POLL_MS : false,
+      query.state.data?.pages?.some((page) => page.results.some(running))
+        ? RUNNING_POLL_MS
+        : false,
     meta: QUIET,
   });
 }
@@ -86,7 +98,8 @@ export const checkAsk = (executionId, body) =>
 
 /**
  * Launches the ask the person accepted. `check` is the check they saw: the
- * backend refuses when the calls or the cost changed since.
+ * backend refuses when the calls or the cost changed since. Its `launchKey`
+ * makes a repeat of this launch return the ask it started.
  */
 export const launchAsk = (executionId, body, check) =>
   axios
@@ -96,5 +109,6 @@ export const launchAsk = (executionId, body, check) =>
         requested: check.requested,
         credits_estimate: check.credits_estimate ?? null,
       },
+      launch_key: check.launchKey,
     })
     .then((response) => response.data);

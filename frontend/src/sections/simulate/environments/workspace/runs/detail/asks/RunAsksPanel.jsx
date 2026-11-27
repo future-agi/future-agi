@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { fToNow } from "src/utils/format-time";
 import { useRunAsk, useRunAsks } from "src/api/simulate-environments/runAsks";
 
@@ -41,8 +42,16 @@ export default function RunAsksPanel({
   onAsk = null,
   askDisabledReason = null,
 }) {
-  const { data, isLoading, error } = useRunAsks(executionId);
-  const asks = data?.asks ?? [];
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useRunAsks(executionId);
+  const asks = data?.pages?.flatMap((page) => page.results) ?? [];
+  const total = data?.pages?.[0]?.count ?? 0;
 
   return (
     <Box data-testid="run-asks">
@@ -51,18 +60,27 @@ export default function RunAsksPanel({
           Questions about this run
         </Typography>
         {onAsk && (
-          <Button
-            variant="outlined"
+          // A disabled button takes no hover, so the reason sits on a span.
+          <CustomTooltip
+            show={!!askDisabledReason}
             size="small"
-            onClick={onAsk}
-            disabled={!!askDisabledReason}
-            title={askDisabledReason || undefined}
-            startIcon={
-              <Iconify icon="solar:question-circle-linear" width={15} />
-            }
+            arrow
+            title={askDisabledReason}
           >
-            Ask about every call
-          </Button>
+            <span data-testid="ask-every-call">
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={onAsk}
+                disabled={!!askDisabledReason}
+                startIcon={
+                  <Iconify icon="solar:question-circle-linear" width={15} />
+                }
+              >
+                Ask about every call
+              </Button>
+            </span>
+          </CustomTooltip>
         )}
       </Stack>
       {isLoading && <CircularProgress size={20} />}
@@ -89,6 +107,20 @@ export default function RunAsksPanel({
           />
         ))}
       </Stack>
+      {hasNextPage && (
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1.5 }}>
+          <Button
+            size="small"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading…" : "Show older questions"}
+          </Button>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {`${asks.length.toLocaleString()} of ${plural(total, "question")} shown`}
+          </Typography>
+        </Stack>
+      )}
     </Box>
   );
 }
@@ -167,8 +199,8 @@ AskCard.propTypes = {
  */
 export function QuestionCounts({ question }) {
   const { counts } = question;
-  const answered = counts.rate?.answered ?? counts.answered;
-  const labels = Object.entries(counts.rate?.labels ?? {});
+  const answered = counts.rate.answered;
+  const labels = Object.entries(counts.rate.labels);
   return (
     <Box data-testid={`ask-question-${question.key}`}>
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -182,6 +214,8 @@ export function QuestionCounts({ question }) {
           `${plural(counts.requested, "call")} requested`,
           ...COUNTED_STATES.map(({ key, label }) => `${label} ${counts[key]}`),
           counts.pending > 0 && `Pending ${counts.pending}`,
+          counts.calls_gone > 0 &&
+            `${plural(counts.calls_gone, "call")} deleted since`,
         ]
           .filter(Boolean)
           .join(" · ")}

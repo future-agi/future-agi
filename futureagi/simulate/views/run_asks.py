@@ -25,20 +25,30 @@ from rest_framework.views import APIView
 
 from accounts.authentication import viewer_denied
 from simulate.models.test_execution import TestExecution
-from simulate.selectors.run_asks import ask_rows, ask_summary, asks_of_run
+from simulate.selectors.run_asks import (
+    ask_rows,
+    ask_summaries,
+    ask_summary,
+    asks_of_run,
+)
 from simulate.serializers.run_ask import (
     AskCheckRequestSerializer,
     AskCheckResponseSerializer,
     AskDetailResponseSerializer,
     AskLaunchRequestSerializer,
     AskLaunchResponseSerializer,
+    AskListQuerySerializer,
     AskListResponseSerializer,
+    AskSummarySerializer,
 )
 from simulate.services import ask_engine
 from simulate.services.ask_selection import SelectionRefused
 from simulate.services.run_asks import (
+    LaunchKeyTaken,
     check_run_ask,
+    earlier_launch,
     freeze_run_selection,
+    launch_key_reused,
     launch_run_ask,
     question_definitions,
 )
@@ -46,20 +56,27 @@ from simulate.views.run_results_v3 import _execution_for_request
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
+from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
 
-# The asks a run's page lists, newest first.
-LISTED_ASKS = 20
+
+class _AskPages(ExtendedPageNumberPagination):
+    """A run's asks, newest first, 20 to a page; older ones on the next pages."""
+
+    page_size = 20
+    page_size_query_param = None
+
 
 # Refusals about what was sent; the rest are about the run's calls or the launch
-# as things stand now, and say so with 409.
+# as things stand now, and say so with 409. Ticked calls over the limit are
+# stopped by the request's shape (400); a whole run over it is the run as it
+# stands (409, too_many_calls).
 _BAD_REQUEST = {
     "questions",
     "question_invalid",
     "audio_unsupported",
     "empty",
-    "too_many",
     "bad_filter",
 }
 _ERRORS = {
@@ -152,6 +169,7 @@ class RunAsksView(APIView):
     permission_classes = [IsAuthenticated]
 
     @validated_request(
+        query_serializer=AskListQuerySerializer,
         responses={
             200: AskListResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
@@ -160,31 +178,64 @@ class RunAsksView(APIView):
     )
     def get(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
-        asks = _asks_of(request, execution).order_by("-created_at", "-id")[:LISTED_ASKS]
-        return Response(
-            AskListResponseSerializer({"asks": [ask_summary(ask) for ask in asks]}).data
+        paginator = _AskPages()
+        page = paginator.paginate_queryset(
+            _asks_of(request, execution).order_by("-created_at", "-id"),
+            request,
+            view=self,
+        )
+        return paginator.get_paginated_response(
+            AskSummarySerializer(ask_summaries(page or []), many=True).data
         )
 
     @viewer_denied("ask a question about calls")
     @validated_request(
         request_serializer=AskLaunchRequestSerializer,
-        responses={201: AskLaunchResponseSerializer, **_ERRORS},
+        responses={
+            200: AskLaunchResponseSerializer,
+            201: AskLaunchResponseSerializer,
+            **_ERRORS,
+        },
         operation_id="simulate_v3_test_execution_ask_launch",
         reject_unknown_fields=True,
     )
     def post(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
         data = request.validated_data
+        launch_key = data["launch_key"]
         try:
             definitions = question_definitions(data["questions"])
-            selection = _freeze(request, execution, data["selection"])
-            ask = launch_run_ask(
-                selection,
+            # A repeat of a launch that went through returns its ask, before
+            # anything is read again or a gate could refuse what it already spent.
+            earlier = earlier_launch(
+                _asks_of(request, execution),
+                launch_key,
                 definitions,
-                accepted=data["accepted"],
-                organization=_organization(request),
-                asked_by=request.user,
+                data["selection"],
             )
+            if earlier is not None:
+                return self._launched(earlier, status.HTTP_200_OK)
+            selection = _freeze(request, execution, data["selection"])
+            try:
+                ask = launch_run_ask(
+                    selection,
+                    definitions,
+                    accepted=data["accepted"],
+                    organization=_organization(request),
+                    asked_by=request.user,
+                    launch_key=launch_key,
+                )
+            except LaunchKeyTaken:
+                # The same launch, sent twice at once, saved first elsewhere.
+                earlier = earlier_launch(
+                    _asks_of(request, execution),
+                    launch_key,
+                    definitions,
+                    data["selection"],
+                )
+                if earlier is None:
+                    raise launch_key_reused() from None
+                return self._launched(earlier, status.HTTP_200_OK)
         except SelectionRefused as refusal:
             return _refused(refusal)
         logger.info(
@@ -194,9 +245,13 @@ class RunAsksView(APIView):
             requested=len(selection.call_ids),
             questions=len(definitions),
         )
+        return self._launched(ask, status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _launched(ask, code: int) -> Response:
         return Response(
             AskLaunchResponseSerializer({"id": ask.id, "status": ask.status}).data,
-            status=status.HTTP_201_CREATED,
+            status=code,
         )
 
 

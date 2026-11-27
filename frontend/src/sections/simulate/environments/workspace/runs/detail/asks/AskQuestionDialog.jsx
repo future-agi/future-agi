@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 import {
   Alert,
   Box,
@@ -22,6 +23,7 @@ import {
 import Iconify from "src/components/iconify";
 import {
   MAX_ASK_QUESTIONS,
+  MAX_ASK_QUESTION_LENGTH,
   askBody,
   checkAsk,
   labelsOf,
@@ -74,9 +76,13 @@ export default function AskQuestionDialog({
   const [questions, setQuestions] = useState(() => [blankQuestion()]);
   const [check, setCheck] = useState(null);
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(null); // "checking" | "launching" | null
-  // Only the latest request may land: an edit while a check is out drops it.
+  const [busy, setBusy] = useState(null); // "checking" | null
+  // Only the latest check may land: an edit while a check is out drops it.
   const requestRef = useRef(0);
+  // A launch is never dropped. Closing the dialog or editing while it starts
+  // does not let a second one start, and its ask still opens once it lands.
+  const [launching, setLaunching] = useState(false);
+  const launchingRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -123,7 +129,10 @@ export default function AskQuestionDialog({
     setCheck(null);
     try {
       const result = await checkAsk(executionId, body);
-      if (request === requestRef.current) setCheck(result);
+      // One key per check: the same launch sent again (a retry after a lost
+      // response) returns the ask it started instead of starting another.
+      if (request === requestRef.current)
+        setCheck({ ...result, launchKey: uuidv4() });
     } catch (failure) {
       if (request === requestRef.current)
         setError(failure?.message || "Couldn't check these calls");
@@ -133,25 +142,28 @@ export default function AskQuestionDialog({
   };
 
   const launch = async () => {
-    requestRef.current += 1;
-    const request = requestRef.current;
-    setBusy("launching");
+    if (launchingRef.current) return;
+    launchingRef.current = true;
+    setLaunching(true);
     setError(null);
+    // Edited since? Then a stale refusal does not check the new questions.
+    const request = requestRef.current;
     try {
       const launched = await launchAsk(executionId, body, check);
-      if (request !== requestRef.current) return;
-      setBusy(null);
       onLaunched?.(launched.id);
     } catch (failure) {
-      if (request !== requestRef.current) return;
-      setBusy(null);
       setError(failure?.message || "Couldn't start the ask");
-      if (STALE.has(failure?.code)) runCheck({ keepError: true });
+      if (request === requestRef.current && STALE.has(failure?.code))
+        runCheck({ keepError: true });
+    } finally {
+      launchingRef.current = false;
+      setLaunching(false);
     }
   };
 
   const wholeRun = selection?.kind !== "calls";
-  const canLaunch = !!check && !check.refusal && check.answers > 0 && !busy;
+  const canLaunch =
+    !!check && !check.refusal && check.answers > 0 && !busy && !launching;
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
@@ -191,6 +203,12 @@ export default function AskQuestionDialog({
           )}
         </Stack>
 
+        {launching && !check && (
+          <Alert severity="info" sx={{ mt: 2 }} data-testid="ask-starting">
+            Your last question is still starting. It opens on the Questions tab
+            once it has.
+          </Alert>
+        )}
         {error && (
           <Alert severity="error" sx={{ mt: 2 }} data-testid="ask-error">
             {error}
@@ -208,12 +226,12 @@ export default function AskQuestionDialog({
         <Button
           variant="outlined"
           onClick={() => runCheck()}
-          disabled={!ready || !!busy}
+          disabled={!ready || !!busy || launching}
         >
           {busy === "checking" ? "Checking…" : "Check"}
         </Button>
         <Button variant="contained" onClick={launch} disabled={!canLaunch}>
-          {busy === "launching"
+          {launching
             ? "Starting…"
             : check?.answers
               ? `Ask (${plural(check.answers, "answer")})`
@@ -273,7 +291,7 @@ function QuestionForm({ index, value, removable, onChange, onRemove }) {
         label="What do you want to know about each call?"
         value={value.question}
         onChange={(event) => onChange({ question: event.target.value })}
-        inputProps={{ maxLength: 4000 }}
+        inputProps={{ maxLength: MAX_ASK_QUESTION_LENGTH }}
       />
       <RadioGroup
         row
