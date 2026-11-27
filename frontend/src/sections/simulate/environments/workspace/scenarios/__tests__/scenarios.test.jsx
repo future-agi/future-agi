@@ -76,13 +76,10 @@ const { queryScenarioFixture, resetScenarioFixture } = await import(
 const defaultView = () => queryScenarioFixture({ limit: 25 });
 const firstRowId = () => defaultView().results[0].id;
 
-const renderStep = (rows = SERVER_ROWS) => {
-  const patch = vi.fn();
+const renderStep = (rows = SERVER_ROWS) =>
   renderWithClient(
-    <ScenariosStep env={TEST_ENV} envState={envStateFor(rows)} patch={patch} />,
+    <ScenariosStep env={TEST_ENV} envState={envStateFor(rows)} />,
   );
-  return { patch };
-};
 
 const pickUseCaseFilter = (useCase) => {
   fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
@@ -124,7 +121,6 @@ describe("ScenariosStep actor names", () => {
       <ScenariosStep
         env={{ ...TEST_ENV, versioning: { enabled: true } }}
         envState={envStateFor(rows)}
-        patch={vi.fn()}
       />,
     );
     expect(await screen.findByText("With Draft name, Pat")).toBeInTheDocument();
@@ -311,7 +307,7 @@ describe("ScenariosStep", () => {
     });
   });
 
-  it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
+  it("opens the Add scenarios panel from the empty placeholder when there are no scenarios", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).
     listScenarios.mockImplementation((jobId, params) =>
@@ -319,9 +315,10 @@ describe("ScenariosStep", () => {
     );
     renderStep([]);
     expect(await screen.findByText("No scenarios yet")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add scenarios" }));
     expect(
-      screen.getByRole("button", { name: "Add scenarios" }),
-    ).toBeDisabled();
+      await screen.findByText(/Add the ones it couldn't work out/),
+    ).toBeInTheDocument();
   });
 
   it("enables the edit pencil", async () => {
@@ -383,18 +380,10 @@ describe("ScenariosStep — bulk selection", () => {
 describe("ScenariosStep — locked template", () => {
   const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-  const renderLocked = (locked) => {
-    const patch = vi.fn();
+  const renderLocked = (locked) =>
     renderWithClient(
-      <ScenariosStep
-        env={TEST_ENV}
-        envState={envStateFor()}
-        patch={patch}
-        locked={locked}
-      />,
+      <ScenariosStep env={TEST_ENV} envState={envStateFor()} locked={locked} />,
     );
-    return { patch };
-  };
 
   it("locks the Add scenarios CTA behind the fork tooltip", () => {
     renderLocked(true);
@@ -463,6 +452,25 @@ describe("ScenariosStep — locked template", () => {
     ).toBeEnabled();
     expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
+  });
+});
+
+describe("ScenariosStep — adapted environment", () => {
+  it("lets scenarios be selected to run, and leaves changing them to the chat", async () => {
+    renderWithClient(
+      <ScenariosStep
+        env={{ ...TEST_ENV, composition: { suite: { digest: "sha256:ab" } } }}
+        envState={envStateFor()}
+      />,
+    );
+    await screen.findByRole("table");
+    expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
+    for (const name of [
+      "Add scenarios",
+      "Edit scenario",
+      "Remove from this environment",
+    ])
+      expect(screen.getAllByRole("button", { name })[0]).toBeDisabled();
   });
 });
 

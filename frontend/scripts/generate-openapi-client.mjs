@@ -123,7 +123,14 @@ function normalizeHostStatusSchema(schema) {
 // writes x-nullable beside no $ref, so the nullable ones are named here.
 const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
 const AGENT_FIX_ISSUE_NULLABLE_REFS = {
-  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
+  SimulationEvidenceCall: ["goals"],
+  // With no environment picked the plan has no ship readiness.
+  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios", "ship"],
+  // A pull request that can open has no reason it can't.
+  AgentFixShipReadiness: ["blocked"],
+  // A launch nothing refuses has neither refusal; a run whose environment has no
+  // agent version has no agent, and an agent Epoch can't change ships nothing.
+  AgentFixLaunchOptions: ["blocked", "variations_blocked", "agent", "ship"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
   // The epoch an issue's page opens: before it ends it has no report, and only a
@@ -132,15 +139,27 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
+  // A candidate whose patch could not be read has no change line.
+  AgentFixCandidateWording: ["changes"],
 };
 
 function isAgentFixIssueSchema(name) {
   return (
+    name.startsWith("SimulationEvidence") ||
     name.startsWith("AgentFixIssue") ||
     name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
     // The launch form's parts of an agent: a part it may change has no reason.
-    name === "AgentFixLaunchSurface"
+    name === "AgentFixLaunchSurface" ||
+    // Only issue_epoch_measuring names an issue; every other refusal sends null.
+    name === "AgentFixLaunchBlocked" ||
+    // An unnumbered or unfinished run, an unversioned environment, a scenario
+    // with no verdict or no evidence import.
+    name === "AgentFixLaunchSourceRun" ||
+    name === "AgentFixLaunchEnvironment" ||
+    name === "AgentFixLaunchScenario" ||
+    // An unnumbered version; an uploaded agent has no ref.
+    name === "AgentFixAgent"
   );
 }
 
@@ -168,7 +187,10 @@ function withNullableFields(name, schema) {
         `${name}.${field} is not in the spec; update the nullable list`,
       );
     }
-    properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    // A scalar's own x-nullable may already have made it a null union above.
+    if (!properties[field].anyOf?.some((one) => one.type === "null")) {
+      properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    }
   }
   return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
 }
@@ -1268,6 +1290,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "$1JsonValueApi;",
       "conversation record JSON values → recursive JSON value",
     );
+    for (const field of ["Arguments", "Result", "Ok", "Error", "Refused"]) {
+      const alias = `SimulationEvidenceToolApi${field}`;
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown } | null;`,
+        `export type ${alias} = JsonValueApi;`,
+        `${alias} → recursive JSON value`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SimulationEvidenceCallApiPersona = {[key: string]: { [key: string]: unknown }} | null;",
+      "export type SimulationEvidenceCallApiPersona = { [key: string]: JsonValueApi } | null;",
+      "simulation persona → nullable JSON record",
+    );
     for (const recordType of [
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
@@ -1811,6 +1848,13 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
       "jsonValueSchema",
       "conversation evidence JSON values → recursive JSON value",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse = zod.object({",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "simulation evidence JSON values → recursive JSON value",
     );
     for (const [anchor, label] of [
       [/("end_time": zod\.string\(\)\.datetime\([^)]*\))/, "end_time"],

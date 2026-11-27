@@ -10,38 +10,15 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
 import EmptyContent from "src/components/empty-content";
+import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { OUTLINED_BTN_SX, T13 } from "../drawerStyles";
-import {
-  WORLD_TYPES,
-  domainLabelOf,
-  filterWorlds,
-  isSoonWorld,
-} from "../worlds";
-import { SANDBOX_APPS } from "./sandboxApps";
+import { WORLD_TYPES, filterWorlds } from "../worlds";
 import { QuietTag } from "./startBits";
-import { SaasSandboxCard, WorldCard } from "./worldCards";
-
-const SANDBOX_TYPE = {
-  id: "any",
-  label: "Any agent",
-  icon: "solar:widget-4-linear",
-};
-
-// The sandbox is one more world, pinned first, when nothing narrows it out.
-function sandboxMatches({ query, type, domain }) {
-  if (domain !== "all" || (type !== "all" && type !== SANDBOX_TYPE.id)) {
-    return false;
-  }
-  const q = query.trim().toLowerCase();
-  return (
-    !q ||
-    `saas sandbox any agent ${SANDBOX_APPS.map((a) => a.name).join(" ")}`
-      .toLowerCase()
-      .includes(q)
-  );
-}
+import ReadyEnvironmentCard from "./ReadyEnvironmentCard";
 
 const selectSx = {
   height: 32,
@@ -58,11 +35,16 @@ const selectSx = {
 };
 
 /**
- * Every prebuilt world, filterable, with the SaaS sandbox pinned first. A
- * world opens its setup; a computer use world is listed but can't be built
- * for yet. The drawer's header names the view and carries the way back.
+ * Every ready environment, filterable. One
+ * opens its panel. The drawer's header names the view and carries the way back.
  */
-export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
+export default function WorldsBrowser({
+  worlds,
+  isLoading = false,
+  error = null,
+  onRetry,
+  onOpenWorld,
+}) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [domain, setDomain] = useState("all");
@@ -72,25 +54,18 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
   );
   const domains = useMemo(
     () =>
-      [...new Set(worlds.map((w) => w.domain))].sort((a, b) =>
-        domainLabelOf(a).localeCompare(domainLabelOf(b)),
+      [...new Map(worlds.map((w) => [w.domain, w.domainLabel]))].sort(
+        ([, a], [, b]) => a.localeCompare(b),
       ),
     [worlds],
   );
-  const total = worlds.length + 1;
-  const withSandbox = sandboxMatches({ query, type, domain });
+  const total = worlds.length;
   const countOf = (id) =>
-    id === "all"
-      ? total
-      : id === SANDBOX_TYPE.id
-        ? 1
-        : worlds.filter((w) => w.type === id).length;
-  const types = [
-    { id: "all", label: "All types" },
-    SANDBOX_TYPE,
-    ...WORLD_TYPES,
-  ].filter((t) => countOf(t.id) > 0);
-  const listed = type === SANDBOX_TYPE.id ? [] : shown;
+    id === "all" ? total : worlds.filter((w) => w.type === id).length;
+  const types = [{ id: "all", label: "All types" }, ...WORLD_TYPES].filter(
+    (t) => t.id === "all" || countOf(t.id) !== 0,
+  );
+  const listed = shown;
   const clear = () => {
     setQuery("");
     setType("all");
@@ -125,8 +100,8 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
           <InputBase
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search worlds"
-            inputProps={{ "aria-label": "Search worlds" }}
+            placeholder="Search environments"
+            inputProps={{ "aria-label": "Search environments" }}
             sx={{ ...T13, flex: 1 }}
           />
         </Stack>
@@ -172,9 +147,9 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
           <MenuItem value="all" sx={T13}>
             All domains
           </MenuItem>
-          {domains.map((d) => (
+          {domains.map(([d, label]) => (
             <MenuItem key={d} value={d} sx={T13}>
-              {domainLabelOf(d)}
+              {label}
             </MenuItem>
           ))}
         </Select>
@@ -187,14 +162,25 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
             flexShrink: 0,
           }}
         >
-          {`${listed.length + (withSandbox ? 1 : 0)} of ${total} worlds`}
+          {isLoading || error
+            ? null
+            : `${listed.length} of ${total} environments`}
         </Typography>
       </Stack>
 
-      {listed.length || withSandbox ? (
+      {isLoading ? (
+        <ContentSkeleton variant="panel" label="Loading ready environments" />
+      ) : error ? (
+        <ErrorState
+          title="Couldn't load the ready environments"
+          detail={errorMessage(error)}
+          onRetry={onRetry}
+          sx={{ height: "auto", flexGrow: 0, py: 3 }}
+        />
+      ) : listed.length ? (
         <Box
           component="ul"
-          aria-label="Prebuilt worlds"
+          aria-label="Ready environments"
           sx={{
             listStyle: "none",
             m: 0,
@@ -204,19 +190,13 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
             gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
           }}
         >
-          {withSandbox && <SaasSandboxCard onOpen={onOpenSandbox} />}
           {listed.map((w) => (
-            <WorldCard
-              key={w.id}
-              world={w}
-              onOpen={onOpenWorld}
-              soon={isSoonWorld(w)}
-            />
+            <ReadyEnvironmentCard key={w.id} world={w} onOpen={onOpenWorld} />
           ))}
         </Box>
       ) : (
         <EmptyContent
-          title="No world matches"
+          title="No environment matches"
           sx={{ height: "auto", flexGrow: 0, py: 3 }}
           action={
             <Button
@@ -235,6 +215,8 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
 }
 WorldsBrowser.propTypes = {
   worlds: PropTypes.array.isRequired,
+  isLoading: PropTypes.bool,
+  error: PropTypes.object,
+  onRetry: PropTypes.func,
   onOpenWorld: PropTypes.func.isRequired,
-  onOpenSandbox: PropTypes.func.isRequired,
 };

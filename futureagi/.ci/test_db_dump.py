@@ -734,9 +734,68 @@ class BackendWorkflowTest(unittest.TestCase):
         )
         self.assertIn("database/key.sh)", self.shard)
         self.assertIn('bash "$GITHUB_ACTION_PATH/key.sh"', self.control)
-        self.assertIn(
-            "python3 -I .ci/db_dump.py key", (self.jobs / "database/key.sh").read_text()
+        key_script = self.jobs / "database/key.sh"
+        key_text = key_script.read_text()
+        self.assertIn("python3 -I .ci/db_dump.py key", key_text)
+        runtime = next(
+            line for line in key_text.splitlines() if line.startswith("runtime=")
         )
+        self.assertNotIn("ImageVersion", runtime)
+        for recipe_input in ("$ids", "$config", '"$(uname -m)"', '"$tools"'):
+            self.assertIn(recipe_input, runtime)
+
+        # Exercise key.sh's exact recipe output against a stable, synthetic
+        # service snapshot. Changing only the runner release must not change
+        # the key that the plan job's probe hands to every shard.
+        with tempfile.TemporaryDirectory() as directory:
+            bin_dir = pathlib.Path(directory) / "bin"
+            bin_dir.mkdir()
+            docker = bin_dir / "docker"
+            docker.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import sys
+
+                    args = sys.argv[1:]
+                    if (
+                        args[0] == "compose"
+                        and args[-2:] == ["config", "--services"]
+                    ):
+                        print("test-db")
+                    elif (
+                        args[0] == "compose"
+                        and args[-3:-1] == ["config", "--images"]
+                    ):
+                        print("postgres:16-alpine")
+                    elif args[:2] == ["image", "inspect"]:
+                        print("sha256:" + "a" * 64)
+                    elif args[0] == "compose" and args[-1] == "config":
+                        print("services:\\n  test-db:\\n    image: postgres:16-alpine")
+                    else:
+                        raise SystemExit(2)
+                    """
+                )
+            )
+            docker.chmod(0o755)
+            keys = []
+            for runner_release in ("runner-release-a", "runner-release-b"):
+                env = {
+                    **os.environ,
+                    "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                    "ImageVersion": runner_release,
+                }
+                result = subprocess.run(
+                    ["bash", str(key_script), "probe"],
+                    cwd=ROOT / "futureagi",
+                    env=env,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                keys.append(result.stdout.strip())
+            self.assertRegex(keys[0], r"^migrated-db-pytest-v2-[0-9a-f]{40}$")
+            self.assertEqual(keys[0], keys[1])
 
     def test_only_public_qualified_output_is_transferred(self):
         self.assertIn("--create-db", self.producer)

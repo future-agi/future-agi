@@ -22,6 +22,7 @@ import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
+  useDebugAnalysis,
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
@@ -64,6 +65,7 @@ import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
+import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
 import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
@@ -182,13 +184,20 @@ export default function RunDetail({
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
   const stopNotice = stopNoticeOf(identity, live);
-  // A finished run whose failures include cases an evidence import added offers
-  // Run Epoch on them; the launch form reads the same cached options.
+  // The header launches from failing cases without opening the diagnosis drawer.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
+  const headerLaunchOpen = fixLaunching && !!fixTargets;
+  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
   const epoch = epochTargets(fixOptions);
-  const improvable = epoch.imported;
+  const importedCount = epoch.imported.length;
+  const canOfferEpoch =
+    fixAllowed &&
+    identity &&
+    !live &&
+    !fixRun &&
+    fixOptions?.scenarios?.some((one) => one.failing_sub_goals?.length);
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -434,14 +443,16 @@ export default function RunDetail({
             </Button>
           </ViewerLock>
         )}
-        {improvable.length > 0 && (
+        {canOfferEpoch && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Tooltip
               describeChild
               title={
-                access.canRun
-                  ? `Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`
-                  : ""
+                !access.canRun
+                  ? ""
+                  : importedCount
+                    ? `Starts an epoch from the ${importedCount} failing scenario${importedCount === 1 ? "" : "s"} that came from imported evidence.`
+                    : "Start from this run’s failing scenarios without requesting a diagnosis."
               }
             >
               <Button
@@ -449,7 +460,12 @@ export default function RunDetail({
                 size="small"
                 disabled={!access.canRun}
                 onClick={() => {
-                  setFixTargets(epoch);
+                  setFixTargets({
+                    keys: importedCount ? epoch.keys : undefined,
+                    note: importedCount
+                      ? epochTargetsNote(epoch)
+                      : undefined,
+                  });
                   setFixLaunching(true);
                 }}
                 startIcon={
@@ -552,6 +568,7 @@ export default function RunDetail({
               />
             )}
             <Tab value="analytics" label="Analytics" />
+            {env?.composition && <Tab value="report" label="Report" />}
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -638,6 +655,10 @@ export default function RunDetail({
               }
               onOpenCalls={openCallsWith}
             />
+          )}
+
+          {tab === "report" && env?.composition && (
+            <RunReport env={env} executionId={executionId} live={live} />
           )}
         </Box>
       </Box>
@@ -736,7 +757,11 @@ export default function RunDetail({
           envId={env.id}
           sourceRunId={executionId}
           initialTargets={fixTargets?.keys}
-          initialNote={fixTargets ? epochTargetsNote(fixTargets) : ""}
+          initialNote={fixTargets?.note}
+          diagnosisUnavailable={
+            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            diagnosis.analysis.status !== "completed"
+          }
         />
       )}
 
@@ -763,6 +788,8 @@ RunDetail.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    // Present on a composition: its runs have a report (environment-releases.md §7.7).
+    composition: PropTypes.object,
   }).isRequired,
   // Client store state — only read for a non-backed env, to drive the
   // fixture-only `AddEvalsDrawer` fallback the same way it always has.

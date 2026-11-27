@@ -151,3 +151,49 @@ def test_multiple_fields_warn_independently(judge):
         "output",
         "input",
     ]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("x" * 10, False),
+        ("x" * _MAX_CONTEXT_CHARS, False),
+        ("x" * 200_001, True),
+        ({"text": "x" * _MAX_CONTEXT_CHARS}, True),
+        (["x" * _MAX_CONTEXT_CHARS], True),
+    ],
+    ids=["short", "at-limit", "over-limit", "dict", "list"],
+)
+def test_mapped_input_metadata(judge, value, expected):
+    evaluator, _ = judge
+    result = evaluator._evaluate(required_keys=["input"], input=value)
+    metadata = json.loads(result["metadata"])
+    assert metadata["truncated"] is expected
+    assert metadata["truncated_fields"] == (["input"] if expected else [])
+
+
+@pytest.mark.parametrize("length, expected", [(10, False), (15000, True)])
+def test_structured_row_context_metadata(judge, length, expected):
+    evaluator, _ = judge
+    result = evaluator._evaluate(row_context={"text": "x" * length})
+    metadata = json.loads(result["metadata"])
+    assert metadata["truncated"] is expected
+    assert metadata["truncated_fields"] == (["row_context"] if expected else [])
+
+
+def test_truncated_fields_follow_mapping_order_and_reset_between_runs(judge):
+    evaluator, _ = judge
+    large = "x" * (_MAX_CONTEXT_CHARS + 1)
+    keys = ["output", "short", "input", "output"]
+    first = evaluator._evaluate(
+        required_keys=keys, output=large, short="ok", input=large
+    )
+    second = evaluator._evaluate(
+        required_keys=keys, output="ok", short="ok", input="ok"
+    )
+    first_metadata = json.loads(first["metadata"])
+    second_metadata = json.loads(second["metadata"])
+    assert first_metadata["truncated"] is True
+    assert first_metadata["truncated_fields"] == ["output", "input"]
+    assert second_metadata["truncated"] is False
+    assert second_metadata["truncated_fields"] == []

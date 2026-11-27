@@ -43,7 +43,9 @@ logger = structlog.get_logger(__name__)
 # 38: link checks validate URL format only, without DNS or network requests
 # (shipped on main as version 33 in v1.59.0; renumbered above dev's 37 so
 # installs at 33, 34 or 37 re-seed and pick up every change).
-SYSTEM_EVALS_VERSION = 38
+# 39: BLEU and CodeBLEU score short answers over the available n-gram orders.
+# 40: restore add-one smoothing for answers of four or more tokens.
+SYSTEM_EVALS_VERSION = 40
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any

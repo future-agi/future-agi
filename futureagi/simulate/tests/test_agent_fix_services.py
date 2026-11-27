@@ -49,6 +49,7 @@ from simulate.pydantic_schemas.agent_fix import (
     VerdictTier,
 )
 from simulate.selectors.agent_fix import (
+    HELD_BACK_MIN_CASES,
     TRANSCRIPT_CHARS,
     VERDICT_TIERS,
     _record,
@@ -64,20 +65,19 @@ from simulate.selectors.agent_fix import (
     launch_options,
     limited_validation,
     ran_at,
+    split_held_back,
     verdict_tiers,
     with_spend,
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_runs import (
-    HELD_BACK_MIN_CASES,
     close_fix_run,
     launch_fix_run,
     make_candidate_default,
     request_stop,
     require_shippable,
     retry_fix_run,
-    split_held_back,
 )
 from simulate.services.agent_setup import store_agent
 from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
@@ -3061,6 +3061,82 @@ class TestWinnerGrading:
             call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
         } == {call_id: sorted([str(first.id), str(second.id)]) for call_id in graded}
 
+    def _limited(self, source_run, settings, budget_usd):
+        """A fix with a winner to grade whose limit is ``budget_usd``, and a second eval
+        added to the environment after its last check run was admitted."""
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, first = self._fix(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "budget_usd": budget_usd}
+        )
+        fix_run.refresh_from_db()
+        # The checks' sealed $0.03, and one eval's worst case on the baseline and the
+        # final check: what the limit was held against before the eval was added.
+        assert committed_usd(fix_run) == Decimal("0.53")
+        added = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        return fix_run, candidate, graded, first, added
+
+    def test_an_eval_added_mid_fix_is_not_graded_past_the_limit(
+        self, source_run, settings
+    ):
+        fix_run, candidate, graded, first, _added = self._limited(
+            source_run, settings, 0.6
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        # Both evals on both runs would bring the fix to $1.03 of its $0.60: the eval the
+        # checks were held for is graded, the one added after them is not.
+        queued = {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        }
+        assert queued == {call_id: [str(first.id)] for call_id in graded}
+        evals = {config for configs in queued.values() for config in configs}
+        priced = Decimal("0.03") + len(graded) * len(evals) * Decimal("0.25")
+        assert priced <= Decimal("0.6")
+
+    def test_an_eval_added_mid_fix_is_graded_when_the_limit_covers_it(
+        self, source_run, settings
+    ):
+        fix_run, candidate, graded, first, added = self._limited(
+            source_run, settings, 1.03
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        assert {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        } == {call_id: sorted([str(first.id), str(added.id)]) for call_id in graded}
+
+    def test_grading_no_eval_fits_queues_nothing(self, source_run, settings):
+        fix_run, candidate, _graded, _first, _added = self._limited(
+            source_run, settings, 0.5
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        dispatched.assert_not_called()
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+        assert winner.outcome == Outcome.WINNER
+
+    def test_what_a_fix_holds_without_its_evals_reserves(self, source_run, settings):
+        fix_run, _candidate_, _graded, _first, _added = self._limited(
+            source_run, settings, 0.6
+        )
+
+        # Two evals now on the baseline and the final check; without them, what it billed.
+        assert committed_usd(fix_run) == Decimal("1.03")
+        assert committed_usd(fix_run, eval_count=0) == Decimal("0.03")
+        assert committed_usd(fix_run, eval_count=1) == Decimal("0.53")
+
     def test_a_failed_hand_off_unstamps_every_config_of_the_calls_it_did_not_reach(
         self, source_run
     ):
@@ -3466,8 +3542,8 @@ class TestPullRequestEvals:
             source_run, EvalReview(grading=EvalGrading.DONE, compared=1)
         )
         assert (
-            "**Platform evals did not finish on this candidate,** so their results are missing."
-            " Review it closely before you merge."
+            "- Platform evals did not finish on this candidate, so their results are"
+            " missing. Review it closely."
             in self._body(
                 source_run, EvalReview(grading=EvalGrading.INCOMPLETE, compared=1)
             )
@@ -3721,8 +3797,8 @@ class TestPullRequestDescription:
         # The fix page's headline: the pass rates and the must-pass cases it broke.
         # A normal result carries no strength label.
         assert (
-            "Checked by Epoch: held-back pass rate 25% → 75%, target pass rate"
-            " 0% → 63%, broke none\n\n### Verdict\n\n| Check |" in body
+            "Held-back pass rate 25% → 75%. No must-pass scenario broke."
+            "\n\n### Verdict\n\n| Check |" in body
         )
         assert "Verified" not in title and "Verified" not in body
         # The engine's own reason is not product text: the checks say it in words.
@@ -3751,7 +3827,11 @@ class TestPullRequestDescription:
         assert "Measured automatically" not in body
         # The feature is Epoch wherever the user reads it.
         assert "Fix my agent" not in title + body
-        assert "### What changed" in body
+        # The change in one line, then each file, from the patch that ships.
+        assert (
+            "### What changed\n\nChanges concierge/agents.py, prompts/booking.md and"
+            " config.yaml: 17 lines added, 5 removed.\n\n| File |" in body
+        )
         assert "| `concierge/agents.py` | +12 | −3 |" in body
         assert "| `prompts/booking.md` | +4 | −1 |" in body
         assert "### Why" in body and f"- {_CAUSES[1]}" in body
@@ -3904,7 +3984,10 @@ class TestPullRequestDescription:
         assert title == "Epoch: fix 6 diagnosed causes in instructions.md"
         table, decided = body.split("<details><summary>How it was decided</summary>")
         # The headline and its row quote the verdict's one held-back rate.
-        assert "held-back pass rate 0% → 56%" in table
+        assert table.startswith(
+            "Held-back pass rate 0% → 56%. No must-pass scenario broke."
+        )
+        assert table.count("0% → 56%") == 2
         assert (
             "| Held-back scenarios | Passed | 0% → 56% on scenarios the epoch never saw,"
             " a clear gain. |" in table
@@ -4042,7 +4125,7 @@ class TestPullRequestDescription:
             "**Limited validation.** Only 2 failing cases were held back from the epoch to"
             " verify it; it takes 4 or more."
         )
-        assert "Checked by Epoch" in body and "Verified by" not in body
+        assert "Target pass rate 0% → 63%." in body and "Verified by" not in body
         assert "### Verdict: Limited validation" in body
         assert "### Why" not in body
         # A check that could not measure says so, and an untraced agent's cost says why.
@@ -4064,15 +4147,18 @@ class TestPullRequestDescription:
         )
         # No cost was measured, so nothing says how one is.
         assert "Measured automatically" not in body
-        # A protected case reads once, by its name, and by its key only without one.
+        # A protected scenario reads once, by its name; one without a name is only
+        # counted. Never a key or a check's id.
         assert (
-            "- Protected case “case-2” is flaky on the current version, so this epoch"
-            " wasn't held to it: its “refunded” check passed 2 of 3 runs, its “polite”"
-            " check passed 1 of 3 runs." in body
+            "- Protected scenario “Refund a late order” is flaky on the current"
+            " version, so this epoch wasn't held to it:" in body
         )
-        assert body.count("Protected case “case-2”") == 1
-        assert "- Protected case “Refund a late order” is flaky" in body
-        assert "case-4" not in body
+        assert (
+            "- 1 protected scenario is flaky on the current version, so this epoch"
+            " wasn't held to it." in body
+        )
+        for raw in ("case-2", "case-4", "“refunded”", "“polite”", "“apologised”"):
+            assert raw not in body
 
     def test_every_check_the_engine_records_reads_as_the_fix_page_names_it(self):
         _check_label = agent_fix_github._check_label
@@ -4116,18 +4202,20 @@ class TestPullRequestDescription:
 
         assert title == "Epoch (known regression): fix 1 diagnosed cause in 3 files"
         assert body.startswith("**Known regression.**")
-        # The case and its check apart, and who chose to open it anyway.
-        assert "- Must-pass case “case-1”: its “refunded” check" in body
+        # Who chose to open it anyway, and the check it broke, never by a key the
+        # environment has no scenario for.
+        assert "- A must-pass scenario\n" in body and "case-1" not in body
         assert "It was opened anyway, for this reason:" in body
         assert "> The regression is a test we are retiring." in body
-        assert "Checked by Epoch: target pass rate 0% → 63%, broke 1" in body
+        assert "Target pass rate 0% → 63%. 1 must-pass scenario broke." in body
         assert "### Verdict: Known regression" in body
         assert "| Must-pass scenarios | Failed | 1 must-pass scenario broke. |" in body
         assert "- Must-pass scenarios: 1 of 6 regressed." in body
         assert (
-            "- Must-pass case “case-3”: its “polite” check passed less often, within"
-            " normal noise, so it was not counted." in body
+            "- A must-pass scenario passed less often, within normal noise, so it was"
+            " not counted." in body
         )
+        assert "case-3" not in body
 
     def test_a_fix_from_evidence_counts_each_imports_sources_and_never_names_them(
         self, source_run

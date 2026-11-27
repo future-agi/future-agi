@@ -153,16 +153,30 @@ describe("a job that ended before its epoch", () => {
 });
 
 describe("a launched epoch", () => {
-  it("says the step while it runs, and opens the epoch", () => {
-    const status = launched();
+  it("says the stage while it runs, in the epoch page's words, and opens the epoch", () => {
+    // A search the engine names Diagnose, with no diagnosis yet, is diagnosing.
+    const status = launched({ stage: "Diagnose" });
     expect(epochLabel(status)).toBe("Running");
-    expect(epochSentence(status)).toBe("Epoch 3 is searching for a change.");
+    expect(epochSentence(status)).toBe("Epoch 3 is diagnosing the failures.");
     expect(primaryAction(status)).toEqual({
       kind: "view",
       label: "View Epoch 3",
     });
-    expect(epochIcon(status).tip).toBe("Epoch 3 · Running · Searching");
+    expect(epochIcon(status).tip).toBe("Epoch 3 · Running · Diagnosing");
     expect(epochIcon(status).role).toBe("info");
+
+    const proposing = launched({
+      stage: "Diagnose",
+      diagnosis: { causes: ["a cause"] },
+    });
+    expect(epochSentence(proposing)).toBe("Epoch 3 is proposing changes.");
+    expect(epochIcon(proposing).tip).toBe("Epoch 3 · Running · Proposing");
+    // The job's summary carries no diagnosis: it reads as the search.
+    const summary = launched({ summary: true });
+    expect(epochIcon(summary).tip).toBe("Epoch 3 · Running · Proposing");
+    expect(epochIcon(launched({ step: "verify" })).tip).toBe(
+      "Epoch 3 · Running · Checking",
+    );
   });
 
   it("makes Open pull request the main action on a ready GitHub epoch", () => {

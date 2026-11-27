@@ -88,6 +88,80 @@ def _headers(capability):
 
 
 @pytest.mark.django_db
+def test_consumption_groups_frozen_turn_records_once_per_page(
+    organization, django_capture_on_commit_callbacks
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    cases = (
+        ([], None),
+        ([None], None),
+        ([{"records": [{"credits": 0}]}], 0),
+        (
+            [
+                {"records": [{"credits": 1.5}, {"credits": 2}]},
+                {"records": [{"credits": 3}]},
+            ],
+            6.5,
+        ),
+    )
+    table = HostedHarnessBuilderTurnUsage._meta.db_table
+    expected = {}
+    for i, (reports, credits) in enumerate(cases):
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key=f"totals-{i}"
+        )
+        for j, report in enumerate(reports):
+            _, command, _ = enqueue_message(
+                job, content="change", client_request_id=str(j)
+            )
+            HostedHarnessBuilderTurnUsage.no_workspace_objects.create(
+                job=job,
+                organization=organization,
+                command_message=command,
+                usage={"tokens_in": 10},
+                report=report,
+            )
+            if len(reports) > 1 and j == 0:
+                with django_capture_on_commit_callbacks() as queued:
+                    harness_usage.bill_builder_turn(
+                        str(command.conversation_id),
+                        {
+                            "command_message_id": str(command.id),
+                            "usage": {"tokens_in": 999},
+                        },
+                    )
+                assert (
+                    len(queued) == 1
+                )  # Replay scheduled the frozen report for delivery.
+                frozen = HostedHarnessBuilderTurnUsage.no_workspace_objects.get(
+                    command_message=command
+                )
+                assert frozen.usage == {"tokens_in": 10}
+                assert frozen.report == report
+        expected[str(job.id)] = credits
+        with CaptureQueriesContext(connection) as captured:
+            used = harness_usage.harness_consumption(job)
+        reads = [q["sql"] for q in captured if table in q["sql"]]
+        assert len(reads) == 1 and "SUM(" in reads[0].upper()
+        assert (used["ai_credits"] if used is not None else None) == credits
+
+    request = SimpleNamespace(organization=organization, headers={})
+    with CaptureQueriesContext(connection) as captured:
+        rows = HostedHarnessProvider().list(request).data
+    assert sum(table in q["sql"] for q in captured) == 1
+    assert {
+        row["job"]["job_id"]: (
+            row["consumption"]["ai_credits"] if row["consumption"] is not None else None
+        )
+        for row in rows
+    } == expected
+
+
+@pytest.mark.django_db
 def test_message_submission_is_durable_ordered_and_idempotent(organization):
     job, _ = create_hosted_job(
         organization,
@@ -2508,6 +2582,16 @@ def test_a_message_after_the_build_is_refused_over_the_authoring_cap(
         assert response.status_code == 402
         assert not queued
         assert checked == [str(job.organization_id)]
+        with monkeypatch.context() as below_cap:
+            below_cap.setattr(
+                harness_usage, "require_harness_authoring", lambda _org: None
+            )
+            assert provider.send_message(request, job.id).status_code == 202
+        assert provider.send_message(request, job.id).status_code == 202
+        assert checked == [str(job.organization_id)]
+        assert (
+            job.conversation.messages.filter(client_request_id="over-cap").count() == 1
+        )
     else:
         assert response.status_code == 202
         assert queued

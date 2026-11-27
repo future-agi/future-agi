@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -127,6 +128,10 @@ from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
 )
+from simulate.serializers.harness_run_report import (
+    HarnessRunReportQuerySerializer,
+    HarnessRunReportSerializer,
+)
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services import (
     harness_actor_reads,
@@ -136,6 +141,7 @@ from simulate.services import (
     harness_actors,
     harness_file_roles,
 )
+from simulate.services.agent_fix_agents import with_epoch_pickable
 from simulate.services.evidence_import import (
     TranscriptInput,
     add_to_suite,
@@ -336,9 +342,20 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     pagination_class = ExtendedPageNumberPagination
 
     def _scoped_jobs(self, request):
+        # An adaptation is followed as a job; its composition is the environment. One in review
+        # is listed until it's done, awaiting approval of its design first. By id: a negated
+        # JSON lookup is NULL, not true, on a job without metadata.
+        organization = request_organization(request)
+        adaptations = HostedHarnessJob.no_workspace_objects.filter(
+            organization=organization, payload__metadata__has_key="adaptation"
+        )
+        in_review = adaptations.filter(
+            payload__metadata__adaptation__mode="review"
+        ).exclude(state=HostedHarnessJob.State.COMPLETED)
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
-                organization=request_organization(request),
+                ~Q(id__in=adaptations.values("id")) | Q(id__in=in_review.values("id")),
+                organization=organization,
                 environment__isnull=True,
                 deleted=False,
             ),
@@ -1779,11 +1796,13 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         query = request.validated_query_data
-        jobs = filter_for_list(
-            with_version_contract(self._queryset(request)),
-            search=query.get("search"),
-            status=query.get("status"),
-            agent_type=query.get("agent_type"),
+        jobs = with_epoch_pickable(
+            filter_for_list(
+                with_version_contract(self._queryset(request)),
+                search=query.get("search"),
+                status=query.get("status"),
+                agent_type=query.get("agent_type"),
+            )
         )
         agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:
@@ -1871,6 +1890,94 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def run(self, request, pk=None):
         """Create one new Run for the selected scenarios and trial count."""
         return get_harness_provider().run(request, pk)
+
+    @validated_request(
+        query_serializer=HarnessRunReportQuerySerializer,
+        responses={200: HarnessRunReportSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "The report of one run of a composition, optionally compared with a "
+            "baseline run."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"runs/(?P<run_id>[0-9a-fA-F-]{36})/report",
+    )
+    def run_report(self, request, pk=None, run_id=None):
+        """A composition run's results, coverage and comparability (contract §7.7).
+
+        A run is addressed by its test execution id, as the other run routes
+        are, or by its run id. The baseline may be a run of another composition
+        of this organization: comparing two agents means two compositions.
+        """
+        from django.db.models import Q
+
+        from simulate.services.harness_releases import composition_of
+        from simulate.services.harness_run_report import run_manifest, run_report
+
+        def not_found(message):
+            return Response(
+                build_error_envelope(message, status_code=status.HTTP_404_NOT_FOUND),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        def not_a_composition(message):
+            return Response(
+                build_error_envelope(
+                    message,
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="not_a_composition",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        def find_run(identifier, **scope):
+            identifier = _uuid_or_none(identifier)
+            if identifier is None:
+                return None
+            return (
+                scope_jobs(
+                    HostedHarnessJob.no_workspace_objects.filter(
+                        organization=request_organization(request),
+                        environment__isnull=False,
+                        deleted=False,
+                        **scope,
+                    ),
+                    request,
+                )
+                .filter(Q(test_execution_id=identifier) | Q(run_id=identifier))
+                .first()
+            )
+
+        job = self._job(request, pk)
+        if job is None:
+            return not_found("Environment not found")
+        if composition_of(job) is None:
+            return not_a_composition("Only a composition's runs have a report")
+        run = find_run(run_id, environment=job)
+        manifest = run_manifest(run) if run is not None else None
+        if manifest is None:
+            return not_found("Run not found")
+        baseline_id = request.validated_query_data.get("baseline")
+        baseline_manifest = None
+        if baseline_id is not None:
+            baseline = find_run(baseline_id)
+            if baseline is None:
+                return not_found("Baseline run not found")
+            baseline_manifest = run_manifest(baseline)
+            if baseline_manifest is None:
+                return not_a_composition("The baseline is not a composition's run")
+        return Response(
+            run_report(
+                job,
+                run,
+                manifest,
+                baseline_run_id=str(baseline_id) if baseline_id else None,
+                baseline_manifest=baseline_manifest,
+            )
+        )
 
     def _run_test_job(self, request, pk):
         """The environment and its run test, or the response that refuses the call.
