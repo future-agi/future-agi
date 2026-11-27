@@ -154,11 +154,14 @@ export function attemptNote(
   if (verdict.counted === false) {
     const next = attemptNextStep({
       state: verdict.state,
+      code: verdict.failure?.code,
       number: verdict.number,
       counted: verdict.counted,
       budgetCredits: request.budget_credits,
     });
-    return `This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. ${next}`;
+    const ended =
+      "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts.";
+    return next ? `${ended} ${next}` : ended;
   }
   return verdict.tiers.length ? null : "No check ran on this attempt.";
 }

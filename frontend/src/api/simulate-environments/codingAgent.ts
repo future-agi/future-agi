@@ -13,7 +13,7 @@ import {
 } from "src/hooks/useCapabilities";
 import axios, { endpoints } from "src/utils/axios";
 
-import { FIX_LIVE_STATES, FIX_POLL_MS } from "./fixRuns";
+import { FIX_LIVE_STATES, FIX_POLL_MS, OUR_FAILURES } from "./fixRuns";
 
 // An Epoch as the attempt reads take it: its list read and its detail read both fit.
 type AttemptFix = Pick<AgentFixRunApi, "id" | "state" | "request">;
@@ -133,21 +133,33 @@ export const RUN_AGAIN = `This run has had its ${OUTSIDE_ATTEMPTS_MAX} attempts.
 
 interface EndedAttempt {
   state: string;
+  // The failure's code, on a failed attempt.
+  code: string | null | undefined;
   number: number | undefined;
   counted: boolean | null | undefined;
   budgetCredits: number | undefined;
 }
 
+// A failure that is ours, not the change's: the coding agent can only send it again.
+export const failedOnOurSide = (code: string | null | undefined): boolean =>
+  !code || code === "fix_queue_timeout" || OUR_FAILURES.has(code);
+
 // The next step after an attempt that ended out of budget, past its time limit or on
 // our side: the same in its ending and under its checks. At the budget cap a larger
 // budget is refused, so the run has to shrink. A counted attempt's tree was checked,
-// and the platform refuses the same tree again.
+// and the platform refuses the same tree again. Any other ending names its own step,
+// or none: null.
 export function attemptNextStep({
   state,
+  code,
   number,
   counted,
   budgetCredits,
-}: EndedAttempt): string {
+}: EndedAttempt): string | null {
+  const sendAgain =
+    state === "out_of_budget" ||
+    (state === "failed" && (code === "fix_deadline" || failedOnOurSide(code)));
+  if (!sendAgain) return null;
   if (usedTheRunsLastAttempt(number, counted)) return RUN_AGAIN;
   if (state === "out_of_budget" && (budgetCredits ?? 0) >= BUDGET_CREDITS_MAX) {
     return RUN_FEWER_SCENARIOS;

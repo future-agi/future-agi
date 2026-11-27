@@ -418,10 +418,11 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
       await screen.findByText(
         counted
           ? "No check ran on this attempt."
-          : `This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. ${
+          : `This attempt ended before Future AGI checked the change. It does not use one of the run's attempts.${
+              // Of these endings, only the budget's sends the tree again.
               state === "out_of_budget"
-                ? "Submit it again with a larger budget: fagi epoch submit --budget-credits."
-                : "Submit it again with fagi epoch submit."
+                ? " Submit it again with a larger budget: fagi epoch submit --budget-credits."
+                : ""
             }`,
       );
       expect(panel).not.toHaveTextContent("did not apply");
@@ -686,6 +687,52 @@ describe("An attempt's running stages and ending", () => {
       });
       expect(note?.slice(-next.length)).toBe(next);
       expect(ending?.slice(-next.length)).toBe(next);
+    },
+  );
+
+  // These endings name their own step, or none: the note under the checks names none.
+  it.each<
+    [AgentFixAttemptVerdictApi["state"], AgentFixAttemptVerdictApi["failure"]]
+  >([
+    [
+      "failed",
+      {
+        code: "engine_exited",
+        message: "The engine stopped: the model provider refused the key.",
+      },
+    ],
+    ["not_reproduced", null],
+    ["stopped", null],
+  ])(
+    "names no next step under the checks of an uncounted %s attempt",
+    (state, failure) => {
+      const base = attemptFix();
+      const request = {
+        ...base.request,
+        budget_credits: 1500,
+        outside_candidate: { summary: "", number: 2 },
+      };
+      const note = attemptNote(
+        fixtureVerdict({
+          state,
+          failure,
+          number: 2,
+          counted: false,
+          tiers: [],
+        }),
+        request,
+      );
+      const ending = headline({
+        ...base,
+        state,
+        failure,
+        counted: false,
+        request,
+      });
+      expect(note).toBe(
+        "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts.",
+      );
+      expect(ending).not.toContain("fagi epoch submit");
     },
   );
 

@@ -2389,6 +2389,27 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
             " it can't be made the default.",
         )
 
+    def test_a_candidate_the_engine_rejected_with_no_verdict_is_not_unchecked(
+        self, browser_client, planted
+    ):
+        """An Epoch that ended with no improvement checked its candidates: one rejected
+        with no verdict is the engine's refusal, not one it never reached."""
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            outcome="rejected", verdict=None
+        )
+
+        response = _move(
+            browser_client,
+            planted.environment,
+            planted.candidates.get().agent_version_id,
+        )
+
+        assert response.status_code == 409, response.content
+        assert (response.json()["error"], response.json()["message"]) == (
+            "fix_candidate_not_shippable",
+            CANNOT_SHIP,
+        )
+
     def test_a_candidate_that_passed_but_was_not_picked_says_so(
         self, browser_client, planted
     ):

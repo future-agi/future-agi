@@ -85,27 +85,13 @@ def outside_attempts(source_run: HostedHarnessJob) -> QuerySet[AgentFixRun]:
     ).order_by("created_at")
 
 
-# The endings an attempt can reach before any check of its change: a failure, the
-# platform's or the agent's, a baseline that passed when measured again, the budget, a
-# stop (a person's own included), or too few failing cases.
-UNCHECKED_ENDINGS = frozenset(
-    {
-        AgentFixRun.State.FAILED,
-        AgentFixRun.State.NOT_REPRODUCED,
-        AgentFixRun.State.OUT_OF_BUDGET,
-        AgentFixRun.State.STOPPED,
-        AgentFixRun.State.TOO_FEW_CASES,
-    }
-)
-
-
 def counts_as_attempt(fix_run: AgentFixRun) -> bool:
     """Whether an outside attempt uses one of its run's attempts: its change got a verdict,
     or it is still being checked. One that ended before any verdict on its change told its
     coding agent nothing, so it does not count, and its tree may be sent again. A static
     refusal ends with no improvement: that is the static check's verdict, so it counts.
     Reads the attempt's candidates, which an Epoch read prefetches."""
-    return fix_run.state not in UNCHECKED_ENDINGS or any(
+    return fix_run.state not in AgentFixRun.UNCHECKED_ENDINGS or any(
         candidate.verdict is not None for candidate in fix_run.candidates.all()
     )
 

@@ -25,6 +25,18 @@ class AgentFixRun(BaseModel):
         TOO_FEW_CASES = "too_few_cases", "Too few failing cases"
 
     ACTIVE_STATES = (State.QUEUED, State.RUNNING, State.STOPPING)
+    # The endings an Epoch can reach before any check of a candidate's change: a
+    # failure, the platform's or the agent's, a baseline that passed when measured
+    # again, the budget, a stop (a person's own included), or too few failing cases.
+    UNCHECKED_ENDINGS = frozenset(
+        {
+            State.FAILED,
+            State.NOT_REPRODUCED,
+            State.OUT_OF_BUDGET,
+            State.STOPPED,
+            State.TOO_FEW_CASES,
+        }
+    )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(

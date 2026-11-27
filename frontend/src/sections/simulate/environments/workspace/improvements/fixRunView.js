@@ -1,7 +1,11 @@
-import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+import {
+  FIX_LIVE_STATES,
+  OUR_FAILURES,
+} from "src/api/simulate-environments/fixRuns";
 import {
   RUN_AGAIN,
   attemptNextStep,
+  failedOnOurSide,
   isOutsideAttempt,
   usedTheRunsLastAttempt,
 } from "src/api/simulate-environments/codingAgent";
@@ -187,18 +191,6 @@ const whenEnded = (fix) =>
     ? `after ${triedText(fix)}`
     : "before any candidate ran";
 
-// Failures that are ours, not the agent's: the user can only retry.
-export const OUR_FAILURES = new Set([
-  "fix_engine_failed",
-  "fix_engine_died",
-  "fix_watch_failed",
-  "fix_workflow_lost",
-  "fix_dispatch_failed",
-  "fix_variations_failed",
-  "fix_variations_timeout",
-  "scheduler_unavailable",
-]);
-
 const sentence = (text) =>
   text
     ? `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/\.?$/, ".")}`
@@ -213,6 +205,7 @@ function attemptEndingText(fix) {
   const last = usedTheRunsLastAttempt(number, fix.counted);
   const submitAgain = attemptNextStep({
     state: fix.state,
+    code,
     number,
     counted: fix.counted,
     budgetCredits: fix.request?.budget_credits,
@@ -229,7 +222,7 @@ function attemptEndingText(fix) {
     case "failed":
       if (code === "fix_deadline")
         return `This attempt ran out of its time limit. Nothing changed. ${submitAgain}`;
-      if (!code || code === "fix_queue_timeout" || OUR_FAILURES.has(code))
+      if (failedOnOurSide(code))
         return `This attempt stopped because of a problem on our side, not your change. Nothing changed. ${submitAgain}`;
       return `This attempt stopped on something only you can change: ${sentence(fix.failure.message)}`;
     default:
