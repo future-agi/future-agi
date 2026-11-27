@@ -17,7 +17,7 @@ from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .code_archive import CodeArchive
 from .component_evaluation import ComponentEvaluation
-from .eval_config import SimulateEvalConfig
+from .eval_config import SimulateEvalConfig, SimulateEvalConfigRemovedKeys
 from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
@@ -120,6 +120,7 @@ __all__ = [
     "SimulatorAgent",
     "RunTest",
     "SimulateEvalConfig",
+    "SimulateEvalConfigRemovedKeys",
     "TestExecution",
     "CallExecution",
     "CallTranscript",
