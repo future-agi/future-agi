@@ -156,6 +156,7 @@ is only port-forwarded). */ -}}
       "CHANNEL_REDIS_URL" (include "futureagi.redis.url" (dict "root" $root "db" 3))
       "WEBSOCKET_ENDPOINT" (printf "http://%s:%v/call-websocket/" $backend $v.backend.service.port)
       "STORAGE_BACKEND" $storage
+      "STORAGE_BUNDLED" (ternary "true" "false" (eq $v.objectStorage.mode "bundled"))
       "MINIO_URL" (include "futureagi.url.objects" $root)
       "UPLOAD_BUCKET_NAME" $v.objectStorage.bucket
       "S3_REGION" $v.objectStorage.region

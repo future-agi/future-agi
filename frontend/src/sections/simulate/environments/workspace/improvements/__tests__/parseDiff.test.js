@@ -30,4 +30,27 @@ describe("parseDiff", () => {
     expect(files[0].lines[2]).toEqual({ type: "add", text: "add this" });
     expect(parseDiff("")).toEqual([]);
   });
+
+  it("names a deleted file by its real path, not /dev/null", () => {
+    const files = parseDiff(
+      [
+        "diff --git a/old/a.md b/old/a.md",
+        "deleted file mode 100644",
+        "--- a/old/a.md",
+        "+++ /dev/null",
+        "@@ -1,2 +0,0 @@",
+        "-one",
+        "-two",
+        "diff --git a/old/b.md b/old/b.md",
+        "deleted file mode 100644",
+        "--- a/old/b.md",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-three",
+        "",
+      ].join("\n"),
+    );
+    expect(files.map((f) => f.file)).toEqual(["old/a.md", "old/b.md"]);
+    expect(files[0].lines.map((l) => l.type)).toEqual(["remove", "remove"]);
+  });
 });
