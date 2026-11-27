@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // The drawer runs against the real `useDebugAnalysis`; only the transport and
 // the neighbours it does not own are stubbed.
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, default: { get: vi.fn(), post: vi.fn() } };
 });
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
@@ -22,7 +22,9 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
   }),
 }));
 
-const { default: axios } = await import("src/utils/axios");
+// The mocked transport: only `get` and `post` exist on it.
+const { default: transport } = await import("src/utils/axios");
+const axios = transport as unknown as { get: Mock; post: Mock };
 const { default: FixMyAgentDrawer } = await import("../FixMyAgentDrawer");
 
 const TOO_FEW = "You need at least 15 connected calls to debug failures.";
@@ -31,7 +33,7 @@ const renderDrawer = () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const tree = (open) => (
+  const tree = (open: boolean) => (
     <QueryClientProvider client={client}>
       <FixMyAgentDrawer
         open={open}
@@ -45,7 +47,7 @@ const renderDrawer = () => {
     </QueryClientProvider>
   );
   const view = render(tree(true));
-  return { ...view, setOpen: (open) => view.rerender(tree(open)) };
+  return { ...view, setOpen: (open: boolean) => view.rerender(tree(open)) };
 };
 
 beforeEach(() => {
