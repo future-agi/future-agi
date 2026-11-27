@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SimulateApiAgentFixRunsLaunchOptionsResponse,
   SimulateApiHarnessEnvironmentsDraftsResponse,
   SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody,
   SimulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse,
@@ -36,6 +37,93 @@ describe.each([
     expect(
       schema.safeParse([{ name: "Verify the caller's PIN", passed }]).success,
     ).toBe(false);
+  });
+});
+
+describe("generated launch options contract", () => {
+  const { blocked } = SimulateApiAgentFixRunsLaunchOptionsResponse.shape;
+
+  // Only issue_epoch_measuring names an issue; every other refusal sends null.
+  it.each([
+    {
+      code: "fix_run_active",
+      message: "An epoch is running.",
+      cluster_id: null,
+    },
+    {
+      code: "issue_epoch_measuring",
+      message: "Another issue's epoch is starting.",
+      cluster_id: "cluster-1",
+    },
+  ])("accepts a $code refusal", (refusal) => {
+    expect(blocked.parse(refusal)).toEqual(refusal);
+  });
+
+  it("accepts a launch nothing refuses", () => {
+    expect(blocked.parse(null)).toBeNull();
+  });
+
+  // An unnumbered, unfinished run of an unversioned environment, an uploaded agent
+  // with no ref, and a scenario with no verdict that no evidence import added.
+  it("accepts the fields the server leaves empty", () => {
+    const body = {
+      source_run: {
+        id: "11111111-1111-4111-8111-111111111111",
+        number: null,
+        state: "completed",
+        finished_at: null,
+      },
+      environment: {
+        id: "22222222-2222-4222-8222-222222222222",
+        name: "Support",
+        version: null,
+      },
+      agent: {
+        name: "Support agent",
+        kind: "upload",
+        version_id: "33333333-3333-4333-8333-333333333333",
+        version_number: null,
+        ref: null,
+      },
+      scenarios: [
+        {
+          key: "refund",
+          name: "Refund",
+          passed: null,
+          failing_sub_goals: [],
+          evidence_import_id: null,
+        },
+      ],
+      suggested: { target_scenario_keys: [], protected_scenario_keys: [] },
+      surfaces: [],
+      defaults: {
+        surfaces: ["prompt"],
+        budget_credits: 100,
+        max_minutes: 30,
+        allowed_models: [],
+        agent_cost_metered: false,
+        agent_calls_unmeasured: false,
+        reply_latency_margin_pct: 0,
+        cost_margin_pct: 0,
+      },
+      limits: {
+        budget_credits_max: 1000,
+        max_minutes_max: 120,
+        scenarios_min: 1,
+        cases_min: 1,
+        variations_per_case: 1,
+        verified_cases_min: 1,
+        scenarios_max: 50,
+      },
+      blocked: null,
+      variations_blocked: null,
+      held_back_scenario_keys: null,
+      ship: null,
+    };
+
+    expect(SimulateApiAgentFixRunsLaunchOptionsResponse.parse(body)).toEqual(
+      body,
+    );
   });
 });
 
@@ -177,10 +265,18 @@ describe("generated drafts contract", () => {
     parent_label: "v1",
     default_label: "v1",
     changes: { added: 1, removed: 0, changed: 0 },
+    name: null,
+    candidate_state: null,
   };
 
   it("accepts a piece without a draft and an unnumbered draft", () => {
-    const body = { environment: null, suite: draft, set_aside: [] };
+    const body = {
+      environment: null,
+      suite: draft,
+      set_aside: [],
+      validation: null,
+      candidates: null,
+    };
 
     expect(SimulateApiHarnessEnvironmentsDraftsResponse.parse(body)).toEqual(
       body,

@@ -642,3 +642,9 @@ class CallCallActors(TypedDict, total=False):
     resolved: list[CallActor]
     summary: list[CallActorTookPart]
     events: list[CallActorEvent]
+
+
+# A scenario's lifecycle state on an agent, environment and suite pairing.
+LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
+# What a run does when every selected case is held back only for not being validated on the pairing.
+UnprovedNext = Literal["validate_first", "run_unvalidated"]

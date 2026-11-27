@@ -92,6 +92,46 @@ export const normalizeAlertDetail = (detail = {}) => ({
 
 export const isAlertMuted = (row) => Boolean(row?.isMute ?? row?.is_mute);
 
+const sameAddresses = (a = [], b = []) => {
+  const norm = (list) =>
+    [...new Set((list ?? []).map((e) => `${e}`.trim().toLowerCase()))].sort();
+  return _.isEqual(norm(a), norm(b));
+};
+
+// The notification fields of an alert save. An edit sends the email
+// recipients only when the editor changed them: an alert email's Unsubscribe
+// link removes that address on the server, and resending the list the form
+// loaded would quietly add it back.
+export const notificationPayload = (notification, loaded, isUpdate) => {
+  const isSlack = notification?.method === "slack";
+  const isWebhook = notification?.method === "webhook";
+  const payload = {
+    notification_emails:
+      !isSlack && !isWebhook ? notification?.emails ?? [] : [],
+    slack_webhook_url: isSlack ? notification?.slack?.webhookUrl ?? "" : "",
+    slack_notes: isSlack ? notification?.slack?.notes ?? "" : "",
+    webhook_url: isWebhook ? notification?.webhook?.url ?? "" : "",
+  };
+  const emailsUnchanged =
+    !isSlack &&
+    !isWebhook &&
+    loaded?.method === notification?.method &&
+    sameAddresses(notification?.emails, loaded?.emails);
+  if (isUpdate && emailsUnchanged) delete payload.notification_emails;
+  return payload;
+};
+
+// The last recipient of an email alert can unsubscribe from the emailed link,
+// which leaves the stored alert with no addresses. Editing that alert must
+// still save a rename or a threshold change; a new alert (or a duplicate)
+// still needs a destination.
+export const allowStoredNoEmails = (values, isUpdate) => {
+  const notification = values?.notification;
+  if (!isUpdate || notification?.method !== "email") return values;
+  if (notification?.emails?.length) return values;
+  return { ...values, notification: { ...notification, keepNoEmails: true } };
+};
+
 export const getAlertFilterValue = (data) => {
   const filters = [];
   const normalizedFilters = normalizeAlertFilters(data?.filters);

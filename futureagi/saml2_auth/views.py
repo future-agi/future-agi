@@ -30,7 +30,7 @@ from accounts.models.auth_token import (
     AuthTokenType,
 )
 from accounts.models.user import User
-from accounts.utils import first_signup, get_request_organization
+from accounts.utils import WorkEmailRequired, first_signup, get_request_organization
 from analytics.utils import (
     MixpanelEvents,
     MixpanelModes,
@@ -183,6 +183,12 @@ def _saml_denial_redirect(reason):
     encoded = urlsafe_base64_encode(
         b"SAML is not enabled for your organization. Please contact your Administrator"
     )
+    return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
+
+
+def _work_email_required_redirect(provider, exc):
+    logger.info("oauth_signup_rejected_personal_email", provider=provider)
+    encoded = urlsafe_base64_encode(str(exc).encode())
     return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
 
 
@@ -922,6 +928,8 @@ class Auth0CallbackView(APIView):
             encoded = urlsafe_base64_encode(b"Unable to Process your request currently")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
             return HttpResponseRedirect(redirect_url)
+        except WorkEmailRequired as exc:
+            return _work_email_required_redirect("auth0", exc)
         except Exception as exc:
             logger.error(
                 "oauth_callback_failed",
@@ -1058,6 +1066,8 @@ class GithubCallbackView(APIView):
             response["new_org"] = new_org
             return response
 
+        except WorkEmailRequired as exc:
+            return _work_email_required_redirect("github", exc)
         except Exception as exc:
             logger.error(
                 "oauth_callback_failed",
@@ -1198,6 +1208,8 @@ class MicrosoftCallbackView(APIView):
             response["new_org"] = new_org
             return response
 
+        except WorkEmailRequired as exc:
+            return _work_email_required_redirect("microsoft", exc)
         except Exception as exc:
             logger.error(
                 "oauth_callback_failed",

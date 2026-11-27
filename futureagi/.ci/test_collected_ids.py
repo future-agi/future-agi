@@ -1162,6 +1162,173 @@ class ProducerIdentityTest(unittest.TestCase):
         # A wrong digest is fetched again from scratch before failing closed.
         self.assertEqual([c.args[0] for c in slept.call_args_list], [2, 4, 8])
 
+    def test_a_full_rerun_reads_each_shard_s_artifact_from_its_attempt(self):
+        """Run 45532046719, attempt 2 (a full re-run), listed
+        collected-ids-metrics-11 twice: attempt 1's upload (02:54:44Z, inside
+        02:19:38-02:54:51Z) and attempt 2's (03:20:38Z, inside
+        02:57:55-03:20:43Z). Each leg qualifies on its own attempt's artifact
+        and stays exactly-once within that attempt."""
+        matrix = json.dumps(
+            {
+                "include": [
+                    {"suite": "main", "name": "pytest", "group": n} for n in (1, 2)
+                ]
+            }
+        )
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        env = {
+            "RUNNER_TEMP": temp,
+            "GITHUB_STEP_SUMMARY": str(pathlib.Path(temp) / "summary"),
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_RUN_ID": "100",
+            "GITHUB_REPOSITORY": "fixture/repo",
+            "GITHUB_SHA": "c" * 40,
+            "GITHUB_RUN_ATTEMPT": "2",
+            "SHARDS": matrix,
+        }
+        common = {
+            "sha": env["GITHUB_SHA"],
+            "run": "100",
+            "suite": "main",
+            "ee": "oss",
+            "db": "schema",
+            "durations": "0" * 64,
+            "temporal": "1" * 64,
+            "matrix": hashlib.sha256(matrix.encode()).hexdigest(),
+        }
+        windows = {
+            1: ("2026-11-25T02:19:38Z", "2026-11-25T02:54:51Z"),
+            2: ("2026-11-25T02:57:55Z", "2026-11-25T03:20:43Z"),
+        }
+        jobs = [
+            {
+                "name": f"pytest shard {group}",
+                "run_attempt": attempt,
+                "conclusion": "success",
+                "started_at": windows[attempt][0],
+                "completed_at": windows[attempt][1],
+            }
+            for group in (1, 2)
+            for attempt in (1, 2)
+        ]
+        # Shard 1 lists one artifact (attempt 2's); shard 2 lists both.
+        artifacts = [
+            {
+                "name": "collected-ids-main-1",
+                "id": 11,
+                "digest": "sha256:fixture",
+                "created_at": "2026-11-25T03:19:02Z",
+            },
+            {
+                "name": "collected-ids-main-2",
+                "id": 21,
+                "digest": "sha256:fixture",
+                "created_at": "2026-11-25T02:54:44Z",
+            },
+            {
+                "name": "collected-ids-main-2",
+                "id": 22,
+                "digest": "sha256:fixture",
+                "created_at": "2026-11-25T03:20:38Z",
+            },
+        ]
+        receipts = {
+            11: dict(common, group=1, attempt=2),
+            21: dict(common, group=2, attempt=1),
+            22: dict(common, group=2, attempt=2),
+        }
+        rows = {
+            n: [
+                str(n),
+                f"test_{n}",
+                [["setup", "passed"], ["call", "passed"], ["teardown", "passed"]],
+            ]
+            for n in (1, 2)
+        }
+        downloaded = []
+
+        def artifact(a, repo):
+            downloaded.append(a["id"])
+            group = receipts[a["id"]]["group"]
+            return (
+                receipts[a["id"]],
+                [rows[group]],
+                "same-order",
+                [r[:2] + ["pass"] for r in rows.values()] if group == 1 else None,
+            )
+
+        listed = list(artifacts)
+        with (
+            patch.dict(os.environ, env),
+            patch.object(
+                checker,
+                "pages",
+                side_effect=lambda _, field: jobs if field == "jobs" else listed,
+            ),
+            patch.object(checker, "verify_artifact", side_effect=artifact),
+            patch.object(checker, "run_date", return_value=datetime.date(2026, 11, 25)),
+            patch.object(checker.time, "sleep") as slept,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            # Before this change: "the run does not have exactly one artifact
+            # per planned shard".
+            checker.verify_run()
+            self.assertFalse(slept.called)
+            self.assertEqual(sorted(downloaded), [11, 22])
+            self.assertIn(
+                "main/2: attempt 2, artifact 22 sha256:fixture", output.getvalue()
+            )
+
+            # Still exactly once within the attempt: a second artifact from
+            # attempt 2's own window fails.
+            listed = [*artifacts, dict(artifacts[2], id=23)]
+            with self.assertRaisesRegex(
+                ValueError,
+                "main/2: 2 artifacts from the producing attempt 2, not exactly one",
+            ):
+                checker.verify_run()
+
+            # Only attempt 1's artifact listed: the listings wait for attempt
+            # 2's, then fail closed naming it; attempt 1's is never read.
+            listed = [artifacts[0], artifacts[1], dict(artifacts[1], id=24)]
+            downloaded.clear()
+            with self.assertRaisesRegex(ValueError, "artifact collected-ids-main-2"):
+                checker.verify_run()
+            self.assertNotIn(21, downloaded)
+            self.assertNotIn(24, downloaded)
+
+            # One listed artifact is taken as the leg's (no clock comparison
+            # can fail it), so a lone stale one is read: its receipt names
+            # attempt 1, not the producing attempt 2, and the leg fails closed.
+            listed = [artifacts[0], artifacts[1]]
+            slept.reset_mock()
+            with self.assertRaisesRegex(
+                ValueError, "main/2: absent or superseded producer for main/2"
+            ):
+                checker.verify_run()
+            self.assertFalse(slept.called)
+
+    def test_an_artifact_belongs_to_the_job_that_ran_when_it_was_created(self):
+        job = {
+            "started_at": "2026-11-25T02:57:55Z",
+            "completed_at": "2026-11-25T03:20:43Z",
+        }
+        listed = [
+            {"id": 1, "created_at": "2026-11-25T02:54:44Z"},
+            {"id": 2, "created_at": "2026-11-25T03:20:38Z"},
+            {"id": 3, "created_at": "2026-11-25T03:20:45Z"},  # GitHub rounding
+            {"id": 4, "created_at": "2026-11-25T03:21:00Z"},
+            {"id": 5},
+        ]
+        self.assertEqual([a["id"] for a in checker.produced_by(listed, job)], [2, 3])
+        self.assertEqual(
+            checker.produced_by(listed, {"started_at": job["started_at"]}), []
+        )
+        # One listed artifact is the leg's whatever its time: its receipt must
+        # still name the producing attempt.
+        self.assertEqual(checker.shard_artifacts(listed[:1], job), listed[:1])
+        self.assertEqual(checker.shard_artifacts([], job), [])
+
 
 class ListingSettleTest(unittest.TestCase):
     """GitHub can list a run's jobs seconds behind the jobs themselves.
@@ -1289,6 +1456,26 @@ class ListingSettleTest(unittest.TestCase):
             missing,
             ["job 'backend / metrics shard 4'", "artifact collected-ids-metrics-4"],
         )
+
+    def test_another_attempt_s_artifact_of_the_same_name_is_not_this_one(self):
+        def job(n, attempt, start, end):
+            return dict(self.job(n, attempt), started_at=start, completed_at=end)
+
+        jobs = [
+            job(3, 2, "2026-11-25T02:57:55Z", "2026-11-25T03:20:43Z"),
+            job(4, 2, "2026-11-25T02:57:55Z", "2026-11-25T03:20:43Z"),
+        ]
+        old = dict(self.artifact(4), id=40, created_at="2026-11-25T02:54:44Z")
+        new = dict(self.artifact(4), id=41, created_at="2026-11-25T03:20:38Z")
+        three = dict(self.artifact(3), created_at="2026-11-25T03:10:00Z")
+        # Attempt 1's artifact and a second one listed, neither from attempt 2.
+        stale = dict(old, id=42, created_at="2026-11-25T02:50:00Z")
+        missing = self.settle((jobs, [three, old, stale]), attempt=2)[2]
+        self.assertEqual(missing, ["artifact collected-ids-metrics-4"])
+        lagging = (jobs, [three, old, stale])
+        full = (jobs, [three, old, new])
+        _, _, missing, pauses, _, _ = self.settle(lagging, full, attempt=2)
+        self.assertEqual((missing, pauses), ([], [5]))
 
     def test_the_run_attempt_comes_from_actions(self):
         self.assertEqual(checker.run_attempt({"GITHUB_RUN_ATTEMPT": "3"}), 3)

@@ -24,6 +24,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.evals_metric import EvalTemplate
+from simulate.constants.hosted_harness import SCENARIO_KEY
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -329,6 +330,7 @@ def provision_alk_sim_run_test(
     personas: list[dict] | None = None,
     scenario_ids: list | None = None,
     agent_definition_id: str | None = None,
+    agent_definition: AgentDefinition | None = None,
     agent_name: str | None = None,
     description: str = "",
     modality: str = "text",
@@ -345,6 +347,9 @@ def provision_alk_sim_run_test(
       supplied personas (see ``_build_persona_scenario_dataset``). This matches
       the platform's native dataset model: a scenario suite is one dataset and
       every conversation case is one datapoint.
+
+    ``agent_definition`` is one the caller has already authorised and checked the
+    modality of; ``agent_definition_id`` is resolved in exactly this workspace.
 
     ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
     Defaults to off, since it costs an extra judge per call. A v3 environment
@@ -379,7 +384,7 @@ def provision_alk_sim_run_test(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
 
-        agent_definition = _provision_agent_definition(
+        agent_definition = agent_definition or _provision_agent_definition(
             organization,
             agent_definition_id,
             agent_name,
@@ -1290,7 +1295,7 @@ def _build_manifest_call_executions(
         call.call_metadata.update(
             {
                 "harness_execution_key": entry["execution_key"],
-                "harness_scenario_key": entry["scenario_key"],
+                SCENARIO_KEY: entry["scenario_key"],
                 "harness_trial_index": entry["trial_index"],
             }
         )

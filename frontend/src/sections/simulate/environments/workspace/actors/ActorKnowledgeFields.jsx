@@ -24,12 +24,24 @@ export default function ActorKnowledgeFields({
 }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  // Evaluator-only files are listed, locked, so it's clear why an actor can't be given them.
+  const evaluatorOnly = Object.entries(sources.roles ?? {})
+    .filter(([, role]) => role === "evaluator_only")
+    .map(([path]) => path);
   return (
     <>
       <Autocomplete
         multiple
         size="small"
-        options={sources.files}
+        options={[...sources.files, ...evaluatorOnly]}
+        getOptionDisabled={(path) => evaluatorOnly.includes(path)}
+        renderOption={({ key, ...props }, path) => (
+          <li key={key} {...props}>
+            {evaluatorOnly.includes(path)
+              ? `${path} · ${F.evaluatorOnly}`
+              : path}
+          </li>
+        )}
         value={files}
         onChange={(_, next) => onChange("files", next)}
         renderInput={(params) => (
@@ -121,6 +133,8 @@ ActorKnowledgeFields.propTypes = {
   sources: PropTypes.shape({
     files: PropTypes.arrayOf(PropTypes.string).isRequired,
     records: PropTypes.arrayOf(RECORD).isRequired,
+    // Every attached file's role by path; evaluator-only files are never in `files`.
+    roles: PropTypes.objectOf(PropTypes.string),
   }).isRequired,
   // Resolves to the stored path; absent when the environment is locked.
   upload: PropTypes.func,

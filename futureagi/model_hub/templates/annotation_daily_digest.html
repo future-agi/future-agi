@@ -2,6 +2,8 @@
 {% block title %}Your annotation digest{% endblock %}
 {% block preheader %}{% if annotator_total %}{{ annotator_total }} pending{% if reviewer_total %} · {% endif %}{% endif %}{% if reviewer_total %}{{ reviewer_total }} reviews{% endif %}{% endblock %}
 {% block txid %}◦ ANNOTATION / DAILY DIGEST{% endblock %}
+{# Unsubscribe sits inline in the card footer below, so skip the base line. #}
+{% block unsubscribe_footer %}{% endblock %}
 {% block content %}
   <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
     <span style="display:inline-block; width:5px; height:5px; border-radius:50%; background:#fafafa; margin-right:8px; vertical-align:middle; box-shadow:0 0 8px rgba(255,255,255,0.7);"></span>Daily digest

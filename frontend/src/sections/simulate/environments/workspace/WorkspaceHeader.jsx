@@ -20,6 +20,7 @@ import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import EnvVersionPin from "./EnvVersionPin";
+import { compositionSummary } from "./composition/composition.helpers";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import useSimulationAccess from "../hooks/useSimulationAccess";
@@ -123,7 +124,7 @@ export default function WorkspaceHeader({
           <EnvVersionPin env={env} />
         </Stack>
         <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
-          {env.tagline}
+          {env.composition ? compositionSummary(env.composition) : env.tagline}
         </Typography>
       </Box>
 
@@ -137,6 +138,7 @@ export default function WorkspaceHeader({
               trials={headerTrials}
               onChange={setHeaderTrials}
               scenarioCount={scenarioCount}
+              composition={env.composition}
             />
           )}
           <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
@@ -211,6 +213,7 @@ WorkspaceHeader.propTypes = {
     name: PropTypes.string,
     tagline: PropTypes.string,
     surface: PropTypes.string,
+    composition: PropTypes.object,
     status: PropTypes.string,
     buildStatus: PropTypes.string,
     platform: PropTypes.shape({
