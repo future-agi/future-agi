@@ -7,6 +7,18 @@ import { formatCredits, formatMinutes } from "./fixRunView";
 export const needsVariations = (picked, limits) =>
   picked > 0 && picked < (limits?.cases_min ?? 0);
 
+// The run's scenarios in its locked version's test split; none off one.
+export const testSplitKeys = (options) =>
+  (options?.scenarios || [])
+    .filter((s) => s.split === "test")
+    .map((s) => s.key);
+
+export function heldBackNote(options) {
+  if (options?.held_back_from !== "locked_version") return null;
+  if (!options.locked_version_label) return null;
+  return `Held back: lock ${options.locked_version_label}'s test split. It learns only from the train split.`;
+}
+
 // `heldBack` is heldBackOf's answer: the cases the server holds back, or why
 // none are known yet.
 export function countsLine(picked, protectedCount, limits, heldBack) {
@@ -139,8 +151,17 @@ export function launchError({
   models = [],
   seenModels = [],
   costLimit = "",
+  testKeys = [],
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
+  // Every case held back: the epoch would have nothing to learn from.
+  if (testKeys.length && targets.every((key) => testKeys.includes(key))) {
+    const subject =
+      targets.length === 1
+        ? "The only failing case is"
+        : `All ${targets.length} failing cases are`;
+    return `${subject} in the test split. Pick failing cases from the train split.`;
+  }
   if (targets.length < limits.scenarios_min) {
     // Only for a backend older than dev: the current schema requires cases_min and
     // variations_per_case. Remove this branch once every environment runs current dev.

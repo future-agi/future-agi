@@ -1137,7 +1137,9 @@ describe("Ship", () => {
     expect(
       await within(dialog).findByText("instructions.md"),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("+3 −1")).toBeInTheDocument();
+    // Added and removed lines read as two aligned columns.
+    expect(within(dialog).getByText("+3")).toBeInTheDocument();
+    expect(within(dialog).getByText("−1")).toBeInTheDocument();
     expect(within(dialog).queryByText("Repo")).toBeNull();
     expect(shipPosts()).toHaveLength(0);
     await user.click(confirm);
@@ -1247,6 +1249,25 @@ describe("Ship", () => {
         "It becomes the default once it passes a check with this environment",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says there are no file changes when the patch is empty", async () => {
+    const user = userEvent.setup();
+    const real = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url, ...rest) =>
+      /\/patch\//.test(url)
+        ? Promise.resolve({ data: "" })
+        : real(url, ...rest),
+    );
+    try {
+      renderPage("fix-ready-github");
+      const { dialog } = await confirmShip(user, "Open pull request");
+      expect(
+        await within(dialog).findByText("No file changes."),
+      ).toBeInTheDocument();
+    } finally {
+      axios.get.mockImplementation(real);
+    }
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {

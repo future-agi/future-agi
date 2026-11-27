@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Reviewer Assigner: routes each PR to one owning-team member, reassigns stale
+// Reviewer Assigner: routes each internal PR to one reviewer, reassigns stale
 // requests, DM-pings stale reviewers, and posts a daily reviewer-load summary.
 // Driven by .github/reviewer-config.json; selection logic is in reviewer-rotation.mjs.
 //
 // Modes (selected via MODE env var):
-//   sweep    — one GraphQL read of every open PR; request the least-loaded member of the
-//              owning team(s) where there is no reviewer, and move a request with no
-//              devflow-review after 4 working hours to the next least-loaded member
+//   sweep    — read the recent open PRs; request the least-loaded person on the roster
+//              (config users with write access) where there is no reviewer, and move a
+//              request with no devflow-review after 4 working hours to the next one
 //   ping     — DM each pending reviewer of an open PR >3 days old (gated by REVIEWER_PING_ENABLED)
 //   summary  — post sorted "reviewer → open PR count" to SLACK_WEBHOOK_URL
 
@@ -16,13 +16,13 @@ import { dirname, resolve } from "node:path";
 
 import {
   REASSIGN_AFTER_MS,
-  candidatesFor,
   hasHumanReviewRequest,
   isAssignerComment,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
   renderAssignment,
+  rosterReviewers,
   workingMsBetween,
 } from "./reviewer-rotation.mjs";
 
@@ -48,6 +48,9 @@ if (!GITHUB_REPOSITORY) die("GITHUB_REPOSITORY is required");
 const [OWNER, REPO] = GITHUB_REPOSITORY.split("/");
 const GH_API = "https://api.github.com";
 const PING_AGE_DAYS = 3;
+// Only pull requests opened in the last week rotate, so turning the sweep on
+// never assigns the backlog.
+const NEW_PR_MS = 7 * 24 * 3600 * 1000;
 const dryRun = DRY_RUN === "true";
 
 const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
@@ -104,61 +107,9 @@ async function ghPaginated(path) {
   return out;
 }
 
-// Convert a labeler-style glob (** and *) to a RegExp. Anchored at both ends.
-function globToRegex(glob) {
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === "*" && glob[i + 1] === "*") {
-      re += ".*";
-      i++;
-    } else if (c === "*") {
-      re += "[^/]*";
-    } else if (/[.+?^${}()|[\]\\]/.test(c)) {
-      re += "\\" + c;
-    } else {
-      re += c;
-    }
-  }
-  return new RegExp("^" + re + "$");
-}
-
-// Specificity = length of the literal prefix before the first wildcard.
-// Used to pick the owning team when multiple globs match the same file.
-function globSpecificity(glob) {
-  const i = glob.search(/[*?]/);
-  return i === -1 ? glob.length : i;
-}
-
-// Precompile globs once.
-const compiledTeams = Object.entries(config.teams).map(([id, t]) => ({
-  id,
-  ...t,
-  compiledPaths: t.paths.map((p) => ({
-    glob: p,
-    re: globToRegex(p),
-    specificity: globSpecificity(p),
-  })),
-}));
-
-// Find the team that owns a given file path (most-specific-glob-wins).
-function ownerOf(file) {
-  let best = null;
-  for (const team of compiledTeams) {
-    for (const p of team.compiledPaths) {
-      if (p.re.test(file)) {
-        if (!best || p.specificity > best.specificity)
-          best = { team, specificity: p.specificity };
-        break; // one team can only "claim" via its most-specific own glob anyway
-      }
-    }
-  }
-  return best?.team || null;
-}
-
 // Find every team that has `gh-user` as its lead (a person may lead multiple teams).
 function teamsLedBy(ghUser) {
-  return compiledTeams.filter((t) => t.lead === ghUser);
+  return Object.values(config.teams).filter((t) => t.lead === ghUser);
 }
 
 function userMeta(ghUser) {
@@ -172,25 +123,28 @@ function slackMention(ghUser) {
 
 // ─── mode: sweep (assign + reassign) ──────────────────────────────────────────
 
-// One paginated GraphQL read covers every open PR: reviewers, assignment marker,
-// reviews and files. A sweep costs one request per PAGE_SIZE open PRs, plus
-// writes for the PRs that need an assignment or a reassignment. The marker is
-// posted when the PR opens, so the first 30 comments hold it.
-const PAGE_SIZE = 50;
+// One paginated GraphQL read, newest first, covers the open PRs the sweep can
+// act on: reviewers, assignment marker and reviews. Paging stops at the
+// first page that reaches past NEW_PR_MS, so a sweep costs a few requests
+// however long the backlog is, plus writes for the PRs that need an assignment
+// or a reassignment. A page of 50 with comment bodies timed out (HTTP 502). The
+// marker is posted when the PR opens, so the first 30 comments hold it.
+const PAGE_SIZE = 25;
 const SWEEP_QUERY = `query($owner: String!, $repo: String!, $after: String) {
   repository(owner: $owner, name: $repo) {
-    pullRequests(states: OPEN, first: ${PAGE_SIZE}, after: $after) {
+    pullRequests(states: OPEN, first: ${PAGE_SIZE}, after: $after, orderBy: { field: CREATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number
         isDraft
+        isCrossRepository
+        createdAt
         author { login }
         reviewRequests(first: 20) {
           nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
         }
         latestReviews(first: 20) { nodes { author { login } body submittedAt } }
         comments(first: 30) { nodes { databaseId body author { login } } }
-        files(first: 100) { nodes { path } }
       }
     }
   }
@@ -204,6 +158,8 @@ function normalise(n) {
   return {
     number: n.number,
     draft: n.isDraft,
+    fork: n.isCrossRepository,
+    created_at: n.createdAt,
     author: n.author?.login,
     requested_reviewers: asked
       .filter((r) => r.__typename === "User")
@@ -221,12 +177,14 @@ function normalise(n) {
       body: r.body,
       submitted_at: r.submittedAt,
     })),
-    files: n.files.nodes.map((f) => f.path),
   };
 }
 
+// Open PRs, newest first, through the first page that reaches past the
+// NEW_PR_MS cutoff. Reviewer load is counted on these PRs only.
 async function openPrs() {
   const out = [];
+  const cutoff = Date.now() - NEW_PR_MS;
   let after = null;
   do {
     const res = await gh("/graphql", {
@@ -243,7 +201,10 @@ async function openPrs() {
       );
     const page = res.data.repository.pullRequests;
     out.push(...page.nodes.map(normalise));
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    const oldest = page.nodes.at(-1)?.createdAt;
+    const pastCutoff = !oldest || Date.parse(oldest) < cutoff;
+    after =
+      page.pageInfo.hasNextPage && !pastCutoff ? page.pageInfo.endCursor : null;
   } while (after);
   return out;
 }
@@ -287,7 +248,7 @@ async function upsertAssignment(pr, { login, round, note }) {
   const hours = REASSIGN_AFTER_MS / 3600000;
   const body = [
     renderAssignment({ login, at: new Date().toISOString(), round }),
-    `${note} If no agent review arrives within ${hours} working hours (10:00–19:00 IST, Mon–Fri), the next least-loaded member is requested.`,
+    `${note} If no agent review arrives within ${hours} working hours (10:00–19:00 IST, Mon–Fri), the next least-loaded reviewer is requested.`,
   ].join("\n");
   const existing = findAssignment(pr.comments);
   const path = existing
@@ -300,31 +261,23 @@ async function upsertAssignment(pr, { login, round, note }) {
   });
 }
 
-function owningTeams(pr) {
-  const teams = new Map(); // id → team
-  for (const file of pr.files) {
-    const t = ownerOf(file);
-    if (t) teams.set(t.id, t);
-  }
-  return teams;
+// Everyone on the roster (config users) who can push here, except the author.
+async function reviewersFor(pr) {
+  return rosterReviewers(
+    Object.keys(config.users),
+    [...(await writers())],
+    pr.author,
+  );
 }
 
 async function assign(pr) {
   log(`\n— PR #${pr.number} —`);
-  const matchedTeams = owningTeams(pr);
-  const candidates = candidatesFor(
-    [...matchedTeams.values()],
-    config,
-    pr.author,
-  );
+  const candidates = await reviewersFor(pr);
   const reviewer = pickLeastLoaded(candidates, loads, { seed: pr.number });
   if (!reviewer) {
-    log("  no reviewer to assign (the author is the only configured member)");
+    log("  no reviewer to assign (nobody else on the roster can push)");
     return;
   }
-  const teamNames = [...matchedTeams.values()]
-    .map((t) => t.display_name)
-    .join(", ");
 
   log(`  assigning: ${reviewer} (least loaded of ${candidates.join(", ")})`);
   if (dryRun) {
@@ -336,33 +289,12 @@ async function assign(pr) {
   await upsertAssignment(pr, {
     login: reviewer,
     round: 1,
-    note: teamNames
-      ? `Review requested from \`${reviewer}\`, the least-loaded member of ${teamNames}.`
-      : `No owning team matched; review requested from \`${reviewer}\`.`,
+    note: `Review requested from \`${reviewer}\`, the least-loaded reviewer.`,
   });
-
-  if (matchedTeams.size > 1) {
-    const lines = [...matchedTeams.values()].map(
-      (t) => `• **${t.display_name}** (${t.ownership}) — @${t.lead}`,
-    );
-    const body = `This PR touches code owned by multiple teams:\n\n${lines.join("\n")}\n\nPlease coordinate on review.`;
-    await gh(`/repos/${OWNER}/${REPO}/issues/${pr.number}/comments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body }),
-    });
-    log(
-      `  posted cross-team coordination comment (${matchedTeams.size} teams)`,
-    );
-  }
 }
 
 async function reassign(pr, current) {
-  const candidates = candidatesFor(
-    [...owningTeams(pr).values()],
-    config,
-    pr.author,
-  );
+  const candidates = await reviewersFor(pr);
   const next = pickLeastLoaded(candidates, loads, {
     exclude: [current.login],
     seed: pr.number + current.round,
@@ -394,20 +326,39 @@ async function reassign(pr, current) {
   });
 }
 
+// Internal means write access here: lower-case logins with push or higher,
+// read once per sweep and only when a write is due. Only internal authors'
+// pull requests rotate (external ones have their own flow), and only
+// internal reviewers are requested (GitHub refuses anyone else).
+let writersRead = null;
+function writers() {
+  writersRead ??= ghPaginated(
+    `/repos/${OWNER}/${REPO}/collaborators?permission=push&per_page=100`,
+  ).then((users) => new Set(users.map((u) => u.login.toLowerCase())));
+  return writersRead;
+}
+
+async function isInternal(login) {
+  return Boolean(login) && (await writers()).has(login.toLowerCase());
+}
+
 // Writes only when this PR needs them: no reviewer and never assigned → assign;
 // the assigned reviewer is overdue → reassign. Anything else is read-only.
+// A fork is always external: without write access a branch cannot live here.
 async function sweepPr(pr, now) {
-  if (pr.draft) return;
+  if (pr.draft || pr.fork || now - Date.parse(pr.created_at) > NEW_PR_MS)
+    return;
   const current = findAssignment(pr.comments);
   if (!hasHumanReviewRequest(pr)) {
     // A marker without a request means someone removed the reviewer by hand.
-    if (!current) await assign(pr);
+    if (!current && (await isInternal(pr.author))) await assign(pr);
     return;
   }
   if (!current) return; // assigned before this rotation existed, or by hand
   const requested = pr.requested_reviewers.map((r) => r.login.toLowerCase());
   if (!requested.includes(current.login.toLowerCase())) return; // reviewed, or changed by hand
-  if (reassignDue(current, pr.reviews, now)) await reassign(pr, current);
+  if (reassignDue(current, pr.reviews, now) && (await isInternal(pr.author)))
+    await reassign(pr, current);
 }
 
 // A cancelled run (a newer dev push) finishes the PR it is writing, so a request
