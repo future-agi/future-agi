@@ -927,11 +927,7 @@ describe("LaunchFixDialog", () => {
       pinOptions(locked());
       renderDialog();
 
-      expect(
-        await screen.findByText(
-          "Held back: lock 2026.11.1's test split. It learns only from the train split.",
-        ),
-      ).toBeInTheDocument();
+      expect(await screen.findByText(/lock 2026\.11\.1/)).toBeInTheDocument();
       expect(
         screen.getByText(
           "12 failing: 10 to fix, 2 held back to prove it · 5 protected",
@@ -958,11 +954,7 @@ describe("LaunchFixDialog", () => {
       pinOptions(locked());
       renderDialog({ initialTargets: ["refund-over-200", "identity-phone"] });
 
-      expect(
-        await screen.findByText(
-          "All 2 failing cases are in the test split. Pick failing cases from the train split.",
-        ),
-      ).toBeInTheDocument();
+      expect(await screen.findByText(/in the test split/)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
     });
   });

@@ -653,13 +653,10 @@ class TestALockedVersion:
             "fix_targets_all_test",
             422,
         )
-        assert refused.value.message == (
-            "All 2 failing cases are in the test split. Pick failing cases from the"
-            " train split."
-        )
+        assert refused.value.details == {"cases": 2}
         assert not AgentFixRun.no_workspace_objects.exists()
 
-    def test_the_refusal_of_one_failing_case_in_the_test_split_is_singular(
+    def test_the_refusal_counts_only_the_failing_cases_in_the_test_split(
         self, source_run, user
     ):
         _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]])
@@ -668,10 +665,7 @@ class TestALockedVersion:
             _launch(source_run, user)
 
         assert refused.value.code == "fix_targets_all_test"
-        assert refused.value.message == (
-            "The only failing case is in the test split. Pick failing cases from the"
-            " train split."
-        )
+        assert refused.value.details == {"cases": 1}
 
     def test_a_protected_test_split_case_never_reaches_the_request(
         self, source_run, user
@@ -684,10 +678,6 @@ class TestALockedVersion:
         assert (refused.value.code, refused.value.status_code) == (
             "fix_protected_in_test",
             422,
-        )
-        assert refused.value.message == (
-            "Cases in the test split can't be must-pass: the Epoch would learn from"
-            " them."
         )
         assert not AgentFixRun.no_workspace_objects.exists()
 

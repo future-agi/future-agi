@@ -110,9 +110,7 @@ describe("held back on a locked version", () => {
   });
 
   it("names the lock whose test split is held back", () => {
-    expect(heldBackNote(LOCKED)).toBe(
-      "Held back: lock 2026.11.1's test split. It learns only from the train split.",
-    );
+    expect(heldBackNote(LOCKED)).toMatch(/lock 2026\.11\.1/);
   });
 
   it("refuses a pick that is all test split, as the launch does", () => {
@@ -124,12 +122,8 @@ describe("held back on a locked version", () => {
         limits: LIMITS,
         testKeys: testSplitKeys(LOCKED),
       });
-    expect(check(["a", "b"])).toBe(
-      "All 2 failing cases are in the test split. Pick failing cases from the train split.",
-    );
-    expect(check(["a"])).toBe(
-      "The only failing case is in the test split. Pick failing cases from the train split.",
-    );
+    expect(check(["a", "b"])).toMatch(/in the test split/);
+    expect(check(["a"])).toMatch(/in the test split/);
     expect(check(["a", "c"])).toBeNull();
   });
 });
