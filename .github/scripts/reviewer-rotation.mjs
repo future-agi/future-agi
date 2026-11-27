@@ -14,6 +14,29 @@ const ASSIGN_RE = /<!--\s*devflow-assigned:v1\b([^>]*)-->/;
 
 const lower = (s) => String(s || "").toLowerCase();
 
+// The team GitHub adds for a code-owner path. Its request is not a person's
+// review request, so rotation still assigns one reviewer.
+export const CODE_OWNER_TEAM = "internal-all-write";
+
+// True when a person, or a team other than the code-owner team, is asked to review.
+export function hasHumanReviewRequest(pr) {
+  return (
+    (pr.requested_reviewers?.length ?? 0) > 0 ||
+    (pr.requested_teams || []).some((t) => lower(t.slug) !== CODE_OWNER_TEAM)
+  );
+}
+
+// True for a comment by the assigner: the approver App, or github-actions
+// for assignments written before the App. Routing only: the approval job
+// trusts the App's review request, never a comment.
+export function isAssignerComment(comment, assigner) {
+  const login = lower(comment.user?.login);
+  return (
+    /^github-actions(\[bot\])?$/.test(login) ||
+    (Boolean(assigner) && login === lower(assigner))
+  );
+}
+
 function uniqueExcept(logins, author) {
   const seen = new Set([lower(author)]);
   return logins.filter((l) => !seen.has(lower(l)) && seen.add(lower(l)));

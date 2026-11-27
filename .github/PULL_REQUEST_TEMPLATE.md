@@ -44,7 +44,7 @@ AI use:
 ## E2E coverage
 
 <!-- One line. `yarn coverage` (from e2e/) tells you which to use:
-     E2E: new <ID>            a flow added in this PR (appears in the FLOWS.md diff)
+     E2E: new <ID>            a flow added in this PR (a new flow id in a spec under e2e/flows)
      E2E: updated <ID>        an existing flow changed in this PR
      E2E: covered-by <ID>     an existing, unchanged flow already proves this change
      E2E: exempt (<reason>)   docs | tooling | tests-only | not-in-stack | backend-internal |
