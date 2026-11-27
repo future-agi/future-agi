@@ -1,12 +1,11 @@
 """A failed reconcile has no entry to log; the task itself owns the reason."""
 
 import dataclasses
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from asgiref.sync import async_to_sync
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.service import RPCError, RPCStatusCode
 from temporalio.testing import ActivityEnvironment
 
 from tfc.temporal.eval_tasks import activities, workflows
@@ -131,51 +130,33 @@ def test_failed_selection_reason_in_empty_logs(
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize(
-    ("start_error", "expected_status"),
-    [
-        (None, EvalTaskStatus.PENDING),
-        (RuntimeError("dispatch unavailable"), EvalTaskStatus.FAILED),
-        (
-            RPCError("refused", RPCStatusCode.INVALID_ARGUMENT, b""),
-            EvalTaskStatus.FAILED,
-        ),
-        (
-            RPCError("no acknowledgement", RPCStatusCode.DEADLINE_EXCEEDED, b""),
-            EvalTaskStatus.PENDING,
-        ),
-    ],
-)
-def test_resume_clears_reason_only_when_accepted(
-    monkeypatch, auth_client, eval_task, start_error, expected_status
-):
+def test_resume_hides_reason_until_run_starts(monkeypatch, auth_client, eval_task):
     eval_task.status = EvalTaskStatus.FAILED
     eval_task.failure_reason = BUDGET_REASON
     eval_task.save(update_fields=["status", "failure_reason"])
 
-    def start(task, *, replace_existing):
-        assert replace_existing and task.status == EvalTaskStatus.PENDING
-        if start_error is not None:
-            raise start_error
-        return str(task.pk)
-
+    start = Mock(return_value=str(eval_task.pk))
     monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
     response = auth_client.post(
         f"/tracer/eval-task/unpause_eval_task/?eval_task_id={eval_task.pk}",
         {},
         format="json",
     )
+    assert response.status_code == 200
+    start.assert_called_once_with(eval_task, replace_existing=True)
     eval_task.refresh_from_db()
-    assert response.status_code == (200 if start_error is None else 400)
-    assert eval_task.status == expected_status
-    assert eval_task.failure_reason == (None if start_error is None else BUDGET_REASON)
+    assert eval_task.status == EvalTaskStatus.PENDING
+    assert eval_task.failure_reason == BUDGET_REASON
+
     response = auth_client.get(
         "/tracer/eval-task/get_eval_task_logs/", {"eval_task_id": str(eval_task.pk)}
     )
     assert response.status_code == 200
     logs = response.json()["result"]
-    assert logs["total_count"] == 0
-    assert logs["status"] == expected_status
-    assert logs["failure_reason"] == (
-        BUDGET_REASON if expected_status == EvalTaskStatus.FAILED else None
-    )
+    assert logs["status"] == EvalTaskStatus.PENDING
+    assert logs["failure_reason"] is None
+
+    activities._set_task_status_sync(str(eval_task.pk), EvalTaskStatus.RUNNING)
+    eval_task.refresh_from_db()
+    assert eval_task.status == EvalTaskStatus.RUNNING
+    assert eval_task.failure_reason is None

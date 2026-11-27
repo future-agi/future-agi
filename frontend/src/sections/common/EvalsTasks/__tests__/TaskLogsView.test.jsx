@@ -144,10 +144,13 @@ describe("TaskLogsView totals", () => {
     },
   );
 
-  it("does not claim no evaluations ran when a failed task has executions", async () => {
+  it("explains a missing failure reason without discounting existing runs", async () => {
     mocks.readEvalTaskLogs.mockResolvedValue(summary({ status: "failed" }));
     renderView("failed");
-    await screen.findByText("Completed runs");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The reason for this failed run was not recorded.",
+    );
+    expect(await statCardText("Completed runs")).toBe("2Completed runs");
     expect(
       screen.queryByText(/No evaluation runs are available in this log/),
     ).not.toBeInTheDocument();

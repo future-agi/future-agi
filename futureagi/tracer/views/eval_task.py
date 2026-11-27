@@ -34,8 +34,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
-from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.service import RPCError, RPCStatusCode
 
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_input_validation import (
@@ -2948,36 +2946,11 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
             ).count()
             eval_task.status = EvalTaskStatus.PENDING
-            eval_task.save(update_fields=["status", "updated_at"])
-            pending = EvalTask.objects.filter(
-                pk=eval_task.pk,
-                status=EvalTaskStatus.PENDING,
-                updated_at=eval_task.updated_at,
-            )
-            try:
-                start_eval_task_workflow_sync(eval_task, replace_existing=True)
-            except (
-                RuntimeError,
-                ValueError,
-                WorkflowAlreadyStartedError,
-                RPCError,
-            ) as exc:
-                # Only undo a definite refusal. A timeout can lose the reply
-                # to an accepted start; leave it PENDING for its worker.
-                if not isinstance(exc, RPCError) or exc.status in {
-                    RPCStatusCode.INVALID_ARGUMENT,
-                    RPCStatusCode.FAILED_PRECONDITION,
-                    RPCStatusCode.PERMISSION_DENIED,
-                    RPCStatusCode.UNAUTHENTICATED,
-                    RPCStatusCode.NOT_FOUND,
-                    RPCStatusCode.ALREADY_EXISTS,
-                }:
-                    pending.update(status=recovered_from)
-                raise
-            # Keep the diagnosis until dispatch accepts. If its worker already
-            # advanced the task, that status write owns the reason instead.
-            if eval_task.failure_reason is not None:
-                pending.update(failure_reason=None)
+            eval_task.save(update_fields=["status"])
+
+            # Pause exits the workflow; resuming starts a fresh run that picks up
+            # the remaining pending/running entries.
+            start_eval_task_workflow_sync(eval_task, replace_existing=True)
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(

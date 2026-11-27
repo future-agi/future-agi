@@ -154085,6 +154085,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        failure_reason: {
+          title: "Failure reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         run_type: {
           title: "Run type",
           type: "string",

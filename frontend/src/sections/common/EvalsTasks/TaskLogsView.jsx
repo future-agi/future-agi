@@ -714,10 +714,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           Could not refresh task logs. The previous summary is still shown.
         </Alert>
       )}
-      {isFailed && isCurrentLog && (failureReason || hasEmptyLog) && (
+      {isFailed && isCurrentLog && (
         <Alert severity="error">
           {failureReason ||
-            "This task failed. No evaluation runs are available in this log, and the failure reason is unavailable."}
+            (hasEmptyLog
+              ? "This task failed. No evaluation runs are available in this log, and the failure reason is unavailable."
+              : "The reason for this failed run was not recorded.")}
         </Alert>
       )}
       {/* Progress Bar */}

@@ -37932,6 +37932,8 @@ export interface _EvalTaskListRowResponseApi {
   /** @minLength 1 */
   status: string;
   /** @minLength 1 */
+  failure_reason?: string | null;
+  /** @minLength 1 */
   run_type: string;
   /** @minLength 1 */
   row_type: string;

@@ -1400,9 +1400,10 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
-    // Swagger 2 x-nullable is lost by Orval. Keep the explicit task-details
-    // response aligned with legacy nullable fields and absent sampling policies.
+    // Orval drops x-nullable. Task list rows send null for a missing reason;
+    // task details have legacy nullable fields and absent sampling policies.
     for (const [typeName, fields] of Object.entries({
+      _EvalTaskListRowResponseApi: ["failure_reason"],
       EvalTaskDetailsResultApi: [
         "name",
         "project_name",
@@ -2520,6 +2521,18 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         / =[\s\S]*/,
         ` = ${getName};\n\n`,
         postName,
+      );
+    }
+    for (const response of [
+      "TracerEvalTaskListEvalTasksResponse",
+      "TracerEvalTaskListEvalTasksWithProjectNameResponse",
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        '"failure_reason": zod.string().min(1).optional()',
+        '"failure_reason": zod.string().min(1).nullish()',
+        `${response}.failure_reason nullable`,
       );
     }
     const taskDetailsDeclaration =
