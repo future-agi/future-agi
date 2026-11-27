@@ -55210,6 +55210,7 @@ export const SimulateApiHarnessEnvironmentsVerifyDetailResponse = zod.object({
     "finalizing",
     "cleaning_up",
     "retry_wait",
+    "parked",
     "completed",
     "failed",
     "canceled",
@@ -59125,12 +59126,6 @@ export const simulateApiHarnessReleasesCustomizeBodyIdempotencyKeyMax = 255;
 
 export const SimulateApiHarnessReleasesCustomizeBody = zod.object({
   suite_id: zod.string().uuid(),
-  agent_version_id: zod
-    .string()
-    .uuid()
-    .describe(
-      "The agent whose workspace the copy is built in, as every build is.",
-    ),
   name: zod.string().min(1).max(simulateApiHarnessReleasesCustomizeBodyNameMax),
   change: zod
     .string()
@@ -59142,6 +59137,18 @@ export const SimulateApiHarnessReleasesCustomizeBody = zod.object({
     .min(1)
     .max(simulateApiHarnessReleasesCustomizeBodyIdempotencyKeyMax),
 });
+
+/**
+ * Continue a copy whose design paused on an unanswered question: it starts again from
+the workspace it paused in and asks that question again.
+ */
+export const SimulateApiHarnessReleasesCustomizeContinueCustomizationParams =
+  zod.object({
+    job_id: zod.string(),
+  });
+
+export const SimulateApiHarnessReleasesCustomizeContinueCustomizationBody =
+  zod.object({});
 
 /**
  * How a connected agent fits a release suite: its tools paired with the world's and

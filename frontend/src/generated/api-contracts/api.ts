@@ -67091,6 +67091,80 @@ export const simulateApiHarnessReleasesCustomize = async (
   );
 };
 
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse202 =
+  {
+    data: HarnessJobReadApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse404 =
+  {
+    data: ApiTextErrorResponseApi;
+    status: 404;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse409 =
+  {
+    data: ApiTextErrorResponseApi;
+    status: 409;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 409>;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponseSuccess =
+  simulateApiHarnessReleasesCustomizeContinueCustomizationResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponseError =
+  (
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponse403
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponse404
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponse409
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse =
+  | simulateApiHarnessReleasesCustomizeContinueCustomizationResponseSuccess
+  | simulateApiHarnessReleasesCustomizeContinueCustomizationResponseError;
+
+export const getSimulateApiHarnessReleasesCustomizeContinueCustomizationUrl = (
+  jobId: string,
+) => {
+  return `/simulate/api/harness-releases/customize/${jobId}/continue/`;
+};
+
+/**
+ * Continue a copy whose design paused on an unanswered question: it starts again from
+the workspace it paused in and asks that question again.
+ */
+export const simulateApiHarnessReleasesCustomizeContinueCustomization = async (
+  jobId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesCustomizeContinueCustomizationResponse> => {
+  return apiMutator<simulateApiHarnessReleasesCustomizeContinueCustomizationResponse>(
+    getSimulateApiHarnessReleasesCustomizeContinueCustomizationUrl(jobId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateApiHarnessReleasesFitResponse200 = {
   data: HarnessReleaseFitResponseApi;
   status: 200;

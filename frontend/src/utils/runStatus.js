@@ -33,6 +33,7 @@ export const RUN_STATUS = {
   error: { role: "danger", label: "Error" },
   flaky: { role: "warning", label: "Flaky" },
   needs_input: { role: "warning", label: "Needs input" },
+  parked: { role: "warning", label: "Paused" },
   needs_review: { role: "warning", label: "Needs review" },
   awaiting_approval: { role: "warning", label: "Awaiting approval" },
   stopped: { role: "neutral", label: "Stopped" },

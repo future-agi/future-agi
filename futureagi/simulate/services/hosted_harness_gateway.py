@@ -376,9 +376,16 @@ def _ask_harness_to_customize(
     from simulate.services.hosted_harness_conversation import enqueue_message
     from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
 
-    customization = ((job.payload or {}).get("metadata") or {}).get(
-        "customization"
-    ) or {}
+    metadata = (job.payload or {}).get("metadata") or {}
+    if (metadata.get("design") or {}).get("resume_from"):
+        # A continued copy: the design picks up from its checkpoint and asks its open
+        # question again. A new message would be answered before it.
+        from simulate.models import HostedHarnessConversation
+
+        conversation = HostedHarnessConversation.no_workspace_objects.get(job=job)
+        schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+        return
+    customization = metadata.get("customization") or {}
     source = (customization.get("source") or {}).get("environment_name") or "it"
     conversation, _message, _created = enqueue_message(
         job,
@@ -5682,8 +5689,11 @@ class HostedHarnessGateway:
         """Settle a copy whose design process exited 0 or 2 from the releases it sealed in
         `design-output`, then clean up through the normal attempt protocol."""
         from simulate.services.harness_releases import (
+            AUTHORING_WORKSPACE,
             DESIGN_OUTPUT,
             complete_customization,
+            design_waiting,
+            park_customization,
         )
 
         sandbox = self.client.get(
@@ -5709,15 +5719,40 @@ class HostedHarnessGateway:
                 body = sandbox.fs.download_file("/tmp/design.tar.gz", 300)
                 if _extract_adaptation(body, directory):
                     output = Path(directory)
-            job = complete_customization(attempt.job, output)
+            if design_waiting(output):
+                # Paused on an unanswered question: keep the workspace so Continue resumes it.
+                # Its spend file stays behind, so the next attempt doesn't count it again.
+                checkpoint = sandbox.process.exec(
+                    f"cd {AUTHORING_WORKSPACE} && umask 077 && "
+                    "tar -czf /tmp/design-checkpoint.tar.gz --exclude=__pycache__ "
+                    f"--exclude=./cost.json --exclude=./{DESIGN_OUTPUT.rsplit('/', 1)[-1]} . && "
+                    '{ test "$(stat -c %s /tmp/design-checkpoint.tar.gz)" '
+                    f"-le {_ADAPTATION_MAX_BYTES} || (exit {_ADAPTATION_TOO_LARGE_EXIT}); }}",
+                    timeout=180,
+                )
+                if checkpoint.exit_code:
+                    raise HostedHarnessError(
+                        "design_checkpoint_failed",
+                        str(checkpoint.result or "")[-500:],
+                        status_code=502,
+                        retryable=True,
+                    )
+                job = park_customization(
+                    attempt.job,
+                    sandbox.fs.download_file("/tmp/design-checkpoint.tar.gz", 300),
+                )
+            else:
+                job = complete_customization(attempt.job, output)
         return self._end_adaptation(attempt, job)
 
     def _end_adaptation(
         self, attempt: HostedHarnessAttempt, job: HostedHarnessJob
     ) -> HostedHarnessJob:
-        """End the attempt of a settled adaptation as its job ended, and clean up."""
-        attempt.terminal_stage = job.state
-        attempt.terminal_failure = job.failure
+        """End the attempt of a settled adaptation as its job ended, and clean up. A parked
+        copy's attempt ended cleanly: the job waits for Continue."""
+        parked = job.state == HostedHarnessJob.State.PARKED
+        attempt.terminal_stage = "completed" if parked else job.state
+        attempt.terminal_failure = None if parked else job.failure
         attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
         return self._delete_and_record(attempt)
 

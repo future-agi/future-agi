@@ -57511,6 +57511,67 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-releases/customize/{job_id}/continue/": {
+            "post": {
+                "operationId": "simulate_api_harness-releases_customize_continue_customization",
+                "description": "Continue a copy whose design paused on an unanswered question: it starts again from\nthe workspace it paused in and asks that question again.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-releases/fit/": {
             "post": {
                 "operationId": "simulate_api_harness-releases_fit",
@@ -161552,6 +161613,7 @@
                         "finalizing",
                         "cleaning_up",
                         "retry_wait",
+                        "parked",
                         "completed",
                         "failed",
                         "canceled"
@@ -161583,6 +161645,7 @@
                         "finalizing",
                         "cleaning_up",
                         "retry_wait",
+                        "parked",
                         "completed",
                         "failed",
                         "canceled"
@@ -164062,7 +164125,6 @@
         "HarnessReleaseCustomizeRequest": {
             "required": [
                 "suite_id",
-                "agent_version_id",
                 "name",
                 "change",
                 "idempotency_key"
@@ -164071,12 +164133,6 @@
             "properties": {
                 "suite_id": {
                     "title": "Suite id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "agent_version_id": {
-                    "title": "Agent version id",
-                    "description": "The agent whose workspace the copy is built in, as every build is.",
                     "type": "string",
                     "format": "uuid"
                 },

@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -16,6 +16,7 @@ import StatusBadge from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { paths } from "src/routes/paths";
 import { cancelHarnessJob } from "src/api/harness/harness";
+import { continueHarnessCustomization } from "src/api/harness/releases";
 import {
   errorMessage,
   terminalStages,
@@ -63,6 +64,7 @@ BriefRow.propTypes = {
  */
 export default function CustomizeTheCopy({ jobId, job, chat }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { canEdit } = useSimulationAccess();
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const info = job?.job || {};
@@ -74,19 +76,29 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
   const status = job?.status || {};
   const state = status.state || "queued";
   const finished = terminalStages.has(state);
+  // Paused on a question nobody answered: the design waits, kept, for Continue.
+  const parked = state === "parked";
   // The job stays "provisioning" while the builder designs, which reads as nothing
   // happening: show the conversation's state until the job ends.
-  const shownState = finished
-    ? state
-    : chat?.waiting
-      ? "needs_input"
-      : chat?.running || chat?.inFlight
-        ? "in_progress"
-        : state;
+  const shownState =
+    finished || parked
+      ? state
+      : chat?.waiting
+        ? "needs_input"
+        : chat?.running || chat?.inFlight
+          ? "in_progress"
+          : state;
   const sourceTitle = titleOf(source.environment_name);
   const cancel = useMutation({
     mutationFn: () => cancelHarnessJob(jobId),
     onSuccess: () => navigate(paths.dashboard.simulate.environments.root),
+    onError: (error) =>
+      enqueueSnackbar(errorMessage(error), { variant: "error" }),
+  });
+  const resume = useMutation({
+    mutationFn: () => continueHarnessCustomization(jobId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["harness-job", jobId] }),
     onError: (error) =>
       enqueueSnackbar(errorMessage(error), { variant: "error" }),
   });
@@ -226,6 +238,29 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
                 }
               >
                 {`Your copy is ready: ${sourceTitle} · copy, ${result.scenario_count} scenarios. It is listed with the ready environments as Private.`}
+              </Alert>
+            )}
+            {parked && (
+              <Alert
+                severity="warning"
+                action={
+                  <ViewerLock
+                    locked={!canEdit}
+                    title={WORKSPACE_COPY.viewer.create}
+                  >
+                    <Button
+                      size="small"
+                      color="inherit"
+                      disabled={!canEdit || resume.isPending}
+                      onClick={() => resume.mutate()}
+                    >
+                      Continue
+                    </Button>
+                  </ViewerLock>
+                }
+              >
+                The builder paused on a question nobody answered. Continue picks
+                up where it left off and asks it again.
               </Alert>
             )}
             {state === "failed" && (

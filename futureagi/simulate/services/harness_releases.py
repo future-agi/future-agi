@@ -2077,6 +2077,16 @@ def customization_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
     uploads, prepare_command = _release_archives(
         job.organization, template["environment"], template["suite"]
     )
+    parked = parked_checkpoint(job)
+    if parked is not None:
+        # A continued copy starts from the workspace it paused in: the design, its records and
+        # the open question, put back before the control process opens the design.
+        uploads = [(DESIGN_CHECKPOINT_PATH, _download(parked["object_key"])), *uploads]
+        prepare_command = (
+            f"mkdir -p {AUTHORING_WORKSPACE} && "
+            f"tar -xzf {DESIGN_CHECKPOINT_PATH} -C {AUTHORING_WORKSPACE} && "
+            f"rm -f {DESIGN_CHECKPOINT_PATH} && {prepare_command}"
+        )
     return AdaptationLaunch(
         uploads=tuple(uploads),
         prepare_command=prepare_command,
@@ -2088,8 +2098,118 @@ def customization_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
 
 
 def customization_settled(job: HostedHarnessJob) -> bool:
-    """A copy whose outcome is recorded: how its sandbox ends no longer changes it."""
-    return customization_of(job) is not None and job.state in _TERMINAL_STATES
+    """A copy whose attempt's outcome is recorded, ended or parked: how its sandbox ends no
+    longer changes it."""
+    return customization_of(job) is not None and (
+        job.state in _TERMINAL_STATES or job.state == HostedHarnessJob.State.PARKED
+    )
+
+
+# A design that paused on an unanswered question (agent-learning-kit `_park_design`).
+DESIGN_WAITING = "design_waiting"
+DESIGN_CHECKPOINT_PATH = "/work/design-checkpoint.tar.gz"
+
+
+def parked_checkpoint(job: HostedHarnessJob) -> dict[str, Any] | None:
+    value = ((job.payload or {}).get("metadata") or {}).get("customization_parked")
+    return value if isinstance(value, dict) and value.get("object_key") else None
+
+
+def design_waiting(output: Path | None) -> bool:
+    """Whether a copy's design output says it paused for an answer rather than ended."""
+    if output is None or not (Path(output) / "result.json").is_file():
+        return False
+    result = _read_object(Path(output), "result.json")
+    failure = result.get("failure")
+    return (
+        result.get("status") != "completed"
+        and isinstance(failure, dict)
+        and failure.get("code") == DESIGN_WAITING
+    )
+
+
+def park_customization(job: HostedHarnessJob, checkpoint: bytes) -> HostedHarnessJob:
+    """Keep a copy whose design paused on an unanswered question: its workspace is stored and the
+    job waits, not ended, until Continue starts it again from there. A copy cancelled meanwhile
+    ends as cancelled instead."""
+    from simulate.models import HostedHarnessConversation
+    from simulate.services.hosted_harness_conversation import (
+        WORKSPACE_MAX_BYTES,
+        _validate_workspace_archive,
+    )
+
+    if len(checkpoint) > WORKSPACE_MAX_BYTES:
+        raise _error("design_checkpoint_too_large", "the paused design is over 256 MiB")
+    _validate_workspace_archive(checkpoint)
+    digest = hashlib.sha256(checkpoint).hexdigest()
+    owner = job.organization_id
+    object_key = f"harness-customizations/{owner}/{job.id}/{digest}.tar.gz"
+    _upload(object_key, checkpoint)
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if customization_settled(locked):
+            return locked
+        if locked.cancel_requested_at or locked.deleted:
+            _settle_customization(locked, None)
+            return locked
+        now = timezone.now()
+        payload = dict(locked.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            "customization_parked": {
+                "object_key": object_key,
+                "digest": f"sha256:{digest}",
+                "size": len(checkpoint),
+                "parked_at": now.isoformat(),
+                "attempt_number": locked.current_attempt_number,
+            },
+        }
+        locked.payload = payload
+        locked.state = HostedHarnessJob.State.PARKED
+        locked.current_stage = HostedHarnessJob.State.PARKED
+        locked.failure = None
+        locked.content_updated_at = now
+        locked.save(
+            update_fields=[
+                "payload",
+                "state",
+                "current_stage",
+                "failure",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
+        # The open question's id belongs to the stopped sandbox; the resumed design asks again.
+        HostedHarnessConversation.no_workspace_objects.filter(job=locked).update(
+            blocking_input=None, updated_at=now
+        )
+    return locked
+
+
+def continue_customization(job: HostedHarnessJob) -> tuple[HostedHarnessJob, bool]:
+    """Queue a parked copy to start again from its stored workspace, and say whether it was
+    queued now. A copy already continuing is left as it is; an ended one can't continue."""
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if customization_of(locked) is None:
+            raise _error("customization_not_found", "copy not found", 404)
+        if locked.state != HostedHarnessJob.State.PARKED:
+            if locked.state in _TERMINAL_STATES or locked.cancel_requested_at:
+                raise _error(
+                    "customization_not_parked",
+                    "this copy has ended and can't be continued",
+                    409,
+                )
+            return locked, False
+        payload = dict(locked.payload)
+        metadata = dict(payload.get("metadata") or {})
+        metadata["design"] = {**metadata["design"], "resume_from": str(locked.id)}
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.state = HostedHarnessJob.State.QUEUED
+        locked.current_stage = HostedHarnessJob.State.QUEUED
+        locked.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    return locked, True
 
 
 def _customization_failure(code: str, message: str) -> dict[str, Any]:

@@ -14,6 +14,9 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("src/api/harness/harness", () => ({ cancelHarnessJob: vi.fn() }));
+vi.mock("src/api/harness/releases", () => ({
+  continueHarnessCustomization: vi.fn(),
+}));
 
 // The chat is the builder's own console; this page only places it.
 vi.mock("../../../buildEnvironment/console/BuilderConsole", () => ({
@@ -21,6 +24,12 @@ vi.mock("../../../buildEnvironment/console/BuilderConsole", () => ({
 }));
 
 const { cancelHarnessJob } = await import("src/api/harness/harness");
+const { continueHarnessCustomization } = await import(
+  "src/api/harness/releases"
+);
+const { default: useSimulationAccess } = await import(
+  "../../../hooks/useSimulationAccess"
+);
 const { default: CustomizeTheCopy } = await import("../CustomizeTheCopy");
 
 const CHAT = { turns: [], running: false, send: vi.fn() };
@@ -53,6 +62,12 @@ beforeEach(() => {
   navigate.mockReset();
   cancelHarnessJob.mockReset();
   cancelHarnessJob.mockResolvedValue({});
+  continueHarnessCustomization.mockReset();
+  continueHarnessCustomization.mockResolvedValue({});
+  vi.mocked(useSimulationAccess).mockReturnValue({
+    canEdit: true,
+    canRun: true,
+  });
 });
 
 describe("The copy's design", () => {
@@ -127,5 +142,31 @@ describe("The copy's design", () => {
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(cancelHarnessJob.mock.calls[0]).toEqual(["copy-job"]);
+  });
+
+  it("continues a copy that paused on a question", async () => {
+    render(jobOf("parked"));
+
+    expect(screen.getByText("Paused")).toBeInTheDocument();
+    expect(screen.getByText(/paused on a question/)).toBeInTheDocument();
+    // Paused, not ended: it can still be stopped.
+    expect(
+      screen.getByRole("button", { name: "Cancel build" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() =>
+      expect(continueHarnessCustomization).toHaveBeenCalledWith("copy-job"),
+    );
+  });
+
+  it("a viewer can't continue a paused copy", () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    render(jobOf("parked"));
+
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 });

@@ -446,3 +446,233 @@ def test_the_gateway_settles_a_copy_from_its_design_output(submit):
     assert packed == ["/tmp/design.tar.gz"]
     assert settled.state == HostedHarnessJob.State.FAILED
     assert settled.failure["code"] == "design_stopped"
+
+
+# --- a design that paused on a question: parked, then continued ------------------------------------
+
+WAITING = json.dumps(
+    {
+        "status": "failed",
+        "failure": {
+            "code": "design_waiting",
+            "message": "the design is waiting for an answer; continue it to resume",
+        },
+    }
+).encode()
+
+
+def _sandbox(files_by_path):
+    """A sandbox whose packed archives are `files_by_path`, read once, then gone."""
+    from types import SimpleNamespace
+
+    from simulate.tests.test_harness_compositions import _Gone
+
+    class Files:
+        def download_file(self, path, timeout):
+            return files_by_path[path]
+
+    sandbox = SimpleNamespace(
+        fs=Files(),
+        process=SimpleNamespace(
+            exec=lambda command, **kwargs: SimpleNamespace(exit_code=0, result="")
+        ),
+    )
+    client = _Gone()
+    found = iter([sandbox])
+    client.get = lambda *args, **kwargs: next(found, None) or _Gone().get()
+    return client
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+@pytest.fixture
+def store(monkeypatch):
+    """The object store: release archives and stored checkpoints."""
+    stored: dict[str, bytes] = {}
+    monkeypatch.setattr(harness_releases, "_upload", stored.__setitem__)
+    monkeypatch.setattr(
+        harness_releases, "_download", lambda key: stored.get(key, b"archive")
+    )
+    return stored
+
+
+@pytest.mark.django_db
+def test_a_parked_copy_continues_and_seals(
+    submit, retail, store, auth_client, monkeypatch, tmp_path, organization
+):
+    from simulate.services import hosted_harness_gateway
+    from simulate.services.harness_releases import DESIGN_CHECKPOINT_PATH
+    from simulate.tasks import hosted_harness_conversation as runtime
+    from simulate.tests.test_harness_compositions import _attempted, _gateway, _targz
+
+    scheduled = []
+    monkeypatch.setattr(
+        runtime, "schedule_conversation_runtime", lambda *a: scheduled.append(a)
+    )
+    submit()
+    job = HostedHarnessJob.no_workspace_objects.get(id=submit.started[0])
+    hosted_harness_gateway._ask_harness_to_customize(
+        job, attempt=type("Attempt", (), {"id": "a1"})(), endpoint_base_url="https://x"
+    )
+    asked = job.conversation.messages.count()
+
+    # 1. Nobody answered the builder's question: the design parks with its workspace.
+    checkpoint = _targz(
+        {
+            "design.json": b'{"name": "retail_copy"}',
+            ".futureagi-pending-question.json": b'{"question": "Who approves?"}',
+        }
+    )
+    parked = _gateway(
+        _sandbox(
+            {
+                "/tmp/design.tar.gz": _targz({"result.json": WAITING}),
+                "/tmp/design-checkpoint.tar.gz": checkpoint,
+            }
+        )
+    )._finish_customization(_attempted(job))
+
+    assert parked.state == HostedHarnessJob.State.PARKED
+    assert parked.failure is None and parked.terminal_at is None
+    kept = parked.payload["metadata"]["customization_parked"]
+    assert store[kept["object_key"]] == checkpoint
+    # The sandbox's end was recorded and left the copy parked.
+    parked.refresh_from_db()
+    assert parked.state == HostedHarnessJob.State.PARKED
+
+    # 2. Continue queues it again, to resume from that workspace.
+    response = auth_client.post(f"{CUSTOMIZE}{job.id}/continue/", {}, format="json")
+
+    assert response.status_code == 202, response.content
+    assert submit.started == [job.id, job.id] or submit.started == [
+        str(job.id),
+        str(job.id),
+    ]
+    job.refresh_from_db()
+    assert job.state == HostedHarnessJob.State.QUEUED
+    assert job.payload["metadata"]["design"]["resume_from"] == str(job.id)
+
+    # 3. The next sandbox gets the workspace back before the design opens.
+    launch = customization_launch_for(job)
+    assert launch.uploads[0] == (DESIGN_CHECKPOINT_PATH, checkpoint)
+    assert launch.prepare_command.startswith(
+        f"mkdir -p /work/authoring && tar -xzf {DESIGN_CHECKPOINT_PATH} -C /work/authoring"
+    )
+
+    # 4. The builder isn't sent the change again: it asks its open question again itself.
+    hosted_harness_gateway._ask_harness_to_customize(
+        job, attempt=type("Attempt", (), {"id": "a2"})(), endpoint_base_url="https://x"
+    )
+    assert job.conversation.messages.count() == asked
+    assert len(scheduled) == 2
+
+    # 5. Answered and approved in the chat, the design seals the copy.
+    def register(environment_dir, suite_dir, *, organization):
+        environment = HarnessEnvironmentRelease.no_workspace_objects.create(
+            organization=organization,
+            digest="sha256:" + "c" * 64,
+            name="retail_copy",
+            object_key="releases/copy",
+            manifest={
+                "provenance": {"derived_from": f"release:{retail.environment.digest}"}
+            },
+            tools=[],
+            policy={},
+        )
+        suite = HarnessSuiteRelease.no_workspace_objects.create(
+            organization=organization,
+            digest="sha256:" + "d" * 64,
+            name="retail_copy_base",
+            environment=environment,
+            object_key="releases/copy_base",
+            manifest={"scenarios": [{"key": "a"}, {"key": "b"}]},
+            personas=[],
+        )
+        return environment, suite
+
+    monkeypatch.setattr(harness_releases, "register_release", register)
+    sealed = _tree(
+        _sealed(
+            tmp_path,
+            derived_from=f"release:{retail.environment.digest}",
+            template_suite=retail.digest,
+        )
+    )
+    settled = _gateway(
+        _sandbox({"/tmp/design.tar.gz": _targz(sealed)})
+    )._finish_customization(_attempted(job))
+
+    assert settled.state == HostedHarnessJob.State.COMPLETED
+    assert settled.payload["metadata"]["customization_result"]["scenario_count"] == 2
+    assert settled.current_attempt_number == 2
+
+
+@pytest.mark.django_db
+class TestParkedCopy:
+    @pytest.fixture
+    def parked(self, submit, store):
+        submit()
+        job = HostedHarnessJob.no_workspace_objects.get(id=submit.started[0])
+        return harness_releases.park_customization(job, _checkpoint())
+
+    def test_only_a_parked_copy_continues(self, parked, auth_client, submit):
+        first = auth_client.post(f"{CUSTOMIZE}{parked.id}/continue/", {}, format="json")
+        again = auth_client.post(f"{CUSTOMIZE}{parked.id}/continue/", {}, format="json")
+
+        assert first.status_code == 202, first.content
+        # Already continuing: answered as it is, and not started twice.
+        assert again.status_code == 202, again.content
+        assert len(submit.started) == 2
+
+    def test_an_ended_copy_cant_continue(self, parked, auth_client):
+        parked.state = HostedHarnessJob.State.FAILED
+        parked.save(update_fields=["state"])
+
+        response = auth_client.post(
+            f"{CUSTOMIZE}{parked.id}/continue/", {}, format="json"
+        )
+
+        assert response.status_code == 409, response.content
+
+    def test_an_unknown_copy_is_not_found(self, auth_client):
+        response = auth_client.post(
+            f"{CUSTOMIZE}{uuid.uuid4()}/continue/", {}, format="json"
+        )
+
+        assert response.status_code == 404, response.content
+
+    def test_cancelling_a_parked_copy_ends_it(self, parked, monkeypatch):
+        from simulate.services.hosted_harness import request_cancellation
+
+        canceled = request_cancellation(parked, "user_canceled")
+
+        assert canceled.state == HostedHarnessJob.State.CANCELED
+        assert canceled.terminal_at is not None
+
+    def test_a_parked_copy_keeps_waiting(self, parked):
+        from simulate.services.harness_environment import (
+            STATUS_AWAITING_APPROVAL,
+            status_for,
+        )
+        from simulate.services.hosted_harness_conversation import (
+            _TERMINAL_JOB_STATES,
+        )
+
+        # Its sandbox ending no longer changes it, and its chat waits for Continue.
+        assert complete_customization(parked, None).state == (
+            HostedHarnessJob.State.PARKED
+        )
+        assert status_for(parked) == STATUS_AWAITING_APPROVAL
+        assert parked.state in _TERMINAL_JOB_STATES
+
+
+def _checkpoint() -> bytes:
+    from simulate.tests.test_harness_compositions import _targz
+
+    return _targz({"design.json": b"{}"})

@@ -1788,6 +1788,40 @@ class HostedHarnessProvider:
             )
         return self._dispatch(request, job)
 
+    def continue_customization(self, request, job_id) -> Response:
+        """Start a parked copy again from its stored workspace; one already continuing is
+        answered as it is."""
+        from simulate.services.harness_releases import (
+            continue_customization,
+            customization_of,
+        )
+        from simulate.services.harness_usage import require_harness_authoring
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        job = self._job(request, job_id)
+        if job is None or job.deleted or customization_of(job) is None:
+            return Response(
+                build_error_envelope(
+                    "copy not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if job.state == HostedHarnessJob.State.PARKED:
+            try:
+                require_harness_authoring(str(job.organization_id))
+            except Exception as exc:
+                response = _usage_limit_response(exc)
+                if response is not None:
+                    return response
+                raise
+        try:
+            job, queued = continue_customization(job)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        if not queued:
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
+        return self._dispatch(request, job)
+
     def _submit(
         self,
         request,
@@ -2374,7 +2408,10 @@ class HostedHarnessProvider:
                 status=status.HTTP_404_NOT_FOUND,
             )
         reason = request.validated_data["reason"]
-        request_cancellation(job, reason)
+        if request_cancellation(job, reason).state == HostedHarnessJob.State.CANCELED:
+            # Ended at once (a parked copy): no workflow or sandbox is left to stop.
+            job.refresh_from_db()
+            return Response(serialize_job(job))
         try:
             cancel_hosted_harness_gateway_workflow(str(job.id))
         except Exception:

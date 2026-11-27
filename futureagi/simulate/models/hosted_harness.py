@@ -28,6 +28,9 @@ class HostedHarnessJob(BaseModel):
         FINALIZING = "finalizing", "Finalizing"
         CLEANING_UP = "cleaning_up", "Cleaning up"
         RETRY_WAIT = "retry_wait", "Retry wait"
+        # A copy whose design paused on an unanswered question: its workspace is kept, and
+        # Continue starts it again from there. Not terminal, and no sandbox is running.
+        PARKED = "parked", "Parked"
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
         CANCELED = "canceled", "Canceled"

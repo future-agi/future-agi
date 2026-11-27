@@ -25587,6 +25587,7 @@ export const HarnessVerifyCreateResponseApiState = {
   finalizing: "finalizing",
   cleaning_up: "cleaning_up",
   retry_wait: "retry_wait",
+  parked: "parked",
   completed: "completed",
   failed: "failed",
   canceled: "canceled",
@@ -25609,6 +25610,7 @@ export const HarnessVerifyResultApiState = {
   finalizing: "finalizing",
   cleaning_up: "cleaning_up",
   retry_wait: "retry_wait",
+  parked: "parked",
   completed: "completed",
   failed: "failed",
   canceled: "canceled",
@@ -26716,8 +26718,6 @@ export interface HarnessReleaseListResponseApi {
 
 export interface HarnessReleaseCustomizeRequestApi {
   suite_id: string;
-  /** The agent whose workspace the copy is built in, as every build is. */
-  agent_version_id: string;
   /**
    * @minLength 1
    * @maxLength 255

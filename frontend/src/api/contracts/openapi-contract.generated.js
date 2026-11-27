@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1232,
+  endpointCount: 1233,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -31641,6 +31641,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-releases/customize/{job_id}/continue/": {
+      post: {
+        operationId:
+          "simulate_api_harness-releases_customize_continue_customization",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
           default: {
@@ -75076,24 +75105,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessReleaseCustomizeRequest: {
-      required: [
-        "suite_id",
-        "agent_version_id",
-        "name",
-        "change",
-        "idempotency_key",
-      ],
+      required: ["suite_id", "name", "change", "idempotency_key"],
       type: "object",
       properties: {
         suite_id: {
           title: "Suite id",
-          type: "string",
-          format: "uuid",
-        },
-        agent_version_id: {
-          title: "Agent version id",
-          description:
-            "The agent whose workspace the copy is built in, as every build is.",
           type: "string",
           format: "uuid",
         },
@@ -76471,6 +76487,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "finalizing",
             "cleaning_up",
             "retry_wait",
+            "parked",
             "completed",
             "failed",
             "canceled",
@@ -76502,6 +76519,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "finalizing",
             "cleaning_up",
             "retry_wait",
+            "parked",
             "completed",
             "failed",
             "canceled",

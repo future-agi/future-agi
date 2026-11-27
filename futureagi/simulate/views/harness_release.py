@@ -139,6 +139,25 @@ class HarnessReleaseViewSet(viewsets.ViewSet):
         the original stays as it was. The job is followed like any harness job."""
         return HostedHarnessProvider().create_customization(request)
 
+    @viewer_denied("continue a copy")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            202: HarnessJobReadSerializer,
+            404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path=r"customize/(?P<job_id>[^/.]+)/continue",
+    )
+    def continue_customization(self, request, job_id=None):
+        """Continue a copy whose design paused on an unanswered question: it starts again from
+        the workspace it paused in and asks that question again."""
+        return HostedHarnessProvider().continue_customization(request, job_id)
+
 
 class HarnessAdaptationViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]

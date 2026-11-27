@@ -24,6 +24,18 @@ export const createHarnessCustomization = async (payload) =>
     )
   ).data;
 
+// Starts a copy whose design paused on an unanswered question again, from where it paused; the
+// builder asks that question again. Answers 202 with the job.
+export const continueHarnessCustomization = async (jobId) =>
+  (
+    await axios.post(
+      apiPath("/simulate/api/harness-releases/customize/{job_id}/continue/", {
+        job_id: jobId,
+      }),
+      {},
+    )
+  ).data;
+
 // Takes `{suite_id, name, instructions, model, idempotency_key}` and answers 201 with the composed
 // environment that runs our own agent on the suite (§6.4); there is no adaptation to wait for.
 export const createHarnessHostedAgent = async (payload) =>
