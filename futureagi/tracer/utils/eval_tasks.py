@@ -742,7 +742,9 @@ def process_eval_task(eval_task_id: str):
     except Exception as e:
         logger.exception(f"{e}")
         eval_task.status = EvalTaskStatus.FAILED
-        eval_task.save(update_fields=["status", "updated_at"])
+        # This legacy path records no diagnosis; drop any older one.
+        eval_task.failure_reason = None
+        eval_task.save(update_fields=["status", "failure_reason", "updated_at"])
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="tasks_s")

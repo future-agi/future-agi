@@ -160,3 +160,28 @@ def test_resume_hides_reason_until_run_starts(monkeypatch, auth_client, eval_tas
     eval_task.refresh_from_db()
     assert eval_task.status == EvalTaskStatus.RUNNING
     assert eval_task.failure_reason is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_dispatch_does_not_reuse_an_older_reason(monkeypatch, eval_task):
+    from tracer.views import instant_eval_scale
+
+    # An earlier selection failure, then a restart whose dispatch fails before
+    # selection runs: that new failure must not show the old diagnosis.
+    eval_task.status = EvalTaskStatus.FAILED
+    eval_task.failure_reason = BUDGET_REASON
+    eval_task.save(update_fields=["status", "failure_reason"])
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("dispatch refused")
+
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync", refuse
+    )
+    monkeypatch.setattr(
+        instant_eval_scale.transaction, "on_commit", lambda callback: callback()
+    )
+    instant_eval_scale._start_workflow_on_commit(eval_task, replace=True)
+    eval_task.refresh_from_db()
+    assert eval_task.status == EvalTaskStatus.FAILED
+    assert eval_task.failure_reason is None

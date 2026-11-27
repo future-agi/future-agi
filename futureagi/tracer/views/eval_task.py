@@ -2840,7 +2840,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_tasks.update(
-                deleted=True, deleted_at=timezone.now(), status=EvalTaskStatus.DELETED
+                deleted=True,
+                deleted_at=timezone.now(),
+                status=EvalTaskStatus.DELETED,
+                failure_reason=None,
             )
 
             EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
