@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
@@ -1776,14 +1776,17 @@ class HostedHarnessProvider:
                 )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
-        except Exception as exc:
+        except DatabaseError as exc:
             logger.warning(
                 "harness_customize_failed org=%s error=%s",
                 organization.id,
                 type(exc).__name__,
             )
             return Response(
-                {"detail": "Hosted harness scheduler is unavailable"},
+                build_error_envelope(
+                    "Hosted harness scheduler is unavailable",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                ),
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return self._dispatch(request, job)
