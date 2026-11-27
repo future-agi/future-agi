@@ -55526,6 +55526,17 @@
                         "description": "The scenarios the run would select, comma-separated; absent or blank selects every scenario.",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "split",
+                        "in": "query",
+                        "description": "The split of the locked version the run would run; absent previews the scenarios selected.",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "train",
+                            "test"
+                        ]
                     }
                 ],
                 "responses": {
@@ -157737,19 +157748,23 @@
                 },
                 "improved": {
                     "title": "Improved",
-                    "type": "integer"
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "regressed": {
                     "title": "Regressed",
-                    "type": "integer"
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "no_meaningful_change": {
                     "title": "No meaningful change",
-                    "type": "integer"
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "inconclusive": {
                     "title": "Inconclusive",
-                    "type": "integer"
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "criteria_changed": {
                     "title": "Criteria changed",
@@ -157784,11 +157799,37 @@
                 }
             }
         },
+        "RunLockedVersionLabel": {
+            "description": "The locked version the run of a split runs under; null without a split.",
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "locked": {
+                    "title": "Locked",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessRunPinnedVersions": {
             "required": [
                 "agent",
                 "environment",
-                "suite"
+                "suite",
+                "split",
+                "locked_version"
             ],
             "type": "object",
             "properties": {
@@ -157800,6 +157841,19 @@
                 },
                 "suite": {
                     "$ref": "#/definitions/RunVersionLabel"
+                },
+                "split": {
+                    "title": "Split",
+                    "description": "The split the run runs; null for the scenarios selected.",
+                    "type": "string",
+                    "enum": [
+                        "train",
+                        "test"
+                    ],
+                    "x-nullable": true
+                },
+                "locked_version": {
+                    "$ref": "#/definitions/RunLockedVersionLabel"
                 }
             }
         },
@@ -157818,13 +157872,38 @@
                 }
             }
         },
+        "HarnessComparability": {
+            "required": [
+                "comparable",
+                "reasons"
+            ],
+            "type": "object",
+            "properties": {
+                "comparable": {
+                    "title": "Comparable",
+                    "description": "False when either run ran a split and the two differ in environment version, suite version or split; every verdict is then null.",
+                    "type": "boolean"
+                },
+                "reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "different_versions",
+                            "different_split"
+                        ]
+                    }
+                }
+            }
+        },
         "HarnessCompare": {
             "required": [
                 "execution_id",
                 "against_execution_id",
                 "pairs",
                 "summary",
-                "versions"
+                "versions",
+                "comparability"
             ],
             "type": "object",
             "properties": {
@@ -157850,6 +157929,9 @@
                 },
                 "versions": {
                     "$ref": "#/definitions/HarnessCompareVersions"
+                },
+                "comparability": {
+                    "$ref": "#/definitions/HarnessComparability"
                 }
             }
         },
@@ -160211,7 +160293,7 @@
             "type": "object",
             "properties": {
                 "scenario_ids": {
-                    "description": "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
+                    "description": "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, or of the split when one is given, resolved by the server; an empty list is refused.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -160219,6 +160301,16 @@
                         "minLength": 1
                     },
                     "maxItems": 1000
+                },
+                "split": {
+                    "title": "Split",
+                    "description": "Run this split of the locked version of the run's versions; absent or null runs scenario_ids, or every scenario when they are left out.",
+                    "type": "string",
+                    "enum": [
+                        "train",
+                        "test"
+                    ],
+                    "x-nullable": true
                 },
                 "trials": {
                     "title": "Trials",
@@ -170976,6 +171068,20 @@
                 },
                 "stop": {
                     "$ref": "#/definitions/RunStop"
+                },
+                "split": {
+                    "title": "Split",
+                    "description": "The split the run ran; null for the scenarios selected.",
+                    "type": "string",
+                    "enum": [
+                        "train",
+                        "test"
+                    ],
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "locked_version": {
+                    "$ref": "#/definitions/RunLockedVersionLabel"
                 }
             }
         },
@@ -179169,6 +179275,19 @@
                 },
                 "readiness_selection": {
                     "$ref": "#/definitions/HarnessRunReadinessSelection"
+                },
+                "split": {
+                    "title": "Split",
+                    "description": "The split the run ran; null for the scenarios selected.",
+                    "type": "string",
+                    "enum": [
+                        "train",
+                        "test"
+                    ],
+                    "x-nullable": true
+                },
+                "locked_version": {
+                    "$ref": "#/definitions/RunLockedVersionLabel"
                 },
                 "build_notice": {
                     "title": "Build notice",
