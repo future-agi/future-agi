@@ -10,6 +10,10 @@ import OverviewPanel from "../OverviewPanel";
 vi.mock("../../agents/AgentVersionsPanel", () => ({
   default: ({ env }) => <div data-testid="agent-versions-panel">{env.id}</div>,
 }));
+// The locked-version card reads the versions query and has its own tests.
+vi.mock("../LockedVersionCard", () => ({
+  default: ({ envId }) => <div data-testid="locked-version-card">{envId}</div>,
+}));
 import { HardRulesCard } from "../OverviewCards";
 
 const connectedState = {
@@ -229,6 +233,23 @@ describe("OverviewPanel", () => {
     };
     const manage = () =>
       screen.queryByRole("button", { name: "Manage versions" });
+
+    it("shows the locked-version card while versioning is on", () => {
+      renderPanel({ env: versioned });
+
+      expect(screen.getByTestId("locked-version-card")).toHaveTextContent(
+        "env-1",
+      );
+    });
+
+    it("keeps the locked-version card out while building or without versioning", () => {
+      const { unmount } = renderPanel({ env: versioned, buildMode: true });
+      expect(screen.queryByTestId("locked-version-card")).toBeNull();
+      unmount();
+
+      renderPanel();
+      expect(screen.queryByTestId("locked-version-card")).toBeNull();
+    });
 
     it("opens the agent versions in a drawer while versioning is on", async () => {
       const user = userEvent.setup();
