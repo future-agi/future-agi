@@ -20,8 +20,9 @@ const CELL = {
 
 export default function ActorRelations({ cast }) {
   if (!cast.length) return null;
+  // Who brings in or is reached by whom reads by person: a role can be shared by several.
   const names = Object.fromEntries(
-    cast.map((one) => [one.id, actorTitle(one).main]),
+    cast.map((one) => [one.id, one.name || one.id]),
   );
   return (
     <SectionCard title={R.title} subtitle={R.subtitle}>

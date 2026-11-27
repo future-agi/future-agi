@@ -144,7 +144,8 @@ export default function ActorForm({
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
   const leave = () => {
-    if (busy) return;
+    // A Save waiting for the check counts as saving: leaving then could drop a save already on its way.
+    if (busy || saveAsked) return;
     if (changed) setLeaving(true);
     else onClose();
   };

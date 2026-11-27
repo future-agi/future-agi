@@ -751,7 +751,14 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByText("Who can reach whom")).toBeNull();
     actorsData = cast([
       { ...MANAGER, reaches: ["caller"], when_label: "When contacted" },
-      typedActor({ id: "caller", name: "Dana", side: "caller" }),
+      // Who reaches or brings in whom reads by person, since a role can be shared.
+      typedActor({
+        id: "caller",
+        name: "Dana",
+        role: "Customer",
+        side: "caller",
+        parent: "manager",
+      }),
     ]);
     const { container } = render(<WorldActorsPanel envId="env-2" />);
     expect(
@@ -777,7 +784,8 @@ describe("WorldActorsPanel", () => {
       "—",
       "Dana",
     ]);
-    expect(dana[0]).toBe("Dana");
+    expect(dana[0]).toBe("Customer · Dana");
+    expect(dana[2]).toBe("Priya Raman");
     expect(dana[3]).toBe("No other actor");
     expect(
       within(container).getByRole("button", { name: "Limits" }),
@@ -1012,6 +1020,11 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(saveButton());
     expect(mutate).not.toHaveBeenCalled();
     expect(within(saveButton()).getByRole("progressbar")).toBeInTheDocument();
+    // Leaving waits too, so the waiting save can't land behind the discard dialog.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(
+      screen.queryByRole("dialog", { name: /Discard changes/ }),
+    ).toBeNull();
     answer = CLEAN;
     rerender(<WorldActorsPanel envId="env-1" />);
     expect(sent()).toMatchObject({ op: "create", changes: { name: "Lena" } });

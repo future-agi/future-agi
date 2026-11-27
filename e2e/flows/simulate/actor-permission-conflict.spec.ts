@@ -27,10 +27,10 @@ test('SIM-E2E-020: giving an actor an action only another actor holds is flagged
             'check a new actor given approvals.put (POST actor-validation)',
             'open the Actors tab and add an actor in the world',
             'name it and give it approvals.put',
-            'tick Both should have it'],
+            'tick Both should have it and save'],
     backendChecks: ['the check names Dana Brooks as the only holder of approvals.put and writes nothing'],
     browserChecks: ['the form says approvals.put is held only by Dana Brooks before anything is saved',
-                    'Save to draft saves nothing and keeps the form open until Both should have it is ticked'],
+                    'Save to draft saves nothing and keeps the form open until Both should have it is ticked, then saves the actor with approvals.put'],
   }),
 }, async ({ page, actor }, testInfo) => {
   // One seed through the backend container (Django start-up), two API calls and one page load.
@@ -50,7 +50,7 @@ test('SIM-E2E-020: giving an actor an action only another actor holds is flagged
     expect(cast.actors.map((one) => one.name)).not.toContain(NEW_ACTOR);
   });
 
-  await test.step('browser: the conflict shows before saving and Save waits for the confirmation', async () => {
+  await test.step('browser: the conflict shows before saving, and Save saves only once it is confirmed', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=actors`);
     await page.getByRole('button', { name: 'Add actor' }).click({ timeout: UI_READY });
     await page.getByRole('textbox', { name: 'Name', exact: true }).fill(NEW_ACTOR);
@@ -66,6 +66,11 @@ test('SIM-E2E-020: giving an actor an action only another actor holds is flagged
     const cast = await actor.api.get<Cast>(`${ENVIRONMENTS}/${seed.environmentId}/actors/`);
     expect(cast.actors.map((one) => one.name)).not.toContain(NEW_ACTOR);
     await conflict.getByLabel('Both should have it').check();
-    await expect(save).toBeEnabled({ timeout: UI_READY });
+    await save.click();
+    await expect(save).toBeHidden({ timeout: UI_READY });
+    await expect.poll(async () => {
+      const saved = await actor.api.get<Cast>(`${ENVIRONMENTS}/${seed.environmentId}/actors/`);
+      return saved.actors.filter((one) => one.name === NEW_ACTOR).map((one) => one.permitted_actions);
+    }, { timeout: UI_READY }).toEqual([[ACTION]]);
   });
 });

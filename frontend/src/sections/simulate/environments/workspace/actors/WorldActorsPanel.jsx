@@ -132,6 +132,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const loudChannels = (data ? data.channel_options : [])
     .filter((one) => one.loudness)
     .map((one) => one.channel);
+  const roleGroups = groupsByRole(cast);
   const deletingId =
     edit.isPending && edit.variables?.op === "delete"
       ? edit.variables.actorId
@@ -280,8 +281,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
             {/* Actors alone in their role first, then each role with several people, so a group is never
                 followed by a row outside it. */}
             {[
-              ...groupsByRole(cast).filter((group) => group.actors.length < 2),
-              ...groupsByRole(cast).filter((group) => group.actors.length > 1),
+              ...roleGroups.filter((group) => group.actors.length < 2),
+              ...roleGroups.filter((group) => group.actors.length > 1),
             ].flatMap((group) =>
               group.actors.length > 1
                 ? [
