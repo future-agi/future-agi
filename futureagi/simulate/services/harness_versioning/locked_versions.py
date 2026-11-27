@@ -343,7 +343,7 @@ def _locked_version(
 
 @dataclass(frozen=True)
 class LockedVersionSplits:
-    """A locked version's splits, as the keys of its suite's scorable scenarios."""
+    """A locked version's roster: its members' splits, by scenario key."""
 
     id: UUID
     label: str
@@ -371,18 +371,16 @@ def run_locked_version(run: HostedHarnessJob) -> LockedVersionSplits | None:
     locked_version = _locked_version(environment_version_id, suite_version_id)
     if locked_version is None:
         return None
-    tasks = scorable_tasks(
-        suite_version_id, environment_version_id=environment_version_id
-    )
-    assigned = _assigned(tasks)
+    # The lock's roster, as it locked them: a later rule, an edit or a new default
+    # never moves a scenario into or out of its test split.
+    members = locked_version_members(locked_version.id)
+    keys = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=suite_version_id, scenario_id__in=members
+    ).values_list("scenario_id", "scenario_key")
     return LockedVersionSplits(
         id=locked_version.id,
         label=locked_version.label,
-        splits={
-            task.key: assigned[task.scenario_id]
-            for task in tasks
-            if task.scenario_id in assigned
-        },
+        splits={key: members[scenario_id] for scenario_id, key in keys},
     )
 
 
