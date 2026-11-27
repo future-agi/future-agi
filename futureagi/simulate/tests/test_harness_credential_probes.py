@@ -441,6 +441,10 @@ def test_probe_without_a_base_calls_the_provider(
             "https://gateway.example.com/api/models",
         ),
         (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1?tenant=x"},
+            "https://gateway.example.com/v1/models?tenant=x",
+        ),
+        (
             {
                 "OPENAI_BASE_URL": "https://gateway.example.com/v1",
                 "OPENAI_API_BASE": "https://other.example.com",
@@ -468,6 +472,7 @@ def test_openai_probe_honours_the_agent_base(provider_request, base_values, url)
         "https://gateway.example.com",
         "https://gateway.example.com/",
         "https://gateway.example.com/v1/",
+        "https://gateway.example.com?tenant=x",
     ],
 )
 def test_anthropic_probe_honours_the_agent_base(provider_request, base):
@@ -476,10 +481,10 @@ def test_anthropic_probe_honours_the_agent_base(provider_request, base):
     )
 
     assert result.ok is True
-    assert (
-        provider_request.call_args.args[1]
-        == "https://gateway.example.com/v1/models?limit=1"
-    )
+    expected = "https://gateway.example.com/v1/models?limit=1"
+    if "?" in base:
+        expected = "https://gateway.example.com/v1/models?tenant=x&limit=1"
+    assert provider_request.call_args.args[1] == expected
     assert provider_request.call_args.kwargs["headers"] == {
         "x-api-key": "gateway-key",
         "anthropic-version": "2023-06-01",
@@ -545,6 +550,16 @@ def test_an_unreachable_gateway_names_the_base_variable(provider_request):
         (
             "http://127.0.0.1:8080/v1",
             "does not resolve to an address this check may call",
+        ),
+        ("https://gateway.example.com/v1#x", "has a fragment (#...); remove it"),
+        ("https://gateway.example.com/v1#", "has a fragment (#...); remove it"),
+        (
+            "http://0x7f000001/v1",
+            "spells its host as a number; use a name or a plain IP address",
+        ),
+        (
+            "http://2130706433/v1",
+            "spells its host as a number; use a name or a plain IP address",
         ),
     ],
 )
@@ -1115,25 +1130,23 @@ def test_preflight_checks_a_phone_target_routing_from_our_caller_number(
     assert (number, values, caller) == (NUMBER, ROUTING_VALUES, CALLER)
 
 
-def test_a_base_that_resolves_privately_at_send_is_refused_after_passing_the_check():
-    """The base is checked again as the probe is sent, so a name that answers with a public address at
-    the check and a private one at the send (rebinding) never reaches the private one."""
-    answers = iter(["93.184.215.14", "169.254.169.254"])
+def _answers(*addresses):
+    """A name that answers each lookup with the next address, the last one after."""
+    answers = iter(addresses)
 
     def resolve(host, *_args, **_kwargs):
-        return [
-            (
-                socket.AF_INET,
-                socket.SOCK_STREAM,
-                6,
-                "",
-                (next(answers, "169.254.169.254"), 0),
-            )
-        ]
+        address = next(answers, addresses[-1])
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))]
 
-    with (
-        patch("agentcc.services.url_safety.socket.getaddrinfo", resolve),
-        patch("requests.adapters.HTTPAdapter.send") as sent,
+    return resolve
+
+
+def test_a_base_that_resolves_privately_at_send_is_refused_after_passing_the_check():
+    """The base is checked again as the probe is sent: a name that answers with a public address at the
+    check and a private one at the send (rebinding) is refused, naming the variable."""
+    with patch(
+        "agentcc.services.url_safety.socket.getaddrinfo",
+        _answers("93.184.215.14", "169.254.169.254"),
     ):
         result = probe(
             "openai",
@@ -1144,5 +1157,38 @@ def test_a_base_that_resolves_privately_at_send_is_refused_after_passing_the_che
         )
 
     assert result.ok is False
-    assert "could not run" in result.message
-    sent.assert_not_called()
+    assert result.message == (
+        "OpenAI check could not run: OPENAI_BASE_URL does not resolve to an address"
+        " this check may call"
+    )
+
+
+def test_the_probe_connects_to_the_address_it_checked_whatever_the_name_answers_next():
+    """Rebinding after both checks: the third lookup would answer a private address, but the connection
+    goes to the address the send checked, with no lookup of its own."""
+    connected = []
+
+    def connect(address, *_args, **_kwargs):
+        connected.append(address)
+        raise OSError("stop here")
+
+    with (
+        patch(
+            "agentcc.services.url_safety.socket.getaddrinfo",
+            _answers("93.184.215.14", "93.184.215.14", "169.254.169.254"),
+        ),
+        patch("urllib3.util.connection.create_connection", connect),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert connected == [("93.184.215.14", 443)]
+    assert result.ok is False
+    assert result.message == (
+        "OpenAI is unreachable at OPENAI_BASE_URL (ConnectionError); check OPENAI_BASE_URL"
+    )

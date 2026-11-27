@@ -8,26 +8,27 @@ only succeeds with a valid key. Adding a provider means adding a row, nothing el
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 import structlog
 from google.protobuf import json_format
 
 from agentcc.services.url_safety import (
-    build_ssrf_safe_session,
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
 from tfc.utils.lazy_extras import load_extra
-from tfc.utils.ssrf_guard import SsrfBlocked, assert_url_host_public
+from tfc.utils.ssrf_guard import SsrfBlocked, assert_url_host_public, safe_fetch
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +46,16 @@ ANTHROPIC_BASE_ALIASES = ("ANTHROPIC_BASE_URL",)
 
 class BaseUrlRefused(ValueError):
     """A configured base URL the probe will not call; the message names its variable."""
+
+
+def number_spelled_host(host: str) -> bool:
+    """A host that is an address spelled other than canonically (2130706433,
+    0x7f000001, 0177.0.0.1): no egress list names it, so a base URL may not use it.
+    A canonical IP address and a name (its last label a word) are fine."""
+    try:
+        return str(ipaddress.ip_address(host)) != host
+    except ValueError:
+        return not re.fullmatch(r"[a-z][a-z0-9-]*", host.rsplit(".", 1)[-1].lower())
 
 
 @dataclass(frozen=True)
@@ -123,6 +134,12 @@ def _at_base(default_base: str, path: str, base_aliases: tuple[str, ...]):
             or not parsed.hostname
         ):
             raise BaseUrlRefused(f"{name} is not an http(s) URL")
+        if parsed.fragment or base.endswith("#"):
+            raise BaseUrlRefused(f"{name} has a fragment (#...); remove it")
+        if number_spelled_host(parsed.hostname):
+            raise BaseUrlRefused(
+                f"{name} spells its host as a number; use a name or a plain IP address"
+            )
         try:
             ensure_public_http_url(
                 base, name, allow_private=private_provider_urls_allowed()
@@ -131,9 +148,17 @@ def _at_base(default_base: str, path: str, base_aliases: tuple[str, ...]):
             raise BaseUrlRefused(
                 f"{name} does not resolve to an address this check may call"
             ) from None
-        if base.endswith("/v1") and path.startswith("/v1/"):
-            return base + path[len("/v1") :]
-        return base + path
+        base_path = parsed.path.rstrip("/")
+        tail, _, query = path.partition("?")
+        if base_path.endswith("/v1") and tail.startswith("/v1/"):
+            tail = tail[len("/v1") :]
+        # The path goes into the path; the base's query and the probe's follow it.
+        return urlunparse(
+            parsed._replace(
+                path=base_path + tail,
+                query="&".join(one for one in (parsed.query, query) if one),
+            )
+        )
 
     return url
 
@@ -337,22 +362,30 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
 
 
 def _request(
-    method: str, url: str, *, guarded: bool, timeout: float, **kwargs: Any
+    method: str, url: str, *, base_name: str, timeout: float, **kwargs: Any
 ) -> Any:
-    """Send one probe. A URL under a base the agent set goes through Agent Command Center's SSRF-safe
-    session, which resolves the URL again on the same rules just before sending it. The connection does
-    its own lookup, so a name that changes between that check and the connect is not covered. Without a
-    base, the provider's own URL is sent as is."""
-    if not guarded:
+    """Send one probe. A URL under a base the agent set (``base_name``) is resolved
+    again on the same rules and the connection goes to that checked address, the
+    host kept for TLS and ``Host``, never redirected. Without a base, the provider's
+    own URL is sent as is."""
+    if not base_name:
         return requests.request(method, url, timeout=timeout, **kwargs)
-    session = build_ssrf_safe_session(
-        "the base URL does not resolve to an address this check may call",
-        allow_private=private_provider_urls_allowed(),
-    )
     try:
-        return session.request(method, url, timeout=timeout, **kwargs)
-    finally:
-        session.close()
+        return safe_fetch(
+            url,
+            method=method,
+            timeout=timeout,
+            headers=kwargs.get("headers"),
+            follow_redirects=False,
+            allow_private=private_provider_urls_allowed(),
+        )
+    except SsrfBlocked:
+        raise BaseUrlRefused(
+            f"{base_name} does not resolve to an address this check may call"
+        ) from None
+    except ValueError as exc:
+        # The connection itself failed (``safe_fetch`` reports it so).
+        raise requests.ConnectionError(str(exc)) from None
 
 
 def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
@@ -368,7 +401,7 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
         response = _request(
             request.method,
             request.url,
-            guarded=bool(base_name),
+            base_name=base_name,
             headers=dict(request.headers),
             json={} if request.method == "POST" else None,
             timeout=PROBE_TIMEOUT_SECONDS,

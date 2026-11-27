@@ -61,6 +61,7 @@ from simulate.services.harness_credential_probes import (
     ANTHROPIC_BASE_ALIASES,
     OPENAI_BASE_ALIASES,
     configured_base,
+    number_spelled_host,
 )
 from simulate.services.harness_versioning.hashing import INDEX_ONLY_FIELDS
 from simulate.services.hosted_harness import (
@@ -2314,11 +2315,8 @@ def _base_url_host(values: Mapping[str, Any], names: tuple[str, ...]) -> str | N
         {name: str(values.get(name) or "") for name in names}, names
     )
     host = _hostname_from_url(base) if base else None
-    # A name ends in a word (example.com); a number in another spelling (2130706433, 0x7f000001, 0177.0.0.1) is an
-    # address, which an egress list never holds, whether or not it resolves from here.
-    if not host or not re.fullmatch(
-        r"[a-z][a-z0-9-]*", host.rsplit(".", 1)[-1].lower()
-    ):
+    # The credential check refuses the same hosts, so the two agree.
+    if not host or number_spelled_host(host):
         return None
     try:
         _validate_egress_host(host)
