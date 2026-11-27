@@ -510,6 +510,44 @@ def producer_attempt(matches, name):
     return latest, first
 
 
+# GitHub's clock rounds to the second. The two attempts of a shard are minutes
+# apart, so this slack can never admit the other attempt's artifact.
+PRODUCED_SLACK = datetime.timedelta(seconds=2)
+
+
+def _instant(value):
+    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def produced_by(artifacts, job):
+    """The artifacts uploaded while this job ran.
+
+    A full re-run lists each shard's artifact once per attempt under the same
+    name (run 45532046719 listed collected-ids-metrics-11 twice), and an
+    artifact names no attempt. The job that uploaded it does: the artifact was
+    created between its start and end. A copy of a job that "Re-run failed
+    jobs" did not re-run keeps the original's times, so it matches the
+    original's artifact.
+    """
+    if not job.get("started_at") or not job.get("completed_at"):
+        return []
+    start = _instant(job["started_at"]) - PRODUCED_SLACK
+    end = _instant(job["completed_at"]) + PRODUCED_SLACK
+    return [
+        artifact
+        for artifact in artifacts
+        if artifact.get("created_at")
+        and start <= _instant(artifact["created_at"]) <= end
+    ]
+
+
+def shard_artifacts(listed, job):
+    """The leg's artifacts from its producing job: all of them when only one is
+    listed (its receipt still has to name the producing attempt), else those
+    the producing job uploaded."""
+    return listed if len(listed) <= 1 else produced_by(listed, job)
+
+
 def malformed_inventory(inventory):
     """Whether an inventory is not a list of [id, test path, expectation] rows."""
     return not isinstance(inventory, list) or any(
@@ -626,7 +664,11 @@ def unsettled(legs, prefix, jobs, artifacts, attempt):
             # The verdict fails on an unsuccessful producer whatever else is
             # listed, so waiting for its artifact cannot change it.
             continue
-        if not artifacts.get(key):
+        listed_artifacts = artifacts.get(key, [])
+        if current:
+            # Another attempt's artifact of the same name is not this one.
+            listed_artifacts = shard_artifacts(listed_artifacts, current[-1])
+        if not listed_artifacts:
             missing.append(f"artifact {key}")
     return missing
 
@@ -731,7 +773,7 @@ def verify_run():
     ) as exc:
         problems.append(f"the run date is unavailable: {exc}")
         today = None
-    if set(by_name) != wanted.keys() or any(len(v) != 1 for v in by_name.values()):
+    if set(by_name) != wanted.keys():
         problems.append("the run does not have exactly one artifact per planned shard")
     plan_digest = hashlib.sha256(os.environ["SHARDS"].encode()).hexdigest()
     identities = set()
@@ -753,8 +795,15 @@ def verify_run():
                 continue
             if latest["conclusion"] != "success":
                 problems.append(f"unsuccessful producer for {suite}/{group}")
-            if len(by_name[key]) == 1:
-                artifact = by_name[key][0]
+            # Strict within the producing attempt: exactly one artifact.
+            produced = shard_artifacts(by_name.get(key, []), latest)
+            if key in by_name and len(produced) != 1:
+                problems.append(
+                    f"{suite}/{group}: {len(produced)} artifacts from the producing"
+                    f" attempt {producer}, not exactly one"
+                )
+            if len(produced) == 1:
+                artifact = produced[0]
                 futures[pool.submit(verify_artifact, artifact, repo)] = (
                     artifact,
                     {**latest, "producer_attempt": producer},

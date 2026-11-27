@@ -8,10 +8,22 @@ import {
   within,
 } from "src/utils/test-utils";
 
+const mockNavigate = vi.hoisted(() => vi.fn());
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
-  return { ...actual, useNavigate: () => vi.fn() };
+  return { ...actual, useNavigate: () => mockNavigate };
 });
+
+vi.mock("src/auth/hooks", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAuthContext: () => ({ role: "Member" }),
+}));
+
+vi.mock("src/api/integrations", () => ({
+  useGitHubConnection: () => ({ data: null, isLoading: false }),
+  useSourceRepositories: () => ({ data: [] }),
+  useSourceBranches: () => ({ data: [] }),
+}));
 
 vi.mock("src/api/agents/connectedAgents", () => ({
   useConnectedAgents: () => ({
@@ -38,9 +50,48 @@ vi.mock("src/api/agents/connectedAgents", () => ({
   }),
 }));
 
+vi.mock("src/api/harness/releases", () => ({
+  useHarnessReleases: () => ({
+    data: [
+      {
+        id: "rel-1",
+        digest: "sha256:" + "ab".repeat(32),
+        name: "retail",
+        system: true,
+        parent: null,
+        tools: [{ name: "get_order", description: "", mutates_state: false }],
+        policy: {
+          parameters: [],
+          agent_rules: [{ id: "verify_first", text: "Verify first." }],
+        },
+        suites: [
+          {
+            id: "suite-1",
+            digest: "sha256:" + "cd".repeat(32),
+            name: "retail_base",
+            scenario_count: 100,
+            origins: { base: 100, specialized: 0, custom: 0 },
+            policy_profile: {},
+          },
+        ],
+        catalogue: {
+          title: "Retail",
+          summary: "An online clothing store.",
+          channel: "chat",
+          records: { orders: 38 },
+          apps: [],
+          example_requests: ["Where is my order?"],
+        },
+      },
+    ],
+    isLoading: false,
+  }),
+  createHarnessAdaptation: vi.fn(),
+  useHarnessReleaseFit: () => ({}),
+}));
+
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
-  storeHarnessSecretValues: vi.fn(),
   createHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
   getHarnessJob: vi.fn(),
@@ -135,12 +186,18 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(screen.getByText(/No way to connect matches/)).toBeInTheDocument();
   });
 
-  it("hides the prebuilt worlds and shows the SaaS sandbox disabled", () => {
+  it("lists the published ready environments, each with its two ways in", () => {
     render();
+    const card = screen.getByRole("listitem", { name: "Retail" });
+    expect(card).toHaveTextContent("100 scenarios · 1 tools");
     expect(
-      screen.queryByRole("listitem", { name: "Customer Support Line" }),
-    ).toBeNull();
-    expect(screen.getByRole("button", { name: "SaaS sandbox" })).toBeDisabled();
+      within(card).getByRole("button", { name: "Use with my agent" }),
+    ).toBeEnabled();
+    expect(
+      within(card).getByRole("button", { name: "Customize" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("SaaS sandbox")).toBeNull();
+    expect(screen.queryByText("UI only")).toBeNull();
   });
 
   it("lists the connected agents, filtered by type", () => {
@@ -280,6 +337,22 @@ describe("BuildEnvironmentDrawer setup", () => {
     );
     expect(row("GitHub")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("comes back to this drawer after installing the GitHub App", () => {
+    window.history.pushState(
+      {},
+      "",
+      "/dashboard/simulate/environments?build=github&github=denied",
+    );
+    render();
+    connect("GitHub");
+    fireEvent.click(screen.getByRole("button", { name: "Install GitHub App" }));
+    const target = new URL(mockNavigate.mock.lastCall[0], "https://x.test");
+    expect(target.searchParams.get("return_to")).toBe(
+      "/dashboard/simulate/environments?build=github",
+    );
+    window.history.pushState({}, "", "/");
   });
 
   it("opens Vapi on the prod form, without the type and platform pickers", () => {

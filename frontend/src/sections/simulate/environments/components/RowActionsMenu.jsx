@@ -5,6 +5,7 @@ import CustomTooltip from "src/components/tooltip";
 import {
   ENV_STATUS,
   ROW_ACTION_LABEL,
+  AWAITING_APPROVAL_TOOLTIP,
   BUILDING_TOOLTIP,
 } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "../workspace/workspace.constants";
@@ -18,19 +19,21 @@ const ICON_SX = { minWidth: 0, mr: 1 };
 export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDeleteRequest }) {
   const active = menuFor?.row;
   const { canEdit, canRun } = useSimulationAccess();
-  const buildingActive = [
+  // Nothing to run yet: it's being built, or its design waits to be approved.
+  const unbuilt = [
+    ENV_STATUS.AWAITING_APPROVAL,
     ENV_STATUS.BUILDING,
     ENV_STATUS.FINALIZING,
     ENV_STATUS.CANCELLING,
   ].includes(active?.status);
   const runLabel =
-    active?.runsTotal > 0 && !buildingActive
+    active?.runsTotal > 0 && !unbuilt
       ? ROW_ACTION_LABEL.rerun
       : ROW_ACTION_LABEL.run;
 
   const runItem = (
     <MenuItem
-      disabled={buildingActive || !canRun}
+      disabled={unbuilt || !canRun}
       onClick={() => {
         onRun?.(active);
         onClose?.();
@@ -71,13 +74,19 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
           primaryTypographyProps={{ sx: { typography: "s2" } }}
         />
       </MenuItem>
-      {buildingActive || !canRun ? (
+      {unbuilt || !canRun ? (
         <CustomTooltip
           show
           arrow
           placement="left"
           size="small"
-          title={buildingActive ? BUILDING_TOOLTIP : WORKSPACE_COPY.viewer.run}
+          title={
+            !unbuilt
+              ? WORKSPACE_COPY.viewer.run
+              : active.status === ENV_STATUS.AWAITING_APPROVAL
+                ? AWAITING_APPROVAL_TOOLTIP
+                : BUILDING_TOOLTIP
+          }
         >
           <span>{runItem}</span>
         </CustomTooltip>

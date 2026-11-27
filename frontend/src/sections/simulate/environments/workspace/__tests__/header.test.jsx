@@ -605,6 +605,28 @@ describe("WorkspaceHeader", () => {
   });
 });
 
+describe("the versions' names", () => {
+  it("follow their numbers in the top bar and on the pin", () => {
+    versionsResponse.current = {
+      agent: [item({ id: "a1", label: "v4", is_default: true })],
+      environment: [
+        item({ id: "e2", label: "v2", name: "Refunds", is_default: true }),
+      ],
+      suite: [
+        item({ id: "s3", label: "v3", name: "More refusals", is_default: true }),
+      ],
+    };
+    render(<VersionBar env={VERSIONED_ENV} />);
+    expect(screen.getByText("v2 · Refunds")).toBeInTheDocument();
+    expect(screen.getByText("v3 · More refusals")).toBeInTheDocument();
+    expect(screen.getByText("v4")).toBeInTheDocument();
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    expect(
+      screen.getByRole("button", { name: "env v2 · Refunds" }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("VersionBar", () => {
   afterEach(() => {
     versionsResponse.current = undefined;

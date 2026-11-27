@@ -30,6 +30,7 @@ from rest_framework.test import APIClient
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization import Organization
 from accounts.models.user import User
+from accounts.utils import WORK_EMAIL_REQUIRED_MESSAGE
 from saml2_auth import google_oauth, views
 
 CLIENT_ID = "synthetic-google-client"
@@ -82,6 +83,7 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
         "jwks_status": 200,
         "provider": "google",
         "exchange_access_token": True,
+        "email": EMAIL,
     }
 
     def signed_claims(*, claims=None, name=True, omit=()):
@@ -154,8 +156,8 @@ def identity_server(signing_keys, settings, monkeypatch, tmp_path):
                     {
                         "name": PROFILE,
                         "displayName": PROFILE,
-                        "email": EMAIL,
-                        "mail": EMAIL,
+                        "email": state["email"],
+                        "mail": state["email"],
                     },
                 )
             else:
@@ -422,6 +424,29 @@ def test_google_retains_access_token_hash_validation(identity_server, google_use
     before = AuthToken.objects.count()
     client, response = _callback()
     _assert_denied(client, response, before)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("provider", ["google", "github", "microsoft"])
+def test_personal_email_signup_redirects_with_work_email_message(
+    identity_server, monkeypatch, provider
+):
+    personal = "google-oauth-personal@gmail.com"
+    monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
+    identity_server["email"] = personal
+    identity_server["issue"](claims={"email": personal})
+    callback = "auth0_callback" if provider == "google" else f"{provider}-callback"
+    before, users = AuthToken.objects.count(), User.objects.count()
+    response = APIClient().get(reverse(callback), {"code": CODE})
+    assert response.status_code == 302
+    query = parse_qs(urlparse(response["Location"]).query)
+    assert query["denied"] == ["true"]
+    reason = urlsafe_base64_decode(query["reason"][0])
+    assert reason == WORK_EMAIL_REQUIRED_MESSAGE.encode()
+    assert "sso_token" not in query
+    assert AuthToken.objects.count() == before
+    assert User.objects.count() == users
+    assert not User.objects.filter(email=personal).exists()
 
 
 def _assert_signed_in(response, user, before):

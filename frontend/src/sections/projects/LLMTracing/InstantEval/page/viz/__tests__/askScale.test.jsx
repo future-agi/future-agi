@@ -1,7 +1,11 @@
 import React from "react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
+import {
+  ThemeProvider,
+  createTheme,
+  decomposeColor,
+} from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 import { typography } from "src/theme/typography";
 import { AskCrossTab, AskHeatmap, AskPatterns, AskTimeline } from "../index";
@@ -18,8 +22,10 @@ import {
   CATEGORY_COLORS,
   CATEGORY_COLORS_DARK,
   NO_COLOR,
+  NO_COLOR_DARK,
   OTHER_CATEGORY_COLOR,
   YES_COLOR,
+  YES_COLOR_DARK,
   answerColor,
   isCatchAll,
 } from "../../../results/answerColors";
@@ -428,26 +434,36 @@ describe("AskPatterns for a category question", () => {
 });
 
 describe("answer colours", () => {
-  it("uses the brand set per mode and keeps later category labels neutral", () => {
+  it("keeps categories off status, Yes and No hues, and later labels neutral", () => {
     const dark = createTheme({ palette: palette("dark"), typography });
-    // The org design guide's purple, green, red and amber.
-    expect(CATEGORY_COLORS).toEqual(theme.palette.dataBrand);
+    // Blue, teal, pink and lime from the data set, in each mode's step.
     expect(CATEGORY_COLORS).toEqual([
-      "#7857FC",
-      "#22C55E",
-      "#EF4444",
-      "#F59E0B",
+      "#2563EB",
+      "#0D9488",
+      "#DB2777",
+      "#65A30D",
     ]);
-    expect(CATEGORY_COLORS_DARK).toEqual(dark.palette.dataBrand);
-    // A category never takes the error marker's red.
+    expect(CATEGORY_COLORS_DARK).toEqual(
+      [1, 2, 4, 6].map((i) => dark.palette.data[i]),
+    );
+    // A category is never read as "couldn't answer", a status, Yes or No: its
+    // hue stays well away from each of them, not only from the exact value.
     for (const current of [theme, dark]) {
-      const colors =
-        current.palette.mode === "dark"
-          ? CATEGORY_COLORS_DARK
-          : CATEGORY_COLORS;
-      colors.forEach((color) => {
-        expect(color).not.toBe(current.palette.status.danger.solid);
-      });
+      const inDark = current.palette.mode === "dark";
+      const colors = inDark ? CATEGORY_COLORS_DARK : CATEGORY_COLORS;
+      const taken = [
+        current.palette.status.danger.solid,
+        current.palette.status.danger.fg,
+        current.palette.status.success.solid,
+        current.palette.status.warning.solid,
+        inDark ? YES_COLOR_DARK : YES_COLOR,
+        inDark ? NO_COLOR_DARK : NO_COLOR,
+      ];
+      colors.forEach((color) =>
+        taken.forEach((other) =>
+          expect(hueGap(color, other)).toBeGreaterThanOrEqual(25),
+        ),
+      );
     }
     // Yes is the brand purple and No the guide's amber, in each mode's step.
     const yesNo = { answerType: "yes_no", labels: ["Yes", "No"] };
@@ -703,3 +719,20 @@ describe("small multiples with few rows per cell", () => {
     ).toBeInTheDocument();
   });
 });
+
+// Degrees between two colours' hues, round the colour wheel.
+function hueGap(a, b) {
+  const hue = (color) => {
+    const [r, g, bl] = decomposeColor(color)
+      .values.slice(0, 3)
+      .map((v) => v / 255);
+    const max = Math.max(r, g, bl);
+    const d = max - Math.min(r, g, bl);
+    if (!d) return 0;
+    const h =
+      max === r ? (g - bl) / d : max === g ? (bl - r) / d + 2 : (r - g) / d + 4;
+    return (h * 60 + 360) % 360;
+  };
+  const gap = Math.abs(hue(a) - hue(b));
+  return Math.min(gap, 360 - gap);
+}

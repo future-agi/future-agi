@@ -23,6 +23,13 @@ from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
+from .harness_release import (
+    HarnessAgentBinding,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+    HostedAgentSpec,
+)
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -104,6 +111,11 @@ __all__ = [
     "HarnessSuiteVersion",
     "HarnessTaskSplit",
     "TaskSplit",
+    "HarnessAgentBinding",
+    "HarnessEnvironmentRelease",
+    "HarnessRunManifest",
+    "HarnessSuiteRelease",
+    "HostedAgentSpec",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",

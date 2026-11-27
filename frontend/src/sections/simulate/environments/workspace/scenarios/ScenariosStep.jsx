@@ -2,9 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
+  Stack,
   Typography,
   Button,
+  Collapse,
   ClickAwayListener,
+  Tooltip,
+  useMediaQuery,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
@@ -26,8 +30,6 @@ import AddScenariosDrawer from "./AddScenariosDrawer";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
-import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
-import ViewerLock from "../../components/ViewerLock";
 import DraftImports from "../../evidence/DraftImports";
 import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
@@ -35,7 +37,13 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import {
+  ARCHIVED_LABEL,
+  LIFECYCLE_COPY,
+  SCENARIOS_COPY,
+} from "./scenarios.constants";
+import { countsLine, isBeingValidated } from "./lifecycleView";
+import ValidateScenariosButton from "./ValidateScenariosButton";
 import { DRAFTS_COPY, WORKSPACE_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
@@ -44,42 +52,36 @@ import {
   isScenarioSampleMode,
   SAMPLE_PAGE_SIZE,
 } from "src/api/simulate-environments/scenariosSampleMode";
-import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
+import {
+  useHarnessScenarios,
+  useRunningScenarioValidation,
+} from "src/api/simulate-environments/scenariosHooks";
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
+// The Filter panel's own field for a scenario's state; the server's fields never use this name.
+const STATE_FIELD = "lifecycle_state";
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // The add CTA. Rendered in two places (the toolbar when the list is populated, and
-// the empty placeholder), so it lives here as one node. Disabled with a
-// coming-soon tooltip for now — the drawer it opens is built and wired, just
-// not surfaced yet. On a locked template the same disabled button reads the
-// fork tooltip instead. Wrapped in a span so the tooltip still fires over the
-// disabled button.
+// the empty placeholder), so it lives here as one node. It opens the Add
+// scenarios panel. A locked template or a Viewer gets it disabled, with the
+// reason on a tooltip; the span keeps the tooltip firing over the disabled
+// button.
 // `short` is the toolbar form: the list it sits on says what gets added, so the
 // visible label drops the noun and the accessible name keeps it.
-function AddButton({
-  onClick,
-  contained = false,
-  locked = false,
-  short = false,
-}) {
+function AddButton({ onClick, contained = false, lockReason, short = false }) {
   return (
-    <CustomTooltip
-      show
-      arrow
-      size="small"
-      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}
-    >
+    <CustomTooltip show={!!lockReason} arrow size="small" title={lockReason}>
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
           variant={contained ? "contained" : "outlined"}
           color="primary"
           size="small"
-          disabled
+          disabled={!!lockReason}
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
@@ -93,23 +95,27 @@ function AddButton({
 AddButton.propTypes = {
   onClick: PropTypes.func,
   contained: PropTypes.bool,
-  locked: PropTypes.bool,
+  // Why it can't be used, if it can't.
+  lockReason: PropTypes.string,
   short: PropTypes.bool,
 };
 
 // Shown when the environment has no scenarios at all — rare, since they are
 // normally derived when the environment is built.
-function RoutePlaceholder({ onAdd, locked = false }) {
+function RoutePlaceholder({ onAdd, lockReason }) {
   return (
     <EmptyState
       icon="solar:widget-add-linear"
       title={SCENARIOS_COPY.emptyTitle}
       body={SCENARIOS_COPY.emptyBody}
-      action={<AddButton onClick={onAdd} contained locked={locked} />}
+      action={<AddButton onClick={onAdd} contained lockReason={lockReason} />}
     />
   );
 }
-RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
+RoutePlaceholder.propTypes = {
+  onAdd: PropTypes.func,
+  lockReason: PropTypes.string,
+};
 
 // Scenarios tab body. The scenarios are already here — derived when the
 // environment is built — so the page leads with them: one toolbar (search,
@@ -119,15 +125,14 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({
   env,
   envState,
-  patch,
   locked = false,
   onStartRun,
   runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
-  // An evidence import opened from Observe, or a transcript added here, lands
-  // as `?import=`.
+  // An evidence import opened from Observe or a dataset, or a transcript added
+  // here, lands as `?import=`.
   const [searchParams, setSearchParams] = useSearchParams();
   const importId = searchParams.get(IMPORT_PARAM);
   const closeImport = () => {
@@ -143,10 +148,17 @@ export default function ScenariosStep({
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const { canEdit } = useSimulationAccess();
+  // A composition's suite is a sealed release; the amend route cannot change it, its chat can.
+  const editHint = env?.composition ? SCENARIOS_COPY.compositionEditHint : null;
+  // Its rows can still be selected, to run some of them.
   const rowsLocked = locked || !canEdit;
+  const editLocked = rowsLocked || Boolean(editHint);
   const rowsLockTooltip = locked
     ? LOCK_TOOLTIP
-    : WORKSPACE_COPY.viewer.scenarios;
+    : !canEdit
+      ? WORKSPACE_COPY.viewer.scenarios
+      : editHint;
+  const addLockReason = editLocked ? rowsLockTooltip : undefined;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -155,6 +167,17 @@ export default function ScenariosStep({
   const [trials, setTrials] = useState(1);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
+  // State is picked by its label and sent as the list's `lifecycle` param, which only the list takes.
+  const { listFilters, fieldFilters } = useMemo(() => {
+    const { [STATE_FIELD]: picked, ...rest } = filters;
+    const state = LIFECYCLE_COPY.filters.find(
+      (one) => one.label === picked?.[0],
+    );
+    return {
+      fieldFilters: rest,
+      listFilters: state ? { ...rest, lifecycle: state.value } : rest,
+    };
+  }, [filters]);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   // The row opened in full from the table (the scenario drawer).
@@ -207,7 +230,7 @@ export default function ScenariosStep({
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: debouncedQuery,
-    filters,
+    filters: listFilters,
     groupBy,
     page,
     pageSize,
@@ -230,11 +253,18 @@ export default function ScenariosStep({
   // The list polls every 15s. A failed first load takes the whole tab; a failed
   // background refetch keeps the rows already on screen and says so inline.
   const loadFailed = pageData.isError || suiteQuery.isError;
+  // The open drawer reads the row from the current list, so a Validate or archive shows there too; a row the list
+  // no longer shows keeps the copy it was opened with.
+  const drawerRow = openRow
+    ? pageData.rows.find((one) => one.id === openRow.id) ?? openRow
+    : null;
   const retryLoad = () => {
     if (pageData.isError) pageData.refetch();
     if (suiteQuery.isError) suiteQuery.refetch();
   };
-  const hasScenarios = suiteTotal > 0;
+  // With every scenario archived the list is empty, but they can still be restored from it.
+  const archivedCount = pageData.proofCounts?.archived ?? 0;
+  const hasScenarios = suiteTotal > 0 || archivedCount > 0;
 
   // A change to the search, the filters or the grouping moves the matching set,
   // so the page position and the selection predicate are reset in each change
@@ -258,9 +288,25 @@ export default function ScenariosStep({
   // The filter catalogue comes straight from the server (`fields`), counted
   // over the searched suite so an OR stays buildable; it drops into the shared
   // FilterPanel unchanged.
+  const hasStates = Boolean(pageData.proofCounts);
   const filterFields = useMemo(
-    () => withServedLabels(pageData.fields || [], pageData.levelLabels),
-    [pageData.fields, pageData.levelLabels],
+    () => [
+      // The list takes one state at a time and has no "is not".
+      ...(hasStates
+        ? [
+            {
+              value: STATE_FIELD,
+              label: LIFECYCLE_COPY.filterLabel,
+              type: "enum",
+              single: true,
+              operators: ["is"],
+              choices: LIFECYCLE_COPY.filters.map((one) => one.label),
+            },
+          ]
+        : []),
+      ...withServedLabels(pageData.fields || [], pageData.levelLabels),
+    ],
+    [hasStates, pageData.fields, pageData.levelLabels],
   );
   // The editor offers every noise bed the backend serves, not only the ones the suite already uses.
   const noiseOptions = useMemo(
@@ -298,14 +344,38 @@ export default function ScenariosStep({
             : r.field;
         flat[key] = [...(flat[key] || []), ...values];
       });
+      // The Query tab can add State twice; the last pick counts.
+      if (flat[STATE_FIELD]) flat[STATE_FIELD] = flat[STATE_FIELD].slice(-1);
       setFilters(flat);
     } else {
       setFilters(result);
     }
   };
 
+  // Only versioned environments carry lifecycle counts; unversioned ones show no line and no State filter.
+  const countsText = countsLine(pageData.proofCounts);
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // The rows a running validation is proving read Validating.
+  const { data: runningValidation } = useRunningScenarioValidation(
+    pageData.proofCounts ? env?.id : null,
+  );
+  // Every scenario not archived, which is what Re-prove all proves again.
+  const reproveCount = pageData.proofCounts
+    ? (pageData.proofCounts.proved ?? 0) +
+      (pageData.proofCounts.kept_as_written ?? 0) +
+      (pageData.proofCounts.not_proved ?? 0)
+    : 0;
   const hiddenCount = hiddenGroupIds.length;
   const hasSearchOrFilters = query.length > 0 || filterCount > 0;
+  const showingArchived = filters[STATE_FIELD]?.[0] === ARCHIVED_LABEL;
+  const toggleArchived = () => {
+    setFilters(
+      showingArchived
+        ? fieldFilters
+        : { ...fieldFilters, [STATE_FIELD]: [ARCHIVED_LABEL] },
+    );
+    resetView();
+  };
   const clearFilters = () => {
     setQuery("");
     setFilters({});
@@ -344,7 +414,7 @@ export default function ScenariosStep({
   const resolveSelection = (pick) =>
     resolveScenarioSelection(env?.id, {
       search: debouncedQuery,
-      filters,
+      filters: listFilters,
       mode: sel.mode,
       marked: sel.idList,
       pick,
@@ -479,14 +549,6 @@ export default function ScenariosStep({
     );
   };
 
-  // Adds dedupe against what is already on the environment, so re-adding a row
-  // the drawer still had selected is a no-op rather than a duplicate.
-  const addScenarios = (rows) => {
-    const existing = new Set(selected.map((s) => s.id));
-    const fresh = (rows || []).filter((r) => !existing.has(r.id));
-    if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
-  };
-
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
@@ -519,7 +581,10 @@ export default function ScenariosStep({
           body="Something went wrong loading this environment's scenarios. Try again."
         />
       ) : !hasScenarios ? (
-        <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
+        <RoutePlaceholder
+          onAdd={() => setAdding(true)}
+          lockReason={addLockReason}
+        />
       ) : (
         <ClickAwayListener onClickAway={handleClickAway}>
           <Box
@@ -544,6 +609,14 @@ export default function ScenariosStep({
               >
                 Couldn&apos;t refresh the scenarios. Showing the last loaded
                 list.
+              </Alert>
+            )}
+            {editHint && (
+              <Alert
+                severity="info"
+                sx={{ mb: 2, typography: "s3", flexShrink: 0 }}
+              >
+                {editHint}
               </Alert>
             )}
             {/* The bulk-action bar covers the toolbar's row while a selection is
@@ -580,24 +653,13 @@ export default function ScenariosStep({
                       <CoverageMatrix
                         jobId={env?.id}
                         search={debouncedQuery}
-                        filters={filters}
+                        filters={fieldFilters}
+                        versioned={Boolean(env?.versioning?.enabled)}
                       />
-                      {!locked && env?.id && (
-                        <ViewerLock
-                          locked={!canEdit}
-                          title={WORKSPACE_COPY.viewer.scenarios}
-                        >
-                          <ImportEvidenceButton
-                            envId={env.id}
-                            onImported={openImport}
-                            disabled={!canEdit}
-                          />
-                        </ViewerLock>
-                      )}
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
-                        locked={locked}
+                        lockReason={addLockReason}
                         short
                       />
                     </>
@@ -618,7 +680,12 @@ export default function ScenariosStep({
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <SelectionBar
                       count={sel.count}
-                      onDelete={bulkDelete}
+                      onDelete={editHint ? undefined : bulkDelete}
+                      deleteBlockedReason={
+                        showingArchived
+                          ? SCENARIOS_COPY.deleteArchived
+                          : undefined
+                      }
                       onClear={sel.clear}
                       onRun={
                         canRun && onStartRun ? handleRunSelected : undefined
@@ -628,6 +695,7 @@ export default function ScenariosStep({
                       }
                       trials={trials}
                       onTrialsChange={setTrials}
+                      composition={env?.composition}
                       matching={{
                         mode: sel.mode,
                         total: pageData.total,
@@ -639,6 +707,93 @@ export default function ScenariosStep({
                 </Box>
               )}
             </Box>
+
+            <Collapse
+              in={Boolean(runningValidation?.job_id)}
+              timeout={reduceMotion ? 0 : undefined}
+              unmountOnExit
+              sx={{ flexShrink: 0 }}
+            >
+              <Stack
+                role="status"
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                data-testid="validating-line"
+                sx={{ pb: 1 }}
+              >
+                <Iconify
+                  icon="solar:hourglass-line-linear"
+                  width={16}
+                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                />
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+                  {LIFECYCLE_COPY.validate.runningLine(
+                    runningValidation?.scenario_keys?.length ||
+                      runningValidation?.to_prove,
+                  )}
+                </Typography>
+              </Stack>
+            </Collapse>
+            {countsText && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="flex-end"
+                flexWrap="wrap"
+                columnGap={1}
+                rowGap={0.5}
+                sx={{ pb: 1, flexShrink: 0 }}
+              >
+                <Typography
+                  data-testid="lifecycle-counts"
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {countsText}
+                </Typography>
+                {archivedCount > 0 && (
+                  <Tooltip
+                    arrow
+                    describeChild
+                    title={LIFECYCLE_COPY.countsArchivedHint(showingArchived)}
+                  >
+                    <Button
+                      size="small"
+                      color="inherit"
+                      aria-pressed={showingArchived}
+                      onClick={toggleArchived}
+                      sx={{
+                        typography: "s3",
+                        minWidth: 0,
+                        px: 0.75,
+                        color: showingArchived
+                          ? "text.primary"
+                          : "text.secondary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {LIFECYCLE_COPY.countsArchived(archivedCount)}
+                    </Button>
+                  </Tooltip>
+                )}
+                {!rowsLocked && env?.id && (
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <ValidateScenariosButton envId={env.id} />
+                    <ValidateScenariosButton
+                      envId={env.id}
+                      reproveAll
+                      quiet
+                      label={LIFECYCLE_COPY.validate.reproveAll}
+                      confirmCount={reproveCount}
+                    />
+                  </Stack>
+                )}
+              </Stack>
+            )}
 
             {/* The table's own bordered box, its edges on the toolbar's. */}
             <Box
@@ -653,7 +808,7 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!rowsLocked && env?.id ? (
+              {!editLocked && env?.id ? (
                 <DraftImports envId={env.id} onResume={openImport} />
               ) : null}
               <PagedScenarioViews
@@ -669,9 +824,11 @@ export default function ScenariosStep({
                 page={page}
                 onPageChange={setPage}
                 query={query}
-                filters={filters}
+                filters={listFilters}
+                isValidating={(row) => isBeingValidated(row, runningValidation)}
                 groupBy={activeGroupBy}
                 locked={rowsLocked}
+                editLocked={editLocked}
                 lockTooltip={rowsLockTooltip}
                 rowHeight={rowHeight}
                 readout={
@@ -702,18 +859,23 @@ export default function ScenariosStep({
       <AddScenariosDrawer
         open={adding}
         onClose={() => setAdding(false)}
-        env={env}
-        selected={selected}
-        onAdd={addScenarios}
+        envId={env.id}
+        onImported={openImport}
       />
       <ScenarioDrawer
-        row={openRow}
+        envId={env?.id}
+        onLifecycleChange={(lifecycle) =>
+          setOpenRow((prev) =>
+            prev && lifecycle ? { ...prev, lifecycle } : prev,
+          )
+        }
+        row={drawerRow}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {
           setOpenRow(null);
           setEditing(row);
         }}
-        locked={rowsLocked}
+        locked={editLocked}
         testConditions={
           !!pageData.scenarioEditing?.editable_fields?.includes("faults")
         }
@@ -727,6 +889,7 @@ export default function ScenariosStep({
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
         env={env}
+        privateFields={pageData.privateFields}
       />
       <ConfirmDialog
         open={!!pendingDelete}
@@ -757,7 +920,6 @@ export default function ScenariosStep({
 ScenariosStep.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
-  patch: PropTypes.func.isRequired,
   locked: PropTypes.bool,
   // Starts a run scoped to the selected scenarios × trials — (ids, trials).
   onStartRun: PropTypes.func,

@@ -114,9 +114,51 @@ export const useTestDetailStoreShallow = (fun) =>
 export const useTestDetailSearchStoreShallow = (fun) =>
   useTestDetailStore(useShallow(fun));
 
-export const useTestExecutionStore = create((set) => ({
+// The run status the call grid last read, and the execution it read it for.
+// `statusReader` is the grid that reads it: the store outlives the Call
+// Details tab, so a read that answers after the user left still counts, but a
+// grid mounted later takes over. `kpisUpdateCountAtFinish` is how many KPI
+// reads had landed when the grid saw the run finish: only a later read holds
+// the final count Debug failures judges. `finalKpisFailed` says the explicit
+// final read failed; a KPI read that lands later decides anyway.
+const EMPTY_EXECUTION_STATE = {
   status: null,
-  setStatus: (status) => set({ status }),
+  statusExecutionId: null,
+  statusReader: null,
+  kpisUpdateCountAtFinish: null,
+  finalKpisFailed: false,
+};
+
+// Applies `update` only while `executionId` is the execution on screen.
+const forExecution = (executionId, update) => (state) =>
+  state.statusExecutionId === executionId ? update : {};
+
+export const useTestExecutionStore = create((set) => ({
+  ...EMPTY_EXECUTION_STATE,
+  setStatus: (executionId, status) =>
+    set(forExecution(executionId, { status })),
+  // `null` when the run is making calls again.
+  setKpisUpdateCountAtFinish: (executionId, count) =>
+    set(
+      forExecution(executionId, {
+        kpisUpdateCountAtFinish: count,
+        finalKpisFailed: false,
+      }),
+    ),
+  markFinalKpisFailed: (executionId) =>
+    set(forExecution(executionId, { finalKpisFailed: true })),
+  // A grid mounting on the execution on screen keeps its status and final
+  // count. A newly opened execution has neither yet.
+  claimStatus: (executionId, reader) =>
+    set((state) =>
+      state.statusExecutionId === executionId
+        ? { statusReader: reader }
+        : {
+            ...EMPTY_EXECUTION_STATE,
+            statusExecutionId: executionId,
+            statusReader: reader,
+          },
+    ),
 }));
 
 export const resetState = () => {
@@ -130,5 +172,5 @@ export const resetState = () => {
   useTestDetailStore.setState({
     search: "",
   });
-  useTestExecutionStore.setState({ status: null });
+  useTestExecutionStore.setState(EMPTY_EXECUTION_STATE);
 };

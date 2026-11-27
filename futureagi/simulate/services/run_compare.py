@@ -20,7 +20,11 @@ from simulate.models import (
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_reliability_v3 import wilson
-from simulate.services.run_results_v3_scoring import HARNESS_FAILED, HARNESS_PASSED
+from simulate.services.run_results_v3_scoring import (
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_PASSED,
+)
 
 # Two-sided 95%.
 Z = 1.959963984540054
@@ -63,9 +67,35 @@ def newcombe_interval(
 
 
 def verdict(
-    passed: int, trials: int, other_passed: int, other_trials: int
+    passed: int,
+    trials: int,
+    other_passed: int,
+    other_trials: int,
+    undecided: int = 0,
+    other_undecided: int = 0,
 ) -> tuple[str, tuple[float, float] | None]:
-    """The current run (``passed``/``trials``) against the other, and the interval."""
+    """The current run (``passed``/``trials``) against the other, and the interval. Undecided trials could have gone
+    either way: a regression holds only with every undecided trial read in its favour (the current run's as passes,
+    the other's as failures), an improvement only with every one read against it; otherwise it is inconclusive."""
+    if undecided or other_undecided:
+        outcome, interval = verdict(passed, trials, other_passed, other_trials)
+        if outcome == REGRESSED:
+            bound = verdict(
+                passed + undecided,
+                trials + undecided,
+                other_passed,
+                other_trials + other_undecided,
+            )[0]
+            return (REGRESSED if bound == REGRESSED else INCONCLUSIVE), interval
+        if outcome == IMPROVED:
+            bound = verdict(
+                passed,
+                trials + undecided,
+                other_passed + other_undecided,
+                other_trials + other_undecided,
+            )[0]
+            return (IMPROVED if bound == IMPROVED else INCONCLUSIVE), interval
+        return outcome, interval
     if not trials or not other_trials:
         return INCONCLUSIVE, None
     difference = passed / trials - other_passed / other_trials
@@ -82,22 +112,31 @@ def verdict(
     return INCONCLUSIVE, (low, high)
 
 
-def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
-    """Whether a trial passed: every sub-goal held; None when one was undecided, even beside a failure. Not
-    applicable and inconclusive sub-goals are left out (only those: undecided); no sub-goals reads the status."""
+def trial_passed(
+    sub_goals: Any, harness_status: Any, failure: Any = None
+) -> bool | None:
+    """Whether a trial passed: every sub-goal held. A failed check, or a trial graded failed with none (the world
+    committed a write twice), fails it; else a check undecided or never verified leaves it undecided. Not applicable
+    and inconclusive sub-goals are left out; no sub-goals reads the status."""
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
+    results = [sub_goal_result(dict(one)) for one in checks]
+    status = str(harness_status or "").lower()
+    if status in HARNESS_ERROR:
+        # Ended on a failure: the agent's fails it, ours (or one not known) decides nothing about the agent.
+        return (
+            False
+            if isinstance(failure, Mapping) and failure.get("domain") == "agent"
+            else None
+        )
+    if "fail" in results or status in HARNESS_FAILED:
+        return False
     if checks:
-        results = [sub_goal_result(dict(one)) for one in checks]
-        if any(result is None for result in results):
+        # A check nothing decided, or one never verified for this scenario, leaves the trial undecided: never a pass.
+        if any(result in (None, "unmeasured") for result in results):
             return None
         held = [SUB_GOAL_PASSED[one] for one in results if one in SUB_GOAL_PASSED]
         return all(held) if held else None
-    status = str(harness_status or "").lower()
-    if status in HARNESS_PASSED:
-        return True
-    if status in HARNESS_FAILED:
-        return False
-    return None
+    return True if status in HARNESS_PASSED else None
 
 
 @dataclass
@@ -112,20 +151,27 @@ class ScenarioTrials:
     sub_goals: set[str] = field(default_factory=set)
 
     def add(
-        self, sub_goals: Any, harness_status: Any, call_outcome: Any, eval_outcome: Any
+        self,
+        sub_goals: Any,
+        harness_status: Any,
+        call_outcome: Any,
+        eval_outcome: Any,
+        failure: Any = None,
     ) -> None:
         for one in sub_goals or []:
             if isinstance(one, Mapping) and one.get("name"):
                 self.sub_goals.add(str(one["name"]))
-        outcome = (
-            None
-            if call_outcome in _UNRUN_OUTCOMES
-            else trial_passed(sub_goals, harness_status)
+        # A trial sealed on a failure ran: the agent's (it stalled, it hung up) fails it, ours (the judge left a check
+        # open, the simulator broke) leaves it undecided, counted beside the decided ones, never dropped as unrun.
+        sealed = isinstance(failure, Mapping) and bool(failure.get("domain"))
+        unrun = call_outcome in _UNRUN_OUTCOMES and not (
+            call_outcome == "error" and sealed
         )
+        outcome = None if unrun else trial_passed(sub_goals, harness_status, failure)
         if outcome is not None:
             self.decided += 1
             self.passed += int(outcome)
-        elif call_outcome not in _UNRUN_OUTCOMES:
+        elif not unrun:
             self.undecided += 1
         if eval_outcome in ("passed", "failed"):
             self.eval_measured += 1
@@ -212,7 +258,12 @@ def scenario_pairs(
                 now.sub_goals | then.sub_goals, digests, against_digests
             )
             outcome, interval = verdict(
-                now.passed, now.decided, then.passed, then.decided
+                now.passed,
+                now.decided,
+                then.passed,
+                then.decided,
+                now.undecided,
+                then.undecided,
             )
             pair.update(
                 band=CRITERIA_CHANGED if changed else PAIRED,
@@ -289,6 +340,59 @@ def sub_goal_digests(environment_version_ids: Iterable[Any]) -> dict[str, Any]:
         id__in=ids
     ).values_list("id", "documents__sub_goal_digests")
     return {str(version_id): digests for version_id, digests in rows}
+
+
+def changed_tests(
+    suite_id: Any,
+    other_suite_id: Any,
+    environment_id: Any,
+    other_environment_id: Any,
+    keys: Iterable[str],
+) -> set[str]:
+    """Keys whose case is not the same test in the two runs: its content differs between the two
+    suite versions, or the environment versions differ and a rule or file it cites changed."""
+    from simulate.services.canonical_json import canonical_digest
+    from simulate.services.harness_scenario_lifecycle import changed_refs
+
+    keys = list(keys)
+    if not keys:
+        return set()
+
+    def contents(suite: Any) -> dict[str, Any]:
+        if not suite:
+            return {}
+        return dict(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=suite, scenario_key__in=keys
+            ).values_list("scenario_key", "content")
+        )
+
+    now, then = contents(suite_id), contents(other_suite_id)
+    changed = {
+        key
+        for key in now.keys() & then.keys()
+        if canonical_digest(now[key] or {}) != canonical_digest(then[key] or {})
+    }
+    if (
+        environment_id
+        and other_environment_id
+        and environment_id != other_environment_id
+    ):
+        versions = {
+            str(one.id): one
+            for one in HarnessEnvironmentVersion._base_manager.filter(
+                id__in=[environment_id, other_environment_id]
+            )
+        }
+        version, other = (
+            versions.get(str(environment_id)),
+            versions.get(str(other_environment_id)),
+        )
+        if version is not None and other is not None:
+            changed |= set(
+                changed_refs(version, now, parent_documents=other.documents or {})
+            )
+    return changed
 
 
 def suite_members(suite_id: Any, keys: Iterable[str]) -> set[str]:

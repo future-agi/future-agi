@@ -56,11 +56,11 @@ interface PieceVersion { id: string; label: string | null; is_default: boolean }
 interface Versions { environment: PieceVersion[]; suite: PieceVersion[]; locked_versions: LockedVersion[] }
 
 test(
-  'SIM-E2E-038: an author locks an environment\'s default versions and sees the locked version\'s label with the train and test split',
+  'SIM-E2E-042: an author locks an environment\'s default versions and sees the locked version\'s label with the train and test split',
   {
     tag: ['@flow'],
     annotation: flowAnnotation({
-      id: 'SIM-E2E-038',
+      id: 'SIM-E2E-042',
       area: 'simulate',
       userGoal:
         'An author whose environment has enough scorable scenarios opens its Overview, sees the version is ready to lock, locks it, and reads its label with the train and test task counts; the environment then cannot be deleted until the version is unlocked',
