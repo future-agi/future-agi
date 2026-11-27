@@ -56,9 +56,13 @@ export function ReviewedStatements({ source, rules }) {
       (statement, index, list) => !isHeading(source, statement, index, list),
     );
   const policy = new Map(rules.map((rule) => [rule.statement_id, rule]));
+  // Older accepted reviews have no accepted_rule_ids; they fall back to the proposal status.
+  const accepted = source.accepted_rule_ids;
   const isRule = (statement) =>
-    policy.get(statement.statement_id)?.status === "supported" &&
-    !(statement.text_truncated ?? statement.text.length >= 2000);
+    Array.isArray(accepted)
+      ? accepted.includes(policy.get(statement.statement_id)?.rule_id)
+      : policy.get(statement.statement_id)?.status === "supported" &&
+        !(statement.text_truncated ?? statement.text.length >= 2000);
   return [
     ["Rules", statements.filter(isRule)],
     ["Reference passages", statements.filter((s) => !isRule(s))],

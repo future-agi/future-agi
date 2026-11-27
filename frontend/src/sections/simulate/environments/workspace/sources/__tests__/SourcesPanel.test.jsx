@@ -511,6 +511,34 @@ describe("SourcesSection", () => {
     expect(screen.getByText("Page 2")).toBeVisible();
   });
 
+  it("lists a rule the person unticked as a reference passage in the saved file", async () => {
+    sources = [
+      {
+        source_id: "policy",
+        filename: "policy.pdf",
+        purpose: "policy",
+        review_id: "review-1",
+        used_by: [],
+        unsaved: false,
+      },
+    ];
+    const [records, policy] = ready.preview.sources;
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      preview: {
+        ...ready.preview,
+        sources: [records, { ...policy, accepted_rule_ids: [] }],
+      },
+    };
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "policy.pdf" }));
+    expect(
+      await screen.findByText("Refunds are allowed for 15 days."),
+    ).toBeVisible();
+    expect(screen.getByText("Reference passages")).toBeVisible();
+  });
+
   it("displays KB passage locations and the original link without rendering cached excerpts", async () => {
     const origin = { kind: "knowledge_base", kb_id: "kb-1" };
     sources = [
