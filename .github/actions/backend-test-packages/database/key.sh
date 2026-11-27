@@ -16,7 +16,11 @@ ids=$(while IFS= read -r service; do
   [[ $id =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
   printf '%s:%s\n' "$service" "$id"
 done <<< "$services")
-config=$("${compose[@]}" config | sha256sum)
+# The Compose file's own bytes, not `docker compose config`: the rendered form
+# changes with the Compose release a runner image ships, and that alone
+# missed the cache. The file interpolates no variables, so its bytes are the
+# whole service definition; the image IDs above pin what each tag resolved to.
+config=$(sha256sum < docker-compose.test.yml)
 if [[ ${1:-running} == probe ]]; then
   tools='3.12.3|0.13.9'
 else

@@ -4,6 +4,8 @@ import test from "node:test";
 
 import {
   candidatesFor,
+  hasHumanReviewRequest,
+  isAssignerComment,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
@@ -159,4 +161,44 @@ test("reassign is due after 4 working hours with no devflow review from the assi
     ),
     true,
   );
+});
+
+test("a request for the code-owner team is not a human request; any other is", () => {
+  const user = [{ login: "ann" }];
+  const owners = [{ slug: "internal-all-write" }];
+  const none = { requested_reviewers: [], requested_teams: [] };
+  assert.equal(hasHumanReviewRequest(none), false);
+  assert.equal(
+    hasHumanReviewRequest({ ...none, requested_teams: owners }),
+    false,
+  );
+  assert.equal(
+    hasHumanReviewRequest({
+      requested_reviewers: user,
+      requested_teams: owners,
+    }),
+    true,
+  );
+  assert.equal(
+    hasHumanReviewRequest({ ...none, requested_teams: [{ slug: "backend" }] }),
+    true,
+  );
+  assert.equal(
+    hasHumanReviewRequest({
+      ...none,
+      requested_teams: [...owners, { slug: "backend" }],
+    }),
+    true,
+  );
+});
+
+test("the assigner's comments are the App's and github-actions', nobody else's", () => {
+  const by = (login) => ({ user: { login } });
+  const app = "devflow-approver[bot]";
+  assert.equal(isAssignerComment(by("devflow-approver[bot]"), app), true);
+  assert.equal(isAssignerComment(by("Devflow-Approver[bot]"), app), true);
+  assert.equal(isAssignerComment(by("github-actions[bot]"), app), true);
+  assert.equal(isAssignerComment(by("someone"), app), false);
+  assert.equal(isAssignerComment(by("devflow-approver"), app), false);
+  assert.equal(isAssignerComment(by(""), ""), false);
 });
