@@ -1,18 +1,22 @@
 import PropTypes from "prop-types";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
   Button,
   Checkbox,
+  Divider,
   FormControlLabel,
   FormHelperText,
+  IconButton,
   MenuItem,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
+import { Upload } from "src/components/upload";
 import {
   MAX_EVIDENCE_SOURCES,
   MAX_TRANSCRIPT_CHARS,
@@ -22,15 +26,32 @@ import {
 import { EVIDENCE_COPY, errorText, guessFormat } from "./evidence.constants";
 
 const FORMATS = Object.keys(EVIDENCE_COPY.formats);
+// What the drop zone and its file picker take.
+const ACCEPT = {
+  "application/json": [".json"],
+  "text/plain": [".txt"],
+  "text/csv": [".csv"],
+};
 
-function FormatSelect({ value, onChange }) {
+// `fileName` makes it a file row's compact select: no label above it (the
+// row says which file), and its name for screen readers says which file.
+function FormatSelect({ value, onChange, fileName }) {
   return (
     <TextField
       select
       size="small"
-      label={EVIDENCE_COPY.formatLabel}
+      label={fileName ? undefined : EVIDENCE_COPY.formatLabel}
       value={value}
       onChange={(event) => onChange(event.target.value)}
+      SelectProps={
+        fileName
+          ? {
+              inputProps: {
+                "aria-label": `${EVIDENCE_COPY.formatLabel} of ${fileName}`,
+              },
+            }
+          : undefined
+      }
       sx={{ minWidth: 200 }}
     >
       {FORMATS.map((one) => (
@@ -42,7 +63,11 @@ function FormatSelect({ value, onChange }) {
   );
 }
 
-FormatSelect.propTypes = { value: PropTypes.string, onChange: PropTypes.func };
+FormatSelect.propTypes = {
+  value: PropTypes.string,
+  onChange: PropTypes.func,
+  fileName: PropTypes.string,
+};
 
 // From an environment's Scenarios tab: a pasted transcript, or uploaded files
 // (one case each), become an import, whose review then opens. Production is
@@ -54,7 +79,6 @@ export default function ImportTranscriptDialog({
   onImported,
 }) {
   const create = useCreateEvidenceImport();
-  const fileInput = useRef(null);
   const [pasted, setPasted] = useState("");
   const [name, setName] = useState(EVIDENCE_COPY.pastedName);
   // Null until the person picks one: then it is guessed from the text.
@@ -81,11 +105,14 @@ export default function ImportTranscriptDialog({
       : [];
   }
 
-  const pickFiles = async (event) => {
-    const picked = Array.from(event.target.files ?? []);
-    event.target.value = "";
+  // Dropped or browsed files join the ones already added, up to the limit.
+  const addFiles = async (picked, rejected = []) => {
+    if (rejected.length) {
+      setFileProblem(EVIDENCE_COPY.wrongType(rejected[0].file.name));
+      return;
+    }
     if (!picked.length) return;
-    if (picked.length > MAX_EVIDENCE_SOURCES) {
+    if (files.length + picked.length > MAX_EVIDENCE_SOURCES) {
       setFileProblem(EVIDENCE_COPY.transcriptsTooMany);
       return;
     }
@@ -101,9 +128,18 @@ export default function ImportTranscriptDialog({
       return;
     }
     setFileProblem("");
-    setFiles(
-      read.map((one) => ({ ...one, format: guessFormat(one.name, one.text) })),
-    );
+    setFiles((current) => [
+      ...current,
+      ...read.map((one) => ({
+        ...one,
+        format: guessFormat(one.name, one.text),
+      })),
+    ]);
+  };
+
+  const removeFile = (index) => {
+    setFiles((current) => current.filter((_, at) => at !== index));
+    setFileProblem("");
   };
 
   const setFileFormat = (index, value) =>
@@ -147,7 +183,20 @@ export default function ImportTranscriptDialog({
                 direction="row"
                 spacing={1}
                 alignItems="center"
+                sx={{
+                  pl: 1.25,
+                  pr: 0.5,
+                  py: 0.75,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                }}
               >
+                <Iconify
+                  icon="solar:document-text-linear"
+                  width={16}
+                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                />
                 <Typography
                   noWrap
                   sx={{ typography: "s1", flex: 1, minWidth: 0 }}
@@ -157,16 +206,36 @@ export default function ImportTranscriptDialog({
                 <FormatSelect
                   value={one.format}
                   onChange={(value) => setFileFormat(index, value)}
+                  fileName={one.name}
                 />
+                <IconButton
+                  size="small"
+                  aria-label={EVIDENCE_COPY.removeFile(one.name)}
+                  onClick={() => removeFile(index)}
+                >
+                  <Iconify icon="solar:close-circle-linear" width={16} />
+                </IconButton>
               </Stack>
             ))}
+            <Box>
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => {
+                  setFiles([]);
+                  setFileProblem("");
+                }}
+              >
+                {EVIDENCE_COPY.usePaste}
+              </Button>
+            </Box>
           </Stack>
         ) : (
           <>
             <TextField
               label={EVIDENCE_COPY.pasteLabel}
               multiline
-              minRows={6}
+              minRows={5}
               maxRows={14}
               fullWidth
               value={pasted}
@@ -186,34 +255,41 @@ export default function ImportTranscriptDialog({
                 onChange={setFormat}
               />
             </Stack>
+            <Divider>
+              <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+                {EVIDENCE_COPY.or}
+              </Typography>
+            </Divider>
           </>
         )}
-        <Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            onClick={() => {
-              if (files.length) {
-                setFiles([]);
-                setFileProblem("");
-              } else {
-                fileInput.current?.click();
-              }
-            }}
-          >
-            {files.length ? EVIDENCE_COPY.usePaste : EVIDENCE_COPY.uploadFiles}
-          </Button>
-          <input
-            ref={fileInput}
-            type="file"
+        {files.length < MAX_EVIDENCE_SOURCES && (
+          <Upload
             multiple
-            accept=".json,.txt,.csv,application/json,text/plain,text/csv"
-            hidden
-            data-testid="transcript-file-input"
-            onChange={pickFiles}
+            hidePreview
+            showIllustration={false}
+            showDropRejection={false}
+            accept={ACCEPT}
+            onDrop={(accepted, rejected) => addFiles(accepted, rejected)}
+            uploadIcon={
+              <Iconify
+                icon="solar:upload-minimalistic-linear"
+                width={24}
+                sx={{ color: "primary.main" }}
+              />
+            }
+            heading={EVIDENCE_COPY.dropHeading}
+            description={[EVIDENCE_COPY.dropFormats, EVIDENCE_COPY.dropLimits]}
+            actionButton={
+              <Button size="small" variant="outlined" color="inherit">
+                {EVIDENCE_COPY.browseFiles}
+              </Button>
+            }
+            sx={{ py: files.length ? 1.5 : 2.5 }}
           />
-        </Box>
+        )}
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {EVIDENCE_COPY.transcriptPrivacy}
+        </Typography>
         <Box>
           <FormControlLabel
             control={

@@ -99,7 +99,6 @@ describe("the ready environments browser", () => {
         error={{ message: "releases are down" }}
         onRetry={onRetry}
         onOpenWorld={vi.fn()}
-        onOpenSandbox={vi.fn()}
       />,
     );
 
@@ -127,7 +126,6 @@ describe("the ready environments browser", () => {
       <WorldsBrowser
         worlds={worlds}
         onOpenWorld={vi.fn()}
-        onOpenSandbox={vi.fn()}
       />,
     );
   const optionsOf = (index) => {
@@ -137,11 +135,11 @@ describe("the ready environments browser", () => {
       .map((option) => option.textContent);
   };
 
-  it("counts no sandbox among them", () => {
+  it("lists no sandbox among them", () => {
     browser();
 
     expect(screen.getByText("2 of 2 environments")).toBeInTheDocument();
-    expect(optionsOf(0)).toEqual(["All types2", "Any agent", "Chat2"]);
+    expect(optionsOf(0)).toEqual(["All types2", "Chat2"]);
   });
 
   it("filters by the domain's name", () => {

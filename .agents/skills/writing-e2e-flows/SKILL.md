@@ -31,7 +31,8 @@ not carry — the decision procedure, the interview, design-doc mining, the pinn
 the harness gaps, and the proof loop.
 
 - **`e2e/README.md` § "Writing a flow"** — in full, every time. Not skimmed, not remembered.
-- **`e2e/FLOWS.md`** — what already exists, which area owns it, and the next free id.
+- **`e2e/FLOWS.md`** (run `yarn catalog` first; it is generated and not committed) — what already
+  exists, which area owns it, and the next free id.
 - **The newest spec in the target area**; if the area has no flows yet,
   `e2e/flows/observe/trace-ingestion.spec.ts`, the canonical exemplar the README reproduces.
 
@@ -66,7 +67,7 @@ Track the numbered steps as todos, one each.
    out first; and an empty diff comes back `EXEMPT (no-changes)`, which means "nothing to classify",
    not "no flow needed".
 
-   If the script is not in the checkout: read `FLOWS.md` and classify by hand — does any listed
+   If the script is not in the checkout: run `yarn catalog`, read `FLOWS.md` and classify by hand — does any listed
    flow's area, endpoint or route appear in your diff (update it), or is this user-visible surface
    no flow covers (new flow)?
 
@@ -148,8 +149,9 @@ Then, from `e2e/`:
 yarn typecheck && yarn catalog
 ```
 
-`yarn catalog` regenerates `FLOWS.md`. It is generated; never hand-write it or hand-edit it. Commit
-it in the same commit as the spec.
+`yarn catalog` writes `FLOWS.md` for you to read. It is gitignored; do not commit it. Write the flow
+id as a quoted string literal and the area as an `area:` literal: `e2e-coverage` reads them from
+the spec text to prove `E2E: new <ID>`.
 
 ### 4. Prove — definition of done
 
@@ -188,7 +190,7 @@ flows/<area>/<name>.spec.ts`. Attach mode is for iteration, not for verdicts.
 
 ### 5. Hand off
 
-Spec and `FLOWS.md` in the same commit. No `test.only` — CI runs `forbidOnly`. No retries: a flow
+The spec is the whole flow change; `FLOWS.md` is not committed. No `test.only` — CI runs `forbidOnly`. No retries: a flow
 that passes on the second attempt is telling you something true. Never pass `--grep-invert` on the
 command line; it replaces the config's own value and un-quarantines the whole suite. Quarantine only
 with an owner, a ticket and an expiry within 45 days. The PR body carries the evidence from step 4.
@@ -242,7 +244,7 @@ Pick a budget by what you are waiting on, never by which flow you are writing:
 | "One retry won't hurt."                                                                                                | `retries: 0` is deliberate. A flow that passes on attempt two is reporting a real product behaviour; a retry throws that signal away. Quarantine with owner, ticket and expiry instead.                                                                                                                                 |
 | "I'll read the spans table without `FINAL`."                                                                           | `spans`, `traces` and every CDC-fed table are ReplacingMergeTree. An unmerged read hands you the stale version of a row that moved through a lifecycle.                                                                                                                                                                 |
 | "This wait is a UI refresh, not an eventually-consistent store, so the default budget is right."                       | The 10 s expect default is not a first-paint budget. A UI step that takes 10 s alone takes a minute beside other workers. Use the spec's `UI_READY`.                                                                                                                                                                    |
-| "`FLOWS.md` is generated text; I'll hand-produce what the generator would emit."                                       | The gate is a byte compare, and the file says "do not edit" in its own header. Run `yarn catalog`.                                                                                                                                                                                                                      |
+| "I'll commit `FLOWS.md` so reviewers see the flow."                                                                    | It is gitignored and generated; CI renders it into the job summary. Commit the spec only.                                                                                                                                                                                                                               |
 | "`login.spec.ts` bypasses the fixtures, so I can assemble the actors I need by hand."                                  | That file is a documented single-actor exception because it drives the login UI. Multiple identities is a harness gap: propose the `lib/` extension, do not build it inside a flow.                                                                                                                                     |
 | "The product's own path doesn't reach that state, so I'll drive the API instead."                                      | You have just changed what the flow proves. That is an interview question, not an implementation detail.                                                                                                                                                                                                                |
 | "The commit is mostly refactor; I know which claim is the user-visible one."                                           | Two agents reading the same commit picked two different goals. If more than one goal is plausible, ask.                                                                                                                                                                                                                 |
@@ -275,5 +277,5 @@ predict — it is the full symptom → cause → fix list. The eight that bite f
   planned with the user.
 - Flows for services this stack profile does not start — `serving`, `code-executor`, the simulation
   runner — or assertions on surfaces whose CDC mirror is known-drifted.
-- Committing. Prepare the spec, the regenerated `FLOWS.md` and the evidence; the user decides when
+- Committing. Prepare the spec and the evidence; the user decides when
   it lands.

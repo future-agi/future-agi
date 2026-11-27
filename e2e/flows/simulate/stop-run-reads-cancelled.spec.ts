@@ -85,6 +85,8 @@ test('SIM-E2E-035: a user stops a running Run, and its call reads Cancelled in t
     await goalOutcome.getByRole('button', { name: 'Show Cancelled calls' }).click({ timeout: UI_READY });
     await expect(page.getByText(seed.ongoingScenarioName, { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(seed.skippedScenarioName, { exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Error', exact: true })).toHaveText(/^Error\s*0$/);
+    // Chips with no calls are hidden, so Error (0 here) has no chip; Cancelled stays.
+    await expect(page.getByRole('button', { name: 'Error', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cancelled', exact: true })).toHaveText(/^Cancelled\s*1$/);
   });
 });
