@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0123_harness_locked_version"),
+        ("simulate", "0124_agent_fix_outside_attempts"),
     ]
 
     operations = [
