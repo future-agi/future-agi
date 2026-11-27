@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import ActorField from "./ActorField";
-import ActorVoiceFields from "./ActorVoiceFields";
 import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
@@ -15,7 +14,6 @@ export default function ActorIdentityFields({
   channelOptions,
   chosen,
   fieldOptions,
-  loudness,
 }) {
   const existing = Boolean(actor.id);
   const channelLock = existing
@@ -24,6 +22,26 @@ export default function ActorIdentityFields({
   const startChannel = form.initial.channel;
   return (
     <>
+      <ActorField
+        form={form}
+        name="channel"
+        label={F.channel}
+        options={channelOptions.map((one) =>
+          one.channel === null
+            ? { value: "", label: F.noChannel }
+            : { value: one.channel, label: one.label },
+        )}
+        disabled={Boolean(channelLock)}
+        helperText={channelLock ? channelLock.reason : chosen?.description}
+        // A stored way of joining the cast no longer offers reads by its own name.
+        startLabel={startChannel || F.noChannel}
+      />
+      <ActorField
+        form={form}
+        name="kind"
+        label={F.kind}
+        options={fieldOptions.kind}
+      />
       <ActorField
         form={form}
         name="role"
@@ -58,33 +76,6 @@ export default function ActorIdentityFields({
           helperText={F.idHelp(idHint)}
         />
       )}
-      <ActorField
-        form={form}
-        name="kind"
-        label={F.kind}
-        options={fieldOptions.kind}
-      />
-      <ActorField
-        form={form}
-        name="channel"
-        label={F.channel}
-        options={channelOptions.map((one) =>
-          one.channel === null
-            ? { value: "", label: F.noChannel }
-            : { value: one.channel, label: one.label },
-        )}
-        disabled={Boolean(channelLock)}
-        helperText={channelLock ? channelLock.reason : chosen?.description}
-        // A stored way of joining the cast no longer offers reads by its own name.
-        startLabel={startChannel || F.noChannel}
-      />
-      {form.value("channel") && (
-        <ActorVoiceFields
-          form={form}
-          options={fieldOptions}
-          loudness={chosen?.loudness ? loudness : null}
-        />
-      )}
     </>
   );
 }
@@ -100,5 +91,4 @@ ActorIdentityFields.propTypes = {
   channelOptions: PropTypes.arrayOf(PropTypes.object).isRequired,
   chosen: PropTypes.object,
   fieldOptions: PropTypes.object.isRequired,
-  loudness: PropTypes.object.isRequired,
 };

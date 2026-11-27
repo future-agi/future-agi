@@ -73,16 +73,38 @@ describe("ActorForm", () => {
     ).toBeInTheDocument();
   });
 
-  it("asks for the role first, as the main label, then the name they speak as", () => {
+  it("follows the design's order: how they take part, kind, role, name, id, then comes in", () => {
     verdict = CLEAN;
     renderForm(newActor("world"));
-    const role = screen.getByLabelText("Role (optional)");
-    const name = screen.getByLabelText("Name");
-    expect(
-      role.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    const order = [
+      "How they take part",
+      "Kind (optional)",
+      "Role (optional)",
+      "Name",
+      "Id",
+      "Comes in",
+    ].map((label) => screen.getByLabelText(label));
+    order
+      .slice(1)
+      .forEach((field, index) =>
+        expect(
+          order[index].compareDocumentPosition(field) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy(),
+      );
     expect(screen.getByText(/such as Sales manager/)).toBeInTheDocument();
     expect(screen.getByText(/such as Priya Sharma/)).toBeInTheDocument();
+  });
+
+  it("shows how a speaking actor sounds after the world actions they may take", () => {
+    verdict = CLEAN;
+    renderForm(newActor("caller", "audio_mix"));
+    expect(
+      screen
+        .getByLabelText("World actions they may take (optional)")
+        .compareDocumentPosition(screen.getByLabelText("Gender")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("titles a new actor's form Add actor, added to the draft", () => {

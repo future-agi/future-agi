@@ -13,6 +13,7 @@ import ActorIdentityFields from "./ActorIdentityFields";
 import ActorKnowledgeFields from "./ActorKnowledgeFields";
 import ActorPressureFields from "./ActorPressureFields";
 import ActorTriggerFields from "./ActorTriggerFields";
+import ActorVoiceFields from "./ActorVoiceFields";
 import { ACTORS_COPY } from "./actors.constants";
 import { OPTIONS_SHAPE } from "./actors.shapes";
 import {
@@ -170,7 +171,6 @@ export default function ActorForm({
               channelOptions={context.channelOptions}
               chosen={chosen}
               fieldOptions={options}
-              loudness={context.loudness}
             />
             <ActorTriggerFields
               form={form}
@@ -203,6 +203,13 @@ export default function ActorForm({
               shareConfirmed={shareConfirmed}
               onShare={(checked) => setConfirmedFor(checked ? conflictKey : "")}
             />
+            {value("channel") && (
+              <ActorVoiceFields
+                form={form}
+                options={options}
+                loudness={chosen?.loudness ? context.loudness : null}
+              />
+            )}
             <ActorPressureFields form={form} />
             {field("style", F.style, { helperText: F.styleHelp })}
             <ActorAdvancedFields
