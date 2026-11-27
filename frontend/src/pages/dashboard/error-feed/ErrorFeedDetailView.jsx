@@ -402,7 +402,7 @@ export default function ErrorFeedDetailView() {
                 alignItems="center"
                 gap={1}
                 minWidth={0}
-                sx={{ pl: shared ? 0 : 4, flexWrap: "wrap", rowGap: 0.5 }}
+                sx={{ pl: shared ? 0 : 4 }}
               >
                 <Tooltip arrow title="Error type">
                   <Chip
@@ -414,10 +414,9 @@ export default function ErrorFeedDetailView() {
                     sx={{ flexShrink: 0 }}
                   />
                 </Tooltip>
+                {/* On the chip's line, not one of its own — the header stays two rows. */}
+                <EscalationReason issue={currentError} inline />
               </Stack>
-              <Box sx={{ pl: shared ? 0 : 4 }}>
-                <EscalationReason issue={currentError} />
-              </Box>
             </Stack>
 
             <Stack
