@@ -498,6 +498,38 @@ class MainTests(unittest.TestCase):
         self.assertEqual(len(posted), 1)
         self.assertIn("dismissals", posted[0][3])
 
+    def test_a_wait_keeps_the_admin_rules_approval_on_an_admins_pull_request(self):
+        # The first switch to devflow mode withdrew every queued admin
+        # approval this way: no reviewer requested, so wait.
+        case = Case()
+        case.events = []
+        case.reviews = [review(APPROVER, state="APPROVED", body=da.ADMIN_APPROVAL_BODY)]
+        code, calls, decisions = run_main(case, author_permission="admin")
+        self.assertEqual((code, decisions[0]["action"], decisions[0]["withdraw"]), (0, "wait", []))
+        self.assertEqual(writes(calls), [])
+
+    def test_needs_human_keeps_the_admin_rules_approval_and_adds_the_label(self):
+        case = Case()
+        case.reviews = [review(tier="high"), review(APPROVER, state="APPROVED", body=da.ADMIN_APPROVAL_BODY)]
+        posted = writes(run_main(case, author_permission="admin")[1])
+        self.assertEqual([p[-1] for p in posted], ["labels[]=needs-human"])
+
+    def test_every_other_bot_approval_is_still_withdrawn(self):
+        own = "Approved automatically: a passing low-tier devflow agent review on this commit."
+        for name, body, author_permission, editors in [
+            ("devflow's own approval on an admin's pull request", own, "admin", []),
+            ("the admin body on a non-admin's pull request", da.ADMIN_APPROVAL_BODY, "write", []),
+            ("the admin body edited by another login", da.ADMIN_APPROVAL_BODY, "admin", ["someone"]),
+        ]:
+            with self.subTest(name=name):
+                case = Case()
+                case.events = []
+                bot = review(APPROVER, state="APPROVED", body=body)
+                case.reviews = [bot]
+                case.edits = {bot["id"]: editors}
+                posted = writes(run_main(case, author_permission=author_permission)[1])
+                self.assertEqual([p[3] for p in posted], [f"repos/{REPO}/pulls/1/reviews/{bot['id']}/dismissals"])
+
     def test_4d_a_draft_or_needs_human_at_write_time_gets_no_approval(self):
         for name, change in [
             ("draft", lambda pr: pr.update(draft=True)),
@@ -579,12 +611,15 @@ class WorkflowTests(unittest.TestCase):
 
     def test_3a_the_default_mode_approves_admins_only(self):
         admin, devflow = job(APPROVAL, "admin"), job(APPROVAL, "devflow")
-        # Into dev, devflow mode replaces the admin rule; into main it never does.
-        self.assertIn("(vars.APPROVAL_MODE != 'devflow' || github.event.pull_request.base.ref == 'main') &&", admin)
+        # The admin rule runs in every mode; the devflow job decides dev only.
+        self.assertNotIn("APPROVAL_MODE", admin)
         self.assertIn("github.event.pull_request.base.ref == 'dev' &&", devflow)
         self.assertIn('contains(fromJSON(\'["opened", "reopened", "synchronize", "ready_for_review"]\'), github.event.action)', admin)
         self.assertIn("(vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe')", devflow)
         self.assertIn("vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe'", job(SWEEP, "sweep"))
+
+    def test_the_admin_rules_body_is_the_one_devflow_keeps(self):
+        self.assertIn(f'-f body="{da.ADMIN_APPROVAL_BODY}"', job(APPROVAL, "approve"))
 
     def test_8d_every_action_is_pinned_and_github_token_never_writes(self):
         for path in (APPROVAL, SWEEP):
