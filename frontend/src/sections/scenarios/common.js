@@ -1,4 +1,5 @@
 import { z } from "zod";
+import axios, { endpoints } from "src/utils/axios";
 import { AGENT_TYPES } from "../agents/constants";
 
 // Mirrors BE `no_of_rows.min_value`.
@@ -60,6 +61,24 @@ export const CreateScenarioDefaultValues = {
 
 const GraphSchema = z.any();
 
+// The list endpoint matches `search` as a case-insensitive substring, so the
+// exact, case-sensitive comparison happens here on the returned page.
+const SCENARIO_NAME_CHECK_LIMIT = 100;
+
+const isScenarioNameAvailable = async (name) => {
+  if (!name) return true;
+  try {
+    const response = await axios.get(endpoints.scenarios.list, {
+      params: { search: name, limit: SCENARIO_NAME_CHECK_LIMIT },
+    });
+    const scenarios = response?.data?.results ?? [];
+    return !scenarios.some((scenario) => scenario?.name === name);
+  } catch {
+    // Don't block creation when the duplicate check can't run.
+    return true;
+  }
+};
+
 const CreateScenarioDefaultSchema = {
   agentType: z.enum(["voice", "text"]).optional(),
   sourceType: z
@@ -67,7 +86,14 @@ const CreateScenarioDefaultSchema = {
     .default("agent_definition"),
   sourceId: z.string().min(1, "Source is required"),
   sourceLabel: z.string().optional(), // Used for auto-generating scenario name, not sent to API
-  name: z.string().trim().min(1, "Name is required"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .refine(isScenarioNameAvailable, {
+      message:
+        "A scenario with this name already exists. Please choose another name.",
+    }),
   description: z.string().optional(),
   agentDefinitionId: z.string().optional(),
   agentDefinitionVersionId: z.string().optional(),
