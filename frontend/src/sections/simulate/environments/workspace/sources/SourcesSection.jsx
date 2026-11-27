@@ -378,7 +378,7 @@ export default function SourcesSection({ env, locked }) {
             />
           </Box>
         ) : (
-          <Stack spacing={1} sx={{ p: 2 }}>
+          <Stack spacing={1} sx={{ px: 2.5, pt: 2, minHeight: "100%" }}>
             {sources.uploads.files.map((file) => (
               <Stack
                 key={file.id}
@@ -477,20 +477,46 @@ export default function SourcesSection({ env, locked }) {
               timeout={reduceMotion ? 0 : "auto"}
               unmountOnExit
             >
-              <Stack spacing={1} alignItems="flex-start">
-                <Typography variant="s3" color="text.secondary">
-                  {SOURCES_COPY.policyHint}
-                </Typography>
-                <Button
-                  variant="contained"
-                  disabled={sources.blocked}
-                  onClick={() => setStarted(true)}
-                >
-                  {SOURCES_COPY.readFiles}
-                </Button>
-              </Stack>
+              <Typography variant="s3" color="text.secondary">
+                {SOURCES_COPY.policyHint}
+              </Typography>
             </Collapse>
-            {!create.isPending && <Button onClick={closeReview}>Cancel</Button>}
+            {!create.isPending && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="flex-end"
+                spacing={1}
+                sx={{
+                  py: 1.25,
+                  mt: "auto !important",
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                  position: "sticky",
+                  bottom: 0,
+                  zIndex: 1,
+                  bgcolor: "background.paper",
+                }}
+              >
+                <Button variant="outlined" size="small" onClick={closeReview}>
+                  Cancel
+                </Button>
+                <Fade
+                  in={held}
+                  timeout={reduceMotion ? 0 : undefined}
+                  unmountOnExit
+                >
+                  <Button
+                    variant="contained"
+                    size="small"
+                    disabled={sources.blocked}
+                    onClick={() => setStarted(true)}
+                  >
+                    {SOURCES_COPY.readFiles}
+                  </Button>
+                </Fade>
+              </Stack>
+            )}
           </Stack>
         )}
       </ProposalDrawerFrame>

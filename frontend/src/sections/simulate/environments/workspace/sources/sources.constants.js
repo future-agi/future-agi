@@ -253,7 +253,7 @@ export const SOURCES_COPY = {
   readFailed: "Couldn't read these files. Try again in a moment.",
   usePolicy: "Use as policy",
   policyHint:
-    'Only sentences like “The response must contain "X"” become checkable rules. The rest stays background.',
+    "Policy mode proposes supported instructions as rules. Other passages remain background.",
   readFiles: "Read files",
   menu: {
     upload: "Upload files",

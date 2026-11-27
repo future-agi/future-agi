@@ -177,6 +177,8 @@ function SourceReviewEditor({
       return sources.flatMap((source) => source.accepted_rule_ids || []);
     return unfinished.includes(state) ? checkableRuleIds(preview) : [];
   });
+  // A repair remounts the review, so ticks before it are only decided once it's ready.
+  const rulesHidden = ["reading", "needs_repair"].includes(state);
   const [joinIndexes, setJoinIndexes] = useState([]);
   // A text choice is one-way, so a pick is only applied on Apply.
   const [textChoices, setTextChoices] = useState({});
@@ -241,7 +243,7 @@ function SourceReviewEditor({
     );
   const changeCount =
     sources.length +
-    ruleIds.length +
+    (rulesHidden ? 0 : ruleIds.length) +
     joinIndexes.filter((index) => validJoin(joins[index].relationship)).length;
   const canAccept =
     state === "ready" &&
@@ -385,6 +387,9 @@ function SourceReviewEditor({
   };
   const renderPersonal = ({ id: itemId, sourceId: sid, title }) => {
     const mode = personalDataModes[sid];
+    const filename = sources.find(
+      ({ pin }) => pin?.source_id === sid,
+    )?.filename;
     const selectedPersonal = mappings.filter(
       (m, i) =>
         m.source_id === sid &&
@@ -434,6 +439,7 @@ function SourceReviewEditor({
               size="small"
               variant="outlined"
               disabled={!editable || !textChoices[sid]}
+              aria-label={`Apply personal data choice for ${filename}`}
               onClick={() =>
                 doRepair({ [TEXT_REPAIRS[textChoices[sid]]]: [sid] })
               }
@@ -478,8 +484,7 @@ function SourceReviewEditor({
         item={item}
         inset={0}
         foldText={compact}
-        // A repair remounts the review, so ticks before it are only decided once it's ready.
-        hideCheckbox={["reading", "needs_repair"].includes(state)}
+        hideCheckbox={rulesHidden}
         checked={ruleIds.includes(item.id)}
         onToggle={(event) =>
           setRuleIds(toggled(ruleIds, item.id, event.target.checked))

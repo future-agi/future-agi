@@ -372,7 +372,11 @@ describe("Prebuild source review", () => {
     expect(screen.getByText("Personal data, your choice")).toBeVisible();
     fireEvent.click(screen.getByRole("radio", { name: label }));
     expect(api.post).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Apply personal data choice for Requests.txt",
+      }),
+    );
     await screen.findByRole("button", {
       name: "Approve sources and start build",
     });

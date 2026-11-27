@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import KnowledgeBasePicker from "../../../workspace/sources/KnowledgeBasePicker";
+import { SOURCES_COPY } from "../../../workspace/sources/sources.constants";
 import BuildFilesField from "./BuildFilesField";
 
 export default function BuildSourceFields({
@@ -54,8 +55,7 @@ export default function BuildSourceFields({
             />
           ))}
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            Policy mode proposes supported instructions as rules. Other passages
-            remain background.
+            {SOURCES_COPY.policyHint}
           </Typography>
         </Stack>
       )}
