@@ -14,6 +14,7 @@ from simulate.selectors.debug_failures import (
 )
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import build_evaluation_catalog, eval_rows
+from tfc.utils.api_errors import ApiErrorCode
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_investigation import (
@@ -29,7 +30,8 @@ from tracer.services.simulation_diagnosis import build_diagnosis
 
 
 class SimulationInvestigationConflict(Exception):
-    def __init__(self, message: str, code: str = "execution_not_completed") -> None:
+    # A refusal of the rule names its own code; any other conflict is generic.
+    def __init__(self, message: str, code: str = ApiErrorCode.CONFLICT) -> None:
         super().__init__(message)
         self.code = code
 
@@ -165,7 +167,9 @@ def debug_failures_refusal(
     own words.
     """
     if execution.status not in FINISHED_RUN_STATUSES:
-        return SimulationInvestigationConflict(RUN_IN_PROGRESS)
+        return SimulationInvestigationConflict(
+            RUN_IN_PROGRESS, code="execution_not_completed"
+        )
     if (
         CallExecution.objects.filter(test_execution_id=execution.id, deleted=False)
         .exclude(status__in=_TERMINAL_CALL_STATUSES)

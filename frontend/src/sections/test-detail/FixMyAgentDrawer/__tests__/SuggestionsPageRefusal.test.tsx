@@ -87,6 +87,9 @@ describe("Debug failures drawer on a run the rule refuses", () => {
 
     expect(await screen.findByText(words)).toBeInTheDocument();
     expect(screen.queryByText("server words")).toBeNull();
+    // Unlike the environments drawer, this one offers no retry for any refusal.
+    expect(screen.queryByText(/try again/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /refresh/i })).toBeNull();
     expect(server.get).toHaveBeenCalledTimes(1);
   });
 

@@ -10,6 +10,7 @@ from django.utils import timezone
 from simulate.models import Scenarios
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import CallExecution, TestExecution
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
     TraceInvestigationJob,
@@ -98,6 +99,30 @@ def test_a_small_run_with_no_diagnosis_is_refused(auth_client, organization, wor
     assert refused.value.code == "investigation_too_few_calls"
     assert response.status_code == 409
     assert response.json()["code"] == "investigation_too_few_calls"
+    assert _jobs(execution) == {}
+
+
+def test_a_conflict_outside_the_rule_is_not_read_as_a_run_in_progress(
+    auth_client, organization, workspace
+):
+    execution = _eligible_run(
+        organization, workspace, TestExecution.ExecutionStatus.COMPLETED
+    )
+    # The run's diagnosis project is scoped to another run.
+    Project.objects.create(
+        organization=organization,
+        workspace=workspace,
+        name=f"Simulation Debug {execution.id}",
+        trace_type="experiment",
+        model_type="Numeric",
+        source=ProjectSourceChoices.SIMULATOR.value,
+        metadata={"simulation_test_execution_id": "another run"},
+    )
+
+    response = auth_client.post(_url(execution))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "conflict"
     assert _jobs(execution) == {}
 
 

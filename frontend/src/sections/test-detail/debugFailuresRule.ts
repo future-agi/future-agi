@@ -20,7 +20,9 @@ export const CALLS_UNFINISHED_REASON =
   "Some calls in this run didn’t finish, so Debug failures can’t read it.";
 
 // The server's refusals of a run whose calls have not all finished. Unlike the
-// two above, they can change while the page is open, so asking again is offered.
+// two above, they can change while the page is open. The environments drawer
+// offers Try again for them. Run Simulation's drawer offers no retry for any
+// refusal: its button opens it only once the run is finished.
 const UNFINISHED_RUN_REFUSALS: Readonly<Record<string, string>> = {
   execution_not_completed: RUN_IN_PROGRESS_REASON,
   execution_calls_unfinished: CALLS_UNFINISHED_REASON,
