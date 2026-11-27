@@ -241,6 +241,7 @@ class HarnessConversationEventSerializer(serializers.Serializer):
             "tool_result",
             "question_requested",
             "confirmation_requested",
+            "question_answered",
             "turn_interrupted",
             "turn_completed",
             "checkpoint_committed",
