@@ -634,11 +634,13 @@ const rankAtEarliestLevel = (g) => {
 
 const layoutGraph = (nodes, edges, direction = "LR") => {
   const ranksep = direction === "LR" ? 80 : 50;
+  // In TB, siblings sit side by side and need room for their name labels.
+  const nodesep = direction === "LR" ? 25 : 60;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: direction,
     ranksep,
-    nodesep: 25,
+    nodesep,
     ranker: rankAtEarliestLevel,
   });
 
@@ -661,9 +663,16 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
   Dagre.layout(g);
   const stop = placeStop(g, laidOutIds, direction, ranksep);
 
+  // Dagre gives box centers; React Flow wants top-left corners, so shift each
+  // node by half of its own box (Start/Stop are smaller than other nodes).
   return nodes.map((node) => {
-    const pos = stopIds.has(node.id) ? stop : g.node(node.id);
-    return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
+    const box = stopIds.has(node.id)
+      ? { ...stop, width: SENTINEL_WIDTH, height: SENTINEL_HEIGHT }
+      : g.node(node.id);
+    return {
+      ...node,
+      position: { x: box.x - box.width / 2, y: box.y - box.height / 2 },
+    };
   });
 };
 
