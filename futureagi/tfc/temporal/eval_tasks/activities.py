@@ -392,7 +392,11 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
         from tracer.models.observation_span import EvalEntryStatus, EvalLogger
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
-        from tracer.services.instant_eval_answers import _lock_retained_run, _uuid
+        from tracer.services.instant_eval_answers import (
+            _lock_retained_run,
+            _uuid,
+            record_answer,
+        )
 
         with transaction.atomic():
             # The owning task is fixed at entry creation. Read just its id,
@@ -420,17 +424,20 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
             config = CustomEvalConfig.objects.using("default").get(
                 id=entry.custom_eval_config_id
             )
-            mark_terminal(
+            landed = mark_terminal(
                 entry,
                 EvalEntryStatus.ERRORED,
                 config_hash=resolved_config_hash(config),
                 error=True,
                 error_message="Evaluation worker was lost after its recovery retry.",
                 epoch=entry.updated_at,
-                # A lazily created run that did not yet exist at the lock
-                # boundary backfills its answers; never lock it under the entry.
                 copy_instant_answer=locked_run,
             )
+            if landed and task_id is not None and not locked_run:
+                # A first Ask read may have backfilled while the entry was
+                # still running. Recheck the primary without the negative
+                # task cache, and never wait for a run under the entry lock.
+                transaction.on_commit(lambda: record_answer(entry_id), robust=True)
             return {"entry_id": str(entry_id), "status": str(EvalEntryStatus.ERRORED)}
     finally:
         close_old_connections()

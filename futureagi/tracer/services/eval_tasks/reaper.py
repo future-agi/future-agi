@@ -145,10 +145,9 @@ def _record_instant_answers(task: EvalTask) -> None:
     """An Instant eval run shows the entries given up on as failed (not still
     pending) while it runs. Never fails the reap.
 
-    The entries are locked and rechecked in the transaction that copies their
-    answers, and one a Retry is requeueing is skipped
-    (``_lock_unanswered_given_up``): reading them first and copying later
-    could bring back an answer the Retry just dropped."""
+    The copier serializes with Retry on the run and then locks and rechecks
+    its entries (``_lock_unanswered_given_up``): reading them first and
+    copying later could bring back an answer the Retry just dropped."""
     from tracer.services.instant_eval_answers import is_instant_task, record_answers
 
     try:
@@ -171,10 +170,8 @@ def _lock_unanswered_given_up(task_id) -> list:
     no answer yet. Call it inside the transaction that copies them, so each
     one is rechecked under its row lock.
 
-    An entry another session holds is skipped, not waited for: Retry requeues
-    entries under their row locks, and an answer copied for one of those would
-    outlive the Retry that dropped it. One that stays given up and unanswered
-    is selected again by the next reap."""
+    After acquiring the run lock, skip entries another session still holds.
+    A subsequent reap can copy any that remain given up and unanswered."""
     from tracer.services.instant_eval_answers import _ENTRY_RID, _lock_retained_run
     from tracer.services.instant_eval_summary import CONFIDENCE, LABEL
 

@@ -103,6 +103,46 @@ def test_instant_eval_copies_are_removed_and_the_run_cancelled(observe_project):
     assert EvalTask.all_objects.get(id=task.id).deleted is True
 
 
+@pytest.mark.django_db(transaction=True)
+def test_deletion_locks_cancelled_run_before_child_writes(observe_project):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import OperationalError, connection, connections, transaction
+
+    _, run = _instant_run(observe_project, cancelled=True)
+    cancelled_at = run.cancelled_at
+
+    def probe_cancelled_run():
+        try:
+            with transaction.atomic():
+                InstantEvalRun.objects.select_for_update(nowait=True).get(pk=run.pk)
+        except OperationalError as exc:
+            return getattr(exc.__cause__, "sqlstate", None)
+        finally:
+            connections.close_all()
+        return "unlocked"
+
+    seen = []
+
+    def before_child_write(execute, sql, params, many, context):
+        if not seen and (
+            sql.startswith('UPDATE "tracer_eval_task"')
+            or ("tracer_eval_logger" in sql and "FOR UPDATE" in sql)
+            or sql.startswith('DELETE FROM "tracer_instant_eval_answer"')
+        ):
+            seen.append(pool.submit(probe_cancelled_run).result(timeout=10))
+        return execute(sql, params, many, context)
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        connection.execute_wrapper(before_child_write),
+    ):
+        _delete(observe_project)
+    assert seen == ["55P03"]  # lock_not_available
+    run.refresh_from_db()
+    assert run.cancelled_at == cancelled_at
+
+
 def test_an_active_instant_run_is_paused_after_commit(
     observe_project, django_capture_on_commit_callbacks
 ):

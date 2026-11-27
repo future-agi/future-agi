@@ -1718,6 +1718,16 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 .exists()
             ):
                 return self._cancelled()
+            if not running:
+                # Delete & rerun holds the task before it retires its entries.
+                # Take that same lock now, not in _restart after the UPDATE.
+                task = (
+                    EvalTask.objects.select_for_update(of=("self",))
+                    .filter(pk=task.pk)
+                    .first()
+                )
+                if task is None:
+                    return self._gm.not_found("Eval task not found")
             # A worker may fail another entry after the check. Forget exactly
             # the answers for entries this statement actually requeued.
             with connection.cursor() as cur:

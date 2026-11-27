@@ -1080,12 +1080,10 @@ def test_run_is_locked_before_the_entry(
         )
         answer.delete()
 
-    def probe_run():
+    def probe(rows):
         try:
             with transaction.atomic():
-                InstantEvalRun.objects.select_for_update(nowait=True).get(
-                    eval_task=task
-                )
+                rows.select_for_update(nowait=True, of=("self",)).get()
         except OperationalError as exc:
             return exc.__cause__.sqlstate
         finally:
@@ -1102,7 +1100,13 @@ def test_run_is_locked_before_the_entry(
         ):
             # Deletion would take the run and then wait for this entry. Check
             # from its own connection without creating an actual deadlock.
-            seen.append(pool.submit(probe_run).result(timeout=10))
+            run = InstantEvalRun.objects.filter(eval_task_id=task.pk)
+            seen.append(pool.submit(probe, run).result(timeout=10))
+            if operation == "retry":
+                # This completed run needs a restart. Delete & rerun would
+                # take this task lock before acquiring any live entry lock.
+                rows = EvalTask.all_objects.filter(pk=task.pk)
+                seen.append(pool.submit(probe, rows).result(timeout=10))
         return execute(sql, params, many, context)
 
     with (
@@ -1120,7 +1124,75 @@ def test_run_is_locked_before_the_entry(
                 == EvalEntryStatus.ERRORED
             )
             assert answer.get().label == ERROR
-    assert seen == ["55P03"]  # lock_not_available
+    assert seen == (["55P03", "55P03"] if operation == "retry" else ["55P03"])
+
+
+@pytest.mark.django_db(transaction=True)
+def test_lost_worker_copies_answer_after_a_concurrent_first_read(answered_run):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import connection, connections
+
+    from tfc.temporal.eval_tasks.activities import _requeue_lost_entry_sync
+    from tracer.models.instant_eval import InstantEvalAnswer
+
+    task, _ = answered_run
+    entry = EvalLogger.objects.get(
+        eval_task_id=str(task.pk), status=EvalEntryStatus.ERRORED
+    )
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        status=EvalEntryStatus.RUNNING, attempts=1
+    )
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
+    # Legacy task: the source rows exist, but no Ask read has prepared the run.
+    InstantEvalRun.objects.filter(eval_task=task).delete()
+    InstantEvalAnswer.objects.filter(task=task).delete()
+    answer = InstantEvalAnswer.objects.filter(
+        task=task,
+        row__row_id=entry.trace_session_id,
+        config_id=entry.custom_eval_config_id,
+    )
+
+    def first_read():
+        try:
+            run = instant_eval_scale._prepared_run(task, {}, rate=0)
+            instant_eval_scale._ensure_answers(run)
+            assert run.answers_synced and not answer.exists()
+        finally:
+            connections.close_all()
+
+    def committed_status():
+        from django.db import transaction
+
+        try:
+            with transaction.atomic():
+                locked = EvalLogger.objects.select_for_update(nowait=True).get(pk=entry.pk)
+                return locked.status
+        finally:
+            connections.close_all()
+
+    reads = []
+    copy_states = []
+
+    def before_entry_lock(execute, sql, params, many, context):
+        if not reads and "tracer_eval_logger" in sql and "FOR UPDATE" in sql:
+            # Recovery already looked for a run; finish the first backfill
+            # while the entry is still RUNNING on the writer connection.
+            pool.submit(first_read).result(timeout=10)
+            reads.append(True)
+        elif reads and "tracer_instant_eval_run" in sql and "FOR UPDATE" in sql:
+            copy_states.append(pool.submit(committed_status).result(timeout=10))
+        return execute(sql, params, many, context)
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        connection.execute_wrapper(before_entry_lock),
+    ):
+        result = _requeue_lost_entry_sync(str(entry.pk))
+        assert result["status"] == EvalEntryStatus.ERRORED
+    assert reads == [True]
+    assert copy_states == [EvalEntryStatus.ERRORED]
+    assert answer.get().label == summary_service.ERROR
 
 
 def _half_answered_run(auth_client, observe_project, yes_no, status_):
