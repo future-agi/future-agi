@@ -435,9 +435,8 @@ def run(
         )
         if phase == "native":
             definitions = native.native_definitions(config.destination.database)
-            upgrades = native.native_upgrade_statements(config.destination.database)
             allowed = packaged(
-                (*definitions.values(), *upgrades.values()),
+                definitions.values(),
                 (ddl for name, ddl in definitions.items() if name.endswith("_dict")),
             )
 

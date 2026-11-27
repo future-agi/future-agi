@@ -298,11 +298,9 @@ def _construct_from_chspan(ch_row) -> ObservationSpan:
     )
     try:
         obj.input = _j.loads(ch_row.input) if ch_row.input else None
-    except (_j.JSONDecodeError, TypeError, ValueError, RecursionError):
-        obj.input = ch_row.input or None
-    try:
         obj.output = _j.loads(ch_row.output) if ch_row.output else None
-    except (_j.JSONDecodeError, TypeError, ValueError, RecursionError):
+    except Exception:  # noqa: BLE001
+        obj.input = ch_row.input or None
         obj.output = ch_row.output or None
 
     obj.span_attributes = _ch_span_attributes(ch_row)

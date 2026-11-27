@@ -10,14 +10,9 @@ Complete compatible retained layouts are inspect-only. An incomplete selected
 layout must have no physical rows in ANY selected existing table: creating empty
 rollups/remaps cannot reconstruct history. Partial CREATEs survive failure; there
 is no retry, rollback, POPULATE, receipt insertion, or existing-object mutation,
-with two bounded exceptions:
-1. With a ClickHouse password, a compatible existing dictionary whose CLICKHOUSE
-   source lacks the connecting user is re-created (CREATE OR REPLACE; dictionaries
-   hold no rows) so it stops reading as passwordless default.
-2. When an existing `spans` table lacks additive columns introduced by packaged
-   post-039 migrations (such as `040_trajectory_items.sql`), only those safe
-   `ALTER TABLE spans ADD COLUMN IF NOT EXISTS` statements are applied (zero
-   part rewrites; existing rows default to `payload_encoding = 'inline'`).
+with one exception: with a ClickHouse password, a compatible existing dictionary
+whose CLICKHOUSE source lacks the connecting user is re-created (CREATE OR
+REPLACE; dictionaries hold no rows) so it stops reading as passwordless default.
 
 Existing table compatibility reuses the CDC functional column/engine/key/TTL
 contract, NOT performance equivalence of codecs/indexes/projections/settings.
@@ -49,28 +44,12 @@ _TABLES = {
     "trace_sessions": ("018_trace_sessions.sql", 2, 0),
     "end_user_id_remap": ("019_id_remap.sql", 2, 0),
     "trace_session_id_remap": ("019_id_remap.sql", 2, 1),
-    "trajectory_items": ("040_trajectory_items.sql", 2, 0),
 }
 _CURRENT_LISTS = {
     "list_current_root_facts": ("036_list_current_root_facts.sql", 2, 0),
     "list_current_members": ("036_list_current_root_facts.sql", 2, 1),
     "list_current_user_activity": ("037_list_current_user_activity.sql", 1, 0),
 }
-# Additive, metadata-only 040 columns on `spans` (constant defaults, zero part
-# rewrites). Existing pre-040 installations with retained rows may upgrade in
-# place by creating `trajectory_items` and applying the packaged 040 ALTER.
-_TRAJECTORY_SPAN_COLUMNS = (
-    "input_item_hashes",
-    "output_item_hashes",
-    "tool_def_hashes",
-    "item_scope_id",
-    "payload_encoding",
-    "payload_envelope",
-)
-_TRAJECTORY_SPANS_UPGRADE = "spans:trajectory_columns"
-_TRAJECTORY_SPANS_ADDITIONS = frozenset(
-    ("spans", column) for column in _TRAJECTORY_SPAN_COLUMNS
-)
 _ROLLUPS = {
     "spans_per_session": ("008_per_session_rollup.sql", 2, 0),
     "spans_hourly_rollup": ("010_hourly_downsample.sql", 2, 0),
@@ -178,8 +157,6 @@ def _spans(database):
     head, entries, tail = _table_parts(sql)
     overrides = dict(core._SPAN_COLUMNS)
     overrides["attributes_extra"] += " CODEC(ZSTD(3))"
-    for col in _TRAJECTORY_SPAN_COLUMNS:
-        overrides[col] += " CODEC(ZSTD(1))"
     if overrides["trace_name"].count("'trace_dict'") != 1:
         raise NativeBootstrapError("packaged trace-name dictionary changed")
     overrides["trace_name"] = overrides["trace_name"].replace(
@@ -306,28 +283,6 @@ def native_definitions(
         if kind == "TABLE":
             core._table(result[name])
     return result
-
-
-def native_upgrade_statements(database: str) -> dict[str, str]:
-    """Fixed packaged additive upgrade statements for retained pre-040 layouts.
-
-    Deliberately NOT a generic ALTER interpreter: only the single exact packaged
-    `ALTER TABLE spans ADD COLUMN IF NOT EXISTS ...` statement from
-    `040_trajectory_items.sql` is permitted, qualified to the validated target
-    database.
-    """
-    if (
-        not isinstance(database, str)
-        or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,127}", database)
-        or database.lower() in {"system", "information_schema"}
-    ):
-        raise NativeBootstrapError("explicit native database required")
-    sql = _statement(("040_trajectory_items.sql", 2, 1), "ALTER TABLE spans")
-    prefix = "ALTER TABLE spans"
-    if not sql.startswith(prefix) or ";" in core._TOKEN.findall(sql)[:-1]:
-        raise NativeBootstrapError("expected packaged additive spans ALTER")
-    qualified = sql.replace(prefix, f"ALTER TABLE {database}.spans", 1)
-    return {_TRAJECTORY_SPANS_UPGRADE: qualified}
 
 
 def _rows(client, sql, parameters=None, width=None):
@@ -458,39 +413,20 @@ def _inspect(client, database, definitions):
             _identity(row[-1], name, "TABLE", database)
             try:
                 core._check_table(
-                    name,
-                    row,
-                    columns[name],
-                    {},
-                    ddl,
-                    database=database,
-                    native=True,
-                    allow_additions=(name == "spans"),
-                    additions=(
-                        _TRAJECTORY_SPANS_ADDITIONS if name == "spans" else frozenset()
-                    ),
+                    name, row, columns[name], {}, ddl, database=database, native=True
                 )
             except core.BootstrapError:
                 raise NativeBootstrapError(
                     f"{name}: incompatible native table contract"
                 ) from None
     # Do not start partial initialization over retained rows (including tombstones).
-    # Exception: creating the purely additive `trajectory_items` table on an
-    # otherwise complete pre-040 layout is lossless because historical rows
-    # retain `payload_encoding = 'inline'` and never reference `trajectory_items`.
-    non_additive_missing = tuple(name for name in missing if name != "trajectory_items")
-    if non_additive_missing:
+    if missing:
         for name, row in tables.items():
             if row[0] in {"ReplacingMergeTree", "AggregatingMergeTree", "MergeTree"}:
                 if _rows(client, f"SELECT 1 FROM {database}.{name} LIMIT 1", width=1):
                     raise NativeBootstrapError(
                         "incomplete native layout contains retained rows"
                     )
-    pending_upgrades: tuple[str, ...] = ()
-    if "spans" in tables and any(
-        col not in columns["spans"] for col in _TRAJECTORY_SPAN_COLUMNS
-    ):
-        pending_upgrades = (_TRAJECTORY_SPANS_UPGRADE,)
     if "spans" in tables:
         for name, ddl in definitions.items():
             if not name.endswith("_mv"):
@@ -548,7 +484,7 @@ def _inspect(client, database, definitions):
                 )
             if name in tables:
                 core._check_view_columns(name, columns[name], header)
-    return missing + pending_upgrades
+    return missing
 
 
 def inspect_native(
@@ -651,18 +587,12 @@ def bootstrap_native(
             include_dashboard_rollup=include_dashboard_rollup,
             include_current_lists=include_current_lists,
         )
-        upgrades = native_upgrade_statements(database)
         missing = _inspect(client, database, definitions)
         for name in missing:
-            statement = (
-                upgrades[name]
-                if name in upgrades
-                else with_dictionary_credentials(
-                    definitions[name], ch_user, ch_password
-                )
-            )
             try:
-                client.command(statement)
+                client.command(
+                    with_dictionary_credentials(definitions[name], ch_user, ch_password)
+                )
             except Exception:
                 raise NativeBootstrapError(
                     f"native CREATE failed at {name}; partial state retained, no retry"

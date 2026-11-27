@@ -449,19 +449,11 @@ def test_native_write_boundary_rejects_cdc_and_source_ddl(harness, monkeypatch):
         with pytest.raises(cli.InstallError, match="verified derived migration"):
             client.insert("schema_versions", [], ["filename"])
         client.command(cli.native.native_definitions("default")["traces"])
-        client.command(
-            cli.native.native_upgrade_statements("default")[
-                cli.native._TRAJECTORY_SPANS_UPGRADE
-            ]
-        )
-        return ("traces", cli.native._TRAJECTORY_SPANS_UPGRADE)
+        return ("traces",)
 
     monkeypatch.setattr(cli.native, "bootstrap_native", bootstrap)
-    assert harness.run(phase="native", apply=True)["created_objects"] == [
-        "traces",
-        cli.native._TRAJECTORY_SPANS_UPGRADE,
-    ]
-    assert harness.raw.command.call_count == 2
+    assert harness.run(phase="native", apply=True)["created_objects"] == ["traces"]
+    harness.raw.command.assert_called_once()
     harness.raw.insert.assert_not_called()
 
 

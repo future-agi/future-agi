@@ -112,7 +112,7 @@ _NATIVE_FILES = {
     "end_users": "017_end_users.sql",
     "trace_sessions": "018_trace_sessions.sql",
 }
-# Final native column overrides/additions from 002/005/013/014/015/028. Inspection
+# Final native column overrides/additions from 002/005/013/014/015. Inspection
 # data only: deliberately not an ALTER interpreter or a native apply path.
 _SPAN_COLUMNS = {
     "attributes_extra": "String DEFAULT '{}'",
@@ -126,12 +126,6 @@ _SPAN_COLUMNS = {
     "temperature": "Nullable(Float64) MATERIALIZED if(mapContains(attrs_number, 'gen_ai.request.temperature'), attrs_number['gen_ai.request.temperature'], NULL)",
     "top_p": "Nullable(Float64) MATERIALIZED if(mapContains(attrs_number, 'gen_ai.request.top_p'), attrs_number['gen_ai.request.top_p'], NULL)",
     "max_tokens": "Nullable(Int32) MATERIALIZED if(mapContains(attrs_number, 'gen_ai.request.max_tokens'), toInt32(attrs_number['gen_ai.request.max_tokens']), NULL)",
-    "input_item_hashes": "Array(String) DEFAULT []",
-    "output_item_hashes": "Array(String) DEFAULT []",
-    "tool_def_hashes": "Array(String) DEFAULT []",
-    "item_scope_id": "String DEFAULT ''",
-    "payload_encoding": "LowCardinality(String) DEFAULT 'inline'",
-    "payload_envelope": "String DEFAULT ''",
 }
 _LEDGER_DDL = """
 CREATE TABLE IF NOT EXISTS schema_versions (

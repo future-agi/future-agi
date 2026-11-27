@@ -459,6 +459,9 @@ def _projection_columns(columns: list[str]) -> tuple[str, ...]:
     if not columns:
         raise ValueError("columns must name at least one span column")
     unknown = [c for c in columns if c not in _PROJECTION_SQL]
+    if not is_trajectory_store_read_enabled():
+        # Before 040 is applied these columns do not exist in ClickHouse.
+        unknown.extend(c for c in columns if c in TRAJECTORY_SPAN_COLUMNS)
     if unknown:
         raise ValueError(f"unknown span column(s): {', '.join(unknown)}")
     return tuple(_PROJECTION_SQL[c] for c in columns)
@@ -549,7 +552,13 @@ def _export_columns_for_fields(field_names: set[str]) -> set[str]:
     columns: set[str] = set()
     for field_name in field_names:
         columns.update(_EXPORT_FIELD_COLUMNS.get(field_name, {field_name}))
-    return {column for column in columns if column in _EXPORT_COLUMN_SQL}
+    # The trajectory pointer columns are internal: they are added by the
+    # hydration path itself, never selected because a caller named them.
+    return {
+        column
+        for column in columns
+        if column in _EXPORT_COLUMN_SQL and column not in TRAJECTORY_SPAN_COLUMNS
+    }
 
 
 # CH returns the toString() forms with literal 'NULL' for missing UUIDs in some
