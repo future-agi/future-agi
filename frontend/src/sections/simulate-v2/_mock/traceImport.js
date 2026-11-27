@@ -63,6 +63,45 @@ export const productionTracesOf = (env, envState) => {
   });
 };
 
+/**
+ * The same production traffic as Observe's sessions: the traces of one
+ * conversation, grouped. A session keeps its own ID (S-…) and lists its
+ * traces — it is never shown as one of them (evidence.md: "never disguise one
+ * as another"). Its outcome is failed if any trace failed; its evidence is
+ * what its traces hold together, with the starting state of its first one.
+ */
+export const productionSessionsOf = (env, envState) => {
+  const traces = productionTracesOf(env, envState);
+  const sessions = [];
+  for (let i = 0; i < traces.length; ) {
+    const size = 1 + ((hashSeed(traces[i].id) >>> 0) % 3);
+    const group = traces.slice(i, i + size);
+    i += size;
+    const first = group[0];
+    const n = sessions.length;
+    sessions.push({
+      ...first,
+      id: `sess-${first.id}`,
+      traceId: `S-${201 + n}`,
+      traceIds: group.map((t) => t.traceId),
+      unit: "sessions",
+      at: group.reduce((a, t) => (t.at > a ? t.at : a), first.at),
+      durationS: group.reduce((a, t) => a + (t.durationS || 0), 0),
+      spans: group.reduce((a, t) => a + (t.spans || 0), 0),
+      outcome: group.some((t) => t.outcome === "failed") ? "failed" : "passed",
+      turns: group.flatMap((t) => t.turns || []),
+      evidence: {
+        transcript: true,
+        tools: group.some((t) => t.evidence.tools),
+        startingState: first.evidence.startingState,
+        uncovered:
+          group.find((t) => t.evidence.uncovered)?.evidence.uncovered || null,
+      },
+    });
+  }
+  return sessions;
+};
+
 /** What the new scenario represents — each says what it keeps and what it makes up. */
 export const TRACE_GOALS = [
   {

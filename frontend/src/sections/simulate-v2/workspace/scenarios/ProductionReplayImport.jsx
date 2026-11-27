@@ -21,6 +21,7 @@ import {
   TRACE_GOALS,
   draftingCostOf,
   fromTracesCli,
+  productionSessionsOf,
   productionTracesOf,
   rangeOf,
   traceDraftsOf,
@@ -80,6 +81,8 @@ export default function ProductionReplayImport({
   const [searchParams] = useSearchParams();
   const kinds = mode === "files" ? ["transcript", "dataset"] : ["observe"];
   const [src, setSrc] = useState(kinds[0]);
+  /* Observe lists traces and sessions; either can be picked here too. */
+  const [listUnit, setListUnit] = useState("traces");
   const fileRef = useRef(null);
   const navigate = useNavigate();
   /* The exact sessions, traces or calls picked in Observe — they open frozen,
@@ -95,12 +98,19 @@ export default function ProductionReplayImport({
   );
   const traces = useMemo(() => {
     if (src === "observe")
-      return sel ? selTraces : productionTracesOf(env, envState);
+      return sel
+        ? selTraces
+        : listUnit === "sessions"
+          ? productionSessionsOf(env, envState)
+          : productionTracesOf(env, envState);
     return (envState?.evidenceUploads || []).filter(
       (u) => u.sourceKind === src,
     );
-  }, [src, env, envState, sel, selTraces]);
-  const noun = EVIDENCE_KINDS[src].noun;
+  }, [src, env, envState, sel, selTraces, listUnit]);
+  const noun =
+    src === "observe" && !sel && listUnit === "sessions"
+      ? "session"
+      : EVIDENCE_KINDS[src].noun;
   /* The Observe project this environment takes traces from — the same
      link Observe's Create environment test reads. */
   const { state: simState } = useSimStore();
@@ -122,7 +132,7 @@ export default function ProductionReplayImport({
       : null;
   }, [envState?.agent, connected, simState, env?.id]);
   const project = sel?.project || agentProject || traceProjectOf(env, envState);
-  const unit = sel?.kind || "traces";
+  const unit = sel?.kind || listUnit;
   /* What each becomes as a replay, already scrubbed — the only form shown. */
   const drafts = useMemo(
     () => new Map(traces.map((c) => [c.id, replayScenarioOf(c, env)])),
@@ -475,7 +485,7 @@ export default function ProductionReplayImport({
                 <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
                   {sel
                     ? `${frozenTraces.length} ${selectionNoun(unit, frozenTraces.length)} from Observe`
-                    : `${frozenTraces.length} trace${frozenTraces.length === 1 ? "" : "s"} frozen`}
+                    : `${frozenTraces.length} ${src === "observe" ? selectionNoun(unit, frozenTraces.length) : `${noun}${frozenTraces.length === 1 ? "" : "s"}`} frozen`}
                 </Typography>
                 {/* Picked in Observe: the selection is changed there. */}
                 <TextLink
@@ -576,7 +586,9 @@ export default function ProductionReplayImport({
                               minWidth: 0,
                             }}
                           >
-                            {off ? `Needs ${g.min} or more traces` : g.short}
+                            {off
+                              ? `Needs ${g.min} or more ${src === "observe" ? selectionNoun(unit, 2) : `${noun}s`}`
+                              : g.short}
                           </Typography>
                         </Stack>
                       </Tooltip>
@@ -730,10 +742,38 @@ export default function ProductionReplayImport({
             spacing={0.5}
             alignItems="center"
             sx={{
-              mt: kinds.length > 1 || src !== "observe" ? 0.75 : 0,
+              mt: kinds.length > 1 || src !== "observe" || !sel ? 0.75 : 0,
               flexWrap: "wrap",
             }}
           >
+            {src === "observe" &&
+              !sel &&
+              [
+                ["traces", "Traces"],
+                ["sessions", "Sessions"],
+              ].map(([id, label]) => (
+                <Button
+                  variant="outlined"
+                  key={id}
+                  size="small"
+                  aria-pressed={listUnit === id}
+                  onClick={() => {
+                    setListUnit(id);
+                    setPicked({});
+                  }}
+                  sx={{
+                    px: 1,
+                    minWidth: 0,
+                    height: 24,
+                    typography: "s3",
+                    color: listUnit === id ? "text.primary" : "text.secondary",
+                    bgcolor:
+                      listUnit === id ? "action.selected" : "transparent",
+                  }}
+                >
+                  {label}
+                </Button>
+              ))}
             {kinds.length > 1 &&
               kinds
                 .map((id) => [id, EVIDENCE_KINDS[id]])
@@ -855,7 +895,9 @@ export default function ProductionReplayImport({
             </TextLink>
           ))}
       </Stack>
-      {traces.length > 0 && <RowHeader />}
+      {traces.length > 0 && (
+        <RowHeader idLabel={noun === "session" ? "Session" : "Trace"} />
+      )}
       {/* Saved draft imports — finish them later. */}
       {drafts0.length > 0 && (
         <Box
@@ -952,7 +994,7 @@ const ROW_GRID = {
 const CELL = { typography: "s3", color: "text.secondary", minWidth: 0 };
 const NUM = { ...CELL, textAlign: "right", fontVariantNumeric: "tabular-nums" };
 
-function RowHeader() {
+function RowHeader({ idLabel = "Trace" }) {
   const head = { ...CELL, color: "text.tertiary", fontWeight: 500 };
   return (
     <Box
@@ -966,7 +1008,7 @@ function RowHeader() {
     >
       <span />
       <Typography sx={head}>Conversation</Typography>
-      <Typography sx={head}>Trace</Typography>
+      <Typography sx={head}>{idLabel}</Typography>
       <Typography sx={head}>Agent</Typography>
       <Typography sx={head}>Result</Typography>
       <Typography sx={head}>Missing</Typography>
@@ -1029,6 +1071,14 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
           }}
         >
           {conv.topic}
+          {conv.traceIds && (
+            <Box
+              component="span"
+              sx={{ typography: "s3", color: "text.tertiary", ml: 0.75 }}
+            >
+              {`${conv.traceIds.length} trace${conv.traceIds.length === 1 ? "" : "s"}`}
+            </Box>
+          )}
         </Typography>
         <Typography noWrap sx={{ ...CELL, fontFamily: MONO }}>
           {conv.traceId || "—"}
@@ -1094,6 +1144,7 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
           >
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {[
+                conv.traceIds ? `Traces ${conv.traceIds.join(", ")}` : null,
                 conv.channel,
                 conv.spans ? `${conv.spans} spans` : null,
                 conv.sourceKind && !failed && conv.expected
@@ -1172,6 +1223,8 @@ function MarkedFakes({ text }) {
   );
 }
 MarkedFakes.propTypes = { text: PropTypes.string };
+
+RowHeader.propTypes = { idLabel: PropTypes.string };
 
 ConversationRow.propTypes = {
   conv: PropTypes.object,
