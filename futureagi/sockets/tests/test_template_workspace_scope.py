@@ -12,6 +12,7 @@ from sockets.consumer import DataConsumer
 from sockets.membership import MEMBERSHIP_CLOSE_CODE
 
 
+@pytest.mark.django_db(transaction=True)
 def test_only_the_templates_workspace_grants_access(user, organization, workspace):
     from accounts.models.organization_membership import OrganizationMembership
     from accounts.models.workspace import Workspace, WorkspaceMembership
