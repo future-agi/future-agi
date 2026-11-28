@@ -117,15 +117,20 @@ const isImportMessage = ({ ruleId, nodeType }) =>
   ruleId === "no-restricted-imports" ||
   (ruleId === "no-restricted-syntax" && /^(Import|Export)/.test(nodeType));
 
-const baseImportMessages = async (basePath) => {
-  if (!basePath) return new Set();
+const baseImportCounts = async (basePath) => {
+  const counts = new Map();
   const base = tryGit("show", `${mergeBase}:${basePath}`);
-  if (base === null) return new Set();
+  if (base === null) return counts;
   const [result] = await eslint.lintText(base, {
     filePath: path.resolve(repoRoot, basePath),
   });
-  if (!result) return new Set(); // The original path was ignored.
-  return new Set(result.messages.filter(isImportMessage).map((m) => m.message));
+  // An ignored original path has no baseline diagnostics.
+  for (const m of result?.messages ?? []) {
+    if (isImportMessage(m)) {
+      counts.set(m.message, (counts.get(m.message) ?? 0) + 1);
+    }
+  }
+  return counts;
 };
 
 let count = 0;
@@ -136,9 +141,16 @@ for (const result of results) {
     (m) =>
       m.message.includes("[DS]") && (isImportMessage(m) || lines.has(m.line)),
   );
-  if (hits.some(isImportMessage)) {
-    const before = await baseImportMessages(basePath);
-    hits = hits.filter((m) => !isImportMessage(m) || !before.has(m.message));
+  if (basePath && hits.some(isImportMessage)) {
+    const before = await baseImportCounts(basePath);
+    // Match unchanged lines first so a new alias is reported on its own line.
+    hits.sort((a, b) => Number(lines.has(a.line)) - Number(lines.has(b.line)));
+    hits = hits.filter((m) => {
+      const remaining = before.get(m.message);
+      if (!isImportMessage(m) || !remaining) return true;
+      before.set(m.message, remaining - 1);
+      return false;
+    });
   }
   for (const m of hits) {
     const isError = m.severity === 2;

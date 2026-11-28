@@ -55,6 +55,8 @@ beforeAll(() => {
   const multiline = (source: string) =>
     `import {\n  Dialog,\n} from "${source}";\nexport const color = "#abc";`;
   write("views/Multiline.ts", multiline("./dialog"));
+  const originalAlias = 'import OriginalDialog from "@mui/material/Dialog";';
+  write("views/Aliases.ts", originalAlias);
   git("init", "--quiet");
   git("add", "src");
   git(
@@ -74,6 +76,10 @@ beforeAll(() => {
   git("mv", "src/views/Preview.stories.tsx", "src/views/Preview.tsx");
   // The import source changes, but the specifier and color lines do not.
   write("views/Multiline.ts", multiline("@mui/material"));
+  write(
+    "views/Aliases.ts",
+    `import NewDialog from "@mui/material/Dialog";\n${originalAlias}`,
+  );
 
   // A conversion that reformats an old import and introduces a new one.
   git("mv", "src/views/Page.jsx", "src/views/Page.tsx");
@@ -135,7 +141,9 @@ it("reports new restricted imports but not ones already linted before a rename",
   expect(stdout).toMatch(/MixedValue\.ts:.*error.*bare MUI Dialog/);
   expect(stdout).toMatch(/Multiline\.ts:2:.*error.*bare MUI Dialog/);
   expect(stdout).not.toMatch(/Multiline\.ts:.*Hex colour/);
-  expect(stdout).toContain("6 design-system error(s) and 1 warning(s)");
+  expect(stdout).toMatch(/Aliases\.ts:1:.*error.*bare MUI Dialog/);
+  expect(stdout).not.toContain("Aliases.ts:2:");
+  expect(stdout).toContain("7 design-system error(s) and 1 warning(s)");
 });
 
 it("includes typed source files in the full design-system lint", () => {
