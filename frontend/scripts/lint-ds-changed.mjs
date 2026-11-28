@@ -58,6 +58,8 @@ const resolveMergeBase = () => {
   return best;
 };
 
+const repoRoot = git("rev-parse", "--show-toplevel");
+
 // Added line numbers per file, from a zero-context diff.
 const addedLines = (mergeBase) => {
   const diff = git(
@@ -73,7 +75,6 @@ const addedLines = (mergeBase) => {
     "src/*.ts",
     "src/*.tsx",
   );
-  const repoRoot = git("rev-parse", "--show-toplevel");
   const byFile = new Map();
   let basePath = null;
   let current = null;
@@ -110,11 +111,14 @@ const isImportMessage = ({ ruleId }) =>
   ruleId === "no-restricted-imports" ||
   ruleId === "@typescript-eslint/no-restricted-imports";
 
-const baseImportMessages = async (filePath, basePath) => {
+const baseImportMessages = async (basePath) => {
   if (!basePath) return new Set();
   const base = tryGit("show", `${mergeBase}:${basePath}`);
   if (base === null) return new Set();
-  const [result] = await eslint.lintText(base, { filePath });
+  const [result] = await eslint.lintText(base, {
+    filePath: path.resolve(repoRoot, basePath),
+  });
+  if (!result) return new Set(); // The original path was ignored.
   return new Set(result.messages.filter(isImportMessage).map((m) => m.message));
 };
 
@@ -126,7 +130,7 @@ for (const result of results) {
     (m) => m.message.includes("[DS]") && lines.has(m.line),
   );
   if (hits.some(isImportMessage)) {
-    const before = await baseImportMessages(result.filePath, basePath);
+    const before = await baseImportMessages(basePath);
     hits = hits.filter((m) => !isImportMessage(m) || !before.has(m.message));
   }
   for (const m of hits) {

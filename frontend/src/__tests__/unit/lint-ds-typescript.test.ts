@@ -42,6 +42,16 @@ beforeAll(() => {
   ].join("\n");
   const legacy = 'import EmptyLayout from "src/components/EmptyLayout";';
   write("views/Page.jsx", `${legacy}\n${page}`);
+  const dialog = 'import { Dialog } from "@mui/material";';
+  const fields = [
+    "const id = <T>(x: T) => x;",
+    'export const fields = [id("displayName"), id("email"), id("timeZone")];',
+    "export type Field = (typeof fields)[number];",
+  ].join("\n");
+  write("views/Fields.ts", `${dialog}\n${fields}`);
+  const preview =
+    'export const Preview = () => <Dialog open aria-label="Account preferences" />;';
+  write("views/Preview.stories.tsx", `${dialog}\n${preview}`);
   git("init", "--quiet");
   git("add", "src");
   git(
@@ -54,10 +64,15 @@ beforeAll(() => {
     "-qm",
     "base",
   );
-  git("mv", "src/views/Page.jsx", "src/views/Page.tsx");
+  // Reformat the same import on two renames. Only the story was exempt at base.
+  const reformatted = dialog.slice(0, -1);
+  git("mv", "src/views/Fields.ts", "src/views/Fields.tsx");
+  write("views/Fields.tsx", `${reformatted}\n${fields.replace("<T>", "<T,>")}`);
+  git("mv", "src/views/Preview.stories.tsx", "src/views/Preview.tsx");
+  write("views/Preview.tsx", `${reformatted}\n${preview}`);
 
-  const dialog = 'import { Dialog } from "@mui/material";';
   // A conversion that reformats an old import and introduces a new one.
+  git("mv", "src/views/Page.jsx", "src/views/Page.tsx");
   write(
     "views/Page.tsx",
     `${legacy.slice(0, -1)}\n${dialog}\n${page}\nexport type Open = boolean;`,
@@ -90,7 +105,7 @@ beforeAll(() => {
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-it("rejects a new Dialog import in JSX and converted TSX", () => {
+it("reports new restricted imports but not ones already linted before a rename", () => {
   const { status, stdout, stderr } = run(
     process.execPath,
     "scripts/lint-ds-changed.mjs",
@@ -100,9 +115,11 @@ it("rejects a new Dialog import in JSX and converted TSX", () => {
   expect(status, stderr).toBe(1);
   expect(stdout).toMatch(/Page\.tsx:.*error.*bare MUI Dialog/);
   expect(stdout).toMatch(/Other\.jsx:.*error.*bare MUI Dialog/);
+  expect(stdout).not.toContain("Fields.tsx:");
+  expect(stdout).toMatch(/Preview\.tsx:.*error.*bare MUI Dialog/);
   expect(stdout).toMatch(/colors\.ts:.*error.*\[DS\] Hex colour/);
   expect(stdout).toMatch(/Other\.jsx:.*warning.*EmptyLayout/);
-  expect(stdout).toContain("3 design-system error(s) and 1 warning(s)");
+  expect(stdout).toContain("4 design-system error(s) and 1 warning(s)");
 });
 
 it("includes typed source files in the full design-system lint", () => {
