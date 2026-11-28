@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -152,6 +153,12 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 		outBytes, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "message": reply}}})
 
 		td := buildConversationTrace(canaryProj, oid, "sess-canary", 0xcc, byte(turn), string(inBytes), string(outBytes), true)
+		dev := ptrace.NewTraces()
+		td.CopyTo(dev) // same timestamps: only _version may differ
+		devRows, _, err := ConvertWithIdentities(context.Background(), dev, nil)
+		if err != nil {
+			t.Fatalf("turn %d dev: %v", turn, err)
+		}
 		res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Seen: seen, Gate: trajectory.FixedGate(true)})
 		if err != nil {
 			t.Fatalf("turn %d: %v", turn, err)
@@ -163,18 +170,18 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 		if len(row["input"].(string)) > 128 {
 			t.Fatalf("turn %d: preview input exceeds 128B: %d", turn, len(row["input"].(string)))
 		}
-		// Flattened llm.input_messages.* should be stripped from both attrs_string and attributes_extra.
+		// Flattened llm.input_messages.* are never stripped: attrs_string is
+		// the dev map, and only input.value/output.value left attributes_extra.
 		of := row["attributes_extra"].(map[string]any)
 		as := row["attrs_string"].(map[string]string)
-		for k := range of {
-			if strings.HasPrefix(k, "llm.input_messages.") {
-				t.Errorf("turn %d: flattened key %q was not stripped from attributes_extra", turn, k)
-			}
+		if !reflect.DeepEqual(as, devRows[0]["attrs_string"]) {
+			t.Fatalf("turn %d: attrs_string %v differs from dev %v", turn, as, devRows[0]["attrs_string"])
 		}
-		for k := range as {
-			if strings.HasPrefix(k, "llm.input_messages.") {
-				t.Errorf("turn %d: flattened key %q was not stripped from attrs_string", turn, k)
-			}
+		if as["llm.input_messages.1.message.content"] != "Fix tests" {
+			t.Fatalf("turn %d: flattened key lost: %v", turn, as)
+		}
+		if _, ok := of["input.value"]; ok || of[trajectory.SentinelPromotedInputKey] != "input.value" {
+			t.Fatalf("turn %d: the extracted input's attributes_extra copy must be compacted: %v", turn, of)
 		}
 		// Trace root row MUST retain full lossless input/output (never truncated to preview!).
 		traces := res.Identities.Traces()
@@ -188,16 +195,9 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 		// Simulate durable ClickHouse commit before next turn arrives.
 		seen.MarkCommitted(context.Background(), res.Trajectory.Items())
 		if turn == 5 {
-			// Verify RestoreInline reverts everything cleanly.
+			// RestoreInline yields the dedup-off row exactly.
 			res.Trajectory.RestoreInline()
-			if row["input"] != string(inBytes) || row["output"] != string(outBytes) {
-				t.Fatalf("RestoreInline failed to restore original input/output")
-			}
-			_, inOf := of["llm.input_messages.0.message.content"]
-			_, inAs := as["llm.input_messages.0.message.content"]
-			if !inOf && !inAs {
-				t.Fatalf("RestoreInline failed to restore stripped flattened attributes")
-			}
+			assertRowsEqualIgnoringVersion(t, res.Rows, devRows)
 		}
 		msgs = append(msgs, reply)
 	}

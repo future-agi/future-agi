@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/attributecatalog"
+	"github.com/future-agi/future-agi/fi-collector/pkg/trajectory"
 )
 
 // ScopedSpan carries the existing authenticated collector sidecar. Backfill
@@ -187,7 +188,17 @@ func canonicalMaps(row map[string]any) (attributecatalog.SpanAttributeMaps, erro
 			return attributecatalog.SpanAttributeMaps{}, fmt.Errorf("observedcatalog: trailing overflow JSON")
 		}
 	}
-	return attributecatalog.SpanAttributeMaps{Strings: copyMap(stringsMap), Numbers: copyMap(numbersMap), Booleans: copyMap(boolMap), Extra: copyMap(extra)}, nil
+	maps := attributecatalog.SpanAttributeMaps{Strings: copyMap(stringsMap), Numbers: copyMap(numbersMap), Booleans: copyMap(boolMap), Extra: copyMap(extra)}
+	if row["payload_encoding"] == trajectory.EncodingItemsV1 {
+		// A trajectory pointer row's compaction sentinels are storage
+		// bookkeeping, never span attributes. Callers hand in the dedup-off
+		// attributes (the collector's catalog view, the backfill's
+		// hydration); this keeps the sentinels out even when they cannot.
+		for _, key := range trajectory.SentinelKeys {
+			delete(maps.Extra, key)
+		}
+	}
+	return maps, nil
 }
 
 func copyMap[T any](in map[string]T) map[string]T {

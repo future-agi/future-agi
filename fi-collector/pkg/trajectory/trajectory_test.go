@@ -348,15 +348,16 @@ func TestBatchRestoreInlineAndUsageReport(t *testing.T) {
 		"item_scope_id":      "sess-1",
 		"payload_encoding":   EncodingItemsV1,
 		"payload_envelope":   "{}",
-		"attributes_extra":   map[string]any{"custom": "keep"},
+		"attributes_extra":   map[string]any{"custom": "keep", "input.value": `{"messages":[{"role":"user","content":"full input"}]}`},
 	}
 
 	b := NewBatch()
+	promoted := CompactPromoted(row["attributes_extra"].(map[string]any), "input.value", false, true)
 	b.AddFallback(SpanFallback{
 		Row:           row,
 		OrigInput:     `{"messages":[{"role":"user","content":"full input"}]}`,
 		OrigOutput:    `{"choices":[{"message":{"role":"assistant","content":"full output"}}]}`,
-		StrippedAttrs: map[string]any{"llm.input_messages.0.message.content": "full input"},
+		PromotedInput: promoted,
 	})
 	b.RestoreInline()
 
@@ -367,8 +368,8 @@ func TestBatchRestoreInlineAndUsageReport(t *testing.T) {
 		t.Fatalf("OrigOutput not restored: %v", row["output"])
 	}
 	of := row["attributes_extra"].(map[string]any)
-	if of["llm.input_messages.0.message.content"] != "full input" || of["custom"] != "keep" {
-		t.Fatalf("StrippedAttrs not restored: %v", of)
+	if of["input.value"] != `{"messages":[{"role":"user","content":"full input"}]}` || of["custom"] != "keep" || len(of) != 2 {
+		t.Fatalf("promoted attribute not restored exactly: %v", of)
 	}
 	for _, col := range []string{"input_item_hashes", "output_item_hashes", "tool_def_hashes", "item_scope_id", "payload_encoding", "payload_envelope"} {
 		if _, exists := row[col]; exists {

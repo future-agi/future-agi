@@ -1062,11 +1062,18 @@ func (s *Server) appendLocked(p parcel) {
 			} else if _, allowed := p.projectIDs[projectID]; !allowed {
 				scopeError = "project_workspace_mismatch"
 			}
+			// A compacted row is catalogued through its dedup-off
+			// attributes view, so the catalog is the same with dedup on
+			// or off (no sentinel key, the promoted key present).
+			catalogRow := row
+			if p.traj != nil {
+				catalogRow = p.traj.CatalogRow(row)
+			}
 			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
 				OrganizationID: p.organizationID,
 				WorkspaceID:    p.workspaceID,
 				ScopeError:     scopeError,
-				Row:            row,
+				Row:            catalogRow,
 			})
 		}
 	}
@@ -1186,7 +1193,25 @@ func (s *Server) drainNow(ctx context.Context) {
 	// so neither dangling pointers nor billing under-counts can occur.
 	trajFallback, pointerRows := s.commitTrajectory(ctx, traj, stamp)
 
-	confirmed, held, err := s.writer.InsertConfirmedWith(ctx, batch, chwriter.InsertOptions{StrictColumns: pointerRows, HoldSchemaRefusals: pointerRows})
+	insertOpts := chwriter.InsertOptions{StrictColumns: pointerRows, HoldSchemaRefusals: pointerRows}
+	var deadLetteredPointerRows atomic.Int64
+	if pointerRows {
+		// A pointer row that cannot be stored goes to the dead-letter file
+		// as its self-contained inline copy, so replaying the file never
+		// needs trajectory_items. Those spans end up stored inline, so the
+		// drain bills raw.
+		insertOpts.DeadLetterRow = func(row map[string]any) map[string]any {
+			inline, ok := traj.InlineCopy(row)
+			if ok {
+				deadLetteredPointerRows.Add(1)
+			}
+			return inline
+		}
+	}
+	confirmed, held, err := s.writer.InsertConfirmedWith(ctx, batch, insertOpts)
+	if deadLetteredPointerRows.Load() > 0 {
+		trajFallback = true
+	}
 	if pointerRows && (anyHeld(held) || chwriter.IsSchemaMismatch(err)) {
 		// ClickHouse refused a pointer column (strict columns), so nothing
 		// was stored as a preview. Close the gate so later requests are
