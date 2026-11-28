@@ -21,6 +21,7 @@ from accounts.models import OrgApiKey
 from simulate.models import HostedHarnessExecution, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import HELD_BACK_VERIFIED_MIN
 from simulate.selectors.agent_fix import FINISHED_RUN_STATES
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
     AUTHORING_FAILED,
     RUNTIME_VALIDATION_FAILED,
@@ -67,6 +68,17 @@ def held_back(environment: HostedHarnessJob) -> HeldBack | None:
 def coding_agent_key(request: Any) -> OrgApiKey | None:
     """The coding agent API key the request authenticated with, else ``None``."""
     return request.org_api_key if is_coding_agent_key(request) else None
+
+
+def refuse_coding_agent_split(request: Any, split: str | None) -> None:
+    """A coding agent runs every scenario: a split, planned or run, would tell it which
+    cases are held back in the test split."""
+    if split is not None and coding_agent_key(request) is not None:
+        raise HostedHarnessError(
+            "split_not_for_coding_agent",
+            "A coding agent runs every scenario. Leave out the split.",
+            status_code=422,
+        )
 
 
 def refusal_body(exc: Any, request: Any) -> dict[str, Any]:

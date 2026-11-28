@@ -2099,7 +2099,11 @@ class HostedHarnessProvider:
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
 
-        from simulate.selectors.held_back import coding_agent_key, refusal_body
+        from simulate.selectors.held_back import (
+            coding_agent_key,
+            refusal_body,
+            refuse_coding_agent_split,
+        )
         from simulate.services.harness_verify import require_default_suite
         from simulate.services.harness_versioning.run_warnings import created_run
         from simulate.services.hosted_harness import (
@@ -2134,13 +2138,8 @@ class HostedHarnessProvider:
         coder = coding_agent_key(request)
         split = request.validated_data.get("split")
         try:
+            refuse_coding_agent_split(request, split)
             if coder is not None:
-                if split is not None:
-                    raise HostedHarnessError(
-                        "split_not_for_coding_agent",
-                        "A coding agent runs every scenario. Leave out the split.",
-                        status_code=422,
-                    )
                 # The cases a coding agent may not run are chosen before its first run,
                 # and it runs only the default suite.
                 require_default_suite(
