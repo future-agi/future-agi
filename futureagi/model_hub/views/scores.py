@@ -555,6 +555,20 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         f"Span notes source not found: {span_notes_source_id}"
                     )
 
+        label_ids = {score_data["label_id"] for score_data in data["scores"]}
+        labels = AnnotationsLabels.all_objects.filter(
+            organization=request.organization
+        ).in_bulk(label_ids)
+        active_label_ids = [label.pk for label in labels.values() if not label.deleted]
+        # A stale form with nothing left to save shouldn't create a default queue item.
+        if (
+            not active_label_ids
+            and label_ids == labels.keys()
+            and span_notes is None
+            and not data.get("queue_item_id")
+        ):
+            return self._gm.success_response({"scores": [], "errors": []})
+
         # Resolve queue context once per request — every score in this bulk
         # call shares the same source, so they all land in the same
         # queue_item. See create() for the rationale on requiring queue_item.
@@ -575,7 +589,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             queue_item,
             tracer_project_id,
             source_lookup={f"{fk_field}_id": source_obj.pk},
-            label_ids=[score_data["label_id"] for score_data in data["scores"]],
+            label_ids=active_label_ids,
             annotator_id=request.user.pk,
         )
         if conflict:
@@ -602,10 +616,11 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 label_id = score_data["label_id"]
                 value = score_data["value"]
 
-                try:
-                    label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
-                except AnnotationsLabels.DoesNotExist:
+                label = labels.get(label_id)
+                if label is None:
                     errors.append(f"Label not found: {label_id}")
+                    continue
+                if label.deleted:
                     continue
 
                 # Per-score notes: only saved if the label has allow_notes=True.
@@ -695,17 +710,17 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # so a failure can't poison the transaction that just wrote the
             # Score rows. Single hooks per side-effect (not N) since both
             # operate on the source object, not per-score.
-            scored_label_ids = [s["label_id"] for s in data["scores"]]
-            transaction.on_commit(
-                lambda: _safe_auto_create_queue_items_for_default_queues(
-                    source_type, source_obj, scored_label_ids, request.organization
+            if active_label_ids:
+                transaction.on_commit(
+                    lambda: _safe_auto_create_queue_items_for_default_queues(
+                        source_type, source_obj, active_label_ids, request.organization
+                    )
                 )
-            )
-            transaction.on_commit(
-                lambda: _safe_auto_complete_queue_items(
-                    source_type, source_obj, request.user
+                transaction.on_commit(
+                    lambda: _safe_auto_complete_queue_items(
+                        source_type, source_obj, request.user
+                    )
                 )
-            )
 
         return self._gm.success_response(
             {

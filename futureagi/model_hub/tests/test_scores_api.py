@@ -386,6 +386,81 @@ class TestCreateScore:
 
 
 @pytest.mark.django_db
+class TestArchivedQueueLabels:
+    @pytest.mark.parametrize("read", ["default", "detail", "for-source"])
+    def test_drawer_returns_only_active_labels(
+        self, read, auth_client, observation_span, star_label, thumbs_label
+    ):
+        queues_url = "/model-hub/annotation-queues/"
+        scope = {"project_id": str(observation_span.project_id)}
+        default_url = f"{queues_url}get-or-create-default/"
+        created = auth_client.post(default_url, scope, format="json")
+        assert created.status_code == status.HTTP_200_OK, created.data
+        queue = created.data["result"]["queue"]
+        for label in (star_label, thumbs_label):
+            AnnotationQueueLabel.objects.create(queue_id=queue["id"], label=label)
+        thumbs_label.delete()
+
+        if read == "default":
+            response = auth_client.post(default_url, scope, format="json")
+            entry = response.data["result"]
+        elif read == "detail":
+            response = auth_client.get(f"{queues_url}{queue['id']}/")
+            entry = response.data
+        else:
+            response = auth_client.get(
+                f"{queues_url}for-source/",
+                {"source_type": "observation_span", "source_id": observation_span.id},
+            )
+            (entry,) = response.data["result"]
+        assert response.status_code == status.HTTP_200_OK, response.data
+        key = "label_id" if read == "detail" else "id"
+        assert [str(label[key]) for label in entry["labels"]] == [str(star_label.id)]
+
+    def test_stale_save_skips_archived_but_reports_unknown_labels(
+        self, auth_client, observation_span, star_label, thumbs_label
+    ):
+        source = {"source_type": "observation_span", "source_id": observation_span.id}
+        stale = {"label_id": str(thumbs_label.id), "value": {"value": "up"}}
+        previous = auth_client.post(SCORE_URL, {**source, **stale}, format="json")
+        assert previous.status_code == status.HTTP_200_OK, previous.data
+        thumbs_label.delete()
+        unknown = str(uuid.uuid4())
+        scores = [
+            {**stale, "value": {"value": "down"}},
+            {"label_id": unknown, "value": {"rating": 1}},
+            {"label_id": str(star_label.id), "value": {"rating": 4}},
+        ]
+        response = auth_client.post(
+            f"{SCORE_URL}bulk/", {**source, "scores": scores}, format="json"
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        result = response.data["result"]
+        assert result["errors"] == [f"Label not found: {unknown}"]
+        assert [score["label_id"] for score in result["scores"]] == [str(star_label.id)]
+        assert Score.objects.get(label=star_label).value == {"rating": 4}
+        assert Score.objects.get(label=thumbs_label).value == stale["value"]
+
+    def test_only_archived_labels_do_not_start_a_review(
+        self, auth_client, observation_span, star_label
+    ):
+        star_label.delete()
+        response = auth_client.post(
+            f"{SCORE_URL}bulk/",
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "scores": [{"label_id": str(star_label.id), "value": {"rating": 4}}],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.data["result"] == {"scores": [], "errors": []}
+        assert not Score.objects.filter(label=star_label).exists()
+        assert not QueueItem.objects.filter(observation_span=observation_span).exists()
+
+
+@pytest.mark.django_db
 class TestBulkCreateScores:
     def test_bulk_create(self, auth_client, observation_span, star_label, thumbs_label):
         """Bulk create multiple scores on one source."""

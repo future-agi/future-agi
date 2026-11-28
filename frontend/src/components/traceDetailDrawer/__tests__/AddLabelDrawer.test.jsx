@@ -15,7 +15,7 @@ const {
 } = vi.hoisted(() => ({
   entitlementMessage:
     "You've reached the 10 annotation queues limit across this organization.",
-  defaultQueueState: { isPending: false },
+  defaultQueueState: { isPending: false, labels: [] },
   labelQueryState: {
     data: {
       results: [{ id: "label-1", name: "Review", type: "categorical" }],
@@ -37,7 +37,12 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
+    useQueryClient: () => ({
+      invalidateQueries: mockInvalidateQueries,
+      setQueryData: (_key, labels) => {
+        defaultQueueState.labels = labels;
+      },
+    }),
   };
 });
 
@@ -65,8 +70,12 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
       isPending: defaultQueueState.isPending,
     };
   },
-  useAddLabelToQueue: () => ({ mutateAsync: vi.fn() }),
-  useRemoveLabelFromQueue: () => ({ mutateAsync: vi.fn() }),
+  annotationQueueKeys: { editableLabels: (id) => ["editable-labels", id] },
+  useEditableQueueLabels: (id) => ({
+    data: id ? defaultQueueState.labels : undefined,
+  }),
+  useAddLabelToQueue: () => ({ mutate: vi.fn() }),
+  useRemoveLabelFromQueue: () => ({ mutate: vi.fn() }),
 }));
 
 vi.mock("src/sections/annotations/labels/create-label-drawer", () => ({
@@ -77,6 +86,7 @@ describe("AddLabelDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     defaultQueueState.isPending = false;
+    defaultQueueState.labels = [];
     Object.assign(labelQueryState, {
       data: {
         results: [{ id: "label-1", name: "Review", type: "categorical" }],
@@ -116,6 +126,31 @@ describe("AddLabelDrawer", () => {
     expect(mockGetOrCreate).toHaveBeenCalledWith({ notifyOnError: false });
     expect(screen.getByRole("checkbox")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+  });
+
+  it("drops an archived selection on refresh without losing off-page selections", async () => {
+    const active = { id: "active", name: "Off-page label", type: "text" };
+    const stale = { id: "stale", name: "Former label", type: "text" };
+    const queue = { id: "queue-1" };
+    mockGetOrCreateMutate.mockImplementation((_variables, callbacks) => {
+      const result = { queue, labels: [active, stale] };
+      callbacks.onSuccess({ data: { result } });
+    });
+    labelQueryState.data = { results: [stale] };
+    labelQueryState.hasNextPage = true;
+    const props = { open: true, onClose: vi.fn(), projectId: "project-1" };
+    const { rerender } = render(<AddLabelDrawer {...props} />);
+    await waitFor(() => {
+      expect(screen.getAllByText(stale.name)).toHaveLength(2);
+    });
+
+    defaultQueueState.labels = [active];
+    labelQueryState.data = { results: [] };
+    rerender(<AddLabelDrawer {...props} />);
+
+    expect(screen.queryByText(stale.name)).not.toBeInTheDocument();
+    expect(screen.getByText(active.name)).toBeInTheDocument();
+    expect(mockGetOrCreateMutate).toHaveBeenCalledTimes(1);
   });
 
   it("does not show a false empty state while labels are loading", () => {

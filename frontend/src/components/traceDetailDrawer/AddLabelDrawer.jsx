@@ -20,6 +20,8 @@ import {
 import {
   extractErrorMessage,
   useGetOrCreateDefaultQueue,
+  annotationQueueKeys,
+  useEditableQueueLabels,
   useAddLabelToQueue,
   useRemoveLabelFromQueue,
 } from "src/api/annotation-queues/annotation-queues";
@@ -39,9 +41,6 @@ const AddLabelDrawerContent = ({
 }) => {
   const [search, setSearch] = useState("");
   const [defaultQueue, setDefaultQueue] = useState(null);
-  const [queueLabelIds, setQueueLabelIds] = useState(new Set());
-  const [knownLabelsById, setKnownLabelsById] = useState(new Map());
-  const [saving, setSaving] = useState(false);
   const [createLabelOpen, setCreateLabelOpen] = useState(false);
   const [queueError, setQueueError] = useState("");
   const queryClient = useQueryClient();
@@ -55,10 +54,10 @@ const AddLabelDrawerContent = ({
     hasNextPage,
     fetchNextPage,
     refetch: retryLabels,
-  } = useInfiniteAnnotationLabelsList({
-    search: debouncedSearch,
-    limit: 50,
-  });
+  } = useInfiniteAnnotationLabelsList(
+    { search: debouncedSearch, limit: 50 },
+    { staleTime: 0 },
+  );
   const labels = labelsData?.results || [];
 
   const { mutate: getOrCreateDefault, isPending: isDefaultQueuePending } =
@@ -81,24 +80,16 @@ const AddLabelDrawerContent = ({
           onSuccess: (response) => {
             setQueueError("");
             const result = response.data?.result || response.data;
-            const queue = result?.queue;
-            if (queue) setDefaultQueue(queue);
-            const existingIds = new Set(
-              (result?.labels || []).map((l) => l.id),
-            );
-            setQueueLabelIds(existingIds);
-            setKnownLabelsById(
-              new Map(
-                (result?.labels || [])
-                  .filter((label) => label?.id)
-                  .map((label) => [label.id, label]),
-              ),
-            );
+            if (result?.queue) {
+              queryClient.setQueryData(
+                annotationQueueKeys.editableLabels(result.queue.id),
+                result.labels || [],
+              );
+              setDefaultQueue(result.queue);
+            }
           },
           onError: (error) => {
             setDefaultQueue(null);
-            setQueueLabelIds(new Set());
-            setKnownLabelsById(new Map());
             setQueueError(
               extractErrorMessage(error, "Failed to get default queue"),
             );
@@ -113,47 +104,26 @@ const AddLabelDrawerContent = ({
     datasetId,
     agentDefinitionId,
     getOrCreateDefault,
+    queryClient,
   ]);
 
-  const handleToggle = async (labelId) => {
-    if (!defaultQueue?.id) return;
+  // Queue membership is independent of the current catalog search and page.
+  const queueId = defaultQueue?.id;
+  const { data: selectedLabels = [] } = useEditableQueueLabels(queueId);
+  const queueLabelIds = new Set(selectedLabels.map((label) => label.id));
+  const saving = addLabelMutation.isPending || removeLabelMutation.isPending;
 
-    setSaving(true);
-    try {
-      if (queueLabelIds.has(labelId)) {
-        await removeLabelMutation.mutateAsync({
-          queueId: defaultQueue.id,
-          labelId,
-        });
-        setQueueLabelIds((prev) => {
-          const next = new Set(prev);
-          next.delete(labelId);
-          return next;
-        });
-      } else {
-        await addLabelMutation.mutateAsync({
-          queueId: defaultQueue.id,
-          labelId,
-        });
-        setQueueLabelIds((prev) => new Set([...prev, labelId]));
-        const selectedLabel = labels.find((label) => label.id === labelId);
-        if (selectedLabel) {
-          setKnownLabelsById((prev) =>
-            new Map(prev).set(selectedLabel.id, selectedLabel),
-          );
-        }
-      }
-      onLabelsChanged?.();
-    } finally {
-      setSaving(false);
-    }
+  const handleToggle = (labelId) => {
+    if (!queueId || saving) return;
+    const mutation = queueLabelIds.has(labelId)
+      ? removeLabelMutation
+      : addLabelMutation;
+    mutation.mutate(
+      { queueId, labelId },
+      { onSuccess: () => onLabelsChanged?.() },
+    );
   };
 
-  const visibleLabelsById = new Map(knownLabelsById);
-  labels.forEach((label) => visibleLabelsById.set(label.id, label));
-  const selectedLabels = Array.from(queueLabelIds)
-    .map((labelId) => visibleLabelsById.get(labelId))
-    .filter(Boolean);
   const isInitialLoading =
     isDefaultQueuePending || (isLabelsLoading && labels.length === 0);
 
