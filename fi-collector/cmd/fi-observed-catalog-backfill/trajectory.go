@@ -19,9 +19,10 @@ import (
 // from trajectory_items, so the two catalogs agree.
 
 // trajectoryColumns are the spans columns the backfill reads for pointer
-// rows, in SELECT order.
+// rows, in SELECT order. The input/output columns are not read: they hold
+// previews, and the promoted value is rebuilt from the items.
 var trajectoryColumns = []string{
-	"input", "output", "input_item_hashes", "output_item_hashes", "tool_def_hashes",
+	"input_item_hashes", "output_item_hashes", "tool_def_hashes",
 	"item_scope_id", "payload_encoding", "payload_envelope",
 }
 
@@ -166,9 +167,17 @@ func (s *sourceReader) logicalRows(ctx context.Context, project string, rows []m
 	if err != nil {
 		return nil, 0, err
 	}
+	byRef := make(map[[2]string]string, len(items))
+	for _, it := range items {
+		byRef[[2]string{it.ScopeID, it.ItemHash}] = it.Content
+	}
 	unavailable := 0
 	for _, p := range work {
-		resolve := trajectory.ItemsResolver(p.scope, items)
+		scope := p.scope
+		resolve := func(ref string) (string, bool) {
+			content, ok := byRef[itemRef(scope, ref)]
+			return content, ok
+		}
 		missing := p.bad
 		for _, side := range p.sides {
 			content, err := trajectory.ReconstructSide(side.template, side.msgRefs, side.toolRefs, resolve)
@@ -220,11 +229,11 @@ func (s *sourceReader) readItems(ctx context.Context, project string, want map[[
 		for i, ref := range chunk {
 			params.Set(fmt.Sprintf("param_s%d", i), ref[0])
 			params.Set(fmt.Sprintf("param_h%d", i), ref[1])
-			conditions[i] = fmt.Sprintf("tuple({s%d:String}, {h%d:String})", i, i)
+			conditions[i] = fmt.Sprintf("tuple({s%d:String}, {h%d:FixedString(32)})", i, i)
 		}
 		rows, err := s.selectRows(ctx, `SELECT scope_id, toString(item_hash) AS item_hash, content FROM trajectory_items
  WHERE project_id = {project:UUID}
- AND tuple(scope_id, toString(item_hash)) IN (`+strings.Join(conditions, ",")+`)`, params)
+ AND tuple(scope_id, item_hash) IN (`+strings.Join(conditions, ",")+`)`, params)
 		if err != nil {
 			return nil, fmt.Errorf("read trajectory items: %w", err)
 		}

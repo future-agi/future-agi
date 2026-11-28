@@ -220,38 +220,36 @@ func TestDrainDeadLettersCompactedSpansInline(t *testing.T) {
 }
 
 // TestDeadLetteredDedupRowsBillRaw: spans that end in the dead-letter file
-// are replayed as inline rows, so the request bills its raw bytes, not the
-// deduplicated size.
+// are replayed as inline rows, so their request bills its raw bytes, not the
+// deduplicated size. Turns 1 and 2 are stored as pointer rows (turn 2 bills
+// below raw, so the check is not vacuous); turn 3 reuses their items but its
+// spans insert fails, and it must bill raw.
 func TestDeadLetteredDedupRowsBillRaw(t *testing.T) {
-	ch := &fakeTrajectoryCH{failStrictSpans: true}
+	ch := &fakeTrajectoryCH{}
 	f := newTrajFixture(t, trajectory.Config{Mode: trajectory.ModeOn}, ch, true)
 	usage := &recordingTrajUsage{}
 	f.srv.usage = usage
+	for turn := 1; turn <= 2; turn++ {
+		postTrajOTLP(t, f.srv, trajTestOID, trajTestPID, attrsTurn(t, turn))
+		f.srv.drainNow(context.Background())
+	}
+	ch.mu.Lock()
+	ch.failStrictSpans = true
+	ch.mu.Unlock()
 	postTrajOTLP(t, f.srv, trajTestOID, trajTestPID, attrsTurn(t, 3))
 	f.srv.drainNow(context.Background())
+	if len(deadLetterRows(t, f.dlq)) != 1 {
+		t.Fatal("fixture: turn 3 must be dead-lettered")
+	}
 	usage.mu.Lock()
 	defer usage.mu.Unlock()
-	if len(usage.raw)+usage.legacy != 1 {
-		t.Fatalf("usage events dedup=%d legacy=%d, want one event", len(usage.raw), usage.legacy)
+	if usage.legacy != 0 || len(usage.raw) != 3 {
+		t.Fatalf("usage events dedup=%d legacy=%d, want three dedup events", len(usage.raw), usage.legacy)
 	}
-	for i := range usage.raw {
-		if usage.stored[i] != usage.raw[i] {
-			t.Fatalf("dead-lettered spans billed stored=%d, want raw=%d", usage.stored[i], usage.raw[i])
-		}
+	if usage.stored[1] >= usage.raw[1] {
+		t.Fatalf("control: stored turn 2 must bill below raw (stored=%d raw=%d)", usage.stored[1], usage.raw[1])
 	}
-
-	// Control: the same request stored as pointer rows bills less than raw.
-	ch2 := &fakeTrajectoryCH{}
-	g := newTrajFixture(t, trajectory.Config{Mode: trajectory.ModeOn}, ch2, true)
-	usage2 := &recordingTrajUsage{}
-	g.srv.usage = usage2
-	for turn := 1; turn <= 3; turn++ {
-		postTrajOTLP(t, g.srv, trajTestOID, trajTestPID, attrsTurn(t, turn))
-		g.srv.drainNow(context.Background())
-	}
-	usage2.mu.Lock()
-	defer usage2.mu.Unlock()
-	if n := len(usage2.raw); n != 3 || usage2.stored[n-1] >= usage2.raw[n-1] {
-		t.Fatalf("control: a stored pointer turn must bill below raw: %+v", usage2)
+	if usage.stored[2] != usage.raw[2] {
+		t.Fatalf("dead-lettered turn 3 billed stored=%d, want raw=%d", usage.stored[2], usage.raw[2])
 	}
 }
