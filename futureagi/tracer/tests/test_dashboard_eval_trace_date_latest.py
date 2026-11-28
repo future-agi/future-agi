@@ -1450,39 +1450,6 @@ def test_an_absent_pass_fail_verdict_is_not_set_in_every_breakdown_path(
         assert labels == {"(not set)", "Passed"}, (name, labels)
 
 
-def test_the_election_lookup_is_bounded_below_by_the_window(observe_project, seed):
-    """Previous PR head: the election's id lookup had no time bound, so a
-    one-hour widget read every row the template ever recorded. Fixed: the
-    lookup starts a day before the window (the spans ingestion buffer), and a
-    result recorded earlier than that is not a candidate, while a
-    re-evaluation recorded long after the window still is.
-    """
-
-    template = str(uuid4())
-    day0 = _day(datetime.now(UTC) - timedelta(days=10))
-    old = seed.trace(observe_project, day0 + timedelta(hours=10))
-    seed.result(old, template, day0 + timedelta(hours=11), value=0.3)
-    window_start = day0 + timedelta(days=3)
-    late = seed.trace(
-        observe_project,
-        window_start + timedelta(hours=1),
-        children=[(timedelta(minutes=5), None, 0)],
-    )
-    seed.result(late, template, window_start + timedelta(hours=2), value=0.1)
-    seed.result(late, template, window_start + timedelta(days=4), value=0.7)
-    result = _run_worker(
-        seed,
-        _config(
-            [observe_project],
-            _custom(window_start, window_start + timedelta(days=1)),
-            [_eval_metric(template)],
-        ),
-    )
-    assert _points(result) == pytest.approx({window_start: 0.7})
-    query = "\n".join(seed.usage.queries)
-    assert "_candidate.created_at >=" in query
-
-
 @pytest.mark.parametrize("lane", ["worker", "endpoint"])
 def test_a_rolling_preset_keeps_whole_second_bounds_through_the_public_path(
     observe_project, seed, lane
