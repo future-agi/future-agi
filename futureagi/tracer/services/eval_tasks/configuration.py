@@ -5,7 +5,7 @@ from datetime import datetime
 from django.db import router, transaction
 from django.utils import timezone
 
-from tracer.models.eval_task import EvalTask, RunType
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
 
 def continuous_coverage_floor(task: EvalTask, *, now: datetime) -> datetime:
@@ -57,7 +57,10 @@ def update_task_configuration(task: EvalTask, changes: dict) -> EvalTask:
             .get(pk=task.pk)
         )
         updates = dict(changes)
-        if "status" in updates and updates["status"] != current.status:
+        if "status" in updates and (
+            updates["status"] != EvalTaskStatus.FAILED
+            or updates["status"] != current.status
+        ):
             updates["failure_reason"] = None
         evals = updates.pop("evals", None)
         run_type = updates.get("run_type", current.run_type)

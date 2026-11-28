@@ -1589,7 +1589,9 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a running run can be paused."
             )
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+        EvalTask.objects.filter(id=task.id).update(
+            status=EvalTaskStatus.PAUSED, failure_reason=None
+        )
         if run is not None:
             InstantEvalRun.objects.filter(id=run.id).update(
                 answers_version=F("answers_version") + 1
@@ -1602,8 +1604,11 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         return self._ok(task, "Paused. Answers already being read will still land.")
 
     def _restart(self, task):
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
+        EvalTask.objects.filter(id=task.id).update(
+            status=EvalTaskStatus.PENDING, failure_reason=None
+        )
         task.status = EvalTaskStatus.PENDING
+        task.failure_reason = None
         _start_workflow_on_commit(task, replace=True)
 
     def _resume(self, request, task, run, data):

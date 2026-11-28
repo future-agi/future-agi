@@ -1404,7 +1404,16 @@ export type ${jsonAlias} = JsonValueApi;`,
     // task details have legacy nullable fields and absent sampling policies.
     for (const [typeName, fields] of Object.entries({
       _EvalTaskListRowResponseApi: ["failure_reason"],
+      EvalTaskApi: ["failure_reason"],
+      EvalTaskLogsResultApi: [
+        "start_time",
+        "end_time",
+        "status",
+        "failure_reason",
+        "run_type",
+      ],
       EvalTaskDetailsResultApi: [
+        "failure_reason",
         "name",
         "project_name",
         "status",
@@ -1430,7 +1439,7 @@ export type ${jsonAlias} = JsonValueApi;`,
         schemas = assertReplaceRegexInNamedBlock(
           schemas,
           `export interface ${typeName} {`,
-          new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+          new RegExp(`(^\\s*(?:readonly )?${field}\\??: [^;]+)(;)$`, "m"),
           "$1 | null$2",
           `${typeName}.${field} nullable`,
         );
@@ -2524,6 +2533,12 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       );
     }
     for (const response of [
+      "TracerEvalTaskListResponse",
+      "TracerEvalTaskReadResponse",
+      "TracerEvalTaskUpdateResponse",
+      "TracerEvalTaskPartialUpdateResponse",
+      "TracerEvalTaskGetEvalDetailsResponse",
+      "TracerEvalTaskGetEvalTaskLogsResponse",
       "TracerEvalTaskListEvalTasksResponse",
       "TracerEvalTaskListEvalTasksWithProjectNameResponse",
     ]) {
@@ -2533,6 +2548,18 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         '"failure_reason": zod.string().min(1).optional()',
         '"failure_reason": zod.string().min(1).nullish()',
         `${response}.failure_reason nullable`,
+      );
+    }
+    for (const pattern of [
+      /("(?:start_time|end_time)": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+      /("(?:status|run_type)": zod\.string\(\))/g,
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        "export const TracerEvalTaskGetEvalTaskLogsResponse =",
+        pattern,
+        "$1.nullable()",
+        "nullable task Logs fields",
       );
     }
     const taskDetailsDeclaration =

@@ -150,13 +150,13 @@ const TaskDetailPage = () => {
         ...(payload.sampling_policy !== undefined
           ? { sampling_policy: samplingPolicyForApi(payload.sampling_policy) }
           : {}),
-        eval_task_id: taskId,
       }),
-    onSuccess: (_data, { mode }) => {
+    onSuccess: (_data, { mode, payload: { eval_task_id: updatedId } }) => {
       // A fresh run archives/replaces the cohort. Do not leave its old audit
       // visible while the current cohort is being fetched or has not frozen.
-      queryClient.resetQueries({ queryKey: ["samplingAudit", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.resetQueries({ queryKey: ["samplingAudit", updatedId] });
+      queryClient.resetQueries({ queryKey: ["eval-task-logs", updatedId] });
+      queryClient.invalidateQueries({ queryKey: ["taskDetails", updatedId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar(
         mode === "rerun" ? "Re-run started" : "Task updated successfully",
@@ -366,6 +366,7 @@ const TaskDetailPage = () => {
       );
 
       const transformedData = {
+        eval_task_id: taskId,
         evals: data.evalsDetails?.map((item) => item.id || item) || [],
         filters: {
           ...filters,
@@ -387,7 +388,7 @@ const TaskDetailPage = () => {
       updateTask({ payload: transformedData, mode: confirmMode });
       setConfirmMode(null);
     },
-    [formValues, updateTask, confirmMode, taskDetails],
+    [formValues, updateTask, confirmMode, taskDetails, taskId],
   );
 
   if (isLoading && !taskDetails) {

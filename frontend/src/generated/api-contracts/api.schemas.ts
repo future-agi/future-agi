@@ -37417,6 +37417,8 @@ export interface EvalTaskApi {
   run_type: EvalTaskApiRunType;
   row_type?: EvalTaskApiRowType;
   status?: EvalTaskApiStatus;
+  /** @minLength 1 */
+  readonly failure_reason?: string | null;
   readonly start_time?: string;
   readonly end_time?: string;
   readonly created_at?: string;
@@ -37687,6 +37689,8 @@ export interface EvalTaskDetailsResultApi {
   project_id: string;
   project_name: string | null;
   status: EvalTaskDetailsResultApiStatus | null;
+  /** @minLength 1 */
+  failure_reason?: string | null;
   filters_applied: EvalTaskDetailsResultApiFiltersApplied | null;
   created_at: string;
   evals_applied: EvalTaskDetailsEvalApi[];
@@ -37701,6 +37705,48 @@ export interface EvalTaskDetailsResultApi {
 export interface EvalTaskDetailsResponseApi {
   status?: boolean;
   result: EvalTaskDetailsResultApi;
+}
+
+export interface EvalTaskLogsErrorGroupApi {
+  /** @minLength 1 */
+  normalized: string;
+  count: number;
+  sample: string;
+}
+
+export interface EvalTaskLogsWarningGroupApi {
+  /** @minLength 1 */
+  type: string;
+  empty_keys: string[];
+  filled_keys: string[];
+  message: string;
+  count: number;
+}
+
+export interface EvalTaskLogsResultApi {
+  start_time: string | null;
+  end_time: string | null;
+  status: string | null;
+  /** @minLength 1 */
+  failure_reason?: string | null;
+  run_type: string | null;
+  errors_count: number;
+  success_count: number;
+  skipped_count: number;
+  warnings_count: number;
+  total_count: number;
+  target_count: number;
+  error_groups: EvalTaskLogsErrorGroupApi[];
+  warning_groups: EvalTaskLogsWarningGroupApi[];
+  error_groups_truncated: boolean;
+  warning_groups_truncated: boolean;
+  /** @minLength 1 */
+  row_type: string;
+}
+
+export interface EvalTaskLogsResponseApi {
+  status?: boolean;
+  result: EvalTaskLogsResultApi;
 }
 
 export interface EvalTaskUsageStatsApi {
@@ -51217,24 +51263,7 @@ export type TracerEvalTaskGetEvalDetailsParams = {
 };
 
 export type TracerEvalTaskGetEvalTaskLogsParams = {
-  /**
-   * A one-based page number. Deep pages whose offset exceeds 50000 are rejected.
-   * @minimum 1
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
-};
-
-export type TracerEvalTaskGetEvalTaskLogs200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalTaskApi[];
+  eval_task_id: string;
 };
 
 export type TracerEvalTaskGetUsageParams = {

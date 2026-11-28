@@ -103,6 +103,10 @@ class EvalTask(BaseModel):
         db_index=True,
     )
 
+    @property
+    def visible_failure_reason(self):
+        return self.failure_reason if self.status == EvalTaskStatus.FAILED else None
+
     def __str__(self):
         return f"Eval Task {self.id}"
 

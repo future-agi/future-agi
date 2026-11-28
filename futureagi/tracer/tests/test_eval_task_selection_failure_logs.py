@@ -129,8 +129,26 @@ def test_failed_selection_reason_in_empty_logs(
     assert logs()["failure_reason"] is None
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", [EvalTaskStatus.FAILED, EvalTaskStatus.PENDING])
+def test_details_only_expose_a_current_failure(auth_client, eval_task, status):
+    eval_task.status = status
+    eval_task.failure_reason = BUDGET_REASON
+    eval_task.save(update_fields=["status", "failure_reason"])
+    expected = BUDGET_REASON if status == EvalTaskStatus.FAILED else None
+
+    response = auth_client.get(
+        "/tracer/eval-task/get_eval_details/", {"eval_id": str(eval_task.pk)}
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["failure_reason"] == expected
+    response = auth_client.get(f"/tracer/eval-task/{eval_task.pk}/")
+    assert response.status_code == 200
+    assert response.json()["failure_reason"] == expected
+
+
 @pytest.mark.django_db(transaction=True)
-def test_resume_hides_reason_until_run_starts(monkeypatch, auth_client, eval_task):
+def test_resume_clears_reason_before_worker_starts(monkeypatch, auth_client, eval_task):
     eval_task.status = EvalTaskStatus.FAILED
     eval_task.failure_reason = BUDGET_REASON
     eval_task.save(update_fields=["status", "failure_reason"])
@@ -146,7 +164,7 @@ def test_resume_hides_reason_until_run_starts(monkeypatch, auth_client, eval_tas
     start.assert_called_once_with(eval_task, replace_existing=True)
     eval_task.refresh_from_db()
     assert eval_task.status == EvalTaskStatus.PENDING
-    assert eval_task.failure_reason == BUDGET_REASON
+    assert eval_task.failure_reason is None
 
     response = auth_client.get(
         "/tracer/eval-task/get_eval_task_logs/", {"eval_task_id": str(eval_task.pk)}
@@ -156,10 +174,16 @@ def test_resume_hides_reason_until_run_starts(monkeypatch, auth_client, eval_tas
     assert logs["status"] == EvalTaskStatus.PENDING
     assert logs["failure_reason"] is None
 
-    activities._set_task_status_sync(str(eval_task.pk), EvalTaskStatus.RUNNING)
-    eval_task.refresh_from_db()
-    assert eval_task.status == EvalTaskStatus.RUNNING
-    assert eval_task.failure_reason is None
+    # A worker from before the migration writes only the failure status.
+    eval_task.status = EvalTaskStatus.FAILED
+    eval_task.save(update_fields=["status"])
+    response = auth_client.get(
+        "/tracer/eval-task/get_eval_task_logs/", {"eval_task_id": str(eval_task.pk)}
+    )
+    assert response.status_code == 200
+    logs = response.json()["result"]
+    assert logs["status"] == EvalTaskStatus.FAILED
+    assert logs["failure_reason"] is None
 
 
 @pytest.mark.django_db(transaction=True)

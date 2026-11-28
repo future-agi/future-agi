@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   TracerEvalTaskGetEvalDetailsQueryParams,
   TracerEvalTaskGetEvalDetailsResponse,
+  TracerEvalTaskGetEvalTaskLogsResponse,
+  TracerEvalTaskPartialUpdateBody,
+  TracerEvalTaskReadResponse,
 } from "src/generated/api-contracts/api.zod";
 import swagger from "../../../../../api_contracts/openapi/swagger.json";
 
@@ -100,6 +103,45 @@ describe("generated task-details contract", () => {
       run_type: value,
       filters_applied: null,
     });
+  });
+
+  it.each([
+    ["failed", "Narrow the time range."],
+    ["pending", null],
+  ])("preserves the %s diagnosis in details and Logs", (status, reason) => {
+    expect(TracerEvalTaskPartialUpdateBody.shape).not.toHaveProperty(
+      "failure_reason",
+    );
+    expect(TracerEvalTaskReadResponse.shape.failure_reason.parse(reason)).toBe(
+      reason,
+    );
+    const details = payload(null);
+    Object.assign(details.result, { status, failure_reason: reason });
+    expect(
+      TracerEvalTaskGetEvalDetailsResponse.parse(details).result.failure_reason,
+    ).toBe(reason);
+    const logs = {
+      status: true,
+      result: {
+        status,
+        failure_reason: reason,
+        start_time: null,
+        end_time: null,
+        run_type: "historical",
+        row_type: "spans",
+        errors_count: 0,
+        success_count: 0,
+        skipped_count: 0,
+        warnings_count: 0,
+        total_count: 0,
+        target_count: 0,
+        error_groups: [],
+        warning_groups: [],
+        error_groups_truncated: false,
+        warning_groups_truncated: false,
+      },
+    };
+    expect(TracerEvalTaskGetEvalTaskLogsResponse.parse(logs)).toEqual(logs);
   });
 
   it("rejects paginated envelopes and malformed sampling policies", () => {

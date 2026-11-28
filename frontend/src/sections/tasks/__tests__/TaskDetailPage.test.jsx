@@ -349,6 +349,28 @@ describe("TaskDetailPage", () => {
     expect(axiosGetMock).toHaveBeenCalledTimes(2);
   });
 
+  it("refreshes open failed Logs after a confirmed Re-run", async () => {
+    const reason = "Narrow the time range and retry.";
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "failed", evals_applied: [{ id: "eval-1" }] }),
+    });
+    axiosGetMock
+      .mockResolvedValueOnce(taskLogs("failed", reason))
+      .mockResolvedValue(taskLogs("pending"));
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(await screen.findByText(reason)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
+    await screen.findByText("Re-run Task");
+    expect(axiosGetMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      confirmDialogMock.mock.calls.at(-1)[0].onConfirm("fresh_run");
+    });
+    expect(await screen.findByText("Pending")).toBeVisible();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    expect(axiosGetMock).toHaveBeenCalledTimes(2);
+  });
+
   it("offers no Resume for a completed task", () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({ status: "completed" }),

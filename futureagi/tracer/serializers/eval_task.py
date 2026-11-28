@@ -289,6 +289,7 @@ class EvalTaskDetailsResultSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=[*EvalTaskStatus.choices, ("", "")], allow_null=True, allow_blank=True
     )
+    failure_reason = serializers.CharField(allow_null=True, required=False)
     filters_applied = eval_task_filters_field(allow_null=True)
     created_at = serializers.DateTimeField()
     evals_applied = EvalTaskDetailsEvalSerializer(many=True)
@@ -305,6 +306,44 @@ class EvalTaskDetailsResultSerializer(serializers.Serializer):
 class EvalTaskDetailsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = EvalTaskDetailsResultSerializer()
+
+
+class EvalTaskLogsErrorGroupSerializer(serializers.Serializer):
+    normalized = serializers.CharField()
+    count = serializers.IntegerField()
+    sample = serializers.CharField(allow_blank=True)
+
+
+class EvalTaskLogsWarningGroupSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    empty_keys = serializers.ListField(child=serializers.CharField(allow_blank=True))
+    filled_keys = serializers.ListField(child=serializers.CharField(allow_blank=True))
+    message = serializers.CharField(allow_blank=True)
+    count = serializers.IntegerField()
+
+
+class EvalTaskLogsResultSerializer(serializers.Serializer):
+    start_time = serializers.DateTimeField(allow_null=True)
+    end_time = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField(allow_null=True, allow_blank=True)
+    failure_reason = serializers.CharField(allow_null=True, required=False)
+    run_type = serializers.CharField(allow_null=True, allow_blank=True)
+    errors_count = serializers.IntegerField()
+    success_count = serializers.IntegerField()
+    skipped_count = serializers.IntegerField()
+    warnings_count = serializers.IntegerField()
+    total_count = serializers.IntegerField()
+    target_count = serializers.IntegerField()
+    error_groups = EvalTaskLogsErrorGroupSerializer(many=True)
+    warning_groups = EvalTaskLogsWarningGroupSerializer(many=True)
+    error_groups_truncated = serializers.BooleanField()
+    warning_groups_truncated = serializers.BooleanField()
+    row_type = serializers.CharField()
+
+
+class EvalTaskLogsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskLogsResultSerializer()
 
 
 class PaginationQuerySerializer(PageSizeQuerySerializer):
@@ -399,6 +438,9 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         required=False,
         default=RowType.SPANS,
     )
+    failure_reason = serializers.CharField(
+        source="visible_failure_reason", read_only=True, allow_null=True
+    )
     # Progress block so the UI can render an "X of Y complete" bar while a
     # historical task is draining. Not persisted — computed on read from the
     # task's entry status counts. ``None`` for continuous tasks, which run
@@ -429,6 +471,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "run_type",
             "row_type",
             "status",
+            "failure_reason",
             "start_time",
             "end_time",
             "created_at",

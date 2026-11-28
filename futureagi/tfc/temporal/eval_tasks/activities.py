@@ -641,8 +641,9 @@ def _finalize_task_sync(task_id: str) -> dict:
                 "status": task.status or "",
             }
         task.status = EvalTaskStatus.COMPLETED
+        task.failure_reason = None
         task.end_time = timezone.now()
-        task.save(update_fields=["status", "end_time"])
+        task.save(update_fields=["status", "failure_reason", "end_time"])
         _prewarm_instant_summary(task_id)
         return {
             "task_id": str(task_id),
