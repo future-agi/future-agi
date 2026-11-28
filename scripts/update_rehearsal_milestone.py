@@ -30,7 +30,8 @@ from types import SimpleNamespace
 import uuid
 
 from scripts.update_rehearsal_shipping import (
-    ShippingRehearsal, ProductWitnesses, configuration_preimage, producer, pull_compose_image, wire,
+    REHEARSAL_TELEMETRY, ShippingRehearsal, ProductWitnesses, configuration_preimage, producer,
+    pull_compose_image, require_rehearsal_telemetry, wire,
 )
 from deploy.tests.update_e2e.real_automatic import ProductHarness
 
@@ -395,7 +396,7 @@ class SnapshotMilestone(ShippingRehearsal):
             for sock in sockets: sock.close()
         values = dict(self.ports, COMPOSE_PROJECT_NAME=self.project, COMPOSE_PROFILES='',
             FUTURE_AGI_VERSION=self.source_version+'@'+self.source_digest, GOOGLE_APPLICATION_CREDENTIALS='/dev/null',
-            FUTURE_AGI_TELEMETRY_DISABLED='true')
+            **REHEARSAL_TELEMETRY)
         values['INTEGRATION_ENCRYPTION_KEY'] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         for key in ('SECRET_KEY','REDIS_PASSWORD','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD',
                     'AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN','AGENTCC_WEBHOOK_SECRET'):
@@ -419,6 +420,7 @@ class SnapshotMilestone(ShippingRehearsal):
         model = self.installation.config(refresh=True)
         p.need(set(model['services'])=={'app','postgres','clickhouse'} and
                set(model['volumes'])==set(p.VOLUME_ROLES), 'unsupported retained deployment')
+        require_rehearsal_telemetry(model)
         # The native historical /dev/null bind is retained, not transformed.
         for service in model['services'].values():
             p.need(not service.get('build') and not service.get('privileged') and

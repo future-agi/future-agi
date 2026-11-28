@@ -33,6 +33,7 @@ class ImageIdentityTests(unittest.TestCase):
             model = dict(services={name: dict(image=reference if name=='app' else name+':unit')
                                   for name in ('app', 'postgres', 'clickhouse')},
                          volumes={role:{} for role in p.VOLUME_ROLES})
+            model['services']['app']['environment'] = milestones.REHEARSAL_TELEMETRY
             installation = mock.Mock()
             installation.config.return_value = model
             driver._docker = mock.Mock(return_value='')
@@ -365,7 +366,7 @@ class FakeDaemon:
 
 class LockedDependencyBootTests(unittest.TestCase):
     """The retained lock decides what boots; the lock check still refuses drift."""
-    MODEL = dict(services=dict(app=dict(image=IMAGE), postgres=dict(image='postgres:16'),
+    MODEL = dict(services=dict(app=dict(image=IMAGE, environment=milestones.REHEARSAL_TELEMETRY), postgres=dict(image='postgres:16'),
                                clickhouse=dict(image='clickhouse/clickhouse-server:25.3-alpine')),
                  volumes={role: {} for role in p.VOLUME_ROLES})
 

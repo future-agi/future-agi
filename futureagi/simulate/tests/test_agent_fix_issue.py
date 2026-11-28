@@ -11,12 +11,14 @@ boundary; ClickHouse is a stand-in reader.
 from __future__ import annotations
 
 import uuid
-from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, nullcontext
 from datetime import UTC, datetime, timedelta
+from threading import Event
 from unittest.mock import MagicMock, patch
 
 import pytest
-from django.db import connection
+from django.db import connection, transaction
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -78,6 +80,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 )
 from simulate.tests.test_harness_versioning_record import _authoring
 from simulate.tests.test_hosted_harness_channels import _payload
+from tfc.middleware.workspace_context import workspace_context
 from tracer.models.project import Project
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
 from tracer.services.clickhouse.v2.span_reader import TraceUnit
@@ -590,6 +593,73 @@ class TestCreate:
         assert EvidenceImport.objects.count() == before
         assert not AgentFixIssueJob.no_workspace_objects.exists()
         boundaries.drafting.assert_not_called()
+
+    @pytest.mark.django_db(transaction=True)
+    def test_concurrent_issue_jobs_cannot_both_take_the_same_session(
+        self, environment, issue, user, workspace, boundaries
+    ):
+        other = _issue(issue.project, "S-REFUND-2")
+        (first,) = _members(issue, 1)
+        (second,) = _members(other, 1)
+        session = str(uuid.uuid4())
+        traces = dict.fromkeys((first, second), ("chain", session))
+        at_environment_lock = Event()
+
+        def start(owner, pick):
+            return jobs.create_issue_job(
+                owner,
+                environment=environment,
+                member_ids=[pick],
+                user=user,
+                endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
+            )
+
+        def signal_lock(execute, sql, params, many, context):
+            if (
+                isinstance(sql, str)
+                and "FOR UPDATE" in sql
+                and HostedHarnessJob._meta.db_table in sql
+            ):
+                at_environment_lock.set()
+            return execute(sql, params, many, context)
+
+        def start_second():
+            with (
+                closing(connection),
+                workspace_context(workspace, organization=user.organization),
+                connection.execute_wrapper(signal_lock),
+            ):
+                return start(other, second)
+
+        with _roots(traces) as reader, ThreadPoolExecutor(max_workers=1) as pool:
+            reader.return_value.roots_by_session_ids.return_value = [
+                _root(trace, session=session, input="Refund?", output="Yes")
+                for trace in traces
+            ]
+            reader.return_value.activity_by_trace_ids.side_effect = ConnectionError
+            with transaction.atomic():
+                winner = start(issue, first)
+                case = winner.evidence_import.cases.get()
+                assert case.digest == case.content_digest == ""
+                contender = pool.submit(start_second)
+                # Keep the winner invisible until the contender requests the row.
+                # A check made before that lock would already have missed the case.
+                assert at_environment_lock.wait(10), "second start did not reach lock"
+            with pytest.raises(HostedHarnessError) as refused:
+                contender.result(timeout=10)
+
+        assert refused.value.code == "issue_epoch_picks_in_review"
+        assert refused.value.details == {"member_ids": [second]}
+        assert (
+            AgentFixIssueJob.no_workspace_objects.get(environment=environment) == winner
+        )
+        made = EvidenceImport.objects.get(environment=environment)
+        assert made == winner.evidence_import
+        reader.return_value.roots_by_session_ids.assert_called_once()
+        case.refresh_from_db()
+        assert (case.source_id, case.status) == (session, "pending")
+        boundaries.drafting.assert_called_once()
 
     def test_a_pick_in_review_is_named_while_its_history_cannot_be_read(
         self, environment, issue, user, boundaries

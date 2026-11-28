@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Stack, Tab, Typography } from "@mui/material";
+import { useLocation } from "react-router-dom";
+import { Box, Button, Link, Stack, Tab, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -241,9 +242,62 @@ function endingPrimary(fix, onLaunch, canRun) {
   );
 }
 
+function variationEvidence(fix, backTo) {
+  if (fix.state !== "too_few_cases") return null;
+  const kept = Object.entries(fix.request?.variation_parents || {});
+  const names = fix.scenario_names;
+  const run = fix.check_runs?.find((check) => check.label === "variations");
+  const href =
+    fix.environment_id && run?.run_id && run.test_execution_id
+      ? paths.dashboard.simulate.environments.execution(
+          fix.environment_id,
+          run.run_id,
+          run.test_execution_id,
+        )
+      : null;
+  if (!kept.length && !href) return null;
+  return (
+    <>
+      {kept.length > 0 && (
+        <>
+          <Typography component="h3" sx={{ typography: "s2", fontWeight: 600 }}>
+            Kept variations
+          </Typography>
+          <Box
+            component="ul"
+            sx={{
+              my: 0.5,
+              pl: 2.5,
+              typography: "s2",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {kept.map(([variation, parent]) => (
+              <li key={variation}>
+                {`${names?.[variation] || "Unnamed variation"} — variation of ${names?.[parent] || "Unnamed scenario"}`}
+              </li>
+            ))}
+          </Box>
+        </>
+      )}
+      {href && (
+        <Link
+          component={RouterLink}
+          href={href}
+          state={{ backTo }}
+          sx={{ typography: "s2" }}
+        >
+          Open variations run
+        </Link>
+      )}
+    </>
+  );
+}
+
 // Screen 3: a finished fix. A ready fix leads with its verdict; any other
 // ending reads in the one ending layout, says why it ended, and ships nothing.
 export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
+  const location = useLocation();
   const [launching, setLaunching] = useState(false);
   const { canRun } = useSimulationAccess();
   const ready = fix.state === "ready" && !!winnerOf(fix);
@@ -270,11 +324,13 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
           spent={endingSpent(fix)}
           primary={endingPrimary(fix, launch, canRun)}
         >
-          {noSafe && (
+          {noSafe ? (
             <>
               <NoSafeNumbers fix={fix} />
               <WhatToTryNext fix={fix} onTab={onTab} onLaunch={launch} />
             </>
+          ) : (
+            variationEvidence(fix, location.pathname)
           )}
         </EpochEnding>
       )}

@@ -15,7 +15,7 @@ test('DATA-E2E-001: uploaded dataset values can be discovered and filtered', {
     id: 'DATA-E2E-001', area: 'datasets',
     userGoal: 'Upload a dataset and select a real column value to narrow its rows',
     steps: ['upload a synthetic CSV using the dataset form', 'wait for imported cells',
-      'open the region value picker', 'select a region and verify its rows',
+      'resize the imported rows', 'open the region value picker', 'select a region and verify its rows',
       'refresh, reselect the region and verify the same filtered result'],
     backendChecks: ['uploaded dataset, columns and cells belong to the actor scope',
       'imported region cells reach ClickHouse with their exact dataset, column and row IDs',
@@ -79,6 +79,11 @@ test('DATA-E2E-001: uploaded dataset values can be discovered and filtered', {
   await expect(page).toHaveURL(new RegExp(`/dashboard/develop/${datasetId}`), { timeout: UI_READY });
   const regionCells = page.locator(`.ag-row [col-id="${columnId}"]`);
   await expect(regionCells).toHaveText(['catalog-west', 'catalog-east', 'catalog-west'], { timeout: UI_READY });
+  await page.getByRole('button', { name: 'Column Size', exact: true }).click();
+  const medium = page.getByRole('button', { name: 'Medium', exact: true });
+  await medium.click();
+  await expect(medium).toBeHidden();
+  await expect(page.locator('.ag-center-cols-container .ag-row').first()).toHaveCSS('height', '140px');
   // Dataset filters are unsaved in-memory state. Repeat the picker journey after
   // reload; persistence is not part of this catalog-discovery contract.
   for (const pass of ['initial', 'after-reload']) {

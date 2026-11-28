@@ -2272,7 +2272,9 @@ class CHSpanReader:
         """
         if not span_ids:
             return {}
-        where = "id IN %(ids)s AND is_deleted = 0"
+        # Filter on stable keys only: idx_id can prune under FINAL, while the
+        # engine (not a skip index on is_deleted) removes tombstoned rows.
+        where = "id IN %(ids)s"
         params: dict[str, Any] = {"ids": tuple(span_ids)}
         if project_ids is not None:
             params["pids"] = tuple(dict.fromkeys(str(pid) for pid in project_ids))
@@ -2280,10 +2282,10 @@ class CHSpanReader:
                 return {}
             where += " AND project_id IN %(pids)s"
         rows = self._client.query(
-            "SELECT id, toString(project_id) AS project_id, "
-            "toString(trace_id) AS trace_id FROM spans FINAL "
+            "SELECT id, toString(project_id), toString(trace_id) FROM spans FINAL "
             f"WHERE {where}",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
 
         def _norm(v: Any) -> str | None:

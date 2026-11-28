@@ -729,6 +729,67 @@ describe("FixFinishedView", () => {
       />,
     );
 
+  const variationsRun = {
+    label: "variations",
+    run_id: "rt-variations",
+    test_execution_id: "te-variations",
+  };
+  const tooFew = (parents, run = variationsRun) => {
+    const fix = fixOf("fix-not-reproduced");
+    return {
+      ...fix,
+      state: "too_few_cases",
+      request: { ...fix.request, variation_parents: parents },
+      scenario_names: {
+        a: "Refund",
+        b: "Exchange",
+        v1: "Late refund",
+        v2: "Partial refund",
+        v3: "Gift exchange",
+      },
+      check_runs: [...fix.check_runs, run],
+    };
+  };
+  const runLink = { name: "Open variations run" };
+
+  it("pairs each kept variation with its original case only in the too-few ending", () => {
+    const fix = tooFew({ v1: "a", v2: "a", v3: "b" });
+    const { unmount } = view(fix);
+    const ending = within(screen.getByTestId("epoch-ending"));
+    const rows = ending.getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Late refund — variation of Refund",
+      "Partial refund — variation of Refund",
+      "Gift exchange — variation of Exchange",
+    ]);
+    unmount();
+    view({ ...fix, state: "not_reproduced" });
+    expect(screen.queryByText("Kept variations")).toBeNull();
+    expect(screen.queryByRole("link", runLink)).toBeNull();
+  });
+
+  it("links to the variations check, not the baseline, even when nothing was kept", () => {
+    view(tooFew({}));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.queryByRole("list")).toBeNull();
+    expect(ending.getByRole("link", runLink)).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-variations/te-variations",
+    );
+  });
+
+  it.each(["run_id", "test_execution_id"])(
+    "shows the kept variation without a broken link when %s is absent",
+    (field) => {
+      view(tooFew({ v1: "a" }, { ...variationsRun, [field]: null }));
+      const ending = within(screen.getByTestId("epoch-ending"));
+      expect(ending.getByRole("listitem")).toHaveTextContent(
+        "Late refund — variation of Refund",
+      );
+      expect(ending.queryByRole("link", runLink)).toBeNull();
+    },
+  );
+
   it("offers Retry Epoch N as the ending's one way on, and opens the new fix", async () => {
     const user = userEvent.setup();
     view(fixOf("fix-failed"));

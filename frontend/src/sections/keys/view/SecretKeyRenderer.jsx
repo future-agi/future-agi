@@ -1,4 +1,4 @@
-import { Box, IconButton } from "@mui/material";
+import { Box, IconButton, Tooltip } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
@@ -9,7 +9,6 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 const maskString = (str) => {
   const value = String(str || "");
   if (!value) return "-";
-  if (value.includes("*")) return value;
   const start = value.slice(0, 4);
   const end = value.slice(-4);
   return start + "**********" + end;
@@ -28,7 +27,16 @@ const SecretKeyRenderer = ({ value }) => {
         gap: "12px",
       }}
     >
-      {maskString(value)}
+      {isMasked ? (
+        <Tooltip
+          describeChild
+          title="Keys can only be copied when created. Create a new key if you lost this one."
+        >
+          <span tabIndex={0}>{rawValue}</span>
+        </Tooltip>
+      ) : (
+        maskString(value)
+      )}
       {!isMasked && rawValue && (
         <IconButton
           onClick={() => {

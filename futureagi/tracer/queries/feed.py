@@ -323,35 +323,29 @@ def _fetch_trends_batch(cluster_pks: list[str], days: int = 14) -> dict:
     return result
 
 
-def _fetch_users_affected_batch(cluster_pks: list[str]) -> dict:
-    """
-    Return {cluster_pk: distinct_end_user_count}.
+_MemberKey = tuple[uuid.UUID | None, uuid.UUID | None, uuid.UUID, uuid.UUID]
 
-    Goes ErrorClusterTraces → trace → ObservationSpan.end_user.
 
-    Cross-store algorithm (post-CH25 cutover):
-      1. ECT (PG) → trace_id → set[cluster_id] map (one query). A trace
-         can belong to multiple clusters; the legacy SQL JOIN counted
-         the span once per (trace, cluster) pair so we must replicate
-         that fan-out in Python.
-      2. CHSpanReader.list_by_trace_ids — single CH read for every
-         affected trace.
-      3. Distinct(end_user_id) per cluster_id in Python — for each span
-         we add the user to every cluster the trace belongs to.
-    """
-    if not cluster_pks:
-        return {}
-
-    ect_rows = (
+def _cluster_member_keys(cluster_pks: list[str]) -> list[_MemberKey]:
+    """User and session counts need the same keys, not one row per finding."""
+    return list(
         _current_memberships()
-        .filter(
-            cluster_id__in=cluster_pks,
-        )
+        .filter(cluster_id__in=cluster_pks)
+        .order_by()
         .values_list(
             "trace_id", "trace_session_id", "cluster_id", "cluster__project_id"
         )
+        .distinct()
     )
 
+
+def _fetch_users_affected_batch(members: list[_MemberKey]) -> dict:
+    """
+    Return {cluster_pk: distinct_end_user_count}.
+
+    A trace can belong to multiple clusters. Count its users once in each
+    cluster, including users of every turn of a session member.
+    """
     # trace_id → set of cluster_ids it belongs to (one trace can sit in
     # many clusters via separate ECT rows). Session members (trace NULL)
     # fan out to ALL of the session's traces — the user count must cover
@@ -366,18 +360,15 @@ def _fetch_users_affected_batch(cluster_pks: list[str]) -> dict:
     # prefix (trace_id sits below project_id in the PK — an unscoped FINAL read
     # can't prune parts). Every trace_id below belongs to one of these projects.
     project_ids: set[str] = set()
-    for tid, sid, cid, pid in ect_rows:
-        if not cid:
-            continue
-        cid = str(cid)
-        if pid:
-            project_ids.add(str(pid))
-        if tid:
-            trace_to_clusters.setdefault(str(tid), set()).add(cid)
-        elif sid:
-            session_to_clusters.setdefault(str(sid), set()).add(cid)
-            if pid:
-                sessions_by_project.setdefault(str(pid), set()).add(str(sid))
+    for trace_pk, session_pk, cluster_pk, project_pk in members:
+        cid = str(cluster_pk)
+        pid = str(project_pk)
+        project_ids.add(pid)
+        if trace_pk:
+            trace_to_clusters.setdefault(str(trace_pk), set()).add(cid)
+        elif session_pk:
+            session_to_clusters.setdefault(str(session_pk), set()).add(cid)
+            sessions_by_project.setdefault(pid, set()).add(str(session_pk))
 
     for pid, sids in sessions_by_project.items():
         for sid, tids in _session_traces_map(list(sids), pid).items():
@@ -405,7 +396,7 @@ def _fetch_users_affected_batch(cluster_pks: list[str]) -> dict:
     return {cid: len(users) for cid, users in users_by_cluster.items() if users}
 
 
-def _fetch_sessions_batch(cluster_pks: list[str]) -> dict:
+def _fetch_sessions_batch(members: list[_MemberKey]) -> dict:
     """Return {cluster_pk: distinct_session_count}.
 
     Session members carry their session on the junction row; trace members
@@ -413,22 +404,11 @@ def _fetch_sessions_batch(cluster_pks: list[str]) -> dict:
     ``Trace.session`` FK is gone post-cutover). Distinct session ids are counted
     per cluster in Python — mirrors the old cross-store SQL COUNT(DISTINCT).
     """
-    if not cluster_pks:
-        return {}
-
-    rows = list(
-        _current_memberships()
-        .filter(cluster_id__in=cluster_pks)
-        .values_list(
-            "cluster_id", "trace_id", "trace_session_id", "cluster__project_id"
-        )
-    )
-
     # Trace members (no junction session) get their session from CH; batch once,
     # scoped to the members' tenants so the FINAL read prunes by PK prefix
     # (trace_id is below project_id in the primary key).
-    trace_ids = {str(tid) for _cid, tid, sid, _pid in rows if tid and not sid}
-    project_ids = {str(pid) for _cid, _tid, _sid, pid in rows if pid}
+    trace_ids = {str(tid) for tid, sid, _cid, _pid in members if tid and not sid}
+    project_ids = {str(pid) for _tid, _sid, _cid, pid in members if pid}
     ch_sessions: dict[str, str | None] = {}
     if trace_ids:
         with get_reader() as reader:
@@ -437,13 +417,18 @@ def _fetch_sessions_batch(cluster_pks: list[str]) -> dict:
             )
 
     sessions_by_cluster: dict[str, set] = {}
-    for cid, tid, sid, _pid in rows:
-        cid = str(cid)
+    for tid, sid, cluster_pk, _pid in members:
+        cid = str(cluster_pk)
         session_id = str(sid) if sid else (ch_sessions.get(str(tid)) if tid else None)
         if session_id:
             sessions_by_cluster.setdefault(cid, set()).add(session_id)
 
     return {cid: len(s) for cid, s in sessions_by_cluster.items() if s}
+
+
+def _user_and_session_counts(cluster_pks: list[str]) -> tuple[dict, dict]:
+    members = _cluster_member_keys(cluster_pks)
+    return _fetch_users_affected_batch(members), _fetch_sessions_batch(members)
 
 
 def _fetch_latest_trace_id_batch(cluster_pks: list[str]) -> dict:
@@ -625,8 +610,7 @@ def list_clusters(
 
     cluster_pks = [str(c.pk) for c in clusters]
     trends_map = _fetch_trends_batch(cluster_pks)
-    users_map = _fetch_users_affected_batch(cluster_pks)
-    sessions_map = _fetch_sessions_batch(cluster_pks)
+    users_map, sessions_map = _user_and_session_counts(cluster_pks)
     latest_trace_map = _fetch_latest_trace_id_batch(cluster_pks)
     voice_pids = voice_project_ids([str(c.project_id) for c in clusters])
 
@@ -660,7 +644,7 @@ def get_stats(
     total_errors = qs.aggregate(total=Count("id"))["total"] or 0
 
     cluster_pks = [str(pk) for pk in qs.values_list("pk", flat=True)]
-    users_map = _fetch_users_affected_batch(cluster_pks)
+    users_map = _fetch_users_affected_batch(_cluster_member_keys(cluster_pks))
     affected_users = sum(users_map.values())
 
     return FeedStats(
@@ -701,8 +685,7 @@ def get_cluster_detail(
 
     cluster_pk = str(cluster.pk)
     trends_map = _fetch_trends_batch([cluster_pk])
-    users_map = _fetch_users_affected_batch([cluster_pk])
-    sessions_map = _fetch_sessions_batch([cluster_pk])
+    users_map, sessions_map = _user_and_session_counts([cluster_pk])
     latest_trace_map = _fetch_latest_trace_id_batch([cluster_pk])
 
     row = _row_from_cluster(
@@ -1632,20 +1615,12 @@ def _insight_brief_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
 
 
 def _insight_distribution_shift(
-    trace_ids: list[str], baseline_ids: list[str], metric: str, project_id: str
+    fail_totals: dict, baseline_totals: dict, metric: str
 ) -> PatternInsight | None:
     """KS two-sample on a per-trace numeric (``latency`` or ``tokens``) vs the
     passing baseline. Fires when the distributions differ (p < 0.05) AND the
-    failing side is materially larger (median ratio >= 1.5).
-
-    ``project_id`` (single tenant — both corpora belong to the cluster's
-    project) pins the totals reads so they prune by primary-key prefix."""
+    failing side is materially larger (median ratio >= 1.5)."""
     from scipy.stats import ks_2samp  # lazy
-
-    if not baseline_ids:
-        return None
-    fail_tot = _get_trace_totals_batch(trace_ids, project_id)
-    base_tot = _get_trace_totals_batch(baseline_ids, project_id)
 
     def _pick(totals: dict) -> list[float]:
         vals = []
@@ -1655,8 +1630,8 @@ def _insight_distribution_shift(
                 vals.append(float(v))
         return vals
 
-    fail_vals = _pick(fail_tot)
-    base_vals = _pick(base_tot)
+    fail_vals = _pick(fail_totals)
+    base_vals = _pick(baseline_totals)
     if len(fail_vals) < 3 or len(base_vals) < 3:
         return None
     try:
@@ -1844,9 +1819,15 @@ def _fetch_pattern_summary(
     # Shared builders (both sources) compare vs the KNN-passing baseline.
     candidates: list[PatternInsight | None] = [
         _insight_distinctive_topic(cluster_id, project_id, trace_ids, baseline_ids),
-        _insight_distribution_shift(trace_ids, baseline_ids, "latency", project_id),
-        _insight_distribution_shift(trace_ids, baseline_ids, "tokens", project_id),
     ]
+    if baseline_ids:
+        # The same per-trace aggregate supplies both latency and token counts.
+        fail_totals = _get_trace_totals_batch(trace_ids, project_id)
+        baseline_totals = _get_trace_totals_batch(baseline_ids, project_id)
+        for metric in ("latency", "tokens"):
+            candidates.append(
+                _insight_distribution_shift(fail_totals, baseline_totals, metric)
+            )
     # Scanner-only builders (no passing counterpart for briefs / scan meta).
     if is_scanner:
         candidates.append(_insight_missing_tool(trace_ids))
@@ -2675,7 +2656,8 @@ def _fetch_representative_traces(
         .order_by("-occurrence_at")
     )
     session_by_trace: dict[str, str] = {}
-    if _is_omega_group(cluster_id, project_id):
+    is_omega = _is_omega_group(cluster_id, project_id)
+    if is_omega:
         # Group by trace in SQL before LIMIT. A trace may have 100 findings;
         # bounded over-fetch of membership rows cannot fill a trace page.
         distinct_traces = (
@@ -2718,9 +2700,7 @@ def _fetch_representative_traces(
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
     traces_by_id = _resolve_member_traces(
-        ordered_ids,
-        project_id,
-        include_unavailable=_is_omega_group(cluster_id, project_id),
+        ordered_ids, project_id, include_unavailable=is_omega
     )
     deduped = [traces_by_id[t] for t in ordered_ids if t in traces_by_id]
     if not deduped:
@@ -2733,7 +2713,7 @@ def _fetch_representative_traces(
     reports = _get_investigation_reports_batch(trace_ids, project_id)
     findings_by_trace = (
         _cluster_findings_by_trace(cluster_id, project_id, trace_ids)
-        if _is_omega_group(cluster_id, project_id)
+        if is_omega
         else None
     )
     span_context = (

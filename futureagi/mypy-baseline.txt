@@ -112,8 +112,6 @@ accounts/user_onboard.py:0: error: Value of type "Collection[str]" is not indexa
 accounts/utils.py:0: error: Cannot infer type of lambda  [misc]
 accounts/utils.py:0: error: Cannot infer type of lambda  [misc]
 accounts/utils.py:0: error: Cannot infer type of lambda  [misc]
-accounts/views/appsmith.py:0: error: Argument 1 to "list" has incompatible type "list[User] | None"; expected "Iterable[Any]"  [arg-type]
-accounts/views/appsmith.py:0: error: Incompatible types in assignment (expression has type "ReturnDict[Any, Any]", variable has type "list[User] | None")  [assignment]
 accounts/views/aws_marketplace.py:0: error: "SimpleLazyObject" has no attribute "resolve_customer_token"  [attr-defined]
 accounts/views/config.py:0: error: Need type annotation for "regions" (hint: "regions: list[<type>] = ...")  [var-annotated]
 accounts/views/keys.py:0: error: Incompatible type for "organization" of "OrgApiKey" (got "Any | Organization | None", expected "Organization | Combinable")  [misc]

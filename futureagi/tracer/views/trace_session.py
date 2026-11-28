@@ -638,39 +638,27 @@ def _resolve_session_ids_to_canonical(
 
 def _expand_session_group(
     analytics,
-    canonical_session_id: str,
+    requested_session_id: str,
     *,
     deadline: ReadDeadline | None = None,
 ) -> tuple[str, ...]:
-    """Return all trace_session_ids (old + new) that share the same canonical.
+    """Expand either an old or a new ID to its group; an unmapped ID stands alone."""
+    from tracer.services.clickhouse.v2.id_remap_sql import (
+        bounded_survivor_map_subquery,
+    )
 
-    For a single session detail lookup this replaces the heavy
-    ``LEFT JOIN (survivor_map_subquery)`` with a cheap ``IN (...)`` filter
-    that uses the bloom index on ``trace_session_id``.
-    """
-    q = (
-        "SELECT DISTINCT toString(old_id) AS id "
-        "FROM trace_session_id_remap FINAL "
-        "WHERE new_id = ("
-        "  SELECT new_id FROM trace_session_id_remap FINAL "
-        "  WHERE old_id = %(canonical_id)s LIMIT 1"
-        ") "
-        "UNION ALL "
-        "SELECT DISTINCT toString(new_id) AS id "
-        "FROM trace_session_id_remap FINAL "
-        "WHERE old_id = %(canonical_id)s"
+    group = bounded_survivor_map_subquery(
+        "trace_session_id_remap", candidate_param="ids"
     )
     res = analytics.execute_ch_query(
-        q,
-        {"canonical_id": canonical_session_id},
+        f"SELECT toString(any_id) AS id FROM ({group})",
+        {"ids": (requested_session_id,)},
         timeout_ms=(deadline.remaining_ms(3_000) if deadline else 3_000),
     )
-    ids = {canonical_session_id}
-    for row in res.data or []:
-        val = str(row.get("id") if isinstance(row, dict) else row[0])
-        if val and val != "00000000-0000-0000-0000-000000000000":
-            ids.add(val)
-    return tuple(ids)
+    rows = res.data or []
+    ids = {str(row["id"] if isinstance(row, dict) else row[0]) for row in rows}
+    ids.discard(NIL_UUID)
+    return tuple(ids) or (requested_session_id,)
 
 
 def _get_request_organization(request):
@@ -1255,19 +1243,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         page_start = page_number * page_size
         read_deadline = ReadDeadline.start(SESSION_LIST_WALL_DEADLINE_MS)
 
-        # P3b step1.5: resolve the session's canonical ID and expand it to
-        # all group member IDs (old + new). Use IN (...) instead of the heavy
-        # LEFT JOIN (survivor_map_subquery) to avoid OOM on large remap tables.
-        requested_session_id = str(trace_session_id)
-        canonical_session_id = _resolve_session_ids_to_canonical(
-            analytics,
-            [requested_session_id],
-            deadline=read_deadline,
-        ).get(requested_session_id, requested_session_id)
         session_group_ids = _expand_session_group(
-            analytics,
-            canonical_session_id,
-            deadline=read_deadline,
+            analytics, str(trace_session_id), deadline=read_deadline
         )
 
         # Whole-session metrics use latest physical members, not raw versions.

@@ -1342,6 +1342,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
 
     def prepare(self, digest: str, *, version='v1.53.0') -> dict:
         from deploy.update.manifest import parse_image_ref, parse_version
+        from scripts.update_rehearsal_shipping import REHEARSAL_TELEMETRY, require_rehearsal_telemetry
         parse_version(version)
         parse_image_ref('futureagi/standalone:'+version+'@'+digest)
         if self.source_manifest is not None and (version != self.source_manifest['version'] or
@@ -1374,7 +1375,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         values = dict(self.ports, COMPOSE_PROJECT_NAME=self.project,
                       FUTURE_AGI_VERSION=version,
                       GOOGLE_APPLICATION_CREDENTIALS='/dev/null' if native_ci() else str(credentials),
-                      FUTURE_AGI_TELEMETRY_DISABLED="true", COMPOSE_PROFILES="")
+                      COMPOSE_PROFILES="", **REHEARSAL_TELEMETRY)
         import secrets
         import base64
         values["INTEGRATION_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
@@ -1402,6 +1403,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         (self.root / ".env").chmod(0o600)
         self.model = json.loads(self.dc("config", "--format", "json").stdout)
         validate_model(self.model, self.project)
+        require_rehearsal_telemetry(self.model)
         self.record("compose-resolved.private.json", self.model)
         self.record("ports.json", self.ports)
         return self.model

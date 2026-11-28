@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 from uuid import UUID
+
+from django.db.models import JSONField
+from django.db.models.expressions import RawSQL
 
 from simulate.models.test_execution import CallExecution
 
@@ -45,6 +49,27 @@ class CallExecutionRepository:
         except Exception:
             return None
         return str(ce.id) if ce else None
+
+    @staticmethod
+    async def update_egress_files(
+        call_id: str, *, egress_id: str, recording_files: list[str]
+    ) -> bool:
+        """Patch the two webhook-owned keys against the row at update time."""
+        patch = json.dumps({"egress_id": egress_id, "recording_files": recording_files})
+        updated = await CallExecution.objects.filter(pk=call_id).aupdate(
+            provider_call_data=RawSQL(
+                """jsonb_set(
+                    COALESCE(NULLIF(provider_call_data, 'null'::jsonb), '{}'::jsonb),
+                    '{livekit}',
+                    (CASE WHEN jsonb_typeof(provider_call_data->'livekit') = 'object'
+                          THEN provider_call_data->'livekit' ELSE '{}'::jsonb END)
+                    || %s::jsonb
+                )""",
+                (patch,),
+                output_field=JSONField(),
+            )
+        )
+        return updated > 0
 
     @staticmethod
     async def update_lifecycle(

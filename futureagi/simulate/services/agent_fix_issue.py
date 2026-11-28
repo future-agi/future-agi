@@ -72,6 +72,7 @@ from simulate.services.evidence_import import (
     create_evidence_import,
     discard_evidence_import,
     discard_open_cases,
+    lock_import_environment,
     sources_awaiting_review,
 )
 from simulate.services.harness_agent_versions import advisory_xact_lock
@@ -197,6 +198,9 @@ def create_issue_job(
                 "This issue already has an epoch in progress. Open it.",
                 job_id=str(held.id),
             )
+        # Different issues can pick the same session. Hold the imports' shared
+        # environment row from this check through creation of the new cases.
+        environment = lock_import_environment(environment.id)
         # Asked of the cases alone, before importing: the import retires another
         # import's waiting case whose source changed or has no fingerprint, and
         # an Observe read that fails must not let a pick past another's review.
@@ -220,8 +224,7 @@ def create_issue_job(
         )
         cases = list(evidence_import.cases.select_related("duplicate_of"))
         # A pick that repeats another pick is drafted once, as that pick; one that
-        # repeats another import's case (its conversation, or a source imported
-        # since the check above) waits on that import's review.
+        # repeats another import's conversation waits on that import's review.
         if waiting := [
             member_of_source[case.source_id]
             for case in cases

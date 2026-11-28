@@ -917,7 +917,7 @@ class LivekitService(VoiceServiceBlueprint):
         usage = provider_data.get("usage", {})
 
         if not usage:
-            return CostBreakdown()
+            return CostBreakdown(usage_snapshot={})
 
         costs = calculate_call_costs(
             usage,
@@ -930,6 +930,7 @@ class LivekitService(VoiceServiceBlueprint):
             llm=float(costs["llm"]),
             tts=float(costs["tts"]),
             storage=float(costs["storage"]),
+            usage_snapshot=usage,
         )
 
     async def fetch_and_store_call_data(

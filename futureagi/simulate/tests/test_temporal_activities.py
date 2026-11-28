@@ -940,99 +940,126 @@ class TestFetchAndPersistCallResultActivity:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "usage",
+        [{"tts": {"characters": 200}, "stt": {"duration": 120}}, {}],
+        ids=["updated-usage", "removed-usage"],
+    )
+    async def test_livekit_breakdown_uses_priced_usage(self, call_execution, usage):
+        activity = _ee_voice_large().fetch_and_persist_call_result
+        from temporalio.testing import ActivityEnvironment
+
+        from ee.voice.services.livekit import LivekitService
+        from ee.voice.services.livekit.config import LiveKitConfig
+        from ee.voice.services.livekit.pricing import calculate_call_costs
+        from simulate.temporal.types.activities import FetchAndPersistCallResultInput
+
+        row = CallExecution.objects.filter(pk=call_execution.pk)
+
+        async def store_usage(snapshot):
+            await row.aupdate(provider_call_data={"livekit": {"usage": snapshot}})
+
+        initial = {"tts": {"characters": 100}}
+        initial_cost = float(calculate_call_costs(initial)["tts"])
+        await row.aupdate(
+            provider_call_data={"livekit": {"usage": initial}},
+            customer_cost_breakdown={"tts": {**initial["tts"], "cost": initial_cost}},
+        )
+        extract_costs = LivekitService.extract_costs
+
+        async def interleave_usage_updates(engine, call_id):
+            # Recording extraction has finished. Only the cost read sees this usage.
+            await store_usage(usage)
+            costs = await extract_costs(engine, call_id)
+            await store_usage({"tts": {"characters": 300}})
+            return costs
+
+        with (
+            patch.object(LiveKitConfig, "from_env"),
+            patch.object(LivekitService, "extract_costs", interleave_usage_updates),
+        ):
+            result = await ActivityEnvironment().run(
+                activity,
+                FetchAndPersistCallResultInput(
+                    call_id=str(call_execution.pk),
+                    provider_call_id="livekit-call",
+                    status="COMPLETED",
+                    provider="livekit",
+                    call_type=CallType.INBOUND,
+                ),
+            )
+
+        assert result.success, result.error
+        await call_execution.arefresh_from_db()
+        expected = calculate_call_costs(usage)
+        breakdown = {
+            stage: {**quantities, "cost": float(expected[stage])}
+            for stage, quantities in usage.items()
+        }
+        assert call_execution.customer_cost_breakdown == (breakdown or None)
+        total_cents = round(float(expected["total"]) * 100)
+        assert call_execution.cost_cents == total_cents
+        assert call_execution.customer_cost_cents == total_cents
+        for stage in ("stt", "tts", "llm"):
+            assert getattr(call_execution, f"{stage}_cost_cents") == round(
+                float(expected[stage]) * 100
+            )
+        assert call_execution.vapi_cost_cents == 0
+        storage_cents = round(float(expected["storage"]) * 100, 4)
+        assert call_execution.storage_cost_cents == storage_cents
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
     async def test_fetch_and_persist_call_result_updates_call_execution(
         self, call_execution
     ):
-        """Test that fetch_and_persist_call_result updates CallExecution fields."""
-        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
+        """VAPI still reports the provider's own cost entries."""
+        activity = _ee_voice_large().fetch_and_persist_call_result
+        from temporalio.testing import ActivityEnvironment
+
+        from ee.voice.services.types.voice import RecordingUrls
+        from ee.voice.services.vapi_service import VapiService
         from simulate.temporal.types.activities import FetchAndPersistCallResultInput
-        from tfc.temporal.common.heartbeat import Heartbeater
 
-        # Mock the VoiceServiceManager and Heartbeater
-        mock_call_data = MagicMock()
-        mock_call_data.status = "ended"
-        mock_call_data.call_id = "vapi-call-123"
-        mock_call_data.duration_seconds = 120.5
-        mock_call_data.cost = 0.05
-        mock_call_data.ended_reason = "customer-ended-call"
-        mock_call_data.transcript_available = True
-        mock_call_data.recording_available = True
-        mock_call_data.recording_url = "https://example.com/recording.mp3"
-        mock_call_data.summary = "Test call summary"
-        mock_call_data.messages = [{"role": "user", "content": "Hello"}]
-        mock_call_data.raw_log = {"vapi": {"id": "vapi-123"}}
-        mock_call_data.cost_breakdown = {"vapi": {"llm": 0.03, "tts": 0.02}}
-        mock_call_data.performance_metrics = {}
-        mock_call_data.analysis_data = {}
-        mock_call_data.assistant_id = "asst-test-123"
-        mock_call_data.customer_phone_number = "+1234567890"
-        mock_call_data.call_type = "inbound"
-        mock_call_data.started_at = "2024-01-01T10:00:00Z"
-        mock_call_data.ended_at = "2024-01-01T10:02:00Z"
-        mock_call_data.transcript = {"vapi": {"transcripts": []}}
-
+        call_execution.provider_call_data = {
+            "vapi": {
+                "cost": 0.05,
+                "costBreakdown": {"tts": 0.05},
+                "costs": [{"type": "voice", "characters": 100, "cost": 0.05}],
+            }
+        }
+        await call_execution.asave(update_fields=["provider_call_data"])
         with (
-            patch("temporalio.activity.info"),
-            patch("temporalio.activity.heartbeat"),
+            patch.dict(os.environ, {"VAPI_API_KEY": "test-key"}),
             patch.object(
-                Heartbeater,
-                "__aenter__",
-                new=AsyncMock(return_value=MagicMock(details=None)),
+                VapiService, "fetch_and_store_call_data", return_value=(1, True, True)
             ),
-            patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
-            patch(
-                "ee.voice.services.voice_service_manager.VoiceServiceManager"
-            ) as mock_vsm_class,
+            patch.object(
+                VapiService,
+                "extract_and_persist_recordings",
+                return_value=RecordingUrls(),
+            ),
         ):
-            mock_vsm = MagicMock()
-            mock_vsm.get_call_async = AsyncMock(return_value=mock_call_data)
-            mock_vsm.get_recording_urls = MagicMock(return_value={})
-            # Production now calls fetch_and_store_call_data which returns
-            # a (message_count, has_agent_message, has_customer_message) tuple.
-            mock_vsm.fetch_and_store_call_data = AsyncMock(return_value=(1, True, True))
-            # extract_and_persist_recordings returns an object with optional
-            # *_url attributes; use a MagicMock with all set to None.
-            mock_recordings = MagicMock(
-                recording_url=None,
-                stereo_recording_url=None,
-                customer_recording_url=None,
-                assistant_recording_url=None,
-                provider_call_data=None,
-            )
-            mock_vsm.extract_and_persist_recordings = AsyncMock(
-                return_value=mock_recordings
-            )
-            # extract_costs returns an object with cost components.
-            mock_costs = MagicMock(
-                total=None,
-                stt=None,
-                llm=None,
-                tts=None,
-                transport=None,
-                storage=None,
-            )
-            mock_vsm.extract_costs = AsyncMock(return_value=mock_costs)
-            mock_vsm_class.return_value = mock_vsm
-
-            result = await fetch_and_persist_call_result(
+            result = await ActivityEnvironment().run(
+                activity,
                 FetchAndPersistCallResultInput(
                     call_id=str(call_execution.id),
                     provider_call_id="vapi-call-123",
                     status="COMPLETED",
                     provider="vapi",
                     call_type=CallType.INBOUND,
-                )
+                ),
             )
 
-        assert result.success is True
+        assert result.success, result.error
         assert result.message_count == 1
         assert result.has_agent_message is True
         assert result.has_customer_message is True
-
-        # Activity persists call data (transcript, recordings, costs); the
-        # CallExecution.status transition itself is handled by the workflow,
-        # not by this activity.
-        await sync_to_async(call_execution.refresh_from_db)()
+        await call_execution.arefresh_from_db()
+        assert call_execution.customer_cost_breakdown == {
+            "tts": {"characters": 100, "cost": 0.05}
+        }
+        assert call_execution.customer_cost_cents == call_execution.tts_cost_cents == 5
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio

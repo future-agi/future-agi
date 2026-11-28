@@ -14,8 +14,10 @@ from clickhouse_driver.errors import ServerException
 from rest_framework import status
 
 from accounts.models.user import OrgApiKey
+from conftest import _ch_test_native_client, _ch_test_owned_database
 from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
+from tracer.tests._users_live_ch import LiveExecutor
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -350,9 +352,13 @@ class TestObserveProjectListAPI:
         assert "FROM trace_count_rollup" in compact_query
         assert "uniqExactMerge(uniq_traces_state)" in compact_query
         assert "PREWHERE project_id IN %(pids)s" in compact_query
-        assert "hour >= toDateTime(" in compact_query
-        assert "hour < toDateTime(" in compact_query
-        assert "GROUP BY project_id, day" in compact_query
+        volume_read, _, history_read = compact_query.partition("UNION ALL")
+        assert "hour >= toDateTime(%(volume_start)s, 'UTC')" in volume_read
+        assert "hour < toDateTime(%(activity_end)s, 'UTC')" in volume_read
+        assert "GROUP BY project_id, day" in volume_read
+        assert "uniq_traces_state" not in history_read
+        assert "hour >= toDateTime(%(activity_start)s, 'UTC')" in history_read
+        assert "hour < toDateTime(%(volume_start)s, 'UTC')" in history_read
         assert service.execute_ch_query.call_args.args[1] == {
             "pids": [str(observe_project.id)],
             "activity_start": "2026-05-14",
@@ -368,6 +374,79 @@ class TestObserveProjectListAPI:
         assert call_kwargs["settings"]["max_memory_usage"] == 36 * 1024 * 1024 * 1024
         assert call_kwargs["settings"]["max_result_rows"] == 1_000
         assert call_kwargs["settings"]["max_result_bytes"] == 16 * 1024 * 1024
+
+    def test_list_projects_does_not_read_old_volume_states(
+        self, auth_client, observe_project, project
+    ):
+        now = datetime(2026, 8, 11, 12, tzinfo=UTC)
+        recent, old = str(observe_project.id), str(project.id)
+        with (
+            _ch_test_owned_database("test_project_volume_") as database,
+            _ch_test_native_client(database=database) as client,
+            patch("tracer.views.project.V2AnalyticsQueryService") as service_class,
+            patch("tracer.views.project.timezone.now", return_value=now),
+        ):
+            client.execute("""
+                CREATE TABLE trace_count_rollup (
+                    project_id UUID, hour DateTime('UTC'),
+                    uniq_traces_state AggregateFunction(uniqExact, String)
+                ) ENGINE = AggregatingMergeTree PARTITION BY toYYYYMM(hour)
+                ORDER BY (project_id, hour)
+            """)
+            client.execute(
+                "INSERT INTO trace_count_rollup SELECT toUUID(%(pid)s), "
+                "toDateTime('2026-06-01', 'UTC') "
+                "+ toIntervalHour(modulo(number, 512)) AS hour, "
+                "uniqExactState(toString(number)) FROM numbers(65536) GROUP BY hour",
+                {"pid": recent},
+            )
+            for pid, hour, count in [
+                (old, "2026-05-14 00:00:00", 1),
+                (recent, "2026-07-12 23:00:00", 1),
+                (recent, "2026-07-13 00:00:00", 2),
+                (recent, "2026-07-13 01:00:00", 1),  # same trace, same day
+                (recent, "2026-08-11 12:00:00", 1),  # same trace, new day
+                (recent, "2026-08-12 00:00:00", 1),
+            ]:
+                client.execute(
+                    "INSERT INTO trace_count_rollup SELECT toUUID(%(pid)s), "
+                    "toDateTime(%(hour)s, 'UTC'), uniqExactState(toString(number)) "
+                    "FROM numbers(%(count)s)",
+                    {"pid": pid, "hour": hour, "count": count},
+                )
+
+            # Even reading just the June states costs more than the entire list
+            # query should. Compare native read progress rather than wall time.
+            client.execute("""
+                SELECT project_id, toDate(hour), uniqExactMerge(uniq_traces_state)
+                FROM trace_count_rollup
+                WHERE hour >= toDateTime('2026-06-01', 'UTC')
+                  AND hour < toDateTime('2026-07-01', 'UTC')
+                GROUP BY project_id, toDate(hour)
+            """)
+            old_state_bytes = client.last_query.progress.bytes
+            execute = service_class.return_value.execute_ch_query
+            execute.side_effect = LiveExecutor(client).execute_ch_query
+            response = auth_client.get("/tracer/project/list_projects/")
+            execute.assert_called_once()
+            activity_bytes = client.last_query.progress.bytes
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = {row["id"]: row for row in get_result(response)["table"]}
+        for pid, last_active in (
+            (recent, "2026-08-11T12:00:00"),
+            (old, "2026-05-14T00:00:00"),
+        ):
+            assert rows[pid]["last_active"].removesuffix("+00:00") == last_active
+            assert rows[pid]["activity_query_complete"] is True
+            assert rows[pid]["activity_error_code"] is None
+            assert rows[pid]["activity_query_exact"] is False
+            assert rows[pid]["activity_query_provenance"] == "trace_count_rollup"
+        assert rows[recent]["daily_volume"] == [2] + [0] * 28 + [1]
+        assert rows[recent]["last_30_days_vol"] == 3
+        assert rows[old]["daily_volume"] == [0] * 30
+        assert rows[old]["last_30_days_vol"] == 0
+        assert 0 < activity_bytes < old_state_bytes
 
     def test_list_projects_rollup_contract_is_explicitly_non_exact(
         self, auth_client, observe_project

@@ -330,6 +330,88 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
+func TestUpdateMetadataDoesNotRaceWithAuthenticatedReaders(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+	key, raw := ks.Create("reader", "", nil, nil, map[string]string{"org_id": "first"})
+	var authenticated, readers sync.WaitGroup
+	published := make(chan struct{})
+	for range 4 {
+		authenticated.Add(1)
+		readers.Go(func() {
+			snapshot := ks.Authenticate(raw)
+			authenticated.Done()
+			<-published
+			if snapshot == nil || snapshot.Metadata["org_id"] != "first" {
+				t.Error("authenticated reader lost its original org")
+			}
+		})
+	}
+	authenticated.Wait()
+	for _, org := range []string{"second", "third"} {
+		if _, ok := ks.Update(key.ID, nil, nil, nil, nil, map[string]string{"org_id": org}); !ok {
+			t.Error("update failed")
+		}
+	}
+	close(published)
+	readers.Wait()
+	if t.Failed() {
+		return
+	}
+
+	// Exercise fresh lookups while publishing more snapshots. Each reader
+	// may see either complete version, but never an absent or partial value.
+	start := make(chan struct{})
+	for range 4 {
+		readers.Go(func() {
+			<-start
+			for range 64 {
+				snapshot := ks.Authenticate(raw)
+				if snapshot == nil || (snapshot.Metadata["org_id"] != "third" && snapshot.Metadata["org_id"] != "fourth") {
+					t.Error("reader did not see a published org")
+					return
+				}
+			}
+		})
+	}
+	close(start)
+	for range 64 {
+		if _, ok := ks.Update(key.ID, nil, nil, nil, nil, map[string]string{"org_id": "fourth"}); !ok {
+			t.Error("update failed")
+		}
+	}
+	readers.Wait()
+}
+
+func TestKeyStoreUpdateKeepsSnapshotAndBalance(t *testing.T) {
+	const raw = "fixture"
+	ks := NewKeyStore(authCfg(config.AuthKeyConfig{Key: raw, KeyType: "managed", CreditBalance: 1,
+		Metadata: map[string]string{"org_id": "first"}}))
+	prior := ks.Authenticate(raw)
+	updated, ok := ks.Update(prior.ID, nil, nil, nil, nil, map[string]string{"org_id": "second"})
+	if !ok || ks.Get(prior.ID) != updated || ks.Authenticate(raw) != updated {
+		t.Fatal("both indexes must return the updated snapshot")
+	}
+	if prior.Metadata["org_id"] != "first" || updated.Metadata["org_id"] != "second" {
+		t.Error("old and new snapshots must retain their respective orgs")
+	}
+	prior.DeductMicros(1)
+	if updated.BalanceMicros() != 999999 {
+		t.Error("an in-flight deduction must reach the current balance")
+	}
+}
+
+func TestKeyStoreRevokeKeepsPriorSnapshot(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+	prior, raw := ks.Create("reader", "", nil, nil, nil)
+	if !ks.Revoke(prior.ID) || ks.Authenticate(raw) != nil {
+		t.Fatal("revoked key should not authenticate")
+	}
+	current := ks.Lookup(raw)
+	if prior.Status != "active" || current == nil || current.Status != "revoked" || current != ks.Get(prior.ID) {
+		t.Error("revoke must publish a new status without changing the prior snapshot")
+	}
+}
+
 func TestUpdate_NotFound(t *testing.T) {
 	ks := NewKeyStore(authCfg())
 	name := "x"
@@ -913,5 +995,18 @@ func TestAPIKey_IsManaged(t *testing.T) {
 	}
 	if byok.IsManaged() {
 		t.Error("expected byok key to return false for IsManaged()")
+	}
+}
+
+func TestAPIKey_ZeroValueUsageReadsAsZero(t *testing.T) {
+	var k APIKey
+	if got := k.BalanceMicros(); got != 0 {
+		t.Errorf("BalanceMicros() = %d, want 0", got)
+	}
+	if got := k.BalanceUSD(); got != 0 {
+		t.Errorf("BalanceUSD() = %v, want 0", got)
+	}
+	if got := k.GetLastUsedAt(); got != nil {
+		t.Errorf("GetLastUsedAt() = %v, want nil", got)
 	}
 }
