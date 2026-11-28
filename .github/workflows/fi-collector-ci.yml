@@ -20,6 +20,9 @@ on:
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - "futureagi/tracer/services/clickhouse/v2/schema/**"
+      - "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py"
+      - "futureagi/tracer/tests/fixtures/trajectory_contract/**"
+      - "futureagi/ee/usage/tests/fixtures/collector_observe_add.json"
       - ".github/workflows/fi-collector-ci.yml"
   push:
     branches: [dev, main]
@@ -40,6 +43,9 @@ on:
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - "futureagi/tracer/services/clickhouse/v2/schema/**"
+      - "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py"
+      - "futureagi/tracer/tests/fixtures/trajectory_contract/**"
+      - "futureagi/ee/usage/tests/fixtures/collector_observe_add.json"
       - ".github/workflows/fi-collector-ci.yml"
   merge_group:
   workflow_dispatch:
@@ -91,6 +97,12 @@ jobs:
       OBS_TEST_KAFKA_BROKER: 127.0.0.1:19094
       OBS_TEST_PG_DSN: postgres://test:test@127.0.0.1:15543/observed_catalog_test
       OBS_TEST_REPLICA_URLS: ""
+      OBS_TEST_REDIS_PORT: "16379"
+      # Real ClickHouse + Redis trajectory tests (pkg/server). With
+      # FI_LIVE_STAGE set they fail, never skip, when a prerequisite is missing.
+      FI_LIVE_CH_URL: http://127.0.0.1:18143
+      FI_LIVE_REDIS_ADDR: 127.0.0.1:16379
+      FI_LIVE_STAGE: ci
       GOMAXPROCS: "2"
     steps:
       - uses: actions/checkout@v4
@@ -116,49 +128,49 @@ jobs:
               -v "$PWD/futureagi/tracer/services/clickhouse/v2/observed_catalog:/observed-catalog:ro" \
               clickhouse /bootstrap/bootstrap_clickhouse.sh
           done
-      - name: Real ClickHouse, Kafka, PostgreSQL and OTLP HTTP tests
+      - name: Render the v2 ClickHouse schema for the trajectory tests
+        run: python3 fi-collector/test/observed-catalog/render_v2_schema.py "$RUNNER_TEMP/v2-schema.json"
+      - name: Real ClickHouse, Kafka, PostgreSQL, Redis and OTLP HTTP tests
         working-directory: fi-collector
         timeout-minutes: 10
+        env:
+          FI_LIVE_V2_SCHEMA: ${{ runner.temp }}/v2-schema.json
         run: |
           set -o pipefail
           go test -race -count=1 -p 1 -timeout 8m -json \
-            -run '^(TestClickHouse|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack|TestValidateKey|TestRoutingColumnCheckSeesBothColumns|TestRoutingColumnStateIsSharedThroughNew|TestEnsureSimulationProject)' \
+            -run '^(TestClickHouse|TestLiveTrajectory|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack|TestValidateKey|TestRoutingColumnCheckSeesBothColumns|TestRoutingColumnStateIsSharedThroughNew|TestEnsureSimulationProject)' \
             ./cmd/fi-observed-catalog-backfill ./pkg/server ./pkg/auth \
             | tee "$RUNNER_TEMP/observed-integration.jsonl"
+      - name: The proof check fails on a skipped required test
+        run: |
+          printf '%s\n' '{"Action":"skip","Test":"TestClickHouseTrajectoryHalfApplied040StaysInline"}' > "$RUNNER_TEMP/proof-selfcheck.jsonl"
+          if python3 fi-collector/test/observed-catalog/check_integration_proofs.py "$RUNNER_TEMP/proof-selfcheck.jsonl" \
+              --packages fi-collector/pkg/server; then
+            echo "check_integration_proofs.py accepted a skipped trajectory test" >&2
+            exit 1
+          fi
       - name: Require executed integration proofs, not skipped tests
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          required = {
-              "TestClickHouseStringParametersRoundTrip",
-              "TestClickHouseMigratedStringOverflowBackfill",
-              "TestClickHouseSourceKeysetAndPhysicalVersions",
-              "TestClickHouseObservedIndexReplayBeforeMerges",
-              "TestClickHouseObservedSinkPlainWithRestrictedWriter",
-              "TestKafkaMultipleConsumersAndWorkspaceScale",
-              "TestKafkaSpoolRestartAndPartialConsumerWrite",
-              "TestKafkaRejectsLegacyWireWithoutCommittingPastIt",
-              "TestPostgresOwnershipIsCurrentAndReadOnly",
-              "TestBackfillCLIThroughKafkaWithResume",
-              "TestObservedCatalogHTTPToLocalStack",
-              "TestClickHouseDirectObservedCatalogFromOTLPHTTP",
-              "TestValidateKeyReadsTheAgentOfAnIngestKey",
-              "TestValidateKeyFallsBackWhenTheColumnDisappears",
-              "TestRoutingColumnCheckSeesBothColumns",
-              "TestRoutingColumnStateIsSharedThroughNew",
-              "TestEnsureSimulationProject",
-          }
-          evidence = Path(os.environ["RUNNER_TEMP"]) / "observed-integration.jsonl"
-          events = [json.loads(line) for line in evidence.read_text().splitlines()]
-          passed = {event.get("Test") for event in events if event["Action"] == "pass"}
-          missing = required - passed
-          if missing:
-              raise SystemExit(f"Integration proofs missing or skipped: {sorted(missing)}")
-          print(f"Confirmed {len(required)} real integration proofs")
-          PY
+          python3 fi-collector/test/observed-catalog/check_integration_proofs.py "$RUNNER_TEMP/observed-integration.jsonl" \
+            --packages fi-collector/cmd/fi-observed-catalog-backfill fi-collector/pkg/server fi-collector/pkg/auth \
+            --require \
+              TestClickHouseStringParametersRoundTrip \
+              TestClickHouseMigratedStringOverflowBackfill \
+              TestClickHouseSourceKeysetAndPhysicalVersions \
+              TestClickHouseObservedIndexReplayBeforeMerges \
+              TestClickHouseObservedSinkPlainWithRestrictedWriter \
+              TestKafkaMultipleConsumersAndWorkspaceScale \
+              TestKafkaSpoolRestartAndPartialConsumerWrite \
+              TestKafkaRejectsLegacyWireWithoutCommittingPastIt \
+              TestPostgresOwnershipIsCurrentAndReadOnly \
+              TestBackfillCLIThroughKafkaWithResume \
+              TestObservedCatalogHTTPToLocalStack \
+              TestClickHouseDirectObservedCatalogFromOTLPHTTP \
+              TestValidateKeyReadsTheAgentOfAnIngestKey \
+              TestValidateKeyFallsBackWhenTheColumnDisappears \
+              TestRoutingColumnCheckSeesBothColumns \
+              TestRoutingColumnStateIsSharedThroughNew \
+              TestEnsureSimulationProject
       - name: Collect isolated fixture logs
         if: always()
         timeout-minutes: 1

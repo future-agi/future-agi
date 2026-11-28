@@ -408,7 +408,6 @@ func TestBatchRestoreInlineAndUsageReport(t *testing.T) {
 
 func TestConfigFromEnv(t *testing.T) {
 	env := map[string]string{
-		"FI_COMPACT_SPAN_ATTRS":        "true",
 		"FI_TRAJECTORY_DEDUP_MODE":     "canary",
 		"FI_TRAJECTORY_DEDUP_PROJECTS": " AAAA-1111 , bbbb-2222 ",
 		"FI_TRAJECTORY_LRU_SIZE":       "25000",
@@ -418,7 +417,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfigFromEnv: %v", err)
 	}
-	if !cfg.CompactSpanAttrs || cfg.Mode != ModeCanary || cfg.LRUSize != 25000 || !cfg.BillDedupedBytes {
+	if cfg.Mode != ModeCanary || cfg.LRUSize != 25000 || !cfg.BillsDedupedBytes() {
 		t.Fatalf("unexpected cfg: %+v", cfg)
 	}
 	if !cfg.Active() || !cfg.EnabledForProject("aaaa-1111") || !cfg.EnabledForProject("BBBB-2222") || cfg.EnabledForProject("cccc-3333") {
@@ -516,4 +515,31 @@ func TestSeenStoreCheckNewIsReadOnlyUntilMarkCommitted(t *testing.T) {
 		t.Fatalf("after MarkCommitted: podA=(%d,%d) podB=(%d,%d), want (0,2) each",
 			len(newA3), reusedA3, len(newB2), reusedB2)
 	}
+}
+
+// TestBatchRestoreInlineRowsOnlyTheGivenRows: RestoreInlineRows reverts the
+// compacted rows it is given (matched by identity, not by content) and leaves
+// the batch's other rows exactly as they were stored.
+func TestBatchRestoreInlineRowsOnlyTheGivenRows(t *testing.T) {
+	pointerRow := func() map[string]any {
+		return map[string]any{"input": "preview", "payload_encoding": EncodingItemsV1, "input_item_hashes": []string{"abc"}}
+	}
+	stored, refused, plain := pointerRow(), pointerRow(), map[string]any{"input": "plain"}
+	b := NewBatch()
+	b.AddFallback(SpanFallback{Row: stored, OrigInput: "full stored"})
+	b.AddFallback(SpanFallback{Row: refused, OrigInput: "full refused"})
+	b.RestoreInlineRows([]map[string]any{refused, plain})
+	if refused["input"] != "full refused" {
+		t.Fatalf("refused row not restored: %v", refused)
+	}
+	if _, ok := refused["payload_encoding"]; ok {
+		t.Fatal("refused row keeps its pointer columns")
+	}
+	if stored["input"] != "preview" || stored["payload_encoding"] != EncodingItemsV1 {
+		t.Fatalf("a row not given was changed: %v", stored)
+	}
+	if len(plain) != 1 || plain["input"] != "plain" {
+		t.Fatalf("a row without a fallback was changed: %v", plain)
+	}
+	b.RestoreInlineRows(nil) // no-op
 }

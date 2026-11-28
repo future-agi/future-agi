@@ -68,7 +68,10 @@ func (s *Server) emitPendingUsage(u *pendingUsage, fallbackInline bool) {
 		report.NewItems = 0
 		report.ReusedItems = 0
 	}
-	if report.DedupApplied || fallbackInline || s.trajCfg.CompactSpanAttrs || s.trajCfg.BillDedupedBytes {
+	// Only a request whose spans were deduplicated (or restored inline after a
+	// failed items insert) emits the dedup event; every other request emits
+	// dev's legacy event, whatever the billing flag says.
+	if report.DedupApplied || fallbackInline {
 		if du, ok := s.usage.(DedupUsageEmitter); ok {
 			du.EmitIngestionDedup(
 				u.orgID,
@@ -80,7 +83,7 @@ func (s *Server) emitPendingUsage(u *pendingUsage, fallbackInline bool) {
 				report.DedupSavedBytes(),
 				report.NewItems,
 				report.ReusedItems,
-				s.trajCfg.BillDedupedBytes,
+				s.trajCfg.BillsDedupedBytes(),
 				u.dedupKey,
 			)
 			return
@@ -89,10 +92,9 @@ func (s *Server) emitPendingUsage(u *pendingUsage, fallbackInline bool) {
 	s.usage.EmitIngestion(u.orgID, u.traceCount, u.spanCount, u.rawBytes, u.dedupKey)
 }
 
-// emitUsageWithReport emits either legacy EmitIngestion (preserving exact
-// byte-identical properties when trajectory features are off) or
-// EmitIngestionDedup with raw/stored/saved/item telemetry when dedup,
-// compaction, or dedup-adjusted billing is active.
+// emitUsageWithReport emits either legacy EmitIngestion (byte-identical to
+// dev whenever no span of the request was deduplicated) or
+// EmitIngestionDedup with raw/stored/saved/item telemetry.
 func (s *Server) emitUsageWithReport(ctx context.Context, traces ptrace.Traces, report trajectory.UsageReport) {
 	u := s.buildPendingUsage(ctx, traces, report)
 	if u == nil {
