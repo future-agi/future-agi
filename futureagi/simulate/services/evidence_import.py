@@ -77,7 +77,7 @@ def create_evidence_import(
     caller can show it without reading Observe again."""
     evidence = import_evidence(project, source_kind, source_ids)
     with transaction.atomic():
-        environment = _lock(environment.id)
+        environment = lock_import_environment(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -116,7 +116,7 @@ def create_dataset_import(
     _check_columns(dataset, columns)
     evidence = import_rows(dataset, columns, row_ids)
     with transaction.atomic():
-        environment = _lock(environment.id)
+        environment = lock_import_environment(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -198,7 +198,7 @@ def create_transcript_import(
         [(one.name, read) for one, read in zip(transcripts, parsed, strict=True)]
     )
     with transaction.atomic():
-        environment = _lock(environment.id)
+        environment = lock_import_environment(environment.id)
         evidence_import = EvidenceImport.objects.create(
             organization_id=environment.organization_id,
             workspace_id=environment.workspace_id,
@@ -261,7 +261,7 @@ def _case(
     )
 
 
-def _lock(environment_id) -> HostedHarnessJob:
+def lock_import_environment(environment_id) -> HostedHarnessJob:
     """The environment, read again and held until the transaction commits, so two
     imports of one source made at once cannot both propose it, and a discard waits
     for either. Refused once it is deleted or being deleted: what the request read
@@ -543,7 +543,7 @@ def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
     suite take it: an import made meanwhile never repeats a case being discarded,
     and a case added meanwhile is seen as added."""
     with transaction.atomic():
-        _lock(evidence_import.environment_id)
+        lock_import_environment(evidence_import.environment_id)
         locked = EvidenceImport.no_workspace_objects.select_for_update().get(
             id=evidence_import.id
         )
@@ -572,7 +572,7 @@ def discard_open_cases(evidence_import: EvidenceImport) -> None:
     with what it added and what it repeats: a person kept only some of its drafts, or
     its drafts can go no further. Under the environment's lock, as a discard is."""
     with transaction.atomic():
-        _lock(evidence_import.environment_id)
+        lock_import_environment(evidence_import.environment_id)
         leaving = EvidenceImportCase.objects.filter(
             evidence_import=evidence_import, status__in=OPEN_CASE_STATUSES
         )
