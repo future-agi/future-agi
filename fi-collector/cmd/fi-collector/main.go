@@ -475,7 +475,7 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if err != nil {
 		return err
 	}
-	return nil
+	return c.Trajectory.RequireDormant()
 }
 
 // authWatchers is the part of the authenticator that runs in the background.
