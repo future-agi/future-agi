@@ -1796,7 +1796,9 @@ class TestTestExecutionRuntimeContracts:
             config={},
             mapping={"output": "transcript"},
         )
-        counts = queue_eval_for_finished_calls(test_execution, added)
+        counts = queue_eval_for_finished_calls(
+            test_execution, added, keep_replaced=True
+        )
         assert counts["queued"] == (1 if eval_completed_before else 0)
         assert counts["skipped_pending"] == (0 if eval_completed_before else 1)
 

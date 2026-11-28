@@ -239,7 +239,9 @@ def _grade(fix_run, winner_id, *, evals=("relevance",), queued=1, lands=True):
     configs = _Configs(SimpleNamespace(id=name) for name in evals)
     sent = []
 
-    def queue(execution, chosen):
+    def queue(execution, chosen, *, keep_replaced):
+        # A fix's own check is a machine regrade: it never keeps a replaced answer.
+        assert keep_replaced is False
         sent.append(execution.id)
         if queued and lands:
             CallExecution.objects.filter(test_execution=execution).update(

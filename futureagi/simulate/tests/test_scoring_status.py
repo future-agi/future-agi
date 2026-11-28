@@ -557,7 +557,10 @@ def test_second_add_eval_while_first_in_flight(run_test, eval_template):
         },
     )
 
-    assert queue_eval_for_finished_calls(execution, first)["queued"] == 1
+    assert (
+        queue_eval_for_finished_calls(execution, first, keep_replaced=True)["queued"]
+        == 1
+    )
     graded.refresh_from_db()
     receipt_job.refresh_from_db()
     before = {
@@ -565,7 +568,7 @@ def test_second_add_eval_while_first_in_flight(run_test, eval_template):
         for call in (graded, receipt_job)
     }
 
-    counts = queue_eval_for_finished_calls(execution, second)
+    counts = queue_eval_for_finished_calls(execution, second, keep_replaced=True)
 
     assert counts == {
         "queued": 0,
@@ -621,14 +624,14 @@ def test_add_eval_requeues_a_lost_job_once_its_clock_is_due(
     clock = "simulate.services.harness_run_evals.timezone.now"
 
     with patch(clock, return_value=due_at - timedelta(seconds=1)):
-        early = queue_eval_for_finished_calls(execution, config)
+        early = queue_eval_for_finished_calls(execution, config, keep_replaced=True)
 
     assert (early["queued"], early["skipped_pending"]) == (0, 1)
     call.refresh_from_db()
     assert call.call_metadata == metadata
 
     with patch(clock, return_value=due_at):
-        due = queue_eval_for_finished_calls(execution, config)
+        due = queue_eval_for_finished_calls(execution, config, keep_replaced=True)
 
     assert (due["queued"], due["skipped_pending"]) == (1, 0)
     call.refresh_from_db()
@@ -2979,7 +2982,7 @@ def test_add_eval_counts_a_placeholder_with_no_mapping(
     )
 
     with patch("simulate.services.harness_run_evals.timezone.now", return_value=NOW):
-        counts = queue_eval_for_finished_calls(execution, added)
+        counts = queue_eval_for_finished_calls(execution, added, keep_replaced=True)
 
     assert (counts["queued"], counts["skipped_pending"]) == (queued, 1 - queued)
 
@@ -3857,7 +3860,7 @@ def test_add_eval_dispatch_failure_restores_what_each_call_held(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 2
     assert dispatch.evals.call_count == 1, "the batch stops at the first failure"
@@ -3915,7 +3918,7 @@ def test_add_eval_dispatch_failure_completes_a_run_that_holds_an_ungraded_call(
     dispatch.evals.side_effect = _broker_unreachable
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 1, "only the completed call is queued"
     assert run_at_hand_off == [Status.EVALUATING], "the add did reopen the run"
@@ -3957,7 +3960,7 @@ def test_add_eval_dispatch_failure_keeps_a_verdict_that_landed_anyway(
     dispatch.evals.side_effect = _taken_then_errored
 
     with django_capture_on_commit_callbacks(execute=True):
-        queue_eval_for_finished_calls(run, config)
+        queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     call.refresh_from_db()
     run.refresh_from_db()
@@ -4008,7 +4011,7 @@ def test_add_eval_dispatch_failure_leaves_a_run_something_else_holds(
     dispatch.evals.side_effect = _something_else_takes_the_run
 
     with django_capture_on_commit_callbacks(execute=True):
-        queue_eval_for_finished_calls(run, config)
+        queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     call.refresh_from_db()
     run.refresh_from_db()
@@ -4037,7 +4040,7 @@ def test_add_eval_dispatch_failure_leaves_a_run_it_did_not_reopen(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 1
     assert dispatch.evals.call_count == 1
@@ -4079,7 +4082,7 @@ def test_add_eval_dispatch_failure_ignores_a_deleted_call_still_open(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 1, "the deleted call is not queued"
     call.refresh_from_db()
@@ -4124,7 +4127,7 @@ def test_add_eval_undo_that_fails_is_logged_with_its_run(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks() as callbacks:
-        queue_eval_for_finished_calls(run, config)
+        queue_eval_for_finished_calls(run, config, keep_replaced=True)
     assert len(callbacks) == 1
 
     # Called as the commit would call it, without Django's robust wrapper,

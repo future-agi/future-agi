@@ -1,0 +1,620 @@
+"""Every other path that replaces a run's own verdict keeps it too.
+
+An eval-only rerun empties a call's ``eval_outputs``, and editing an eval with
+``run`` set replaces that eval's verdict on every call of a run. Each keeps
+the verdicts it replaces in ``SimulateEvalResult``, the same way ``run-new-evals`` does.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+from django.db import connection, transaction
+from django.test.utils import CaptureQueriesContext
+
+from simulate.models import CallExecution, SimulateEvalResult, TestExecution
+from simulate.services import call_rerun
+from simulate.services.call_rerun import restore_eval_only_rerun_state
+from simulate.tests import test_scoring_status as scoring
+from simulate.tests.test_scoring_status import CLOSED, _call, _config, _run
+
+# The scoring tests' run test, eval template and hand-off spies.
+agent_definition = scoring.agent_definition
+simulator_agent = scoring.simulator_agent
+scenario = scoring.scenario
+run_test = scoring.run_test
+eval_template = scoring.eval_template
+dispatch = scoring.dispatch
+_capturable_test_executor_logger = scoring._capturable_test_executor_logger
+
+VERDICT = {
+    "name": "Politeness",
+    "output": "Passed",
+    "output_type": "Pass/Fail",
+    "reason": "the agent stayed polite",
+    "status": "Completed",
+}
+
+
+def _kept_rows(call):
+    return list(
+        SimulateEvalResult.objects.filter(
+            call_execution=call, origin=SimulateEvalResult.Origin.REPLACED_OWN_SCORE
+        ).order_by("question_key")
+    )
+
+
+def _graded_call(run_test, eval_template):
+    config = _config(run_test, eval_template, name="Politeness")
+    other = _config(run_test, eval_template, name="Accuracy")
+    execution = _run(run_test, TestExecution.ExecutionStatus.COMPLETED)
+    call = _call(
+        execution,
+        metadata=dict(CLOSED),
+        eval_outputs={
+            str(config.id): dict(VERDICT),
+            str(other.id): dict(VERDICT, name="Accuracy"),
+            "not-a-config-id": {"name": "Legacy", "output": 1.0},
+        },
+    )
+    return config, other, execution, call
+
+
+@pytest.mark.django_db
+def test_an_eval_only_rerun_of_chosen_calls_keeps_every_verdict_it_clears(
+    auth_client, user, run_test, eval_template
+):
+    config, other, execution, call = _graded_call(run_test, eval_template)
+
+    with patch(
+        "simulate.temporal.client.rerun_call_executions",
+        return_value={"workflow_id": "kept-rerun", "merged": False},
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{execution.id}/rerun-calls/",
+            {"rerun_type": "eval_only", "select_all": True},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    call.refresh_from_db()
+    assert call.eval_outputs == {}
+    rows = _kept_rows(call)
+    by_key = {row.question_key: row for row in rows}
+    assert set(by_key) == {str(config.id), str(other.id), "not-a-config-id"}
+    assert by_key[str(config.id)].replaced_verdict == VERDICT
+    assert by_key[str(config.id)].eval_config_id == config.id
+    # A slot key that names no eval of this run is kept, with no eval and no definition.
+    assert by_key["not-a-config-id"].eval_config_id is None
+    assert by_key["not-a-config-id"].question_definition is None
+    assert by_key["not-a-config-id"].score == 1.0
+    assert {row.replaced_by_id for row in rows} == {user.id}
+    assert len({row.replacement_id for row in rows}) == 1
+    assert {row.organization_id for row in rows} == {run_test.organization_id}
+
+
+@pytest.mark.django_db
+def test_an_eval_only_rerun_of_whole_runs_keeps_every_verdict_it_clears(
+    auth_client, user, run_test, eval_template
+):
+    config, other, execution, call = _graded_call(run_test, eval_template)
+
+    with patch(
+        "simulate.temporal.client.rerun_call_executions",
+        return_value={"workflow_id": "kept-bulk", "merged": False},
+    ):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/rerun-test-executions/",
+            {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    call.refresh_from_db()
+    assert call.eval_outputs == {}
+    rows = _kept_rows(call)
+    assert {row.question_key for row in rows} == {
+        str(config.id),
+        str(other.id),
+        "not-a-config-id",
+    }
+    assert {row.replaced_by_id for row in rows} == {user.id}
+
+
+@pytest.mark.django_db
+def test_a_call_and_eval_rerun_keeps_no_row(auth_client, run_test, eval_template):
+    """A call rerun replaces the evidence itself: its history is the call's own."""
+    _, _, execution, call = _graded_call(run_test, eval_template)
+
+    with (
+        patch(
+            "simulate.views.run_test._create_rerun_call_execution",
+            lambda call_execution: None,
+        ),
+        patch(
+            "simulate.temporal.client.rerun_call_executions",
+            return_value={"workflow_id": "kept-call-rerun", "merged": False},
+        ),
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{execution.id}/rerun-calls/",
+            {"rerun_type": "call_and_eval", "select_all": True},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    call.refresh_from_db()
+    assert call.eval_outputs == {}
+    assert _kept_rows(call) == []
+
+
+@pytest.mark.django_db
+def test_editing_an_eval_and_running_it_keeps_the_verdict_with_the_definition_before_the_edit(
+    auth_client, user, run_test, eval_template
+):
+    config, other, execution, call = _graded_call(run_test, eval_template)
+
+    with patch(
+        "simulate.services.test_executor.run_new_evals_on_call_executions_task.apply_async"
+    ):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/eval-configs/{config.id}/update/",
+            {
+                "run": True,
+                "test_execution_id": str(execution.id),
+                "name": "Politeness, stricter",
+            },
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    config.refresh_from_db()
+    assert config.name == "Politeness, stricter"
+    call.refresh_from_db()
+    assert call.eval_outputs[str(config.id)] == {"status": "pending"}
+    [row] = _kept_rows(call)
+    assert row.question_key == str(config.id)
+    assert row.replaced_verdict == VERDICT
+    assert row.question_definition["name"] == "Politeness"
+    assert row.replaced_by_id == user.id
+
+
+@pytest.mark.django_db
+def test_a_call_whose_rerun_fails_part_way_keeps_no_row_and_lends_none_to_the_next(
+    auth_client, run_test, eval_template
+):
+    config, _, execution, failing = _graded_call(run_test, eval_template)
+    passing = _call(
+        execution,
+        metadata=dict(CLOSED),
+        eval_outputs={str(config.id): dict(VERDICT, output="Failed")},
+    )
+    from simulate.views import run_test as views
+
+    real_stamp = views.stamp_eval_queued
+
+    def stamp(metadata, *args, **kwargs):
+        if metadata is failing_metadata[0]:
+            raise RuntimeError("stamp failed")
+        return real_stamp(metadata, *args, **kwargs)
+
+    failing_metadata = [None]
+    real_save_snapshot = views.CallExecutionRerunView._save_eval_snapshot
+
+    def save_snapshot(self, call_execution):
+        if call_execution.id == failing.id:
+            call_execution.call_metadata = call_execution.call_metadata or {}
+            failing_metadata[0] = call_execution.call_metadata
+        return real_save_snapshot(self, call_execution)
+
+    with (
+        patch.object(views, "stamp_eval_queued", stamp),
+        patch.object(
+            views.CallExecutionRerunView, "_save_eval_snapshot", save_snapshot
+        ),
+        patch(
+            "simulate.temporal.client.rerun_call_executions",
+            return_value={"workflow_id": "kept-partial", "merged": False},
+        ),
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{execution.id}/rerun-calls/",
+            {
+                "rerun_type": "eval_only",
+                "call_execution_ids": [str(failing.id), str(passing.id)],
+            },
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    failing.refresh_from_db()
+    assert failing.eval_outputs != {}
+    assert _kept_rows(failing) == []
+    [row] = _kept_rows(passing)
+    assert row.replaced_verdict == dict(VERDICT, output="Failed")
+
+
+@pytest.mark.django_db
+def test_an_eval_only_rerun_whose_dispatch_fails_puts_the_verdicts_back_and_keeps_no_row(
+    auth_client, run_test, eval_template
+):
+    config, _, execution, call = _graded_call(run_test, eval_template)
+
+    with patch(
+        "simulate.temporal.client.rerun_call_executions",
+        side_effect=RuntimeError("temporal is down"),
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{execution.id}/rerun-calls/",
+            {"rerun_type": "eval_only", "select_all": True},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    call.refresh_from_db()
+    assert call.eval_outputs[str(config.id)] == VERDICT
+    assert _kept_rows(call) == []
+
+
+@pytest.mark.django_db
+def test_a_bulk_rerun_forgets_only_the_rows_of_the_run_it_put_back(
+    auth_client, run_test, eval_template
+):
+    config, _, first_execution, first_call = _graded_call(run_test, eval_template)
+    second_execution = _run(run_test, TestExecution.ExecutionStatus.COMPLETED)
+    second_call = _call(
+        second_execution,
+        metadata=dict(CLOSED),
+        eval_outputs={str(config.id): dict(VERDICT, output="Failed")},
+    )
+
+    def dispatch(*, test_execution_id, **kwargs):
+        if test_execution_id == str(second_execution.id):
+            raise RuntimeError("temporal is down")
+        return {"workflow_id": "kept-first", "merged": False}
+
+    with patch("simulate.temporal.client.rerun_call_executions", side_effect=dispatch):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/rerun-test-executions/",
+            {
+                "rerun_type": "eval_only",
+                "test_execution_ids": [
+                    str(first_execution.id),
+                    str(second_execution.id),
+                ],
+            },
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    second_call.refresh_from_db()
+    assert second_call.eval_outputs[str(config.id)] == dict(VERDICT, output="Failed")
+    assert _kept_rows(second_call) == []
+    first_call.refresh_from_db()
+    assert first_call.eval_outputs == {}
+    first_rows = _kept_rows(first_call)
+    assert len(first_rows) == 3
+    assert len({row.replacement_id for row in first_rows}) == 1
+
+
+@pytest.mark.django_db
+def test_one_bulk_rerun_of_two_runs_keeps_their_verdicts_under_one_replacement(
+    auth_client, run_test, eval_template
+):
+    config, _, first_execution, first_call = _graded_call(run_test, eval_template)
+    second_execution = _run(run_test, TestExecution.ExecutionStatus.COMPLETED)
+    second_call = _call(
+        second_execution,
+        metadata=dict(CLOSED),
+        eval_outputs={str(config.id): dict(VERDICT, output="Failed")},
+    )
+
+    with patch(
+        "simulate.temporal.client.rerun_call_executions",
+        return_value={"workflow_id": "kept-both", "merged": False},
+    ):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/rerun-test-executions/",
+            {
+                "rerun_type": "eval_only",
+                "test_execution_ids": [
+                    str(first_execution.id),
+                    str(second_execution.id),
+                ],
+            },
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    rows = _kept_rows(first_call) + _kept_rows(second_call)
+    assert len(rows) == 4
+    assert len({row.replacement_id for row in rows}) == 1
+
+
+@pytest.mark.django_db
+def test_a_put_back_forgets_only_the_rows_of_calls_it_restored(run_test, eval_template):
+    from simulate.services.eval_result_store import ClearedVerdicts
+    from simulate.views import run_test as views
+
+    _, _, execution, restored = _graded_call(run_test, eval_template)
+    no_snapshot = _call(execution, metadata=dict(CLOSED), eval_outputs={"k": VERDICT})
+    views.eval_snapshot(restored).save()
+    cleared = ClearedVerdicts()
+    for call in (restored, no_snapshot):
+        cleared.add(call)
+        call.eval_outputs = {}
+        call.save(update_fields=["eval_outputs"])
+    cleared.keep()
+
+    restore_eval_only_rerun_state(
+        [str(restored.id), str(no_snapshot.id)],
+        "temporal is down",
+        replacement_id=cleared.replacement_id,
+    )
+
+    restored.refresh_from_db()
+    assert restored.eval_outputs != {}
+    assert _kept_rows(restored) == []
+    # Nothing was put back on this call, so its kept verdict is the only copy.
+    no_snapshot.refresh_from_db()
+    assert no_snapshot.eval_outputs == {}
+    [row] = _kept_rows(no_snapshot)
+    assert row.replaced_verdict == VERDICT
+
+
+# --- a verdict a grader stores after the calls were loaded ---------------------
+
+LATE = {"name": "Politeness", "output": "Failed", "reason": "stored meanwhile"}
+
+
+def _grader_stores_meanwhile(call, key):
+    """Wrap the lock-and-reread so a grader's verdict lands just before it."""
+    real = call_rerun.reread_under_lock
+    seen = []
+
+    def wrapped(calls):
+        calls = list(calls)
+        CallExecution.objects.filter(id=call.id).update(eval_outputs={key: LATE})
+        seen.append(True)
+        return real(calls)
+
+    return wrapped, seen
+
+
+def _eval_only_rerun(route, run_test, execution):
+    """The URL and body of an eval-only rerun of one run, by either route."""
+    if route == "chosen-calls":
+        url = f"/simulate/test-executions/{execution.id}/rerun-calls/"
+        return url, {"rerun_type": "eval_only", "select_all": True}
+    url = f"/simulate/run-tests/{run_test.id}/rerun-test-executions/"
+    return url, {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]}
+
+
+def _locks_the_calls_verdicts(sql):
+    """A query that reads the calls' verdicts under their row lock."""
+    return (
+        'FROM "simulate_call_execution" ' in sql
+        and '"simulate_call_execution"."eval_outputs"' in sql
+        and "FOR UPDATE" in sql
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("route", ["chosen-calls", "whole-runs"])
+def test_a_verdict_stored_after_the_calls_were_loaded_is_kept_not_lost(
+    auth_client, run_test, eval_template, route
+):
+    config, _, execution, call = _graded_call(run_test, eval_template)
+    key = str(config.id)
+    wrapped, seen = _grader_stores_meanwhile(call, key)
+    url, body = _eval_only_rerun(route, run_test, execution)
+
+    with (
+        patch("simulate.views.run_test.reread_under_lock", wrapped),
+        patch(
+            "simulate.temporal.client.rerun_call_executions",
+            return_value={"workflow_id": "kept-rerun", "merged": False},
+        ),
+    ):
+        response = auth_client.post(url, body, format="json")
+
+    assert response.status_code == 200, response.content
+    assert seen
+    call.refresh_from_db()
+    assert call.eval_outputs == {}
+    [row] = _kept_rows(call)
+    assert row.replaced_verdict == LATE
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("route", ["chosen-calls", "whole-runs"])
+def test_an_eval_only_rerun_reads_the_verdicts_it_clears_under_the_calls_lock(
+    auth_client, run_test, eval_template, route
+):
+    # Without the lock a grader could store a verdict between the re-read and
+    # the save, and the rerun would empty it unkept.
+    _, _, execution, _ = _graded_call(run_test, eval_template)
+    url, body = _eval_only_rerun(route, run_test, execution)
+
+    with (
+        CaptureQueriesContext(connection) as queries,
+        patch(
+            "simulate.temporal.client.rerun_call_executions",
+            return_value={"workflow_id": "kept-rerun", "merged": False},
+        ),
+    ):
+        response = auth_client.post(url, body, format="json")
+
+    assert response.status_code == 200, response.content
+    assert [
+        query["sql"]
+        for query in queries.captured_queries
+        if _locks_the_calls_verdicts(query["sql"])
+    ]
+
+
+@pytest.mark.django_db
+def test_a_call_that_cannot_be_snapshotted_is_left_as_it_was_and_the_others_are_rerun(
+    auth_client, run_test, eval_template
+):
+    from simulate.models import CallExecutionSnapshot
+    from simulate.views import run_test as views
+
+    config, _, execution, good = _graded_call(run_test, eval_template)
+    stored = {str(config.id): dict(VERDICT, output="Failed")}
+    bad = _call(execution, metadata=dict(CLOSED), eval_outputs=stored)
+    real_snapshot = views.eval_snapshot
+
+    def snapshot(call):
+        if call.id == bad.id:
+            raise ValueError("this call's results cannot be read")
+        return real_snapshot(call)
+
+    dispatched = []
+
+    def dispatch(*, call_execution_ids, **kwargs):
+        dispatched.extend(call_execution_ids)
+        return {"workflow_id": "kept-bulk", "merged": False}
+
+    with (
+        patch("simulate.views.run_test.eval_snapshot", side_effect=snapshot),
+        patch("simulate.temporal.client.rerun_call_executions", side_effect=dispatch),
+    ):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/rerun-test-executions/",
+            {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    assert str(bad.id) in response.content.decode()
+    assert dispatched == [str(good.id)]
+    bad.refresh_from_db()
+    assert bad.eval_outputs == stored
+    assert _kept_rows(bad) == []
+    assert not CallExecutionSnapshot.objects.filter(call_execution=bad).exists()
+    good.refresh_from_db()
+    assert good.eval_outputs == {}
+    assert len(_kept_rows(good)) == 3
+    assert CallExecutionSnapshot.objects.filter(call_execution=good).exists()
+
+
+@pytest.mark.django_db
+def test_a_put_back_forgets_its_rows_whatever_workspace_the_request_is_in(
+    run_test, eval_template, user
+):
+    from accounts.models.workspace import Workspace
+    from simulate.services.eval_result_store import (
+        ClearedVerdicts,
+        forget_replacement,
+    )
+    from tfc.middleware.workspace_context import workspace_context
+
+    _, _, _, call = _graded_call(run_test, eval_template)
+    cleared = ClearedVerdicts()
+    cleared.add(call)
+    cleared.keep()
+    assert _kept_rows(call)
+    other = Workspace.objects.create(
+        name="Other",
+        organization=run_test.organization,
+        is_active=True,
+        created_by=user,
+    )
+
+    with workspace_context(other, organization=run_test.organization):
+        forget_replacement(cleared.replacement_id, [call.id])
+
+    assert _kept_rows(call) == []
+
+
+@pytest.mark.django_db
+def test_grading_again_reads_the_calls_under_their_lock(run_test, eval_template):
+    from simulate.services.run_regrade import pend_evals
+
+    config, _, _, call = _graded_call(run_test, eval_template)
+
+    with CaptureQueriesContext(connection) as queries, transaction.atomic():
+        pended = pend_evals(
+            [call.id],
+            [config],
+            organization_id=run_test.organization_id,
+            workspace_id=run_test.workspace_id,
+        )
+
+    locked = [
+        query["sql"]
+        for query in queries.captured_queries
+        if "simulate_call_execution" in query["sql"] and "FOR UPDATE" in query["sql"]
+    ]
+    assert locked
+    assert [one.id for one in pended.calls] == [call.id]
+    [row] = [row for row in _kept_rows(call) if row.question_key == str(config.id)]
+    assert row.replaced_verdict == VERDICT
+
+
+@pytest.mark.django_db
+def test_a_rerun_of_two_graded_calls_keeps_each_calls_own_rows_once(
+    auth_client, run_test, eval_template
+):
+    config, other, execution, first = _graded_call(run_test, eval_template)
+    second = _call(
+        execution,
+        metadata=dict(CLOSED),
+        eval_outputs={str(config.id): dict(VERDICT, reason="second call")},
+    )
+
+    with patch(
+        "simulate.temporal.client.rerun_call_executions",
+        return_value={"workflow_id": "kept-rerun", "merged": False},
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{execution.id}/rerun-calls/",
+            {"rerun_type": "eval_only", "select_all": True},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    assert len(_kept_rows(first)) == 3
+    [row] = _kept_rows(second)
+    assert row.replaced_verdict["reason"] == "second call"
+
+
+@pytest.mark.django_db
+def test_a_harness_put_back_of_one_eval_keeps_the_rows_of_the_other(
+    run_test, eval_template
+):
+    from simulate.services.eval_result_store import ClearedVerdicts
+    from simulate.services.harness_run_evals import (
+        _ABSENT,
+        EVAL_QUEUED_KEY,
+        _clear_queued_stamps,
+    )
+
+    config, other, execution, call = _graded_call(run_test, eval_template)
+    put_back, kept = str(config.id), str(other.id)
+    cleared = ClearedVerdicts()
+    cleared.add(call, slots={key: call.eval_outputs[key] for key in (put_back, kept)})
+    cleared.keep()
+    CallExecution.objects.filter(id=call.id).update(
+        eval_outputs={put_back: {"status": "pending"}, kept: {"status": "pending"}},
+        call_metadata={
+            **CLOSED,
+            EVAL_QUEUED_KEY: {
+                put_back: "2026-11-25T00:00:00Z",
+                kept: "2026-11-25T00:00:00Z",
+            },
+        },
+    )
+    before = {
+        "entry": dict(VERDICT),
+        "eval_completed": _ABSENT,
+        "eval_started": _ABSENT,
+        "stamp": _ABSENT,
+        "replacement_id": cleared.replacement_id,
+    }
+
+    _clear_queued_stamps([str(call.id)], put_back, {str(call.id): before})
+
+    assert [row.question_key for row in _kept_rows(call)] == [kept]
