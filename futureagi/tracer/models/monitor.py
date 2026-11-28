@@ -96,6 +96,8 @@ class UserAlertMonitor(BaseModel):
         max_length=16,
         choices=[("point", "Point estimate"), ("confident", "Whole 95% interval")],
         default="point",
+        # A build from before this column creates monitors without it.
+        db_default="point",
     )
 
     # Threshold configuration
