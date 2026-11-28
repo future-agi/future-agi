@@ -87,6 +87,48 @@ def effective_operation(doc, method, path):
     return {**inline_reusable(doc, op), 'parameters': parameters}
 
 
+def skills_inputs(doc, method, path):
+    """(location, name) -> required for one operation's inputs, request body fields included."""
+    op = effective_operation(doc, method, path)
+    if op is None:
+        return None
+    inputs = {}
+    for (location, name), param in op['parameters'].items():
+        if location != 'body':
+            inputs[location, name] = bool(param.get('required'))
+            continue
+        schema = param.get('schema') or {}
+        if '$ref' in schema:
+            schema = inline_reusable(doc, referenced(doc, schema['$ref']))
+        required = set(schema.get('required') or ())
+        for field in {*schema.get('properties', {}), *required}:
+            inputs['body', field] = field in required
+    return inputs
+
+
+def breaking_skills_changes(shipped, product):
+    """What a client of the shipped Skills contract would break on: a route the product no longer
+    serves, a required input it removed or renamed, or an input it newly requires. The regenerated
+    SDK follows the product, so this compares the paired SDK's committed slice with the product."""
+    problems = []
+    for path, item in sorted(shipped.get('paths', {}).items()):
+        if not path.startswith(SKILLS):
+            continue
+        for method in sorted(m for m in item if m in HTTP_METHODS):
+            before = skills_inputs(shipped, method, path)
+            after = skills_inputs(product, method, path)
+            if after is None:
+                problems.append(f'{method.upper()} {path} is no longer served')
+                continue
+            for (location, name), required in sorted(before.items()):
+                if required and (location, name) not in after:
+                    problems.append(f'{method.upper()} {path}: required {location} input {name!r} was removed or renamed')
+            for (location, name), required in sorted(after.items()):
+                if required and not before.get((location, name)):
+                    problems.append(f'{method.upper()} {path}: {location} input {name!r} is newly required')
+    return problems
+
+
 def reached_models(doc, operation):
     models = {}
 
@@ -193,11 +235,13 @@ def run_sdk(sdk, *args):
     subprocess.run([sys.executable, '-EBs', *args], cwd=sdk, stdout=sys.stderr, check=True)
 
 
-def generate_clients(sdk, *, check_baseline):
+def generate_clients(sdk, *, check_baseline, paired=None):
     run_sdk(sdk, 'sdkgen/generate.py', '--only', 'python', 'typescript')
     run_sdk(sdk, 'sdkgen/generate.py', '--check', '--only', 'python', 'typescript')
     if check_baseline:
-        run_sdk(sdk, 'sdkgen/check_skills_baseline.py')
+        # paired=(sdk_commit, product): everything but Skills must match that SDK commit exactly.
+        extra = ('--paired', paired[0], '--product-commit', paired[1]) if paired else ()
+        run_sdk(sdk, 'sdkgen/check_skills_baseline.py', *extra)
 
 
 def check_catalog_provenance(root, product, raw_api, raw_tools):
@@ -251,7 +295,13 @@ def shipped_sql_tools(sdk_catalog, product_catalog):
     return sorted(names)
 
 
-def regenerate_scoped(root, sdk, snapshot, inputs, catalog, sdk_catalog):
+# Product pairing owns only the Skills scope. SQL, Epoch and the unscoped operations stay exactly
+# as the paired SDK commit ships them: the SDK's own pairing compares those with the product, so
+# a product change to them, or an SDK change that lands first, can never fail this build.
+OWNED_SCOPES = ('skills',)
+
+
+def regenerate_scoped(root, sdk, sdk_commit, snapshot, inputs, catalog, sdk_catalog):
     contracts = sdk / 'sdkgen/contracts'
     if ({'x-source-sha256', 'x-skills-only-baseline-sha256'} & snapshot.keys()
             or any((contracts / name).exists() for name in ('SOURCE.json', 'mcp-tools.json'))):
@@ -270,27 +320,31 @@ def regenerate_scoped(root, sdk, snapshot, inputs, catalog, sdk_catalog):
 
     product = inputs['backend_commit']
     inputs = {**inputs, 'tools_yaml_sha256': sha(blob(root, product, MCP_CATALOG))}
-    # SQL is a fixed subset of observability in this SDK; epoch and skills each
-    # take a complete group from the tested product's generated MCP inventory.
-    tools = {scope: sorted(t['name'] for t in catalog['tools'] if t['group'] == scope) for scope in ('epoch', 'skills')}
-    tools['sql'] = shipped_sql_tools(sdk_catalog, catalog)
-    if recorded['sql']['tools'] != tools['sql']:
-        raise ValueError('Recorded scoped SQL tool inventory differs from the paired SDK catalog')
-    expected = {scope: {**inputs, 'tools': names} for scope, names in tools.items()}
-    expected['other'] = recorded['other']
-    verifier['verify_scoped_source'](expected, product)
-    if recorded['skills']['backend_commit'] == product and recorded != expected:
+    # Skills takes its complete group from the tested product's generated MCP inventory; every
+    # other record is the paired SDK commit's own, byte for byte.
+    expected = {**recorded, **{scope: {**inputs, 'tools': sorted(t['name'] for t in catalog['tools']
+                                                                  if t['group'] == scope)}
+                               for scope in OWNED_SCOPES}}
+    verifier['verify_scoped_source'](expected, product, owned=OWNED_SCOPES)
+    if any(recorded[scope]['backend_commit'] == product and recorded[scope] != expected[scope]
+           for scope in OWNED_SCOPES):
         raise ValueError('Recorded scoped inputs disagree with the same product commit')
 
-    run_sdk(sdk, 'sdkgen/sync_scoped_contract.py', root.resolve(), product, baseline)
-    generate_clients(sdk, check_baseline=True)
+    run_sdk(sdk, 'sdkgen/sync_scoped_contract.py', root.resolve(), product, sdk_commit,
+            '--scopes', *OWNED_SCOPES)
+    generate_clients(sdk, check_baseline=True, paired=(sdk_commit, product))
     check_changes(sdk)
     raw = (sdk / SDK_SWAGGER).read_bytes()
     swagger = json.loads(raw)
     source = swagger.get('x-contract-sources')
     if source != expected or {'x-source-sha256', 'x-skills-only-baseline-sha256'} & swagger.keys():
         raise ValueError('Regenerated scoped snapshot does not match the committed contract inputs')
-    return swagger, {'sync_mode': 'scoped', 'source': source, 'sha256': {'swagger.json': sha(raw)}}
+    breaking = breaking_skills_changes(snapshot, swagger)
+    if breaking:
+        raise ValueError('Breaking change to the Skills contract the paired SDK ships (pair a same-named '
+                         'SDK branch that ships it): ' + '; '.join(breaking[:10]))
+    return swagger, {'sync_mode': 'scoped', 'owned_scopes': list(OWNED_SCOPES), 'source': source,
+                     'sha256': {'swagger.json': sha(raw)}}
 
 
 def regenerate_legacy(sdk, snapshot, inputs, raw_api, raw_tools, catalog):
@@ -355,7 +409,7 @@ def regenerate(root, sdk, product):
     check_catalog_provenance(root, product, raw_api, raw_tools)
     sdk_catalog = yaml.safe_load(blob(sdk, sdk_commit, 'sdkgen/catalog/operations.yaml'))
     if 'x-contract-sources' in snapshot:
-        swagger, receipt = regenerate_scoped(root, sdk, snapshot, inputs, catalog, sdk_catalog)
+        swagger, receipt = regenerate_scoped(root, sdk, sdk_commit, snapshot, inputs, catalog, sdk_catalog)
     else:
         swagger, receipt = regenerate_legacy(sdk, snapshot, inputs, raw_api, raw_tools, catalog)
     return {**receipt, 'coverage': check_slice(json.loads(raw_api), swagger, catalog, sdk_catalog)}

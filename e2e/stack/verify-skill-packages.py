@@ -29,8 +29,15 @@ def hex_digest(value, size):
     return isinstance(value, str) and re.fullmatch(rf"[0-9a-f]{{{size}}}", value) is not None
 
 
-def verify_scoped_source(source, product=None):
-    """Validate x-contract-sources, including consistency between the three product scopes."""
+def verify_scoped_source(source, product=None, owned=None):
+    """Validate x-contract-sources, including consistency between the product scopes.
+
+    `owned` names the scopes synced from `product` in this pairing (default: all three). Those
+    must name `product` and agree with each other; the others are the paired SDK commit's own
+    records, which must be well formed and agree with each other."""
+    owned = PRODUCT_SCOPES if owned is None else tuple(owned)
+    if not owned or set(owned) - set(PRODUCT_SCOPES) or len(set(owned)) != len(owned):
+        raise ValueError("Invalid scoped contract provenance: owned scopes")
     if not isinstance(source, dict) or set(source) != {*PRODUCT_SCOPES, "other"}:
         raise ValueError("Invalid scoped contract provenance: expected sql, epoch, skills and other")
     other = source["other"]
@@ -39,18 +46,18 @@ def verify_scoped_source(source, product=None):
             or not hex_digest(other["openapi_sha256"], 64)):
         raise ValueError("Invalid scoped contract provenance: SDK baseline")
     hashes = ("openapi_sha256", "mcp_sha256", "tools_yaml_sha256")
-    inputs = None
+    inputs = {}  # one product input tuple per side: the owned scopes, and the pinned ones
     seen_tools = set()
     for scope in PRODUCT_SCOPES:
         row = source[scope]
+        mine = scope in owned
         if (not isinstance(row, dict) or set(row) != {"backend_commit", *hashes, "tools"}
                 or not hex_digest(row["backend_commit"], 40) or not all(hex_digest(row[key], 64) for key in hashes)
-                or (product is not None and row["backend_commit"] != product)):
+                or (mine and product is not None and row["backend_commit"] != product)):
             raise ValueError(f"Invalid scoped contract provenance: {scope} product inputs")
         current = tuple(row[key] for key in ("backend_commit", *hashes))
-        if inputs is not None and current != inputs:
+        if inputs.setdefault(mine, current) != current:
             raise ValueError(f"Invalid scoped contract provenance: inconsistent {scope} product inputs")
-        inputs = current
         tools = row["tools"]
         if (not isinstance(tools, list) or not tools or not all(isinstance(t, str) and t.strip() for t in tools)
                 or tools != sorted(set(tools)) or seen_tools.intersection(tools)):
@@ -69,7 +76,10 @@ def verify_provenance(document, product):
     if not isinstance(hashes, dict) or not isinstance(source, dict):
         raise ValueError("Invalid regenerated contract provenance")
     if source.keys() & {*PRODUCT_SCOPES, "other"}:
-        verify_scoped_source(source, product)
+        owned = contract.get("owned_scopes")
+        if owned is not None and (not isinstance(owned, list) or not all(isinstance(s, str) for s in owned)):
+            raise ValueError("Invalid scoped contract provenance: owned scopes")
+        verify_scoped_source(source, product, owned=owned)
         if mode != "scoped" or set(hashes) != {"swagger.json"} or not hex_digest(hashes["swagger.json"], 64):
             raise ValueError("Invalid scoped contract provenance: expected scoped mode and only a swagger.json digest")
         return

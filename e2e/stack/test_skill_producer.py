@@ -245,11 +245,12 @@ class ContractTests(unittest.TestCase):
             recorded = {k: {**old_inputs, 'tools': names} for k, names in tools.items()}
             recorded['other'] = {'sdk_commit': baseline, 'slice_sha256': sha(baseline_raw),
                                  'openapi_sha256': release_hash}
-            commit(sdk, {path: encode({'x-contract-sources': recorded}),
-                         'sdkgen/catalog/operations.yaml': encode({'operations': sdk_ops})})
-            expected = {k: {'backend_commit': revision, 'openapi_sha256': sha(api_bytes), 'mcp_sha256': sha(mcp_bytes),
-                            'tools_yaml_sha256': sha(yaml_bytes), 'tools': names} for k, names in tools.items()}
-            expected['other'] = recorded['other']
+            head = commit(sdk, {path: encode({'x-contract-sources': recorded}),
+                                'sdkgen/catalog/operations.yaml': encode({'operations': sdk_ops})})
+            # Product pairing owns Skills only: sql, epoch and other stay as the SDK commit ships them.
+            expected = {**recorded, 'skills': {'backend_commit': revision, 'openapi_sha256': sha(api_bytes),
+                                               'mcp_sha256': sha(mcp_bytes), 'tools_yaml_sha256': sha(yaml_bytes),
+                                               'tools': tools['skills']}}
             output = {'x-contract-sources': expected, **self.swagger}
             for name in ('OPENAPI', 'MCP', 'MCP_CATALOG'):
                 (root / checker[name]).write_bytes(b'dirty working tree')
@@ -262,12 +263,13 @@ class ContractTests(unittest.TestCase):
             with patch.dict(regenerate.__globals__, run_sdk=command, check_catalog_provenance=lambda *_: None):
                 receipt = regenerate(root, sdk, revision)
                 self.assertEqual([c.args for c in command.call_args_list], [
-                    (sdk, 'sdkgen/sync_scoped_contract.py', root.resolve(), revision, baseline),
+                    (sdk, 'sdkgen/sync_scoped_contract.py', root.resolve(), revision, head, '--scopes', 'skills'),
                     (sdk, 'sdkgen/generate.py', '--only', 'python', 'typescript'),
                     (sdk, 'sdkgen/generate.py', '--check', '--only', 'python', 'typescript'),
-                    (sdk, 'sdkgen/check_skills_baseline.py'),
+                    (sdk, 'sdkgen/check_skills_baseline.py', '--paired', head, '--product-commit', revision),
                 ])
                 self.assertEqual(receipt['sync_mode'], 'scoped')
+                self.assertEqual(receipt['owned_scopes'], ['skills'])
                 self.assertEqual(receipt['source'], expected)
                 self.assertEqual(receipt['sha256'], {'swagger.json': sha(encode(output))})
                 self.assertEqual(receipt['coverage']['skills_operations']['sdk'], 1)
@@ -279,16 +281,17 @@ class ContractTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, 'committed contract inputs'):
                             regenerate(root, sdk, revision)
 
-                # The catalog still ships cancel_sql, even if both receipts omit it.
+                # A regenerated record that differs from the committed one is still refused.
                 with patch.dict(expected['sql'], tools=['run_sql']):
                     with self.assertRaisesRegex(ValueError, 'committed contract inputs'):
-                        regenerate(root, sdk, revision)  # regenerated receipt alone is incomplete
+                        regenerate(root, sdk, revision)
+                    # SQL is pinned to what the SDK commit ships: product pairing never re-checks
+                    # its inventory against the product (the SDK's own pairing does), so a
+                    # product or SDK change there cannot fail a product build.
                     incomplete = {**recorded, 'sql': {**recorded['sql'], 'tools': ['run_sql']}}
                     commit(sdk, {path: encode({'x-contract-sources': incomplete})})
-                    command.reset_mock()
-                    with self.assertRaisesRegex(ValueError, 'SQL tool inventory'):
-                        regenerate(root, sdk, revision)
-                    command.assert_not_called()
+                    self.assertEqual(regenerate(root, sdk, revision)['source']['sql'], incomplete['sql'])
+                    commit(sdk, {path: encode({'x-contract-sources': recorded})})
 
             # Malformed committed input cannot be repaired by overwriting it, or
             # bypassed by invoking the release sync when the sidecars are absent.
@@ -304,6 +307,45 @@ class ContractTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         regenerate(root, sdk, revision)
                 command.assert_not_called()
+
+    def test_breaking_skills_changes_name_what_a_shipped_client_breaks_on(self):
+        breaking = checker['breaking_skills_changes']
+        resolve, publish = '/model-hub/skills/resolve/', '/model-hub/skills/publish/'
+        shipped = {
+            'paths': {
+                resolve: {'get': {'parameters': [{'name': 'name', 'in': 'query', 'required': True, 'type': 'string'},
+                                                 {'name': 'label', 'in': 'query', 'type': 'string'}]}},
+                publish: {'post': {'parameters': [{'name': 'data', 'in': 'body', 'required': True,
+                                                   'schema': {'$ref': '#/definitions/Push'}}]}},
+                '/model-hub/datasets/': {'get': {'parameters': []}},
+            },
+            'definitions': {'Push': {'type': 'object', 'required': ['name'],
+                                     'properties': {'name': {'type': 'string'}, 'note': {'type': 'string'}}}},
+        }
+        self.assertEqual(breaking(shipped, shipped), [])
+        # An optional addition, and a non-Skills route the product drops, are not this check's concern.
+        tolerated = copy.deepcopy(shipped)
+        tolerated['paths'][resolve]['get']['parameters'].append({'name': 'extra', 'in': 'query', 'type': 'string'})
+        tolerated['definitions']['Push']['properties']['tag'] = {'type': 'string'}
+        del tolerated['paths']['/model-hub/datasets/']
+        self.assertEqual(breaking(shipped, tolerated), [])
+        cases = [
+            (lambda d: d['paths'][resolve]['get']['parameters'][0].update(name='skill_name'),
+             ["GET /model-hub/skills/resolve/: required query input 'name' was removed or renamed",
+              "GET /model-hub/skills/resolve/: query input 'skill_name' is newly required"]),
+            (lambda d: d['paths'][resolve]['get']['parameters'][1].update(required=True),
+             ["GET /model-hub/skills/resolve/: query input 'label' is newly required"]),
+            (lambda d: d['definitions']['Push'].update(required=['name', 'note']),
+             ["POST /model-hub/skills/publish/: body input 'note' is newly required"]),
+            (lambda d: d['definitions']['Push']['properties'].pop('name') and d['definitions']['Push'].update(required=[]),
+             ["POST /model-hub/skills/publish/: required body input 'name' was removed or renamed"]),
+            (lambda d: d['paths'].pop(publish), ['POST /model-hub/skills/publish/ is no longer served']),
+        ]
+        for change, expected in cases:
+            product = copy.deepcopy(shipped)
+            change(product)
+            with self.subTest(expected=expected[0]):
+                self.assertEqual(breaking(shipped, product), expected)
 
     def test_sql_tool_name_alone_does_not_prove_its_product_binding(self):
         endpoint = {'method': 'POST', 'path': '/tracer/sql-query/{id}/cancel/'}

@@ -91,6 +91,29 @@ class PairLockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "branch"):
             verify(self.dist, self.lock(), self.sources)
 
+    def test_product_pairing_owns_only_the_skills_scope(self):
+        # Product pairing re-syncs Skills from the product under test; sql and epoch keep the
+        # paired SDK commit's own records, synced from another product commit.
+        source = self.contract["source"]
+        pinned = {"backend_commit": "5" * 40, "openapi_sha256": "6" * 64,
+                  "mcp_sha256": "7" * 64, "tools_yaml_sha256": "8" * 64}
+        for scope in ("sql", "epoch"):
+            source[scope] = {**pinned, "tools": source[scope]["tools"]}
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)  # without owned_scopes, all must match
+        self.contract["owned_scopes"] = ["skills"]
+        verify(self.dist, self.lock(), self.sources)
+        for scope, key, value in [("skills", "backend_commit", "9" * 40),     # owned: must be this product
+                                  ("epoch", "backend_commit", "9" * 40),      # pinned: must agree with sql
+                                  ("sql", "tools", ["list_skills"])]:         # inventories stay disjoint
+            with self.subTest(scope=scope, key=key), patch.dict(source[scope], {key: value}):
+                with self.assertRaisesRegex(ValueError, "contract provenance"):
+                    verify(self.dist, self.lock(), self.sources)
+        for owned in [[], ["nope"], ["skills", "skills"], "skills"]:
+            with self.subTest(owned=owned), patch.dict(self.contract, owned_scopes=owned):
+                with self.assertRaisesRegex(ValueError, "contract provenance"):
+                    verify(self.dist, self.lock(), self.sources)
+
     def test_legacy_receipts_are_distinct_from_scoped_swagger(self):
         self.contract["sync_mode"] = "full"
         with self.assertRaisesRegex(ValueError, "contract provenance"):
