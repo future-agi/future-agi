@@ -30,11 +30,33 @@ def user():
     )
 
 
-def test_profile_uses_the_app_user_id(client_spy, user):
+def test_profile_uses_the_app_user_id_and_aliases_email_once(client_spy, user):
     posthog_tracker.identify_user(user)
 
     client_spy.set.assert_called_once_with(
         distinct_id=str(user.id), properties={"email": user.email, "name": user.name}
+    )
+    client_spy.alias.assert_called_once_with(
+        previous_id=user.email, distinct_id=str(user.id)
+    )
+
+    client_spy.reset_mock()
+    user.name = "Updated"
+    posthog_tracker.identify_user(user)
+
+    client_spy.alias.assert_not_called()
+    client_spy.set.assert_called_once_with(
+        distinct_id=str(user.id), properties={"email": user.email, "name": "Updated"}
+    )
+
+
+def test_profile_without_email_does_not_send_an_alias(client_spy, user):
+    user.email = ""
+    posthog_tracker.identify_user(user)
+
+    client_spy.alias.assert_not_called()
+    client_spy.set.assert_called_once_with(
+        distinct_id=str(user.id), properties={"email": "", "name": user.name}
     )
 
 
@@ -87,7 +109,6 @@ def test_anonymous_auth_outcomes_only_send_template_status_and_code(
 
     client_spy.capture.assert_called_once_with(
         "api_request",
-        distinct_id=None,
         properties={
             "path": f"/{request.resolver_match.route}",
             "status_code": status,

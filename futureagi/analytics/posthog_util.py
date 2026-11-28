@@ -1,10 +1,12 @@
 import os
 
 import structlog
+from django.core.cache import cache
 from posthog import Posthog
 
 logger = structlog.get_logger(__name__)
 
+_EMAIL_ALIAS_TIMEOUT_SECONDS = 400 * 24 * 60 * 60
 _token_warning_logged = False
 
 
@@ -35,10 +37,11 @@ class PostHogTracker:
     # ---- User Identification (v7: use set/set_once instead of identify) ----
 
     def identify_user(self, user, org=None, workspace_id=None):
-        """Set person properties for a user."""
-        if not self.is_enabled:
+        """Link the legacy email identity and update the account's person properties."""
+        if self.client is None:
             return
         try:
+            distinct_id = str(user.id)
             properties = {
                 "email": user.email,
                 "name": getattr(user, "name", ""),
@@ -51,7 +54,16 @@ class PostHogTracker:
             if workspace_id:
                 properties["workspace_id"] = str(workspace_id)
 
-            self.client.set(distinct_id=str(user.id), properties=properties)
+            try:
+                if user.email and cache.add(
+                    f"posthog:email-alias:{distinct_id}",
+                    True,
+                    timeout=_EMAIL_ALIAS_TIMEOUT_SECONDS,
+                ):
+                    self.client.alias(previous_id=user.email, distinct_id=distinct_id)
+            finally:
+                # A cache or alias failure must not suppress the profile update.
+                self.client.set(distinct_id=distinct_id, properties=properties)
         except Exception as e:
             logger.exception("PostHog identify error", error=str(e))
 
@@ -90,12 +102,10 @@ class PostHogTracker:
         if not self.is_enabled:
             return
         try:
-            self.client.capture(
-                event_name,
-                distinct_id=str(user_id) if user_id is not None else None,
-                properties=properties or {},
-                groups=groups or {},
-            )
+            kwargs = {"properties": properties or {}, "groups": groups or {}}
+            if user_id is not None:
+                kwargs["distinct_id"] = str(user_id)
+            self.client.capture(event_name, **kwargs)
         except Exception as e:
             logger.exception("PostHog capture error", error=str(e))
 
