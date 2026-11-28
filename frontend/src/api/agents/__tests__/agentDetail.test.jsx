@@ -309,6 +309,24 @@ describe("hooks", () => {
     ]);
   });
 
+  it("useAgentEnvironments reads every page, so no environment falls off the tab", async () => {
+    const [first, second] = AGENT_ENVIRONMENTS.results;
+    const pages = {
+      1: { ...AGENT_ENVIRONMENTS, total_pages: 2, results: [first] },
+      // A build that started meanwhile pushed the first row onto this page too.
+      2: { ...AGENT_ENVIRONMENTS, total_pages: 2, results: [first, second] },
+    };
+    listHarnessEnvironments.mockImplementation(({ page }) =>
+      Promise.resolve(pages[page]),
+    );
+    const envs = await run(() => useAgentEnvironments("a1"));
+    expect(listHarnessEnvironments.mock.calls.map(([args]) => args)).toEqual([
+      { agentDefinitionId: "a1", page: 1, limit: 100 },
+      { agentDefinitionId: "a1", page: 2, limit: 100 },
+    ]);
+    expect(envs.map((env) => env.id)).toEqual(["e5391b8a", "e9999999"]);
+  });
+
   it("useStoredAgent reads the version's stored Agent", async () => {
     axios.get.mockResolvedValue({ data: STORED_AGENT });
     const s = await run(() => useStoredAgent("a1", "v1", { enabled: true }));
