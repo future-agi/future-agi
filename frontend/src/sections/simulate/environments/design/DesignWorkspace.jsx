@@ -61,6 +61,8 @@ function ProposedPlan({
   const readingNames =
     fileNames || (sourceReviewId ? "the sources" : "your brief");
   const summary = {
+    // Nothing to review until the proposal arrives.
+    title: question ? undefined : "Drafting the design",
     structured: !question || Boolean(proposal),
     brief: {
       description: proposal

@@ -267,9 +267,10 @@ export default function DesignReview({
   );
 
   return (
-    <Box sx={{ px: 3, py: 2.5 }}>
+    // The workspace pads the page, so it lines up with the source review step.
+    <Box>
       <PageHeader
-        title="Review the design"
+        title={summary.title || "Review the design"}
         description={
           reading
             ? summary.readingLine ||

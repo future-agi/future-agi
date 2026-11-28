@@ -435,6 +435,9 @@ export default function EnvironmentWorkspace() {
         !question &&
         !designApproved(conversation) &&
         !designProgress(conversation).has("approved");
+    // Until the design is approved nothing is built, so Cancel names the design.
+    buildingEnv.beforeDesignApproval =
+      Boolean(metadata.design) && (reviewStage || Boolean(question) || drafting);
     return (
       <Box
         sx={{

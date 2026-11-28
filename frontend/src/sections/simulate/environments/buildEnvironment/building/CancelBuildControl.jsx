@@ -20,7 +20,14 @@ import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
  * The confirm's dismiss button reads "Cancel" (ConfirmDialog's fixed label), so
  * the destructive action says "Stop build" to keep the two apart.
  */
-export default function CancelBuildControl({ envId, building = false }) {
+// Before the design is approved nothing is being built, so the copy names the design.
+const COPY = {
+  build: { button: "Cancel build", title: "Stop this build?", body: "This build will be cancelled and the environment won't be created. You can start a new build afterwards.", action: "Stop build", done: "Build canceled" },
+  design: { button: "Cancel design", title: "Stop this design?", body: "The builder stops and the environment won't be created. You can start a new build afterwards.", action: "Stop design", done: "Design canceled" },
+};
+
+export default function CancelBuildControl({ envId, building = false, designing = false }) {
+  const copy = designing ? COPY.design : COPY.build;
   const [confirming, setConfirming] = useState(false);
   const cancel = useCancelHarnessJob(envId);
   const { canEdit } = useSimulationAccess();
@@ -30,7 +37,7 @@ export default function CancelBuildControl({ envId, building = false }) {
   const onConfirm = () => {
     setConfirming(false);
     cancel.mutate(undefined, {
-      onSuccess: () => enqueueSnackbar("Build canceled", { variant: "success" }),
+      onSuccess: () => enqueueSnackbar(copy.done, { variant: "success" }),
       // A cancel that fails quietly reads as a dead button, so surface it.
       onError: () =>
         enqueueSnackbar("Couldn't cancel the build. Try again", { variant: "error" }),
@@ -49,17 +56,16 @@ export default function CancelBuildControl({ envId, building = false }) {
           startIcon={<Iconify icon="solar:close-circle-linear" width={15} />}
           sx={{ typography: "s2" }}
         >
-          {cancel.isPending ? "Canceling…" : "Cancel build"}
+          {cancel.isPending ? "Canceling…" : copy.button}
         </Button>
       </ViewerLock>
       <ConfirmDialog
         open={confirming}
         onClose={() => setConfirming(false)}
-        title="Stop this build?"
+        title={copy.title}
         content={(
           <Typography component="span" sx={{ typography: "s2" }}>
-            This build will be cancelled and the environment won&apos;t be created. You can start
-            a new build afterwards.
+            {copy.body}
           </Typography>
         )}
         action={
@@ -70,7 +76,7 @@ export default function CancelBuildControl({ envId, building = false }) {
             onClick={onConfirm}
             sx={{ paddingX: "24px" }}
           >
-            Stop build
+            {copy.action}
           </Button>
         }
       />
@@ -81,4 +87,5 @@ export default function CancelBuildControl({ envId, building = false }) {
 CancelBuildControl.propTypes = {
   envId: PropTypes.string,
   building: PropTypes.bool,
+  designing: PropTypes.bool,
 };

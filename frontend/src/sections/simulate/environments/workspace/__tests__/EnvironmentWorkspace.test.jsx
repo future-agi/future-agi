@@ -858,7 +858,9 @@ describe("EnvironmentWorkspace route shell", () => {
       }),
     );
     renderWorkspace("/dashboard/simulate/environments/job-build");
-    expect(await screen.findByText("Review the design")).toBeInTheDocument();
+    expect(await screen.findByText("Drafting the design")).toBeInTheDocument();
+    // Nothing is built yet, so the header cancels the design, not a build.
+    expect(screen.getByRole("button", { name: /Cancel design/ })).toBeInTheDocument();
     // Without the backend's designing state the pill keeps today's "Building".
     expect(screen.queryByText("Designing")).toBeNull();
     expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
@@ -878,7 +880,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(
       await screen.findByText(PIPELINE_CHECKS_COPY.heading),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Review the design")).toBeNull();
+    expect(screen.queryByText("Drafting the design")).toBeNull();
     cleanup();
 
     getHarnessJob.mockResolvedValue(
@@ -894,7 +896,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(
       await screen.findByText(PIPELINE_CHECKS_COPY.heading),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Review the design")).toBeNull();
+    expect(screen.queryByText("Drafting the design")).toBeNull();
     cleanup();
 
     // The backend's own designing stage decides it, whatever the conversation says.
@@ -906,7 +908,7 @@ describe("EnvironmentWorkspace route shell", () => {
       status: { stage: "designing", created_at: NOW },
     });
     renderWorkspace("/dashboard/simulate/environments/job-build");
-    expect(await screen.findByText("Review the design")).toBeInTheDocument();
+    expect(await screen.findByText("Drafting the design")).toBeInTheDocument();
     expect(screen.getByText("Designing")).toBeInTheDocument();
     cleanup();
 
@@ -916,7 +918,7 @@ describe("EnvironmentWorkspace route shell", () => {
       status: { stage: "awaiting_approval", created_at: NOW },
     });
     renderWorkspace("/dashboard/simulate/environments/job-build");
-    expect(await screen.findByText("Review the design")).toBeInTheDocument();
+    expect(await screen.findByText("Drafting the design")).toBeInTheDocument();
     expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
     expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
   });

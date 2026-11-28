@@ -162,7 +162,7 @@ export default function WorkspaceHeader({
 
       {/* Cancel build sits to the right of Run simulation while building; it
           self-hides once the build is no longer running. */}
-      <CancelBuildControl envId={env?.id} building={building} />
+      <CancelBuildControl envId={env?.id} building={building} designing={Boolean(env?.beforeDesignApproval)} />
 
       {!locked && (
         <ForkMenu
@@ -218,6 +218,7 @@ WorkspaceHeader.propTypes = {
     composition: PropTypes.object,
     status: PropTypes.string,
     buildStatus: PropTypes.string,
+    beforeDesignApproval: PropTypes.bool,
     platform: PropTypes.shape({
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
