@@ -28,6 +28,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.agent_definition import ProviderCredentials
+from simulate.selectors.agent_environments import OWNER, environment_jobs, owned_by
 from simulate.services.agent_setup import store_agent
 from simulate.services.hosted_harness import (
     create_hosted_job,
@@ -1238,7 +1239,7 @@ def test_an_agent_with_environments_cannot_be_deleted_one_at_a_time(
     assert single.status_code == status.HTTP_409_CONFLICT, single.content
     assert single.json()["code"] == "agent_in_use"
     assert single.json()["detail"] == (
-        "Northwind is tested by 2 environments. Delete those environments first."
+        "Northwind is still tested by an environment, so it can't be deleted."
     )
     operations = auth_client.delete(
         f"/simulate/api/agent-definition-operations/{tested.id}/"
@@ -1254,6 +1255,170 @@ def test_an_agent_with_environments_cannot_be_deleted_one_at_a_time(
     )
     free.refresh_from_db()
     assert free.deleted is True
+
+
+@pytest.mark.django_db
+def test_an_agent_its_tab_shows_no_environment_for_is_still_kept_while_one_tests_it(
+    auth_client, organization, workspace, user
+):
+    # Deleting asks whether anything tests the agent, not what its tab lists: an adaptation
+    # the list hides, or a build the viewer's list doesn't show, still holds it.
+    adapted = _agent(organization, workspace, "Adapted only")
+    adaptation = _environment(adapted, 1)
+    HostedHarnessJob.all_objects.filter(id=adaptation.id).update(
+        payload={**adaptation.payload, "metadata": {"adaptation": {"mode": "run"}}}
+    )
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    elsewhere = _agent(organization, workspace, "Built elsewhere")
+    HostedHarnessJob.all_objects.filter(id=_environment(elsewhere, 2).id).update(
+        workspace=sibling
+    )
+
+    rows = _rows(auth_client)
+    for agent in (adapted, elsewhere):
+        assert _list(auth_client, agent) == []
+        assert rows[agent.agent_name]["environment_count"] == 0
+        refused = auth_client.delete(f"{AGENTS}{agent.id}/delete/")
+        assert refused.status_code == status.HTTP_409_CONFLICT, refused.content
+        assert refused.json()["code"] == "agent_in_use"
+        # The tab lists none of what tests it, so the refusal names no count and asks
+        # for nothing the page shows.
+        assert refused.json()["detail"] == (
+            f"{agent.agent_name} is still tested by an environment, so it can't be deleted."
+        )
+        operations = auth_client.delete(
+            f"/simulate/api/agent-definition-operations/{agent.id}/"
+        )
+        assert operations.status_code == status.HTTP_409_CONFLICT, operations.content
+        agent.refresh_from_db()
+        assert agent.deleted is False
+
+
+@pytest.mark.django_db
+def test_an_agent_reads_as_tested_wherever_the_server_keeps_it(
+    auth_client, organization, workspace, user
+):
+    # The page offers Delete only where the server would delete: the rows and the detail
+    # say whether anything still tests the agent, even what its tab doesn't list.
+    adapted = _agent(organization, workspace, "Adapted only")
+    adaptation = _environment(adapted, 1)
+    HostedHarnessJob.all_objects.filter(id=adaptation.id).update(
+        payload={**adaptation.payload, "metadata": {"adaptation": {"mode": "run"}}}
+    )
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    elsewhere = _agent(organization, workspace, "Built elsewhere")
+    HostedHarnessJob.all_objects.filter(id=_environment(elsewhere, 2).id).update(
+        workspace=sibling
+    )
+    listed = _agent(organization, workspace, "Listed")
+    _environment(listed, 3)
+    untested = _agent(organization, workspace, "Untested")
+
+    rows = _rows(auth_client)
+    for agent, tested in (
+        (adapted, True),
+        (elsewhere, True),
+        (listed, True),
+        (untested, False),
+    ):
+        assert rows[agent.agent_name]["tested_by_environment"] is tested
+        detail = auth_client.get(f"{AGENTS}{agent.id}/")
+        assert detail.status_code == status.HTTP_200_OK, detail.content
+        assert detail.json()["tested_by_environment"] is tested
+        deleted = auth_client.delete(f"{AGENTS}{agent.id}/delete/")
+        assert (deleted.status_code == status.HTTP_409_CONFLICT) is tested
+
+
+@pytest.mark.django_db
+def test_a_request_sees_exactly_its_workspace_or_only_jobs_with_none(
+    organization, workspace, user
+):
+    # scope_jobs guards many views: a request with a workspace sees only that workspace's
+    # jobs, and one with none sees only jobs that have no workspace.
+    from types import SimpleNamespace
+
+    from simulate.services.harness_provider import scope_jobs
+
+    agent = _agent(organization, workspace, "Scoped jobs")
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    here, there, nowhere = (_environment(agent, minutes) for minutes in (1, 2, 3))
+    HostedHarnessJob.all_objects.filter(id=there.id).update(workspace=sibling)
+    HostedHarnessJob.all_objects.filter(id=nowhere.id).update(workspace=None)
+    jobs = HostedHarnessJob.no_workspace_objects.filter(
+        id__in=[here.id, there.id, nowhere.id]
+    )
+
+    def seen(scope):
+        request = SimpleNamespace(workspace=scope, headers={})
+        return set(scope_jobs(jobs, request).values_list("id", flat=True))
+
+    assert seen(workspace) == {here.id}
+    assert seen(sibling) == {there.id}
+    assert seen(None) == {nowhere.id}
+
+
+@pytest.mark.django_db
+def test_the_owner_rule_reads_the_same_as_a_count_and_as_a_filter(
+    organization, workspace
+):
+    agent = _agent(organization, workspace, "Owned")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    unlinked = _environment(agent, 1)
+    HostedHarnessJob.all_objects.filter(id=unlinked.id).update(
+        run_test=None, agent_version=version
+    )
+    linked = _environment(agent, 2)
+    gone = _environment(agent, 3)
+    RunTest.all_objects.filter(id=gone.run_test_id).update(deleted=True)
+    orphan = _environment(agent, 4)
+    HostedHarnessJob.all_objects.filter(id=orphan.id).update(
+        run_test=None, agent_version=None
+    )
+    _environment(_agent(organization, workspace, "Someone else"), 5)
+
+    as_count = {
+        job.id
+        for job in environment_jobs().annotate(_owner=OWNER).filter(_owner=agent.id)
+    }
+    as_filter = {job.id for job in environment_jobs().filter(owned_by(agent.id))}
+
+    assert as_count == as_filter == {unlinked.id, linked.id}
+
+
+@pytest.mark.django_db
+def test_the_count_and_the_list_use_the_same_scope(
+    auth_client, organization, workspace, user
+):
+    agent = _agent(organization, workspace, "Scoped")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    here = _environment(agent, 1)
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    for minutes, linked in ((2, True), (3, False)):
+        job = _environment(agent, minutes)
+        fields = {"workspace": sibling}
+        if not linked:
+            fields.update(run_test=None, agent_version=version)
+        HostedHarnessJob.all_objects.filter(id=job.id).update(**fields)
+
+    listed = [row["id"] for row in _list(auth_client, agent)]
+    row = _rows(auth_client)["Scoped"]
+
+    assert listed == [str(here.id)]
+    assert _detail(auth_client, agent)["environment_count"] == len(listed)
+    assert row["environment_count"] == len(listed)
+    assert [entry["id"] for entry in row["environments"]] == listed
 
 
 @pytest.mark.django_db
@@ -1636,6 +1801,116 @@ def test_a_queued_build_without_a_test_yet_still_holds_its_agent(
     for row in (queued, version):
         row.refresh_from_db()
         assert row.deleted is False
+
+
+@pytest.mark.django_db
+def test_the_agent_tab_lists_every_build_of_the_agent_and_its_count_agrees(
+    auth_client, organization, workspace
+):
+    # A build is linked to a test only once its scenarios are submitted. One that fails, is
+    # cancelled or is still running before that holds its agent through the version it was built
+    # from, and the agent's tab lists it, as the agent's count already counts it.
+    agent = _agent(organization, workspace, "Tabbed")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    early = {}
+    for minutes, state in enumerate(
+        (
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+            HostedHarnessJob.State.RUNNING,
+        ),
+        1,
+    ):
+        job = _environment(agent, minutes)
+        HostedHarnessJob.all_objects.filter(id=job.id).update(
+            run_test=None, agent_version=version, state=state
+        )
+        early[state] = job
+    linked = _environment(agent, 4)
+    gone = _environment(agent, 5)
+    RunTest.all_objects.filter(id=gone.run_test_id).update(deleted=True)
+    # Another agent's builds, linked or not, and a build with neither a test nor a version.
+    other = _agent(organization, workspace, "Elsewhere")
+    others = _environment(other, 6)
+    others_early = _environment(other, 7)
+    HostedHarnessJob.all_objects.filter(id=others_early.id).update(
+        run_test=None,
+        agent_version=other.create_version(
+            description="p", commit_message="v1", status="active"
+        ),
+    )
+    orphan = _environment(agent, 8)
+    HostedHarnessJob.all_objects.filter(id=orphan.id).update(
+        run_test=None, agent_version=None
+    )
+    # Deleted builds, linked or not, are neither listed nor counted.
+    removed = _environment(agent, 9)
+    removed_early = _environment(agent, 10)
+    HostedHarnessJob.all_objects.filter(id=removed.id).update(deleted=True)
+    HostedHarnessJob.all_objects.filter(id=removed_early.id).update(
+        run_test=None, agent_version=version, deleted=True
+    )
+
+    listed = {row["id"] for row in _list(auth_client, agent)}
+    detail = auth_client.get(f"{AGENTS}{agent.id}/").json()
+    rows = _rows(auth_client)
+
+    assert listed == {str(job.id) for job in (*early.values(), linked)}
+    assert detail["environment_count"] == len(listed)
+    assert rows["Tabbed"]["environment_count"] == len(listed)
+    listed_other = {row["id"] for row in _list(auth_client, other)}
+    assert listed_other == {str(others.id), str(others_early.id)}
+    assert rows["Elsewhere"]["environment_count"] == len(listed_other)
+    # The main Environments page, with no agent asked for, is unchanged: every build.
+    everything = {
+        row["id"]
+        for row in auth_client.get(ENVIRONMENTS, {"limit": 50}).json()["results"]
+    }
+    assert listed | {str(others.id), str(others_early.id), str(gone.id)} <= everything
+    assert str(orphan.id) in everything
+
+
+@pytest.mark.django_db
+def test_an_adaptation_the_list_hides_is_not_counted_either(
+    auth_client, organization, workspace
+):
+    # An adaptation is followed as a job: only one in review and not yet done is listed. The
+    # agent's count follows the same rule, whether the adaptation holds the agent through a
+    # test or through its version.
+    agent = _agent(organization, workspace, "Adapted")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+
+    def adaptation(minutes, adaptation, state, *, linked):
+        job = _environment(agent, minutes)
+        fields = {
+            "payload": {**job.payload, "metadata": {"adaptation": adaptation}},
+            "state": state,
+        }
+        if not linked:
+            fields.update(run_test=None, agent_version=version)
+        HostedHarnessJob.all_objects.filter(id=job.id).update(**fields)
+        return job
+
+    State = HostedHarnessJob.State
+    shown = [
+        _environment(agent, 1),
+        adaptation(2, {"mode": "review"}, State.RUNNING, linked=True),
+        adaptation(3, {"mode": "review"}, State.FAILED, linked=False),
+    ]
+    for minutes, linked in ((4, True), (5, False)):
+        adaptation(minutes, {"mode": "run"}, State.RUNNING, linked=linked)
+        adaptation(minutes + 2, {}, State.RUNNING, linked=linked)
+        adaptation(minutes + 4, {"mode": "review"}, State.COMPLETED, linked=linked)
+
+    listed = {row["id"] for row in _list(auth_client, agent)}
+
+    assert listed == {str(job.id) for job in shown}
+    assert _detail(auth_client, agent)["environment_count"] == len(listed)
+    assert _rows(auth_client)["Adapted"]["environment_count"] == len(listed)
 
 
 @pytest.mark.django_db

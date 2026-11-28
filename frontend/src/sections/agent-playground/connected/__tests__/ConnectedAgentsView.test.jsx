@@ -339,6 +339,28 @@ describe("ConnectedAgentsView", () => {
     ).toBeInTheDocument();
   });
 
+  it("will not delete an agent still tested by an environment its row doesn't count", async () => {
+    const rows = CONNECTED_AGENTS_FIXTURE.map((row) => ({
+      ...row,
+      environment_count: 0,
+      environments: [],
+      tested_by_environment: row.agent_name === "Customer support line",
+    }));
+    axios.get.mockImplementation((_, { params }) =>
+      Promise.resolve({ data: pageOf(rows, params) }),
+    );
+    renderView();
+    await screen.findByText("Customer support line");
+    tickRow("Customer support line");
+
+    expect(deleteButton()).toBeDisabled();
+    expect(
+      screen.getByLabelText(
+        "Customer support line is still used in an environment, so it can't be deleted.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("deletes the idle agents of a mixed selection and says which were kept", async () => {
     axios.delete.mockResolvedValue({
       data: {

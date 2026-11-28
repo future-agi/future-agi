@@ -164,7 +164,7 @@ export default function AgentDetailHeader({
 }) {
   const navigate = useNavigate();
   const isCode = agent.agentKind === "source";
-  const { source, managedBy } = agent;
+  const { source, managedBy, managedByEnvironment } = agent;
   const openManager = () =>
     navigate(paths.dashboard.simulate.environments.detail(managedBy.id));
   const where = isCode
@@ -210,7 +210,12 @@ export default function AgentDetailHeader({
       ) : (
         envs
       )),
-    managedBy && (
+    managedByEnvironment && !managedBy && (
+      <Box component="span" key="managed" data-testid="agent-managed-by">
+        Managed by an environment
+      </Box>
+    ),
+    managedByEnvironment && managedBy && (
       <Box
         component="span"
         key="managed"

@@ -1,6 +1,7 @@
 """Versions of a connected agent: made with no environment, passed into production,
 followed or pinned by the environments that test the agent."""
 
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -235,6 +236,176 @@ def test_production_offers_an_environment_that_never_chose_to_follow(agent):
     assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
         str(unchosen.id): "pinned",
     }
+
+
+def test_production_reaches_a_build_not_yet_linked_to_a_test(agent):
+    # An environment holds its agent through the version it pins until its scenarios are
+    # submitted and it is linked to a test. The agent's page lists it, so production reaches
+    # it as it reaches a linked one in the same state: a finished follower moves, an
+    # unfinished one waits as busy, a pinned one is offered.
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+
+    def built(minutes, state, *, linked=False):
+        environment = _environment(agent, minutes)
+        fields = {"state": state, "agent_version": first}
+        if not linked:
+            fields["run_test"] = None
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(**fields)
+        environment.refresh_from_db()
+        return _built_from(environment, first, source_agent())
+
+    State = HostedHarnessJob.State
+    follows = _following(built(1, State.COMPLETED))
+    failed = _following(built(2, State.FAILED))
+    failed_linked = _following(built(3, State.FAILED, linked=True))
+    pinned = _pinned(built(4, State.CANCELED))
+
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+        set_production(second)
+
+    for environment in (follows, failed, pinned):
+        environment.refresh_from_db()
+    assert follows.agent_version_id == second.id
+    assert failed.agent_version_id == first.id
+    assert pinned.agent_version_id == first.id
+    assert (str(pinned.id), False) in {
+        (str(call.args[0]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    }
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(follows.id): "activated",
+        str(failed.id): "environment_busy",
+        str(failed_linked.id): "environment_busy",
+        str(pinned.id): "pinned",
+    }
+
+
+def test_production_reaches_an_unlinked_build_only_in_its_agents_scope(agent, user):
+    # A build not yet linked to a test is its agent's where the agent is, as the agent's
+    # count and list read it. A production change moves the one there and neither moves,
+    # reports nor offers anything to the one outside.
+    from accounts.models.workspace import Workspace
+
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+
+    def unlinked(minutes, **fields):
+        environment = _environment(agent, minutes)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state=HostedHarnessJob.State.COMPLETED,
+            agent_version=first,
+            run_test=None,
+            **fields,
+        )
+        environment.refresh_from_db()
+        return _following(_built_from(environment, first, source_agent()))
+
+    here = unlinked(1)
+    outside = unlinked(
+        2,
+        workspace=Workspace.objects.create(
+            name="Outside",
+            organization=agent.organization,
+            is_active=True,
+            created_by=user,
+        ),
+    )
+
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+        set_production(second)
+
+    here.refresh_from_db()
+    outside.refresh_from_db()
+    assert here.agent_version_id == second.id
+    assert outside.agent_version_id == first.id
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(here.id): "activated",
+    }
+    assert str(outside.id) not in {str(call.args[0]) for call in nudge.call_args_list}
+
+
+def test_production_offers_a_pinned_dead_build_nothing_it_can_show(agent, settings):
+    # A build with no policy is pinned, so a production change visits an agent's failed and
+    # cancelled builds, linked or not: it leaves each on its version, records it as pinned
+    # and schedules its offer. The offer raises no card while the build is not complete.
+    from simulate.services.harness_versioning.nudges import _raisable
+
+    settings.HARNESS_VERSIONING_NUDGES_ENABLED = True
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+
+    State = HostedHarnessJob.State
+    dead = []
+    for minutes, (state, linked) in enumerate(
+        (
+            (State.FAILED, True),
+            (State.FAILED, False),
+            (State.CANCELED, True),
+            (State.CANCELED, False),
+        ),
+        1,
+    ):
+        environment = _environment(agent, minutes)
+        fields = {"state": state, "agent_version": first}
+        if not linked:
+            fields["run_test"] = None
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(**fields)
+        environment.refresh_from_db()
+        dead.append(environment)
+
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+        set_production(second)
+
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(environment.id): "pinned" for environment in dead
+    }
+    scheduled = {
+        (str(call.args[0]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    }
+    assert scheduled == {(str(environment.id), False) for environment in dead}
+    for environment in dead:
+        environment.refresh_from_db()
+        assert environment.agent_version_id == first.id
+        # Even with a built version, a dead build raises no card; a finished one would.
+        environment.environment_version_id = uuid.uuid4()
+        assert _raisable(environment) is False
+        environment.state = State.COMPLETED
+        assert _raisable(environment) is True
 
 
 def test_a_later_version_that_passes_is_offered_and_waits_for_production(agent):
@@ -619,6 +790,38 @@ def test_a_follow_set_by_hand_can_return_to_an_earlier_production(agent, user):
     assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
         str(following.id): "activated"
     }
+
+
+@pytest.mark.parametrize("linked", [True, False])
+def test_a_failed_build_behind_production_keeps_its_pin_when_told_to_follow(
+    agent, user, linked
+):
+    # The agent's tab lists a failed build whether or not it was linked to a test. Asked to
+    # follow production while behind it, either is refused as not ready, and its pin and
+    # policy are left as they were.
+    from simulate.services.agent_versions import set_environment_policy
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    nudge = "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    first = _passed(agent)
+    environment = _environment(agent, 1)
+    fields = {"state": HostedHarnessJob.State.FAILED, "agent_version": first}
+    if not linked:
+        fields["run_test"] = None
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(**fields)
+    environment.refresh_from_db()
+    pinned = _pinned(_built_from(environment, first, source_agent()))
+    second = _compatible_draft(agent, first)
+    with patch(nudge):
+        set_production(second)
+
+    with patch(nudge), pytest.raises(HostedHarnessError) as refused:
+        set_environment_policy(pinned, policy=POLICY_FOLLOW, user=user)
+
+    assert refused.value.code == "environment_busy"
+    pinned.refresh_from_db()
+    assert pinned.agent_version_id == first.id
+    assert environment_policy(pinned) == POLICY_PINNED
 
 
 def test_switching_to_follow_while_on_production_records_the_request(agent, user):

@@ -172,7 +172,7 @@ export function resolveBackendContainer(
 
 /** Copies a seed script into the backend container, runs it there with `env`, and
  *  parses the JSON line it prints last. */
-function runSeedScript(container: string, scriptPath: string, name: string, env: Record<string, string>): unknown {
+export function runSeedScript(container: string, scriptPath: string, name: string, env: Record<string, string>): unknown {
   execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/${name}`]);
   const stdout = execFileSync('docker', ['exec',
     ...Object.entries(env).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
@@ -182,7 +182,7 @@ function runSeedScript(container: string, scriptPath: string, name: string, env:
   return JSON.parse(stdout.trim().split('\n').pop() ?? '');
 }
 
-function seedSuffix(): string {
+export function seedSuffix(): string {
   return `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 }
 

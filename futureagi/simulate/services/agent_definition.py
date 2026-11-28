@@ -430,7 +430,7 @@ def delete_agent(organization, agent_id) -> tuple[int, int]:
     """Soft-delete one of the organization's agents and its versions. Refuses,
     deleting nothing, while an environment still tests it; the agent is locked so
     an environment can't bind to it in between."""
-    from simulate.services.agent_overview import environment_counts
+    from simulate.services.agent_overview import testing_environment_counts
     from simulate.services.hosted_harness import HostedHarnessError
 
     with transaction.atomic():
@@ -442,12 +442,13 @@ def delete_agent(organization, agent_id) -> tuple[int, int]:
         )
         if agent is None:
             return 0, 0
-        total = environment_counts([agent.id]).get(agent.id, 0)
-        if total:
+        if testing_environment_counts([agent.id]).get(agent.id):
+            # The agent's tab may list none of what tests it, so the refusal names no
+            # count and asks for nothing the page doesn't show.
             raise HostedHarnessError(
                 "agent_in_use",
-                f"{agent.agent_name} is tested by {total} environment"
-                f"{'s' if total != 1 else ''}. Delete those environments first.",
+                f"{agent.agent_name} is still tested by an environment, so it can't"
+                " be deleted.",
                 status_code=409,
             )
         return _soft_delete([agent.id])
@@ -457,7 +458,7 @@ def delete_agents(organization, agent_ids) -> tuple[int, int, list[UUID]]:
     """Soft-delete the organization's agents that no environment tests, with their
     versions, and skip the rest; returns the skipped ids in the order asked. The
     agents are locked so an environment can't bind to one in between."""
-    from simulate.services.agent_overview import environment_counts
+    from simulate.services.agent_overview import testing_environment_counts
 
     with transaction.atomic():
         agents = list(
@@ -466,7 +467,7 @@ def delete_agents(organization, agent_ids) -> tuple[int, int, list[UUID]]:
             .only("id")
             .order_by("id")
         )
-        counts = environment_counts([agent.id for agent in agents])
+        counts = testing_environment_counts([agent.id for agent in agents])
         found = {agent.id for agent in agents}
         skipped = [
             agent_id

@@ -99,8 +99,17 @@ export const usedInLabel = ({ environments, environmentCount }) => {
 
 const agentsCount = (count) => `${count} agent${count === 1 ? "" : "s"}`;
 
+// Whether the server keeps the agent on delete: something tests it, even what its
+// row doesn't count.
+export const isTestedByEnvironment = (agent) =>
+  !!agent.testedByEnvironment || agent.environmentCount > 0;
+
+// An agent its row counts none for is still held by at least one.
 const usedIn = (agents) =>
-  agents.reduce((sum, agent) => sum + (agent.environmentCount ?? 1), 0) === 1
+  agents.reduce(
+    (sum, agent) => sum + Math.max(agent.environmentCount ?? 1, 1),
+    0,
+  ) === 1
     ? "an environment"
     : "environments";
 
@@ -133,14 +142,14 @@ export const deleteConfirmText = (agents, kept = []) => {
   } still used in ${usedIn(kept)} and ${kept.length === 1 ? "stays" : "stay"}.`;
 };
 
+// It asks the user to delete environments only when every row counts what holds it.
 export const deleteBlockedReason = (agents) => {
-  const environments = agents.reduce(
-    (sum, agent) => sum + (agent.environmentCount ?? 0),
-    0,
-  );
-  return `${agentNames(agents)} ${agents.length === 1 ? "is" : "are"} still used in ${
-    environments === 1 ? "an environment" : "environments"
-  }. Delete those environments first.`;
+  const used = `${agentNames(agents)} ${agents.length === 1 ? "is" : "are"} still used in ${usedIn(
+    agents,
+  )}`;
+  return agents.every((agent) => agent.environmentCount > 0)
+    ? `${used}. Delete those environments first.`
+    : `${used}, so ${agents.length === 1 ? "it" : "they"} can't be deleted.`;
 };
 
 export const versionsParts = ({ latestLabel, versionCount }) => {

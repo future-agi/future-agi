@@ -1,6 +1,5 @@
 from uuid import UUID
 
-from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -19,6 +18,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.agent_environments import listed_environment_jobs, owned_by
 from simulate.selectors.agent_fix_issue import issue_scenarios
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
@@ -345,22 +345,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     pagination_class = ExtendedPageNumberPagination
 
     def _scoped_jobs(self, request):
-        # An adaptation is followed as a job; its composition is the environment. One in review
-        # is listed until it's done, awaiting approval of its design first. By id: a negated
-        # JSON lookup is NULL, not true, on a job without metadata.
-        organization = request_organization(request)
-        adaptations = HostedHarnessJob.no_workspace_objects.filter(
-            organization=organization, payload__metadata__has_key="adaptation"
-        )
-        in_review = adaptations.filter(
-            payload__metadata__adaptation__mode="review"
-        ).exclude(state=HostedHarnessJob.State.COMPLETED)
+        # An adaptation in review is listed until it's done, awaiting approval of its design
+        # first; see LISTED.
         return scope_jobs(
-            HostedHarnessJob.no_workspace_objects.filter(
-                ~Q(id__in=adaptations.values("id")) | Q(id__in=in_review.values("id")),
-                organization=organization,
-                environment__isnull=True,
-                deleted=False,
+            listed_environment_jobs().filter(
+                organization=request_organization(request)
             ),
             request,
         )
@@ -1836,7 +1825,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         )
         agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:
-            jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
+            # The agent's own environments, as its count has them: a build not yet linked to a
+            # test is the agent's through the version it was made from.
+            jobs = jobs.filter(owned_by(agent_definition_id))
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
         response = paginator.get_paginated_response(environment_rows(page or []))

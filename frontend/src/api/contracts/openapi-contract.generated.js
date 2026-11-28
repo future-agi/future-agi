@@ -54054,6 +54054,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           readOnly: true,
         },
+        tested_by_environment: {
+          title: "Tested by environment",
+          type: "boolean",
+          readOnly: true,
+        },
         observability_enabled: {
           title: "Observability enabled",
           type: "boolean",
@@ -54069,6 +54074,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         managed_by: {
           $ref: "#/definitions/RunEnvironmentRef",
+        },
+        managed_by_environment: {
+          title: "Managed by environment",
+          type: "boolean",
+          readOnly: true,
         },
         found_check: {
           $ref: "#/definitions/AgentFoundCheck",
@@ -54485,6 +54495,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         environment_count: {
           title: "Environment count",
           type: "integer",
+          readOnly: true,
+        },
+        tested_by_environment: {
+          title: "Tested by environment",
+          type: "boolean",
           readOnly: true,
         },
         environments: {

@@ -434,29 +434,37 @@ describe("AgentVersionsTab", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("won't offer Set as production on an agent an environment manages", async () => {
-    const versions = axios.get.getMockImplementation();
-    axios.get.mockImplementation((url, config) =>
-      url.endsWith(`/agent-definitions/${HOSTED_AGENT_DETAIL.id}/`)
-        ? Promise.resolve({
-            data: {
-              ...HOSTED_AGENT_DETAIL,
-              managed_by: { id: "env-1", name: "Refund flow" },
-            },
-          })
-        : versions(url, config),
-    );
-    renderTab();
-    const [, oldest] = await screen.findAllByTestId("version-entry");
-    await waitFor(() =>
+  it.each([
+    ["names", { id: "env-1", name: "Refund flow" }],
+    // The page may not show which environment manages it, only that one does.
+    ["does not name", null],
+  ])(
+    "won't offer Set as production on an agent an environment manages, when the page %s it",
+    async (_, managedBy) => {
+      const versions = axios.get.getMockImplementation();
+      axios.get.mockImplementation((url, config) =>
+        url.endsWith(`/agent-definitions/${HOSTED_AGENT_DETAIL.id}/`)
+          ? Promise.resolve({
+              data: {
+                ...HOSTED_AGENT_DETAIL,
+                managed_by: managedBy,
+                managed_by_environment: true,
+              },
+            })
+          : versions(url, config),
+      );
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      await waitFor(() =>
+        expect(
+          within(oldest).getByRole("button", { name: "View definition" }),
+        ).toBeInTheDocument(),
+      );
       expect(
-        within(oldest).getByRole("button", { name: "View definition" }),
-      ).toBeInTheDocument(),
-    );
-    expect(
-      within(oldest).queryByRole("button", { name: "Set as production" }),
-    ).toBeNull();
-  });
+        within(oldest).queryByRole("button", { name: "Set as production" }),
+      ).toBeNull();
+    },
+  );
 
   it("won't offer Set as production to a viewer", async () => {
     auth.role = "workspace_viewer";

@@ -140777,6 +140777,11 @@
                     "type": "integer",
                     "readOnly": true
                 },
+                "tested_by_environment": {
+                    "title": "Tested by environment",
+                    "type": "boolean",
+                    "readOnly": true
+                },
                 "environments": {
                     "type": "array",
                     "items": {
@@ -141666,6 +141671,11 @@
                     "type": "integer",
                     "readOnly": true
                 },
+                "tested_by_environment": {
+                    "title": "Tested by environment",
+                    "type": "boolean",
+                    "readOnly": true
+                },
                 "observability_enabled": {
                     "title": "Observability enabled",
                     "type": "boolean",
@@ -141681,6 +141691,11 @@
                 },
                 "managed_by": {
                     "$ref": "#/definitions/RunEnvironmentRef"
+                },
+                "managed_by_environment": {
+                    "title": "Managed by environment",
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "found_check": {
                     "$ref": "#/definitions/AgentFoundCheck"

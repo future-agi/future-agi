@@ -22,6 +22,7 @@ import {
 import {
   CONNECTED_AGENT_FILTER_FIELDS,
   deleteBlockedReason,
+  isTestedByEnvironment,
   deleteConfirmText,
   deleteResultMessage,
   filtersToRows,
@@ -217,8 +218,8 @@ export default function ConnectedAgentsView({ onConnect }) {
       ),
     );
   }, [items, selected]);
-  const inUse = selected.filter((agent) => agent.environmentCount > 0);
-  const deletable = selected.filter((agent) => !(agent.environmentCount > 0));
+  const inUse = selected.filter(isTestedByEnvironment);
+  const deletable = selected.filter((agent) => !isTestedByEnvironment(agent));
   const refreshing = isPlaceholderData;
   const deleteBlocked = !canDelete
     ? DELETE_DENIED

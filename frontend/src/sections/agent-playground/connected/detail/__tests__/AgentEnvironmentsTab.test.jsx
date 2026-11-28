@@ -279,6 +279,22 @@ describe("AgentEnvironmentsTab", () => {
         {
           ...UNTESTED,
           id: "e7777777",
+          status: "ready",
+          agentVersion: { id: "v1", number: 1 },
+          policy: "pinned",
+        },
+        // Behind too, but its build failed: the server refuses to move it.
+        {
+          ...UNTESTED,
+          id: "e8888888",
+          agentVersion: { id: "v1", number: 1 },
+          policy: "pinned",
+        },
+        // Behind too, but still building: the server refuses to move it until it is done.
+        {
+          ...UNTESTED,
+          id: "e6666666",
+          status: "building",
           agentVersion: { id: "v1", number: 1 },
           policy: "pinned",
         },
@@ -354,6 +370,7 @@ describe("AgentEnvironmentsTab", () => {
         {
           ...UNTESTED,
           id: "e7777777",
+          status: "ready",
           agentVersion: { id: "v1", number: 1 },
           policy: "pinned",
         },

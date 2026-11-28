@@ -33615,6 +33615,7 @@ export const SimulateAgentDefinitionsListResponseItem = zod.object({
   source: zod.string().min(1).optional(),
   version_count: zod.number().optional(),
   environment_count: zod.number().optional(),
+  tested_by_environment: zod.boolean().optional(),
   environments: zod
     .array(
       zod.object({
@@ -33864,6 +33865,7 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
   agent_kind: zod.string().min(1).optional(),
   source: zod.string().min(1).optional(),
   environment_count: zod.number().optional(),
+  tested_by_environment: zod.boolean().optional(),
   observability_enabled: zod.boolean().optional(),
   observe_project: zod
     .object({
@@ -33878,6 +33880,7 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
       name: zod.string().min(1),
     })
     .optional(),
+  managed_by_environment: zod.boolean().optional(),
   found_check: zod
     .object({
       required: zod.boolean(),

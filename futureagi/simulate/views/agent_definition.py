@@ -65,6 +65,7 @@ from simulate.services.harness_agent_versions import (
     connected_agent,
     environment_owned,
 )
+from simulate.services.harness_provider import request_workspace
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.production_project import (
     ProductionProjectError,
@@ -181,7 +182,8 @@ class AgentDefinitionView(APIView):
                     annotate_agent_rows(
                         AgentDefinition.objects.filter(
                             organization=user_organization,
-                        )
+                        ),
+                        workspace=request_workspace(request),
                     ),
                     validated,
                 )
@@ -230,7 +232,11 @@ class AgentDefinitionView(APIView):
             serializer = AgentDefinitionListResponseSerializer(
                 result_page,
                 many=True,
-                context={"environments": environment_refs(result_page)},
+                context={
+                    "environments": environment_refs(
+                        result_page, workspace=request_workspace(request)
+                    )
+                },
             )
             return paginator.get_paginated_response(serializer.data)
 
@@ -441,7 +447,10 @@ class AgentDefinitionDetailView(APIView):
         """
         try:
             agent = (
-                annotate_agent_rows(AgentDefinition.objects.all())
+                annotate_agent_rows(
+                    AgentDefinition.objects.all(),
+                    workspace=request_workspace(request),
+                )
                 .select_related("observability_provider__project", "production_project")
                 .get(
                     id=agent_id,
@@ -475,6 +484,7 @@ class AgentDefinitionDetailView(APIView):
 
             agent_kind = getattr(agent, "_agent_kind", None)
             source = getattr(agent, "_source", None)
+            managed = environment_owned(agent.id)
             return Response(
                 {
                     **agent_data,
@@ -484,14 +494,28 @@ class AgentDefinitionDetailView(APIView):
                     "agent_kind": agent_kind,
                     "source": source,
                     "environment_count": agent._environment_count,
+                    "tested_by_environment": getattr(
+                        agent, "_tested_by_environment", False
+                    ),
                     "observability_enabled": observability_on(agent),
                     "observe_project": observe_project(agent, agent_kind),
                     "connected": connected_agent(agent.id),
                     "managed_by": (
-                        next(iter(environment_refs([agent]).get(agent.id) or []), None)
-                        if environment_owned(agent.id)
+                        next(
+                            iter(
+                                environment_refs(
+                                    [agent], workspace=request_workspace(request)
+                                ).get(agent.id)
+                                or []
+                            ),
+                            None,
+                        )
+                        if managed
                         else None
                     ),
+                    # Whether an environment manages it, even where the page can't name
+                    # that environment: the page then offers no production change.
+                    "managed_by_environment": managed,
                     "found_check": {
                         "required": found_check_required(agent),
                         "done_at": agent.found_checked_at,
