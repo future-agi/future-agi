@@ -16,12 +16,14 @@ import path from "node:path";
 import test from "node:test";
 import { parse as parseYaml } from "yaml";
 import {
+  DB_REUSE_LOADS,
   SPEC_GLOBS,
   listSpecFiles,
   parseShard,
   planShards,
   readDurations,
   shardTestMatch,
+  startingLoads,
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
 import {
@@ -85,6 +87,37 @@ test("the split balances time, not test or file count", () => {
     Math.max(...load) < 0.3 * load.reduce((a, b) => a + b, 0),
     JSON.stringify(load),
   );
+});
+
+test("only a run that restores starts shards 2 and 3 with load", () => {
+  // Shard 2 still boots from zero; shard 3 compares the dump after its suite.
+  assert.deepEqual(startingLoads(8, "distributed", "true"), [
+    0, 920, 790, 0, 0, 0, 0, 0,
+  ]);
+  for (const restores of [undefined, "", "false", "TRUE"])
+    assert.deepEqual(startingLoads(8, "distributed", restores), new Array(8).fill(0));
+  // A run restores only with both of those legs.
+  assert.deepEqual(startingLoads(2, "distributed", "true"), [0, 0]);
+  // A stack without measured loads splits evenly.
+  assert.deepEqual(startingLoads(6, "standalone", "true"), new Array(6).fill(0));
+  assert.deepEqual(Object.keys(DB_REUSE_LOADS), ["distributed"]);
+});
+
+test("a starting load takes tests off that shard and keeps every file once", () => {
+  const { files, durations } = suite();
+  const even = planShards(files, durations, 4);
+  const starting = [0, 400, 300, 0];
+  const loaded = planShards(files, durations, 4, starting);
+  assert.deepEqual(flat(loaded), [...files].sort());
+  const time = (group) => group.reduce((sum, file) => sum + durations[file], 0);
+  assert.ok(time(loaded[1]) < time(even[1]), "shard 2 runs less");
+  assert.ok(time(loaded[2]) < time(even[2]), "shard 3 runs less");
+  // The legs still end together: load plus tests, within one file.
+  const ends = loaded.map((group, index) => time(group) + starting[index]);
+  const longest = Math.max(...Object.values(durations));
+  assert.ok(Math.max(...ends) - Math.min(...ends) <= longest, JSON.stringify(ends));
+  // No starting load is the even split.
+  assert.deepEqual(planShards(files, durations, 4, [0, 0, 0, 0]), even);
 });
 
 test("the plan does not depend on the order the files are listed in", () => {
