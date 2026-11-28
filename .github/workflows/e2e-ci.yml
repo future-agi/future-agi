@@ -340,9 +340,14 @@ jobs:
           done
           # Prints the switch as read and each stack's decision.
           # A stack whose restore needs a bridge restores only when this
-          # commit's restore step, the one its legs run, holds it.
+          # commit's restore step, the one its legs run, holds it. This job
+          # checks out .github/scripts alone, so the step comes out of Git at
+          # the tested commit, as text: it is searched, never run. None (a
+          # commit from before it) means no bridge.
+          restore="$RUNNER_TEMP/e2e-db-restore.sh"
+          git show "HEAD:futureagi/.ci/e2e-db-restore.sh" > "$restore" 2> /dev/null || : > "$restore"
           python3 -I "$tools/e2e_db.py" plan "$E2E_DB_REUSE" "$TOTALS" "$db" "$RUNNER_TEMP/e2e-db-plan.json" \
-            --restore-script "$GITHUB_WORKSPACE/futureagi/.ci/e2e-db-restore.sh"
+            --restore-script "$restore"
           echo "db=$(cat "$RUNNER_TEMP/e2e-db-plan.json")" >> "$GITHUB_OUTPUT"
       - name: Hand the saved database dumps to the legs that use them
         if: steps.db.outputs.artifact != ''
