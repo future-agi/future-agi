@@ -41,7 +41,12 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     // A plan is its data, `{ loading: true }` or `{ error }`.
     useRunPlan: vi.fn((envId, picks, { enabled, scenarioKeys, split } = {}) => {
       planCalls.push({ picks, enabled, scenarioKeys, split });
-      const plan = { ...PLAN_OK, ...state.plans[JSON.stringify(picks)] };
+      // A split's plan is `state.plans["split:<split>"]` over the picks' own.
+      const plan = {
+        ...PLAN_OK,
+        ...state.plans[JSON.stringify(picks)],
+        ...(split ? state.plans[`split:${split}`] : {}),
+      };
       if (!enabled) return { isLoading: false, isError: false };
       if (plan.loading) return { isLoading: true, isError: false };
       if (plan.error) {
@@ -1162,6 +1167,54 @@ describe("RunDialog split of a locked version", () => {
     expect(screen.getByTestId("run-blocked")).toHaveTextContent(
       "The test split has no scenarios to run.",
     );
+    expect(runButton()).toBeDisabled();
+  });
+
+  it("asks readiness about the split's scenarios, as the plan names them", async () => {
+    const user = userEvent.setup();
+    state.plans = { "split:test": { scenario_keys: ["k2", "k3"] } };
+    renderDialog({ scenarioIds: undefined });
+
+    await pickOption(user, "Split", "Test split · 2 scenarios");
+
+    expect(useReadiness.mock.lastCall[2]).toMatchObject({
+      keys: ["k2", "k3"],
+      enabled: true,
+    });
+  });
+
+  it("asks no readiness for a split until the plan names its scenarios", async () => {
+    const user = userEvent.setup();
+    state.plans = { "split:test": { loading: true } };
+    renderDialog({ scenarioIds: undefined });
+
+    await pickOption(user, "Split", "Test split · 2 scenarios");
+
+    expect(useReadiness.mock.lastCall[2].enabled).toBe(false);
+  });
+
+  it("counts the split's scenarios the run can play now", async () => {
+    const user = userEvent.setup();
+    state.plans = { "split:test": { scenario_keys: ["k3"] } };
+    renderDialog({ scenarioIds: undefined });
+
+    await pickOption(user, "Split", "Test split · 2 scenarios");
+
+    expect(
+      screen.getByText("Runs the test split of lock 2026.11.1: 1 scenario."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps Run off when the plan refuses an empty split", async () => {
+    const user = userEvent.setup();
+    const message =
+      "The test split of lock 2026.11.1 has no scenario this run can play.";
+    state.plans = { "split:test": { error: refusal("split_empty", message) } };
+    renderDialog({ scenarioIds: undefined });
+
+    await pickOption(user, "Split", "Test split · 2 scenarios");
+
+    expect(screen.getByTestId("run-error")).toHaveTextContent(message);
     expect(runButton()).toBeDisabled();
   });
 
