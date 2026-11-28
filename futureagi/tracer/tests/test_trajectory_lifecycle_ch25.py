@@ -39,6 +39,8 @@ from tracer.services.trajectory_seen_contract import (
     MAX_REUSE_AGE_CAP,
     QUIET_MARK_TTL,
     QUIET_SINCE_KEY,
+    SEEN_KEY_PREFIX,
+    SEEN_V2_KEY_PREFIX,
     clear_project_seen_keys,
 )
 
@@ -1274,11 +1276,13 @@ def test_gc_refuses_a_distributed_facade():
 def test_reuse_cap_matches_collector_constant():
     """GC's margin rests on the collector's reuse cap.
 
-    Once the bounded seen store defines its cap (SeenMaxReuseAge in
-    fi-collector/pkg/trajectory), it must equal the Python constant, and the
-    collector must use the same epoch and contract keys. Until then no
+    When the bounded seen store (seen store v2, SeenMaxReuseAge in
+    fi-collector/pkg/trajectory) is present, its cap must equal the Python
+    constant, and it must use the same epoch and contract keys and the key
+    layout that erasure and the seen-store reset remove. Without it no
     collector writes the contract key, so GC can never delete: that is what
-    this test pins in the meantime.
+    this test pins in that case. The collector config cap (MaxReuseAgeCap)
+    must equal the constant whenever it exists.
     """
     assert GC_MARGIN == MAX_REUSE_AGE_CAP + IN_FLIGHT_MARGIN == timedelta(hours=72)
     package = REPO_ROOT / "fi-collector/pkg/trajectory"
@@ -1287,14 +1291,32 @@ def test_reuse_cap_matches_collector_constant():
         for p in sorted(package.glob("*.go"))
         if not p.name.endswith("_test.go")
     )
-    match = re.search(
-        r"\b(?:SeenMaxReuseAge|MaxReuseAgeCap)\s*=\s*(\d+)\s*\*\s*time\.Hour", source
-    )
-    if match:
-        assert timedelta(hours=int(match.group(1))) == MAX_REUSE_AGE_CAP
+
+    def hours(name):
+        found = re.search(rf"\b{name}\s*=\s*(\d+)\s*\*\s*time\.Hour", source)
+        return timedelta(hours=int(found.group(1))) if found else None
+
+    config_cap = hours("MaxReuseAgeCap")
+    if config_cap is not None:
+        assert config_cap == MAX_REUSE_AGE_CAP
+    seen_cap = hours("SeenMaxReuseAge")
+    if seen_cap is not None:
+        assert seen_cap == MAX_REUSE_AGE_CAP
         assert f'"{CONTRACT_KEY}"' in source
         assert f'"{EPOCH_KEY}"' in source
-        assert '"traj:seen:v2:"' in source
+        for name, prefix in (
+            ("seenKeyPrefix", SEEN_V2_KEY_PREFIX),
+            ("seenLegacyPrefix", SEEN_KEY_PREFIX),
+        ):
+            assert re.search(rf'\b{name}\s*=\s*"{re.escape(prefix)}"', source), name
+        # Project id right after the prefix, so project_seen_key_patterns
+        # ("traj:seen:v2:<pid>:*") matches every key of one project.
+        assert 'return seenKeyPrefix + projectID + ":" +' in source
+        assert re.search(
+            r"return \[\]string\{seenKeyPrefix \+ p \+ \":\*\", "
+            r"seenLegacyPrefix \+ p \+ \":\*\"\}",
+            source,
+        )
         return
     go_sources = (REPO_ROOT / "fi-collector").rglob("*.go")
     assert not any(CONTRACT_KEY in p.read_text(errors="ignore") for p in go_sources)

@@ -30,12 +30,15 @@ code in this repo depends on three parts of that contract:
   only once this mark is ``LEGACY_QUIET_PERIOD`` old. GC removes the mark when
   it sees a legacy key or no contract key, and a seen-store reset removes it.
 
-The bounded seen store (key layout v2) is built in a separate change. Until it
-lands the collector still writes the legacy layout ``traj:seen:<pid>:<scope>``,
-writes no epoch and no contract key, so GC never deletes (see
-``trajectory_lifecycle``). Keep this module and the Go constants in step; the
-test ``test_reuse_cap_matches_collector_constant`` compares them once the Go
-constant exists.
+The bounded seen store (seen store v2, fi-collector/pkg/trajectory/seen.go)
+writes ``traj:seen:v2:<pid>:<epoch>:<scope>:<gen>`` HASH keys that each expire
+at a fixed time, reads ``traj:epoch`` and keeps ``traj:contract:v2``. Its
+``SeenProjectKeyPatterns`` / ``EraseProjectSeenKeys`` cover the same keys as
+``project_seen_key_patterns`` here. A collector without it writes the legacy
+layout ``traj:seen:<pid>:<scope>``, no epoch and no contract key, so GC never
+deletes while one runs (see ``trajectory_lifecycle``). Keep this module and
+the Go constants in step; ``test_reuse_cap_matches_collector_constant``
+compares them whenever the Go seen store v2 is present.
 """
 
 from __future__ import annotations
@@ -52,7 +55,8 @@ IN_FLIGHT_MARGIN = timedelta(hours=24)
 # GC keeps copies persisted within this margin of the oldest span still present.
 GC_MARGIN = MAX_REUSE_AGE_CAP + IN_FLIGHT_MARGIN
 # Longest TTL the legacy seen store set on a key or a pod-local LRU entry
-# (Go: DefaultProjectTTL; no deploy overrides project_ttl).
+# (its 7-day project_ttl default; no deploy overrides project_ttl). Seen store
+# v2 replaces these TTLs with the reuse age, so this bounds only legacy pods.
 LEGACY_SEEN_MAX_TTL = timedelta(days=7)
 # GC deletes only after it has seen no legacy key, and the contract key, for
 # this long: every legacy pod-local LRU entry has expired by then, and a
