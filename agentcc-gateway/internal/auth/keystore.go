@@ -64,7 +64,7 @@ type keyUsage struct {
 
 // BalanceUSD returns the current credit balance in USD.
 func (k *APIKey) BalanceUSD() float64 {
-	return MicrosToUSD(k.creditBalance.Load())
+	return MicrosToUSD(k.BalanceMicros())
 }
 
 // DeductMicros atomically deducts microdollars and returns the new balance in USD.
@@ -86,7 +86,11 @@ func (k *APIKey) SetBalanceMicros(micros int64) {
 }
 
 // BalanceMicros returns the current credit balance in microdollars.
+// A key built outside the store's constructors has no usage record and reads as zero.
 func (k *APIKey) BalanceMicros() int64 {
+	if k.keyUsage == nil {
+		return 0
+	}
 	return k.creditBalance.Load()
 }
 
@@ -136,6 +140,9 @@ func (k *APIKey) IsActive() bool {
 
 // GetLastUsedAt returns the last-used timestamp (may be nil if never used).
 func (k *APIKey) GetLastUsedAt() *time.Time {
+	if k.keyUsage == nil {
+		return nil
+	}
 	return k.lastUsedAt.Load()
 }
 
