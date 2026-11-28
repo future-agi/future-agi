@@ -25,6 +25,18 @@ class AgentFixRun(BaseModel):
         TOO_FEW_CASES = "too_few_cases", "Too few failing cases"
 
     ACTIVE_STATES = (State.QUEUED, State.RUNNING, State.STOPPING)
+    # The endings an Epoch can reach before any check of a candidate's change: a
+    # failure, the platform's or the agent's, a baseline that passed when measured
+    # again, the budget, a stop (a person's own included), or too few failing cases.
+    UNCHECKED_ENDINGS = frozenset(
+        {
+            State.FAILED,
+            State.NOT_REPRODUCED,
+            State.OUT_OF_BUDGET,
+            State.STOPPED,
+            State.TOO_FEW_CASES,
+        }
+    )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -66,6 +78,15 @@ class AgentFixRun(BaseModel):
         null=True,
         blank=True,
         related_name="retries",
+    )
+    # The previous outside attempt on the same source run: a person's own coding agent
+    # submitted the fix this one verifies. Check runs that one finished are reused.
+    attempt_of = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="next_attempts",
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -138,6 +159,9 @@ class AgentFixCandidate(BaseModel):
     )
     # The candidate's change against the base version, as a git patch.
     patch_object_key = models.CharField(max_length=512)
+    # Each file that patch changes, as [path, added lines, removed lines], counted when it
+    # was stored; null when it could not be counted.
+    changed_files = models.JSONField(null=True, blank=True)
     summary = models.TextField(blank=True, default="")
     outcome = models.CharField(
         max_length=16, choices=Outcome.choices, default=Outcome.PENDING

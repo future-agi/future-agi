@@ -47,11 +47,9 @@ export default function NavMini() {
   const activeWorkspaceId = wsMatch ? wsMatch[1] : null;
   const workspaceNav = useWorkspaceSettingsNav(activeWorkspaceId);
 
-  // Sync settings sidebar visibility with URL on page reload
+  // Settings sidebar follows the URL, so a redirect out of settings closes it.
   useEffect(() => {
-    if (pathname.includes("/settings/")) {
-      setSettingOpen(true);
-    }
+    setSettingOpen(pathname.includes("/settings/"));
   }, [pathname, setSettingOpen]);
 
   return (
@@ -83,11 +81,7 @@ export default function NavMini() {
         {/* Design system: same rhythm as the open sidebar — 8px top,
             4px between header rows, 24px rows, a hairline in place of each
             group label, and the bottom block under a subtle top border. */}
-        <Stack
-          sx={{ pt: "8px", width: 1 }}
-          gap="4px"
-          alignItems="center"
-        >
+        <Stack sx={{ pt: "8px", width: 1 }} gap="4px" alignItems="center">
           <Logo collapsed />
           <IconButton
             onClick={() =>

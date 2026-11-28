@@ -10,7 +10,12 @@ from rest_framework.exceptions import ErrorDetail
 
 from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.services.harness_actor_labels import choice_labels
-from simulate.services.harness_actor_rules import LIMIT_FIELDS, UPLOAD_KINDS
+from simulate.services.harness_actor_rules import (
+    FILE_ROLE_ERRORS,
+    FILE_ROLES,
+    LIMIT_FIELDS,
+    UPLOAD_KINDS,
+)
 from simulate.services.harness_actor_validation import (
     ACTOR_RECORD_MAX_CHARS,
     Problem,
@@ -62,15 +67,33 @@ class HarnessTriggerWhereValueField(serializers.JSONField):
         return value
 
 
+class _JsonNumberField(serializers.FloatField):
+    """A number as JSON sends it: true, false and "0.5" are refused, as the whole-record write refuses them."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, bool) or not isinstance(data, (int, float)):
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
+class _JsonIntegerField(serializers.IntegerField):
+    """A whole number as JSON sends it: true and "2" are refused."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, bool) or not isinstance(data, int):
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
 class HarnessActorTriggerSerializer(serializers.Serializer):
     """When an actor comes in; only the keys its kind uses are present, none defaulted."""
 
     kind = serializers.ChoiceField(choices=TRIGGER_KINDS, required=False)
     seconds = serializers.FloatField(required=False, min_value=0)
     tool = serializers.CharField(required=False, allow_blank=True, max_length=200)
-    on_call = serializers.IntegerField(required=False, min_value=1)
-    p = serializers.FloatField(required=False, min_value=0, max_value=1)
-    turn = serializers.IntegerField(required=False, min_value=0)
+    on_call = _JsonIntegerField(required=False, min_value=1)
+    p = _JsonNumberField(required=False, min_value=0, max_value=1)
+    turn = _JsonIntegerField(required=False, min_value=0)
     words = serializers.ListField(
         child=serializers.CharField(max_length=200), required=False, max_length=50
     )
@@ -211,6 +234,12 @@ class HarnessActorSerializer(serializers.Serializer):
     max_turns = serializers.IntegerField(allow_null=True)
     max_lines = serializers.IntegerField(allow_null=True)
     scenarios = serializers.IntegerField(help_text="Scenarios that include the actor.")
+    review_decision = serializers.ChoiceField(
+        choices=["accepted", "rejected"],
+        allow_null=True,
+        required=False,
+        help_text="The decision taken on the actor in the draft's change review; null when none holds.",
+    )
     arrival_overrides = HarnessActorArrivalOverrideSerializer(
         many=True,
         help_text="Scenarios that bring the actor in by their own trigger, with when it comes in there.",
@@ -596,6 +625,18 @@ class HarnessWorldActionSerializer(serializers.Serializer):
 class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
     files = serializers.ListField(child=serializers.CharField())
     records = HarnessActorRecordSourceSerializer(many=True)
+    roles = serializers.DictField(
+        child=serializers.ChoiceField(choices=FILE_ROLES),
+        required=False,
+        help_text="Each attached file's role, by path. An evaluator-only file is never among `files`.",
+    )
+    seed_records_loaded = serializers.BooleanField(
+        allow_null=True,
+        required=False,
+        help_text="Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: "
+        "false when the agent's tools serve their own data, so seed records are context only; null when the sealed "
+        "release does not say.",
+    )
 
 
 class HarnessActorUnresolvedSerializer(serializers.Serializer):
@@ -670,6 +711,23 @@ class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
         choices=tuple(UPLOAD_KINDS),
         help_text="What the file is for: `knowledge`, a document an actor may be given to read.",
     )
+    expected_revision = serializers.IntegerField(min_value=0, required=False)
+    role = serializers.ChoiceField(
+        choices=FILE_ROLES,
+        error_messages=FILE_ROLE_ERRORS,
+        required=False,
+        help_text=(
+            "The file's role: `policy` (a policy or reference), `seed_records` (records the world starts with) or "
+            "`evaluator_only` (kept from the agent and every actor). Left out, the file has no role."
+        ),
+    )
+
+
+class HarnessEnvironmentFileRoleSerializer(serializers.Serializer):
+    path = serializers.CharField(
+        max_length=255, help_text="The attached file, as the knowledge sources list it."
+    )
+    role = serializers.ChoiceField(choices=FILE_ROLES, error_messages=FILE_ROLE_ERRORS)
     expected_revision = serializers.IntegerField(min_value=0, required=False)
 
 

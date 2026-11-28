@@ -81,9 +81,16 @@ export function createFixRunsAxios(actual) {
   const get = vi.fn((url, config = {}) => {
     const params = config.params || {};
     if (url === fixRuns.list()) {
-      const all = fixtureFixRuns(params.environment_id);
+      const states = params.state ? params.state.split(",") : null;
+      const all = fixtureFixRuns(params.environment_id).filter(
+        (f) => !states || states.includes(f.state),
+      );
       const page = params.page ?? 1;
       const limit = params.limit ?? 25;
+      // A page past the end, as the paginator refuses it.
+      if (page > 1 && (page - 1) * limit >= all.length) {
+        return fail(404, { status: false, result: "Invalid page." });
+      }
       return ok({
         count: all.length,
         results: all.slice((page - 1) * limit, page * limit),
@@ -107,7 +114,8 @@ export function createFixRunsAxios(actual) {
     const retry = RETRY.exec(url);
     if (retry) return ok(fixtureRetry(retry[1]));
     const cand = CANDIDATE.exec(url);
-    if (cand && cand[3] === "make-default") return makeDefault(cand[1], cand[2]);
+    if (cand && cand[3] === "make-default")
+      return makeDefault(cand[1], cand[2]);
     if (cand && cand[3] === "pull-request") {
       return openPullRequest(cand[1], cand[2]);
     }

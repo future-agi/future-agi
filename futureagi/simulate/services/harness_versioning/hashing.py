@@ -66,6 +66,9 @@ ENVIRONMENT_UNHASHED_ROOTS = (
 )
 WORLD_SEED_FILES = ("world.sqlite", "store.json", "collections.json", "schema.sql")
 SCENARIO_ROOTS = ("scenarios", "scenario")
+# What ALK's suite index adds to each entry (`folder.write_index`: the case's folder and its solution's step count). They
+# belong to the index only: a case's own document never carries them, and one that does took them from its entry.
+INDEX_ONLY_FIELDS = frozenset({"folder", "steps"})
 
 
 def read_tree(root: Path) -> dict[str, bytes]:
@@ -238,8 +241,25 @@ def _suite_unhashed(path: str) -> bool:
 
 
 def suite_hash(files: Files) -> str:
-    """Checks are derived from the environment's sub-goals, so they are not hashed."""
-    return tree_digest(scenario_files(files), exclude=_suite_unhashed)
+    """Checks are derived from the environment's sub-goals, so they are not hashed.
+
+    A suite that keeps scenarios a rebuild dropped (``dropped.json``) hashes them too, so it is
+    never taken for an earlier version with the same scenarios and lose what a later rebuild
+    restores from. Without drops (no file, an empty one, or one listing none) the hash is ALK's
+    scenario digest unchanged, so existing suite versions keep theirs."""
+    digest = tree_digest(scenario_files(files), exclude=_suite_unhashed)
+    dropped = files.get("dropped.json")
+    if not dropped:
+        return digest
+    try:
+        record = json.loads(dropped)
+    except (TypeError, ValueError):
+        drops = "sha256:" + hashlib.sha256(dropped).hexdigest()
+    else:
+        if isinstance(record, dict) and not record.get("scenarios"):
+            return digest
+        drops = canonical_digest(record)
+    return "sha256:" + hashlib.sha256(f"{digest}\n{drops}".encode()).hexdigest()
 
 
 # Stands in for an overlay field's value: which fields are set still counts, since the

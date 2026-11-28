@@ -34,7 +34,9 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
+    agent_blocker,
     default_max_minutes,
+    environment_state_blocker,
     environment_variations_blocker,
     fewest_failing_cases,
     scenario_results,
@@ -58,13 +60,19 @@ from simulate.selectors.agent_fix_issue import (
 from simulate.selectors.evidence_import import MAX_SOURCES
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_engine import dispatch_run
-from simulate.services.agent_fix_runs import launch_fix_run, require_variation_room
+from simulate.services.agent_fix_runs import (
+    all_in_test_split,
+    launch_fix_run,
+    locked_test_keys,
+    require_variation_room,
+)
 from simulate.services.evidence_drafts import forget, start_drafting
 from simulate.services.evidence_import import (
     add_to_suite,
     create_evidence_import,
     discard_evidence_import,
     discard_open_cases,
+    sources_awaiting_review,
 )
 from simulate.services.harness_agent_versions import advisory_xact_lock
 from simulate.services.harness_usage import (
@@ -94,6 +102,10 @@ _ENDS_THE_JOB = frozenset({"evidence_draft_stale"})
 # up: the run itself, or a launch that keeps failing in a way a later look might outlive.
 _BASELINE_PATIENCE = timedelta(hours=12)
 STOPPED = IssueJobEnding(code="stopped", message="Stopped")
+_IN_REVIEW = (
+    "Another import in this environment is still drafting or reviewing some"
+    " of these traces. Swap them for others."
+)
 
 
 def _refused(
@@ -185,6 +197,19 @@ def create_issue_job(
                 "This issue already has an epoch in progress. Open it.",
                 job_id=str(held.id),
             )
+        # Asked of the cases alone, before importing: the import retires another
+        # import's waiting case whose source changed or has no fingerprint, and
+        # an Observe read that fails must not let a pick past another's review.
+        if in_review := sources_awaiting_review(
+            environment, project=issue.project, source_kind=unit, source_ids=sources
+        ):
+            raise _refused(
+                "issue_epoch_picks_in_review",
+                _IN_REVIEW,
+                member_ids=[
+                    member_of_source[one] for one in sources if one in in_review
+                ],
+            )
         evidence_import, _evidence = create_evidence_import(
             environment=environment,
             project=issue.project,
@@ -195,7 +220,8 @@ def create_issue_job(
         )
         cases = list(evidence_import.cases.select_related("duplicate_of"))
         # A pick that repeats another pick is drafted once, as that pick; one that
-        # repeats another import's case waits on that import's review.
+        # repeats another import's case (its conversation, or a source imported
+        # since the check above) waits on that import's review.
         if waiting := [
             member_of_source[case.source_id]
             for case in cases
@@ -205,10 +231,7 @@ def create_issue_job(
             and case.duplicate_of.status != EvidenceImportCase.Status.ADDED
         ]:
             raise _refused(
-                "issue_epoch_picks_in_review",
-                "Another import in this environment is still drafting or reviewing some"
-                " of these traces. Swap them for others.",
-                member_ids=waiting,
+                "issue_epoch_picks_in_review", _IN_REVIEW, member_ids=waiting
             )
         pending = [
             str(case.id)
@@ -277,6 +300,8 @@ def _active_epoch_refusal(environment: HostedHarnessJob) -> HostedHarnessError |
             f"An epoch from {issue.cluster_id if issue else 'another issue'} is starting"
             " in this environment. Wait for it, or open it.",
             job_id=str(measuring.id),
+            # Its issue's page shows it.
+            cluster_id=issue.cluster_id if issue else None,
         )
     return None
 
@@ -298,13 +323,10 @@ def _require_launchable(
             " ones.",
             status_code=422,
         )
-    if environment.state != HostedHarnessJob.State.COMPLETED:
-        raise _refused(
-            "environment_busy",
-            "The environment isn't ready. Run Epoch once it finishes updating.",
-        )
+    # In environment_blocker's order, as the plan said it.
+    if blocked := agent_blocker(environment) or environment_state_blocker(environment):
+        raise blocked
     kind = agent_kind(environment)
-    kind.require_available()
     if refused := sorted(set(launch.surfaces) - kind.surfaces):
         raise _refused(
             "fix_surface_not_allowed",
@@ -415,6 +437,7 @@ def _run(
                 expected={},
                 idempotency_key=f"issue-epoch-{locked.id}",
                 user=user,
+                for_agent_fix=True,
             )
         # The drafts the person did not keep are discarded, so they hold back no
         # later import of their sources.
@@ -425,6 +448,7 @@ def _run(
             scenario_keys=keys,
             trials=1,
             idempotency_key=f"issue-epoch:{locked.id}:baseline",
+            for_agent_fix=True,
         )
         if launch.max_minutes is None:
             suite = HarnessSuiteMember.no_workspace_objects.filter(
@@ -509,11 +533,15 @@ def advance_issue_job(job_id: str) -> bool:
             _set_ending(job, _baseline_failed())
             return True
         launch = IssueLaunch.model_validate(job.launch)
+        # A test-split case is never must-pass: the search would learn from it.
+        test = locked_test_keys(run)
         try:
             fix_run = launch_fix_run(
                 run,
                 target_scenario_keys=[one.key for one in ran if one.failing_sub_goals],
-                protected_scenario_keys=[one.key for one in ran if one.passed],
+                protected_scenario_keys=[
+                    one.key for one in ran if one.passed and one.key not in test
+                ],
                 surfaces=launch.surfaces,
                 locked_paths=launch.locked_paths,
                 budget_usd=launch.budget_credits / 100,
@@ -531,6 +559,9 @@ def advance_issue_job(job_id: str) -> bool:
             )
             if refusal is None or refusal.retryable:
                 raise
+            if refusal.code == "fix_targets_all_test" and refusal.details:
+                # Nobody picked these cases, so there are no others to pick.
+                refusal = all_in_test_split(refusal.details["cases"], picked=False)
             _set_ending(job, IssueJobEnding(code=refusal.code, message=refusal.message))
             return True
         job.fix_run = fix_run

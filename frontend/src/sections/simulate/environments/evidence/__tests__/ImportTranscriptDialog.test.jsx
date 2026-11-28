@@ -4,18 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "src/utils/test-utils";
 
-const nav = vi.hoisted(() => ({ navigate: vi.fn() }));
-vi.mock("react-router-dom", async (importOriginal) => ({
-  ...(await importOriginal()),
-  useNavigate: () => nav.navigate,
-}));
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn() },
 }));
 
 const { default: axios } = await import("src/utils/axios");
-const { default: ImportEvidenceButton } = await import(
-  "../ImportEvidenceButton"
+const { default: ImportTranscriptDialog } = await import(
+  "../ImportTranscriptDialog"
 );
 const { guessFormat } = await import("../evidence.constants");
 
@@ -24,26 +19,26 @@ const IMPORT = "22222222-2222-2222-2222-222222222222";
 const URL = `/simulate/api/harness-environments/${ENV}/evidence-imports/`;
 const PASTED = "User: Refund my order\nAgent: Done.";
 
-// The way in, as the Scenarios tab shows it: Import evidence, then Add a
-// transcript.
+// The way in (Add scenarios, then Upload transcript or file) is the Add
+// scenarios panel's test; this opens the dialog itself.
 const openDialog = async () => {
   const onImported = vi.fn();
+  const onClose = vi.fn();
   render(
     <QueryClientProvider
       client={
         new QueryClient({ defaultOptions: { mutations: { retry: false } } })
       }
     >
-      <ImportEvidenceButton envId={ENV} onImported={onImported} />
+      <ImportTranscriptDialog
+        open
+        onClose={onClose}
+        envId={ENV}
+        onImported={onImported}
+      />
     </QueryClientProvider>,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Import evidence" }),
-  );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Add a transcript" }),
-  );
-  return { onImported };
+  return { onImported, onClose };
 };
 
 const paste = (text) =>
@@ -57,47 +52,21 @@ const file = (text, name, type) =>
 
 beforeEach(() => {
   axios.post.mockReset();
-  nav.navigate.mockReset();
 });
 
-describe("ImportEvidenceButton", () => {
-  it("offers a way in for each source the hint names", async () => {
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <ImportEvidenceButton envId={ENV} onImported={vi.fn()} />
-      </QueryClientProvider>,
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Import evidence" }),
-    );
-    expect(
-      screen.getByText(
-        /or rows in a dataset, then choose Create environment test/,
-      ),
-    ).toBeInTheDocument();
-
-    await userEvent.click(
-      screen.getByRole("button", { name: "Open a dataset" }),
-    );
-    expect(nav.navigate).toHaveBeenLastCalledWith("/dashboard/develop");
-    await userEvent.click(screen.getByRole("button", { name: "Open Observe" }));
-    expect(nav.navigate).toHaveBeenLastCalledWith("/dashboard/observe");
-  });
-
+describe("ImportTranscriptDialog", () => {
   it("says what a transcript import replaces and keeps", async () => {
     await openDialog();
     expect(
       screen.getByText(
-        /Emails, phone, card and ID numbers become placeholders; an import keeps 60,000 characters, shared by its files\.$/,
+        "Emails, phone and card numbers, SSNs and API keys become placeholders. Up to 60,000 characters per import.",
       ),
     ).toBeInTheDocument();
   });
-});
 
-describe("ImportTranscriptDialog", () => {
   it("imports a pasted transcript, not called production, and opens its review", async () => {
     axios.post.mockResolvedValue({ data: { id: IMPORT, cases: [] } });
-    const { onImported } = await openDialog();
+    const { onImported, onClose } = await openDialog();
     const importButton = screen.getByRole("button", {
       name: "Create environment test",
     });
@@ -117,7 +86,7 @@ describe("ImportTranscriptDialog", () => {
       ],
       production: false,
     });
-    expect(screen.queryByLabelText("Transcript")).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("sends production only when the person says so, with the name they gave", async () => {
@@ -131,7 +100,7 @@ describe("ImportTranscriptDialog", () => {
     });
     await userEvent.click(
       screen.getByRole("checkbox", {
-        name: "These transcripts come from production",
+        name: "From production",
       }),
     );
     await userEvent.click(
@@ -152,7 +121,8 @@ describe("ImportTranscriptDialog", () => {
     await openDialog();
     const csv = "role,text\nuser,Where is it?\nassistant,On its way.\n";
 
-    fireEvent.change(screen.getByTestId("transcript-file-input"), {
+    // The drop zone's own file input, the one Browse files opens.
+    fireEvent.change(document.querySelector('input[type="file"]'), {
       target: {
         files: [
           file(csv, "calls.csv", "text/csv"),
@@ -183,6 +153,45 @@ describe("ImportTranscriptDialog", () => {
         production: false,
       }),
     );
+  });
+
+  it("offers a drop zone that names the files it takes", async () => {
+    await openDialog();
+    expect(
+      screen.getByText("Choose files or drag & drop them here"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "JSON messages (.json), User: / Agent: lines (.txt) or CSV with role and text (.csv)",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Up to 20 files, 500,000 characters each"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Browse files" }),
+    ).toBeInTheDocument();
+  });
+
+  it("adds dropped files to the ones already there, and removes one", async () => {
+    await openDialog();
+    const input = () => document.querySelector('input[type="file"]');
+
+    fireEvent.change(input(), {
+      target: { files: [file(PASTED, "one.txt", "text/plain")] },
+    });
+    await screen.findByText("one.txt");
+    fireEvent.change(input(), {
+      target: { files: [file(PASTED, "two.txt", "text/plain")] },
+    });
+    await screen.findByText("two.txt");
+    expect(screen.getByText("one.txt")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove one.txt" }),
+    );
+    expect(screen.queryByText("one.txt")).toBeNull();
+    expect(screen.getByText("two.txt")).toBeInTheDocument();
   });
 
   it("shows the line the backend could not read, and keeps the text", async () => {

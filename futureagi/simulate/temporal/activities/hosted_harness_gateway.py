@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db import DatabaseError
 from django.utils import timezone
 from temporalio import activity
 
@@ -40,8 +41,9 @@ async def record_hosted_harness_launch_failure(
 ) -> HostedHarnessLaunchRecoveryOutput:
     """Make exhausted pre-attempt launch failures visible instead of leaving jobs queued."""
     from django.db import transaction
+    from django.db.models import Q
 
-    from simulate.models import HostedHarnessJob
+    from simulate.models import CallExecution, HostedHarnessJob
     from simulate.services.hosted_harness import project_terminal_job_onto_run
 
     def _record() -> HostedHarnessLaunchRecoveryOutput:
@@ -85,6 +87,20 @@ async def record_hosted_harness_launch_failure(
                     "updated_at",
                 ]
             )
+            # Keep the launch diagnostic on a person's open calls, independently
+            # of the retry guidance that the projection writes to ended_reason.
+            if job.test_execution_id and not (
+                (job.payload or {}).get("metadata") or {}
+            ).get("coding_agent_key_id"):
+                CallExecution.no_workspace_objects.filter(
+                    Q(error_message__isnull=True) | Q(error_message=""),
+                    test_execution_id=job.test_execution_id,
+                    status__in=(
+                        CallExecution.CallStatus.PENDING,
+                        CallExecution.CallStatus.REGISTERED,
+                        CallExecution.CallStatus.ONGOING,
+                    ),
+                ).update(error_message=job.failure["message"])
             project_terminal_job_onto_run(job, job.terminal_at)
         return HostedHarnessLaunchRecoveryOutput(state=job.state)
 
@@ -117,6 +133,7 @@ async def cancel_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
     from simulate.models import HostedHarnessAttempt
+    from simulate.services.harness_cancel import record_overdue_cleanup_failure
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _cancel() -> str:
@@ -134,6 +151,13 @@ async def cancel_hosted_harness_attempt(
             "hosted harness cancellation cleanup is still pending; attempt_id=%s",
             input.attempt_id,
         )
+        try:
+            await _run_db(record_overdue_cleanup_failure, input.attempt_id)
+        except DatabaseError:
+            activity.logger.exception(
+                "hosted harness cleanup failure not recorded; attempt_id=%s",
+                input.attempt_id,
+            )
         return HostedHarnessPollOutput(
             done=False,
             state="cleaning_up",

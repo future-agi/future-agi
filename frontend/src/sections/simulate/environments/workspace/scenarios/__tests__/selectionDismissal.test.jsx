@@ -31,7 +31,6 @@ async function selectRow() {
         <ScenariosStep
           env={TEST_ENV}
           envState={envStateFor(rows)}
-          patch={vi.fn()}
           canRun
           onStartRun={vi.fn()}
         />

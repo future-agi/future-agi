@@ -130,7 +130,7 @@ function WayGroup({ title, line, items, onPick, compact = false }) {
           py: 1,
           display: "grid",
           columnGap: 4,
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gridTemplateColumns: `repeat(${items.length > 1 ? 2 : 1}, minmax(0, 1fr))`,
         }}
       >
         {items.map((it) => (

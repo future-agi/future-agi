@@ -21,11 +21,30 @@ from simulate.services.agent_setup import AgentNotFound, launched_agent_summary
 from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 from tracer.services.simulation_project import agent_of_run, simulation_project_of
+from tracer.utils.semantic_conventions import AttributeAliases
 
 RUN_MARK_KEY = "fi.simulation.job_id"
 CALL_MARK_KEY = "fi.simulator.call_execution_id"
 # The sandbox stamps a call some of whose model calls it could not measure.
 UNMEASURED_KEY = "fi.simulation.instrumentation"
+# Where a sender reports what a span cost, as the collector reads them (fi-collector
+# adapter.go userCost). It prices a span from its tokens only when none of them holds
+# a number.
+REPORTED_COST_KEYS = (
+    *AttributeAliases.COST_TOTAL,
+    *AttributeAliases.COST_INPUT,
+    *AttributeAliases.COST_OUTPUT,
+    "gen_ai.usage.total_cost",
+    "gen_ai.usage.input_cost",
+    "gen_ai.usage.output_cost",
+)
+# How the collector priced a copy: "provider_reported", "estimated" or "unknown". It
+# marks only a profiled producer's or a non-additive span (converter.go trackCost);
+# the other copies carry no marker, and their cost keys say whether a cost was reported.
+COST_KIND_KEY = "fi.cost.kind"
+# The ASCII whitespace Go's strings.TrimSpace trims from a cost text. Go also trims
+# Unicode spaces such as U+00A0; this does not.
+_COST_TEXT_SPACE = " \\t\\n\\v\\f\\r"
 READ_TIMEOUT_MS = 2000
 MAX_TRACES = 200
 TRACED_AGENT_KIND = "source"
@@ -150,6 +169,23 @@ _CALL_OF_TRACE = (
 )
 
 
+def _span_call_columns() -> str:
+    """A span's call, over its copies: whether a copy names one, the greater id when two
+    copies name two, and when its marked copies start. An unmarked copy's start is not
+    the mark's."""
+    marked = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
+    return (
+        f"max({marked}) AS names_call, "
+        f"max({cols.ATTRS_STRING}['{CALL_MARK_KEY}']) AS span_call, "
+        f"minIf(start_time, {marked}) AS marked_start"
+    )
+
+
+def _trace_call_sql(start: str) -> str:
+    """A trace's call: the call of its earliest marked span, the lesser id on a tie."""
+    return f"argMinIf(span_call, ({start}, span_call), names_call)"
+
+
 def run_traces_sql() -> str:
     is_root = "parent_span_id = ''"
     return (
@@ -179,37 +215,118 @@ def run_traces_params(
     }
 
 
+def _price_sql(value: str) -> str:
+    """Whether a value is a price: a finite number, zero or more."""
+    return f"(isFinite({value}) AND {value} >= 0)"
+
+
+def _cost_kind_sql() -> str:
+    return f"{cols.ATTRS_STRING}['{COST_KIND_KEY}']"
+
+
+def _cost_values_sql() -> str:
+    """The numbers a span row's cost keys hold, as the collector reads them (adapter.go
+    firstNumber: a number, or text with its whitespace trimmed)."""
+    attrs, numbers = cols.ATTRS_STRING, cols.ATTRS_NUMBER
+    keys = ", ".join(f"'{key}'" for key in REPORTED_COST_KEYS)
+    text = f"toFloat64OrNull(trimBoth(value, '{_COST_TEXT_SPACE}'))"
+    return (
+        f"arrayConcat(mapValues(mapFilter((key, value) -> key IN ({keys}), {numbers})), "
+        "arrayMap(value -> assumeNotNull(value), arrayFilter(value -> isNotNull(value), "
+        f"arrayMap(value -> {text}, mapValues(mapFilter((key, value) -> key IN ({keys}), "
+        f"{attrs}))))))"
+    )
+
+
+def _reported_cost_sql() -> str:
+    """Whether a span row's cost is a price its sender reported, a zero too. The cost
+    column holds what the collector made of the report (adapter.go userCost: the
+    total, else input plus output), and it must be a price.
+
+    The collector's marker decides when the copy has one (converter.go trackCost).
+    A copy without one was reported when a cost key holds a number, and every such
+    key is a price: a negative side summed into a zero is none."""
+    values = _cost_values_sql()
+    return (
+        f"({_price_sql('cost')} AND multiIf("
+        f"{_cost_kind_sql()} = 'provider_reported', true, "
+        f"{_cost_kind_sql()} IN ('estimated', 'unknown'), false, "
+        f"notEmpty({values}) AND arrayAll(value -> {_price_sql('value')}, {values})))"
+    )
+
+
 def run_usage_sql() -> str:
     """Each call's model calls: the models its LLM spans named, how many there were,
-    what its LLM and embedding spans cost, and how many of those carried no cost. A span
-    counts for the call it names, else for the call its trace names, as in the list."""
-    call_mark = f"{cols.ATTRS_STRING}['{CALL_MARK_KEY}']"
-    has_call_mark = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
-    # The request model a span names, else the model column, for an instrumentor that
+    what its LLM and embedding spans cost, and how many of those had no price. A span
+    counts for the call it names, else for the call of its trace's earliest marked
+    span. The list names a trace's call from its rows, not its spans, so the two can
+    differ when a span's copies disagree on the call or on when the mark started.
+
+    An agent with two exporters sends one span twice, and the table keeps the copies
+    apart, by service name or by kind. They are counted and priced as the one span they
+    are, each fact from whichever copy carries it, so no copy is chosen and none is
+    lost. The model names are each LLM copy's own, as when every copy was read
+    alone."""
+    attrs = cols.ATTRS_STRING
+    reported = _reported_cost_sql()
+    # The collector's own estimate: a price, on a copy it marked estimated, or on an
+    # unmarked copy whose cost keys hold no number. The collector prices from tokens
+    # only then, so a rejected report's sum is no estimate.
+    estimated = (
+        f"({_price_sql('cost')} AND multiIf("
+        f"{_cost_kind_sql()} = 'estimated', true, "
+        f"{_cost_kind_sql()} IN ('provider_reported', 'unknown'), false, "
+        f"empty({_cost_values_sql()})))"
+    )
+    # The request model a copy names, else the model column, for an instrumentor that
     # names its model in another convention.
     model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
+    spans = (
+        "SELECT trace_id, "
+        f"{_span_call_columns()}, "
+        "max(observation_type = 'llm') AS is_llm, "
+        "max(observation_type IN ('llm', 'embedding')) AS is_billed, "
+        f"max({attrs}['{UNMEASURED_KEY}'] = 'partial') AS is_partial, "
+        f"groupUniqArrayIf({model}, observation_type = 'llm' AND {model} != '') "
+        "AS llm_models, "
+        f"groupUniqArrayIf({model}, observation_type IN ('llm', 'embedding') "
+        f"AND {model} != '') AS billed_models, "
+        # A price the sender reported, a zero too, before one the collector estimated.
+        f"max({reported}) AS span_reported, "
+        f"if(span_reported, maxIf(cost, {reported}), maxIf(cost, {estimated})) "
+        "AS span_cost, "
+        # A zero is a price when reported, or when the collector marked it its estimate
+        # (a catalogued free model); an unmarked default zero is none.
+        f"span_reported OR span_cost > 0 OR max({_cost_kind_sql()} = 'estimated' AND "
+        f"{_price_sql('cost')}) AS span_priced "
+        "FROM spans FINAL "
+        f"{_job_scope_sql()}"
+        "GROUP BY trace_id, id"
+    )
     return (
-        "SELECT call_execution_id, "
-        "groupUniqArrayIf(span_model, is_llm AND span_model != '') AS models, "
+        "SELECT call_execution_id, groupUniqArrayArray(models), sum(llm_spans), "
+        "sum(billed_spans), sum(cost), sum(unpriced), "
+        "groupUniqArrayArray(unpriced_models), sum(partial) "
+        "FROM ("
+        "SELECT if(names_call, span_call, "
+        f"{_trace_call_sql('first_start')} "
+        "OVER (PARTITION BY trace_id)) AS call_execution_id, "
+        "models, llm_spans, billed_spans, cost, unpriced, unpriced_models, partial "
+        "FROM ("
+        # Summed by trace and named call first: finding a trace's call sorts its rows,
+        # and these are far fewer than its spans.
+        "SELECT trace_id, names_call, span_call, min(marked_start) AS first_start, "
+        "groupUniqArrayArray(llm_models) AS models, "
         "countIf(is_llm) AS llm_spans, "
         "countIf(is_billed) AS billed_spans, "
         "sumIf(span_cost, is_billed) AS cost, "
-        "countIf(is_billed AND NOT span_cost > 0) AS unpriced, "
-        "groupUniqArrayIf(span_model, is_billed AND NOT span_cost > 0 "
-        "AND span_model != '') AS unpriced_models, "
+        "countIf(is_billed AND NOT span_priced) AS unpriced, "
+        "groupUniqArrayArrayIf(billed_models, is_billed AND NOT span_priced) "
+        "AS unpriced_models, "
         "countIf(is_partial) AS partial "
-        "FROM ("
-        f"SELECT if({has_call_mark}, {call_mark}, "
-        f"argMinIf({call_mark}, start_time, {has_call_mark}) "
-        "OVER (PARTITION BY trace_id)) AS call_execution_id, "
-        "observation_type = 'llm' AS is_llm, "
-        "observation_type IN ('llm', 'embedding') AS is_billed, "
-        f"{cols.ATTRS_STRING}['{UNMEASURED_KEY}'] = 'partial' AS is_partial, "
-        f"{model} AS span_model, "
-        "cost AS span_cost "
-        "FROM spans FINAL "
-        f"{_job_scope_sql()}"
-        ") "
+        f"FROM ({spans}) "
+        "GROUP BY trace_id, names_call, span_call"
+        ")) "
         "WHERE call_execution_id != '' "
         "GROUP BY call_execution_id"
     )
@@ -218,8 +335,9 @@ def run_usage_sql() -> str:
 def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
     """Each call's model calls in a run, by call id; a call that exported no LLM or
     embedding span, and that the sandbox did not flag partial, is missing. None when the run's agent is not traced, so none of its
-    calls can be seen. A span with no cost leaves its call's cost unknown: it may be an
-    unpriced model, and an unpriced model is not free. A call the sandbox could not wholly
+    calls can be seen. A span with no price leaves its call's cost unknown: it may be an
+    unpriced model, and an unpriced model is not free. A cost its sender reported is a
+    price, a zero too, when it is a finite number and not negative. A call the sandbox could not wholly
     measure (a span stamped partial) reads unknown too: some of its model calls sent no
     span."""
     source = run_traces_source(execution)

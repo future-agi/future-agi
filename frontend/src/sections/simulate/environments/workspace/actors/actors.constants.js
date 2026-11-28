@@ -196,6 +196,11 @@ export const ACTORS_COPY = {
       triggerHelp:
         "When they first take part; a scenario can give them its own",
       triggerTool: "The action",
+      triggerOnCall: "On its call number",
+      triggerOnCallHelp: "Empty or 1 is the first call of the action",
+      triggerChance: "Chance (%)",
+      triggerChanceHelp:
+        "How likely they come in on a call, above 0 and up to 100",
       triggerWords: "Words",
       triggerWordsHelp: "Separated by commas",
       triggerTurn: "From the agent's turn",
@@ -254,6 +259,22 @@ export const ACTORS_COPY = {
         "What you typed here won't be saved. A document you uploaded is already in the draft and stays there; discard the draft to remove it.",
       discard: "Discard",
       save: "Save to draft",
+      evaluatorOnly: "Evaluator only, never offered to an actor",
     },
+  },
+
+  fileRoles: {
+    title: "Files",
+    subtitle:
+      "How the builder uses each attached file. Evaluator only files are kept from the agent and every actor.",
+    roles: {
+      policy: "Policy or reference",
+      seed_records: "Seed records",
+      evaluator_only: "Evaluator only",
+    },
+    noRole: "No role yet",
+    seedContextOnly:
+      "The agent's tools serve their own data here, so seed records are context only.",
+    failed: "Couldn't change the role. Try again.",
   },
 };

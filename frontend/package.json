@@ -28,7 +28,7 @@
     "test:watch": "vitest --watch",
     "test:coverage": "node --max-old-space-size=4096 ./node_modules/.bin/vitest run --coverage",
     "test:unit": "vitest run --reporter=verbose --testNamePattern=\"unit|Unit\"",
-    "test:contracts-codegen": "node --test scripts/openapi-typescript.test.mjs",
+    "test:contracts-codegen": "node --test scripts/openapi-typescript.test.mjs scripts/contract-debt.test.mjs",
     "test:integration": "vitest run --reporter=verbose --testNamePattern=\"integration|Integration\"",
     "test:api-journeys": "node scripts/api-journeys/run.mjs",
     "test:api-journeys:preflight": "node scripts/api-journeys/preflight.mjs",
@@ -149,7 +149,15 @@
     "zustand": "^5.0.6"
   },
   "resolutions": {
-    "strip-ansi": "6.0.1"
+    "strip-ansi": "6.0.1",
+    "protobufjs": "^7.5.5",
+    "form-data": "^4.0.6",
+    "tar": "7.5.22"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5",
+    "form-data": "^4.0.6",
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@storybook/addon-docs": "^9.1.20",
@@ -165,8 +173,8 @@
     "@typescript-eslint/eslint-plugin": "6.21.0",
     "@typescript-eslint/parser": "6.21.0",
     "@vitejs/plugin-react-swc": "^3.11.0",
-    "@vitest/coverage-v8": "3.2.3",
-    "@vitest/ui": "^3.2.3",
+    "@vitest/coverage-v8": "3.2.7",
+    "@vitest/ui": "^3.2.7",
     "eslint": "^8.50.0",
     "eslint-config-airbnb": "^19.0.4",
     "eslint-config-prettier": "^9.0.0",
@@ -189,7 +197,7 @@
     "typescript": "^5.2.2",
     "vite": "^5.4.21",
     "vite-plugin-checker": "^0.12.0",
-    "vitest": "^3.2.3"
+    "vitest": "^3.2.7"
   },
   "msw": {
     "workerDirectory": [

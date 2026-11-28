@@ -21,6 +21,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from accounts.models import Organization, Workspace
+from conftest import WorkspaceAwareAPIClient
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
@@ -34,8 +35,12 @@ from simulate.selectors.agent_fix import (
     LOST_MODELS_SKIPPED_FOR,
     default_max_minutes,
     engine_brief,
+    inventory,
 )
-from simulate.serializers.agent_fix import AgentFixLaunchSerializer
+from simulate.serializers.agent_fix import (
+    AgentFixLaunchSerializer,
+    AgentFixListQuerySerializer,
+)
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
@@ -53,6 +58,7 @@ from simulate.services.run_results_v3_queries import (
     run_calls_queryset,
 )
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
@@ -105,6 +111,22 @@ PLATFORM_KEY = "platform-harness-key"
 def entitled():
     with patch("simulate.views.agent_fix.check_ee_feature") as gate:
         yield gate
+
+
+@pytest.fixture
+def browser_client(api_client, user, workspace):
+    """A person's signed-in session, with the JWT the web app sends: the one caller an
+    Epoch's read names its held-back cases to, so the Epoch page can mark them."""
+    token = api_client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": "testpassword123"},
+        format="json",
+    ).json()["access"]
+    client = WorkspaceAwareAPIClient()
+    client.set_workspace(workspace)
+    client.defaults["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    yield client
+    client.stop_workspace_injection()
 
 
 def _armed(fix_run, *, expires_in=timedelta(hours=1)):
@@ -316,6 +338,20 @@ class TestEngineAuthentication:
 
         assert response.status_code == 200, response.content
         assert response.json()["fix_run_id"] == str(fix_run.id)
+
+    def test_the_sandbox_reads_its_source_through_the_platform(
+        self, api_client, source_run, storage
+    ):
+        # Agent source is never readable by URL: the sandbox gets the bytes from here.
+        fix_run = _armed(_fix_run(source_run))
+        key = f"agent-fix/{fix_run.organization_id}/{fix_run.id}/base-source.tar.gz"
+        storage.objects[key] = b"stored archive"
+
+        response = _engine(api_client, "get", fix_run, "source/")
+
+        assert response.status_code == 200, response.content
+        assert response["Content-Type"] == "application/gzip"
+        assert response.content == b"stored archive"
 
     def test_the_brief_round_trips_with_the_records_the_engine_reads(
         self, api_client, source_run
@@ -564,7 +600,7 @@ class TestEngineCalls:
         assert fix_run.stage == "Diagnose"
 
     def test_a_progress_report_s_step_plan_diagnosis_and_tiers_reach_the_read(
-        self, api_client, auth_client, source_run
+        self, api_client, browser_client, source_run
     ):
         fix_run = _armed(_fix_run(source_run))
         candidate = _candidate(fix_run)
@@ -630,7 +666,7 @@ class TestEngineCalls:
         )
 
         assert response.status_code == 200, response.content
-        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+        read = browser_client.get(f"{BASE}/{fix_run.id}/").json()
         assert (
             read["step"],
             read["plan"]["baseline_spread_pts"],
@@ -1301,6 +1337,133 @@ class TestUserApi:
             "fix_run_active",
         )
 
+    @pytest.mark.parametrize(
+        ("agent", "code"),
+        [
+            # Made before agent versions were kept: neither it nor its run has one.
+            ("unversioned", "environment_agent_unversioned"),
+            ("provider", "fix_agent_not_editable"),
+        ],
+    )
+    def test_a_run_epoch_cannot_start_from_says_why_on_the_form_and_the_launch(
+        self, auth_client, environment, source_run, agent, code
+    ):
+        if agent == "unversioned":
+            HostedHarnessJob.no_workspace_objects.filter(
+                id__in=[environment.id, source_run.id]
+            ).update(agent_version=None)
+            HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+                payload={**environment.payload, "source": {"kind": "github"}}
+            )
+        else:
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=source_run.agent_version_id
+            ).update(source_kind="provider")
+
+        response = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        )
+        launched = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+
+        assert response.status_code == 200, response.content
+        options = response.json()
+        # The variations' check says the same as the launch's.
+        assert (options["blocked"]["code"], options["variations_blocked"]["code"]) == (
+            code,
+            code,
+        )
+        assert options["ship"] is None
+        assert (options["agent"] is None) == (agent == "unversioned")
+        assert (launched.status_code, launched.json()["error"]) == (422, code)
+
+    def test_launch_options_hold_back_what_the_launch_holds_back(
+        self, browser_client, source_run
+    ):
+        # The split's answer names what it was given, so any other seed or target set
+        # reads differently on the form than on the epoch. The form is a person's
+        # session: no other caller reads the held-back cases (test_agent_fix_outside).
+        def split(seed, failing, parents=None):
+            return [f"{seed}|{','.join(sorted(failing))}"]
+
+        with (
+            patch("simulate.selectors.agent_fix.split_held_back", side_effect=split),
+            patch(
+                "simulate.services.agent_fix_runs.split_held_back", side_effect=split
+            ),
+        ):
+            options = browser_client.get(
+                f"{BASE}/launch-options/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            ).json()
+            launched = browser_client.post(
+                f"{BASE}/",
+                _launch_body(
+                    source_run,
+                    target_scenario_keys=options["suggested"]["target_scenario_keys"],
+                ),
+                format="json",
+            )
+
+        assert launched.status_code == 201, launched.content
+        stored = AgentFixRun.no_workspace_objects.get(id=launched.json()["id"])
+        assert options["held_back_scenario_keys"] == [f"{source_run.id}|{KEYS[0]}"]
+        assert (
+            stored.request["held_back_scenario_keys"]
+            == (options["held_back_scenario_keys"])
+        )
+
+    def test_launch_options_leave_held_back_to_the_variations(
+        self, auth_client, source_run, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 12
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+
+        assert options["held_back_scenario_keys"] is None
+
+    @pytest.mark.parametrize(
+        ("source_kind", "installation", "commit", "ship"),
+        [
+            ("archive", None, None, ("make_default", None)),
+            ("github", None, "a" * 40, ("pull_request", "fix_github_not_connected")),
+            ("github", "42", None, ("pull_request", "fix_github_commit_unknown")),
+            ("github", "42", "a" * 40, ("pull_request", None)),
+            # An agent Epoch can't change ships nothing: no row says how.
+            ("provider", None, None, None),
+        ],
+    )
+    def test_launch_options_say_how_the_winner_ships(
+        self, auth_client, source_run, source_kind, installation, commit, ship
+    ):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        access = {"installation_id": installation} if installation else {}
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source_kind=source_kind,
+            source={"repository": "acme/agent", "ref": "refs/heads/main"},
+            agent_payload={**(runtime.agent_payload or {}), "source_access": access},
+        )
+        source = {"kind": source_kind, "commit_sha": commit} if commit else {}
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+            payload={**source_run.payload, "source": source}
+        )
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+
+        said = options["ship"]
+        blocked = said and said["blocked"]
+        assert (said and (said["path"], blocked and blocked["code"])) == ship
+        # Before launch there is no patch yet: the words don't offer it as the way out.
+        assert not blocked or "download the patch instead" not in blocked["message"]
+
     def test_launch_refuses_a_part_the_agent_does_not_offer(
         self, auth_client, source_run, monkeypatch
     ):
@@ -1372,6 +1535,85 @@ class TestUserApi:
         assert page(limit=2) == (3, newest_first[:2])
         assert page(limit=2, page=2) == (3, newest_first[2:])
 
+    def test_fixes_list_by_state_with_their_total(
+        self, auth_client, environment, source_run
+    ):
+        ready = _fix_run(source_run, state=AgentFixRun.State.READY)
+        stopped = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        # An environment holds one live fix at a time.
+        stopping = _fix_run(source_run, state=AgentFixRun.State.STOPPING)
+        failed = _fix_run(source_run, state=AgentFixRun.State.FAILED)
+
+        def listed(**query):
+            response = auth_client.get(
+                f"{BASE}/", {"environment_id": str(environment.id), **query}
+            )
+            assert response.status_code == 200, response.content
+            body = response.json()
+            return body["count"], [one["id"] for one in body["results"]]
+
+        # Running, as the list's filter sends it: every live state.
+        assert listed(state="queued,running,stopping") == (1, [str(stopping.id)])
+        assert listed(state="ready") == (1, [str(ready.id)])
+        assert listed(state=" failed , stopped ") == (
+            2,
+            [str(failed.id), str(stopped.id)],
+        )
+        # No state lists every fix, as before.
+        assert listed()[0] == 4
+        assert listed(state="ready", limit=1, page=1) == (1, [str(ready.id)])
+
+    def test_an_unknown_state_is_refused(self, auth_client, environment, source_run):
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/",
+            {"environment_id": str(environment.id), "state": "ready,shipped"},
+        )
+
+        assert response.status_code == 400, response.content
+        assert "shipped" in response.content.decode()
+
+    @pytest.mark.parametrize("state", [",,", "ready,", " , "])
+    def test_an_empty_state_is_refused_with_the_states_to_use(
+        self, auth_client, environment, source_run, state
+    ):
+        # Read as no state, ",," once listed every fix.
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id), "state": state}
+        )
+
+        assert response.status_code == 400, response.content
+        body = response.content.decode()
+        assert all(one in body for one in AgentFixRun.State.values), body
+
+    def test_the_state_param_names_every_state(self):
+        help_text = AgentFixListQuerySerializer().fields["state"].help_text
+        assert all(one in help_text for one in AgentFixRun.State.values)
+
+    @pytest.mark.parametrize("deleted", ["execution", "job"])
+    def test_a_fix_from_a_deleted_run_names_no_run(
+        self, auth_client, environment, source_run, deleted
+    ):
+        fix = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        if deleted == "execution":
+            # What deleting the run from its page does (run_test views).
+            source_run.test_execution.delete()
+        else:
+            HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+                deleted=True
+            )
+
+        detail = auth_client.get(f"{BASE}/{fix.id}/").json()
+        listed = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id)}
+        ).json()["results"][0]
+
+        for body in (detail, listed):
+            assert (body["source_run_id"], body["source_run_number"]) == (None, None)
+
     def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings
     ):
@@ -1384,8 +1626,13 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            # What only one fix's read carries: its evals, and the words it reads.
             read.pop("eval_warnings")
             read.pop("eval_grading")
+            read.pop("flaky_protected_text")
+            read.pop("scenario_names")
+            for candidate in read["candidates"]:
+                candidate.pop("wording")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
@@ -1651,8 +1898,9 @@ class TestUserApi:
 
         assert (response.status_code, response.json()) == (
             200,
-            {"outcome": "activated"},
+            {"outcome": "validating"},
         )
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
 
@@ -1891,7 +2139,7 @@ class TestUserApi:
             " epoch to verify it; it takes 4 or more."
         )
         assert (
-            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            "Target pass rate 0% → 63%. No must-pass scenario broke.\n"
             in (sent["json"]["body"])
         )
         assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
@@ -1928,8 +2176,8 @@ class TestUserApi:
             assert label not in sent["json"]["title"].lower()
             assert label not in sent["json"]["body"].lower()
         assert (
-            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
-            " 0% → 63%, broke none\n" in sent["json"]["body"]
+            "Held-back pass rate 0% → 61%. No must-pass scenario broke.\n"
+            in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
         assert sent["json"]["title"] == "Epoch: change agent.py"
@@ -2267,18 +2515,18 @@ class TestUserApi:
         candidate.refresh_from_db()
         return fix_run, candidate
 
-    def _override(self, auth_client, fix_run):
-        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+    def _override(self, browser_client, fix_run):
+        [shown] = browser_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
         return shown["override"]
 
     def test_a_candidate_only_must_pass_refused_ships_with_a_reason_it_names(
-        self, auth_client, user, source_run, github
+        self, browser_client, user, source_run, github
     ):
         fix_run, candidate = self._vetoed(source_run, "github")
-        before = self._override(auth_client, fix_run)
+        before = self._override(browser_client, fix_run)
 
         response, [(_, _, sent)] = self._ship(
-            auth_client,
+            browser_client,
             fix_run,
             candidate,
             [(201, {"html_url": self.PULL})],
@@ -2300,11 +2548,14 @@ class TestUserApi:
         assert pull["draft"] is True
         assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        key, check = self.REGRESSED.split(": ")
-        assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]
+        # By the scenario's name in the environment, never by its key.
+        key, _ = self.REGRESSED.split(": ")
+        name = next(one.name for one in inventory(fix_run) if one.key == key)
+        assert f"- Must-pass scenario “{name}”" in pull["body"]
+        assert f"“{key}”" not in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
         assert "Verified by" not in pull["body"]
-        after = self._override(auth_client, fix_run)
+        after = self._override(browser_client, fix_run)
         assert (after["allowed"], after["reason"], after["by"]["id"]) == (
             True,
             self.REASON,
@@ -2314,18 +2565,18 @@ class TestUserApi:
 
     @pytest.mark.parametrize("body", [{}, {"override_reason": "   "}])
     def test_a_candidate_only_must_pass_refused_needs_a_reason(
-        self, auth_client, source_run, github, body
+        self, browser_client, source_run, github, body
     ):
         fix_run, candidate = self._vetoed(source_run, "github")
 
-        response, calls = self._ship(auth_client, fix_run, candidate, [], **body)
+        response, calls = self._ship(browser_client, fix_run, candidate, [], **body)
 
         assert (response.status_code, response.json()["error"], calls) == (
             422,
             "fix_override_reason_required",
             [],
         )
-        assert self._override(auth_client, fix_run)["reason"] == ""
+        assert self._override(browser_client, fix_run)["reason"] == ""
 
     @pytest.mark.parametrize(
         ("failed", "protected"),
@@ -2338,14 +2589,14 @@ class TestUserApi:
         ids=["held-back", "static", "must-pass-and-repeats", "protected-case-lost"],
     )
     def test_a_candidate_refused_for_anything_else_cannot_ship_with_a_reason(
-        self, auth_client, source_run, github, failed, protected
+        self, browser_client, source_run, github, failed, protected
     ):
         fix_run, candidate = self._vetoed(
             source_run, "github", failed=failed, protected=protected
         )
 
         response, calls = self._ship(
-            auth_client, fix_run, candidate, [], override_reason=self.REASON
+            browser_client, fix_run, candidate, [], override_reason=self.REASON
         )
 
         assert (response.status_code, response.json()["error"], calls) == (
@@ -2353,23 +2604,23 @@ class TestUserApi:
             "fix_candidate_not_proven",
             [],
         )
-        override = self._override(auth_client, fix_run)
+        override = self._override(browser_client, fix_run)
         assert (override["allowed"], override["regressions"]) == (False, [])
 
     def test_a_fix_without_held_back_cases_ships_a_must_pass_refusal_with_a_reason(
-        self, auth_client, source_run, github
+        self, browser_client, source_run, github
     ):
         fix_run, candidate = self._vetoed(source_run, "github", held_back=False)
 
         response, calls = self._ship(
-            auth_client,
+            browser_client,
             fix_run,
             candidate,
             [(201, {"html_url": self.PULL})],
             override_reason=self.REASON,
         )
 
-        assert self._override(auth_client, fix_run)["allowed"] is True
+        assert self._override(browser_client, fix_run)["allowed"] is True
         assert (response.status_code, len(calls)) == (200, 1)
 
     @pytest.mark.parametrize(
@@ -2378,7 +2629,7 @@ class TestUserApi:
         ids=["nothing-measured", "lock-not-verified", "cost-not-verified"],
     )
     def test_a_check_that_could_not_be_measured_does_not_stop_an_override(
-        self, auth_client, source_run, github, ceilings, lock
+        self, browser_client, source_run, github, ceilings, lock
     ):
         def allowed(ceilings, lock):
             AgentFixRun.no_workspace_objects.all().delete()
@@ -2388,7 +2639,7 @@ class TestUserApi:
                 {"name": "model-lock", "status": lock},
             ]
             fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
-            return self._override(auth_client, fix_run)["allowed"]
+            return self._override(browser_client, fix_run)["allowed"]
 
         # A measured breach still refuses it.
         assert (
@@ -2398,12 +2649,12 @@ class TestUserApi:
         ) == (True, False, False)
 
     def test_a_verdict_from_before_the_model_lock_tier_reads_as_it_always_did(
-        self, auth_client, source_run, github
+        self, browser_client, source_run, github
     ):
         def override(tiers):
             AgentFixRun.no_workspace_objects.all().delete()
             fix_run, _ = self._vetoed(source_run, "github", tiers=tiers)
-            [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+            [shown] = browser_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
             return shown["verdict"]["tiers"], shown["override"]["allowed"]
 
         old = self._final()
@@ -2437,7 +2688,7 @@ class TestUserApi:
         ids=["unmetered", "metered"],
     )
     def test_an_older_engines_ceilings_read_its_cost_as_unknown_unless_metered(
-        self, auth_client, source_run, github, metered, status, parts
+        self, browser_client, source_run, github, metered, status, parts
     ):
         detail = "cost not measurable; latency 32.6s (baseline 55.4s, ceiling 3600s)"
         tiers = [
@@ -2450,7 +2701,7 @@ class TestUserApi:
         )
         stored = AgentFixCandidate.no_workspace_objects.get(id=candidate.id).verdict
 
-        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+        [shown] = browser_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
 
         assert shown["verdict"]["tiers"][-1] == {
             "name": "ceilings",
@@ -2490,7 +2741,7 @@ class TestUserApi:
         ],
     )
     def test_a_verdict_short_of_the_whole_final_check_cannot_ship_with_a_reason(
-        self, auth_client, source_run, github, tiers
+        self, browser_client, source_run, github, tiers
     ):
         final = self._final()
         recorded = (
@@ -2515,7 +2766,7 @@ class TestUserApi:
             )
 
         response, calls = self._ship(
-            auth_client, fix_run, candidate, [], override_reason=self.REASON
+            browser_client, fix_run, candidate, [], override_reason=self.REASON
         )
 
         assert (response.status_code, response.json()["error"], calls) == (
@@ -2523,11 +2774,11 @@ class TestUserApi:
             "fix_candidate_not_proven",
             [],
         )
-        override = self._override(auth_client, fix_run)
+        override = self._override(browser_client, fix_run)
         assert (override["allowed"], override["regressions"]) == (False, [])
 
     def test_a_verdict_missing_both_the_held_back_tier_and_rate_cannot_ship(
-        self, auth_client, source_run, github
+        self, browser_client, source_run, github
     ):
         # The verdict looks like a fix without held-back cases, but the plan froze 4.
         fix_run, candidate = self._vetoed(
@@ -2535,7 +2786,7 @@ class TestUserApi:
         )
 
         response, calls = self._ship(
-            auth_client, fix_run, candidate, [], override_reason=self.REASON
+            browser_client, fix_run, candidate, [], override_reason=self.REASON
         )
 
         assert (response.status_code, response.json()["error"], calls) == (
@@ -2543,15 +2794,15 @@ class TestUserApi:
             "fix_candidate_not_proven",
             [],
         )
-        assert self._override(auth_client, fix_run)["allowed"] is False
+        assert self._override(browser_client, fix_run)["allowed"] is False
 
     def test_a_fix_without_its_frozen_plan_cannot_ship_a_refusal(
-        self, auth_client, source_run, github
+        self, browser_client, source_run, github
     ):
         fix_run, candidate = self._vetoed(source_run, "github", plan=False)
 
         response, calls = self._ship(
-            auth_client, fix_run, candidate, [], override_reason=self.REASON
+            browser_client, fix_run, candidate, [], override_reason=self.REASON
         )
 
         assert (response.status_code, response.json()["error"], calls) == (
@@ -2559,19 +2810,19 @@ class TestUserApi:
             "fix_candidate_not_proven",
             [],
         )
-        assert self._override(auth_client, fix_run)["allowed"] is False
+        assert self._override(browser_client, fix_run)["allowed"] is False
 
     def test_a_winner_ships_as_before_and_takes_no_reason(
-        self, auth_client, source_run, github
+        self, browser_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
-        override = self._override(auth_client, fix_run)
+        override = self._override(browser_client, fix_run)
 
         refused, none = self._ship(
-            auth_client, fix_run, candidate, [], override_reason=self.REASON
+            browser_client, fix_run, candidate, [], override_reason=self.REASON
         )
         shipped, [(_, _, sent)] = self._ship(
-            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+            browser_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
         )
 
         assert override == {
@@ -2591,41 +2842,46 @@ class TestUserApi:
         assert "Known regression" not in sent["json"]["body"]
 
     def test_an_uploaded_agent_s_vetoed_candidate_becomes_the_default_on_a_reason(
-        self, auth_client, user, environment, source_run
+        self, browser_client, user, environment, source_run
     ):
         fix_run, candidate = self._vetoed(source_run, "archive")
         before = environment.agent_version_id
         url = f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/"
 
-        refused = auth_client.post(url, {}, format="json")
+        refused = browser_client.post(url, {}, format="json")
         environment.refresh_from_db()
         unmoved = environment.agent_version_id
-        shipped = auth_client.post(url, {"override_reason": self.REASON}, format="json")
+        shipped = browser_client.post(
+            url, {"override_reason": self.REASON}, format="json"
+        )
 
         assert (refused.status_code, refused.json()["error"], unmoved) == (
             422,
             "fix_override_reason_required",
             before,
         )
-        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "activated"})
+        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "validating"})
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
-        override = self._override(auth_client, fix_run)
+        override = self._override(browser_client, fix_run)
         assert (override["reason"], override["by"]["id"]) == (self.REASON, str(user.id))
 
     def test_an_uploaded_fix_is_not_shipped_over_a_default_that_moved_even_on_a_reason(
-        self, auth_client, environment, source_run
+        self, browser_client, environment, source_run
     ):
         fix_run, candidate = self._vetoed(source_run, "archive")
         # Another fix from the same run shipped first.
         _, shipped = self._proven(source_run, "archive")
-        auth_client.post(
+        browser_client.post(
             f"{BASE}/{shipped.fix_run_id}/candidates/{shipped.id}/make-default/",
             {},
             format="json",
         )
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
-        response = auth_client.post(
+        response = browser_client.post(
             f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
             {"override_reason": self.REASON},
             format="json",
@@ -2637,7 +2893,7 @@ class TestUserApi:
         )
         environment.refresh_from_db()
         assert environment.agent_version_id == shipped.agent_version_id
-        assert self._override(auth_client, fix_run)["reason"] == ""
+        assert self._override(browser_client, fix_run)["reason"] == ""
 
     def _pin(self, source_run, ref):
         runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
@@ -2650,13 +2906,13 @@ class TestUserApi:
     # A tag ref that names no tag has no commit to compare, as a commit has none.
     @pytest.mark.parametrize("pin", ["refs/tags/v1", "commit", "refs/tags/"])
     def test_a_github_agent_pinned_to_a_tag_or_commit_ships_while_main_moves(
-        self, auth_client, source_run, github, pin
+        self, browser_client, source_run, github, pin
     ):
         self._pin(source_run, github.commit if pin == "commit" else pin)
         fix_run, candidate = self._proven(source_run, "github")
 
         response, [(_, _, sent)] = self._ship(
-            auth_client,
+            browser_client,
             fix_run,
             candidate,
             [(201, {"html_url": self.PULL})],
@@ -2667,12 +2923,14 @@ class TestUserApi:
         assert sent["json"]["base"] == "main"
 
     def test_a_github_agent_pinned_to_a_tag_that_moved_is_not_shipped(
-        self, auth_client, source_run, github
+        self, browser_client, source_run, github
     ):
         self._pin(source_run, "refs/tags/v1")
         fix_run, candidate = self._proven(source_run, "github")
 
-        response, calls = self._ship(auth_client, fix_run, candidate, [], tag="e" * 40)
+        response, calls = self._ship(
+            browser_client, fix_run, candidate, [], tag="e" * 40
+        )
 
         assert (response.status_code, response.json()["error"], calls) == (
             409,
@@ -2683,7 +2941,7 @@ class TestUserApi:
 
     @pytest.mark.parametrize("reason", ["", "the regression is a flaky check"])
     def test_a_github_fix_is_not_shipped_when_its_branch_moved(
-        self, auth_client, source_run, github, reason
+        self, browser_client, source_run, github, reason
     ):
         fix_run, candidate = (
             self._vetoed(source_run, "github")
@@ -2693,7 +2951,7 @@ class TestUserApi:
         body = {"override_reason": reason} if reason else {}
 
         response, calls = self._ship(
-            auth_client, fix_run, candidate, [], head="f" * 40, **body
+            browser_client, fix_run, candidate, [], head="f" * 40, **body
         )
 
         assert (response.status_code, response.json()["error"], calls) == (
@@ -2705,7 +2963,7 @@ class TestUserApi:
         assert "main @ fffffff" in response.json()["message"]
         # Nothing was pushed, and no reason was recorded.
         assert _git(github.bare, "for-each-ref", "refs/heads/futureagi") == ""
-        assert self._override(auth_client, fix_run)["reason"] == ""
+        assert self._override(browser_client, fix_run)["reason"] == ""
 
 
 def test_a_plan_refusal_names_the_feature_epoch():
@@ -3216,7 +3474,7 @@ class TestEngineMemory:
         assert read["ending"] == "no_improvement"
 
     def test_a_report_from_before_flaky_protected_reads_as_none(
-        self, api_client, auth_client, source_run
+        self, api_client, browser_client, source_run
     ):
         fix_run = _armed(_fix_run(source_run))
         self._report(
@@ -3227,7 +3485,7 @@ class TestEngineMemory:
             report={k: v for k, v in fix_run.report.items() if k != "flaky_protected"}
         )
 
-        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
+        read = browser_client.get(f"{BASE}/{fix_run.id}/").json()["report"]
         assert read["flaky_protected"] == []
         assert read["summary"] == "nothing held up"
 
