@@ -34,6 +34,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
           status={getValue()}
           progress={row?.original?.buildProgress}
           awaitingApproval={row?.original?.awaitingApproval}
+          designing={row?.original?.designing}
         />
       ),
     },

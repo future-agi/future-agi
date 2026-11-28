@@ -156,6 +156,48 @@ describe("MyEnvironmentsTable", () => {
     );
   });
 
+  it("shows a design's own states and keeps the fallback for an unknown status", async () => {
+    const [base] = HARNESS_ENVS.results;
+    listHarnessEnvironments.mockResolvedValue({
+      ...HARNESS_ENVS,
+      count: 3,
+      results: [
+        {
+          ...base,
+          id: "d1",
+          name: "Drafting",
+          status: "designing",
+          stage: "acquiring_source",
+        },
+        {
+          ...base,
+          id: "d2",
+          name: "Proposed",
+          status: "awaiting_approval",
+          stage: "acquiring_source",
+        },
+        {
+          ...base,
+          id: "d3",
+          name: "Unknown",
+          status: "paused",
+          stage: "acquiring_source",
+        },
+      ],
+    });
+    renderTab();
+    await screen.findByText("Drafting");
+    expect(
+      within(rowFor("Drafting")).getByText("Designing"),
+    ).toBeInTheDocument();
+    expect(
+      within(rowFor("Proposed")).getByText("Awaiting approval"),
+    ).toBeInTheDocument();
+    expect(
+      within(rowFor("Unknown")).getByText("Not run yet"),
+    ).toBeInTheDocument();
+  });
+
   it("maps connectors to voice / chat agent-type cells", async () => {
     renderTab();
     await screen.findByText("Customer Support Line");

@@ -7,6 +7,7 @@ import {
 import {
   ENV_STATUS,
   BUILD_STATUS,
+  DESIGN_STATE,
   NOT_PROVIDED,
 } from "../myEnvironments.constants";
 
@@ -51,6 +52,8 @@ const LIST_STATUS_COMPLETED = "completed";
 
 export const envStatusFor = (stage, status) => {
   if (STAGE_LED_STAGES.has(stage)) return stageToStatus(stage);
+  // A design that hasn't started building is still building to the rest of the list.
+  if (Object.values(DESIGN_STATE).includes(status)) return ENV_STATUS.BUILDING;
   return status === LIST_STATUS_COMPLETED ? ENV_STATUS.READY : status;
 };
 
@@ -135,8 +138,11 @@ export function harnessEnvToRow(item) {
     // rather than defaulted — inventing "building"/"chat" for a missing value
     // would hide a real data gap. `agent_type` is one of two modalities.
     status: envStatusFor(item?.stage, item?.status),
-    // Still building, but waiting on the person to approve its sources.
-    awaitingApproval: item?.stage === "awaiting_source_review",
+    // Still building, but waiting on the person to approve its sources or design.
+    awaitingApproval:
+      item?.stage === "awaiting_source_review" ||
+      item?.status === DESIGN_STATE.AWAITING_APPROVAL,
+    designing: item?.status === DESIGN_STATE.DESIGNING,
     agentType: ENV_AGENT_TYPE[item?.agent_type],
     updatedAt: item?.last_updated ?? item?.created_at ?? null,
     description: item?.description ?? null,

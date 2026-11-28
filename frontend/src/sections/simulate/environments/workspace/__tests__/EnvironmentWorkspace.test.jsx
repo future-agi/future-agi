@@ -880,6 +880,19 @@ describe("EnvironmentWorkspace route shell", () => {
       await screen.findByText(PIPELINE_CHECKS_COPY.heading),
     ).toBeInTheDocument();
     expect(screen.queryByText("Review the design")).toBeNull();
+    cleanup();
+
+    // The backend's own designing stage decides it, whatever the conversation says.
+    getHarnessJob.mockResolvedValue({
+      ...job({
+        events: [{ kind: "tool_result", payload: { tool: "save_world" } }],
+        messages: [],
+      }),
+      status: { stage: "designing", created_at: NOW },
+    });
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+    expect(await screen.findByText("Review the design")).toBeInTheDocument();
+    expect(screen.getByText("Designing")).toBeInTheDocument();
   });
 
   it.each(["design", "build_job"])(

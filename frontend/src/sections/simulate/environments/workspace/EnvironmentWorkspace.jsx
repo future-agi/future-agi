@@ -31,7 +31,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
-import { BUILD_STATUS } from "../myEnvironments.constants";
+import { BUILD_STATUS, DESIGN_STATE } from "../myEnvironments.constants";
 import ChatSplitPane from "../components/ChatSplitPane";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
@@ -405,21 +405,31 @@ export default function EnvironmentWorkspace() {
       ...env,
       name: evalDetailQuery.data?.overview?.name || metadata.name || env.name,
     };
-    const question = metadata.design && designQuestion(designJob?.conversation);
-    const awaiting =
-      jobQuery.data?.status?.stage === "awaiting_source_review" || question;
+    const stage = jobQuery.data?.status?.stage;
+    // The backend's own design state, when it sends one, wins over the conversation.
+    const designState = Object.values(DESIGN_STATE).includes(stage)
+      ? stage
+      : null;
+    const question =
+      metadata.design &&
+      designState !== DESIGN_STATE.DESIGNING &&
+      designQuestion(designJob?.conversation);
+    const awaiting = designState
+      ? designState === DESIGN_STATE.AWAITING_APPROVAL
+      : stage === "awaiting_source_review" || question;
     // The builder drafts the design before it asks for approval; nothing is
     // built until the person approves it, so this is not a build yet. A resumed
     // design may already be approved in its checkpoint, so it keeps the build view.
     const conversation = designJob?.conversation;
-    const drafting =
-      Boolean(metadata.design) &&
-      !metadata.design.resume_from &&
-      building &&
-      !reviewStage &&
-      !question &&
-      !designApproved(conversation) &&
-      !designProgress(conversation).has("approved");
+    const drafting = designState
+      ? building && designState === DESIGN_STATE.DESIGNING
+      : Boolean(metadata.design) &&
+        !metadata.design.resume_from &&
+        building &&
+        !reviewStage &&
+        !question &&
+        !designApproved(conversation) &&
+        !designProgress(conversation).has("approved");
     return (
       <Box
         sx={{

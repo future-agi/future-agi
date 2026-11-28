@@ -10,6 +10,13 @@ export const ENV_STATUS = {
   READY: "ready",
 };
 
+// A design job's states before it builds, from the backend once it supports
+// them: the list's `status` and the job's `status.stage`.
+export const DESIGN_STATE = {
+  DESIGNING: "designing",
+  AWAITING_APPROVAL: "awaiting_approval",
+};
+
 // The unfinished values of the list endpoint's own status (building | running |
 // completed | failed, from harness_environment.status_for). A cancel in flight
 // stays building/running until it lands as failed, so these two cover it.
