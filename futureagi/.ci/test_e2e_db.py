@@ -491,6 +491,47 @@ class SwitchTest(Workspace):
         self.assertIn("::error", printed)
 
 
+class SummaryTest(Workspace):
+    """The run summary counts what each leg of a restoring run did."""
+
+    def leg(self, shard, result, attempt=1, stack="distributed"):
+        folder = self.dir / f"db-reuse-{stack}-{shard}-attempt-{attempt}"
+        folder.mkdir()
+        (folder / "e2e-db-result").write_text(result + "\n")
+
+    def test_each_kind_is_counted_with_its_shards_and_reasons(self):
+        self.leg(1, "restored")
+        self.leg(2, "zero")
+        self.leg(3, "restored")
+        self.leg(4, "fell back: the restore failed")
+        self.leg(5, "miss: Postgres version")
+        self.leg(1, "restored", stack="standalone")
+        table = e2e_db.summary(self.dir, "distributed", 6)
+        self.assertIn("| restored | 2 | 1, 3 |", table)
+        self.assertIn("| zero | 1 | 2 |", table)
+        self.assertIn("| fell back | 1 | 4 |", table)
+        self.assertIn("| miss | 1 | 5 |", table)
+        # A leg that left no result (it failed before the step, or was
+        # cancelled) is shown, never counted as restored.
+        self.assertIn("| no result | 1 | 6 |", table)
+        self.assertIn("- shard 4: fell back: the restore failed", table)
+        self.assertIn("- shard 5: miss: Postgres version", table)
+
+    def test_the_last_attempt_of_a_shard_counts(self):
+        self.leg(1, "fell back: Postgres did not start", attempt=1)
+        self.leg(1, "restored", attempt=2)
+        table = e2e_db.summary(self.dir, "distributed", 1)
+        self.assertIn("| restored | 1 | 1 |", table)
+        self.assertIn("| fell back | 0 | - |", table)
+        self.assertNotIn("no result", table)
+
+    def test_no_results_at_all_is_every_leg_without_one(self):
+        self.assertIn(
+            "| no result | 3 | 1, 2, 3 |",
+            e2e_db.summary(self.dir / "none", "distributed", 3),
+        )
+
+
 # Stands in for Django and the stack's manage.py: it notes the command line
 # Django sees, and whether post_migrate was sent.
 FAKE_MIGRATE_MODULE = """

@@ -287,6 +287,64 @@ def plan(switch, totals, db):
     return lines, result
 
 
+RESULT_DIR = re.compile(
+    r"db-reuse-(?P<stack>[a-z]+)-(?P<shard>\d+)-attempt-(?P<attempt>\d+)"
+)
+RESULT_FILE = "e2e-db-result"
+
+
+def summary(directory, stack, total):
+    """A table of what each leg of a restoring run did with the saved dump.
+
+    `directory` holds one folder per leg and attempt, as download-artifact
+    writes them (db-reuse-<stack>-<shard>-attempt-<n>/e2e-db-result). The
+    last attempt of each shard counts.
+    """
+    last = {}
+    for folder in sorted(Path(directory).iterdir()) if Path(directory).is_dir() else []:
+        match = RESULT_DIR.fullmatch(folder.name)
+        if not match or match["stack"] != stack:
+            continue
+        shard, attempt = int(match["shard"]), int(match["attempt"])
+        if attempt >= last.get(shard, (0, ""))[0]:
+            text = (
+                (folder / RESULT_FILE).read_text()
+                if (folder / RESULT_FILE).is_file()
+                else ""
+            )
+            last[shard] = (
+                attempt,
+                text.strip().splitlines()[0] if text.strip() else "",
+            )
+    counts = {"restored": [], "fell back": [], "miss": [], "zero": [], "no result": []}
+    reasons = []
+    for shard in range(1, total + 1):
+        result = last.get(shard, (0, ""))[1]
+        kind = next(
+            (
+                k
+                for k in ("restored", "fell back", "miss", "zero")
+                if result.startswith(k)
+            ),
+            "no result",
+        )
+        counts[kind].append(shard)
+        if kind in ("fell back", "miss"):
+            reasons.append(f"- shard {shard}: {result}")
+    lines = [
+        f"### Saved database, {stack}",
+        "",
+        "| Legs | Count | Shards |",
+        "|---|---|---|",
+    ]
+    for kind, shards in counts.items():
+        if shards or kind != "no result":
+            lines.append(
+                f"| {kind} | {len(shards)} | {', '.join(map(str, shards)) or '-'} |"
+            )
+    return "\n".join(lines + ([""] + reasons if reasons else []))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -305,6 +363,10 @@ def main(argv=None):
     sub = commands.add_parser("record")
     for name in ("out", "dump", "preseed", "recipe"):
         sub.add_argument(name)
+    sub = commands.add_parser("summary")
+    sub.add_argument("directory")
+    sub.add_argument("stack")
+    sub.add_argument("total", type=int)
     sub = commands.add_parser("named")
     sub.add_argument("switch")
     sub = commands.add_parser("plan")
@@ -323,6 +385,8 @@ def main(argv=None):
         elif args.command == "differing":
             for name in differing(args.first, args.second):
                 _say(name)
+        elif args.command == "summary":
+            _say(summary(args.directory, args.stack, args.total))
         elif args.command == "named":
             _say(" ".join(read_switch(args.switch)[0]))
         elif args.command == "plan":
