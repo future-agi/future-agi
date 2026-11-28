@@ -711,7 +711,7 @@ def forget(evidence_import_id: str, drafting_job_id: str | None = None) -> None:
     # A deleted import too: its environment's deletion leaves its drafting here.
     imports = EvidenceImport._base_manager.filter(id=evidence_import_id)
     if drafting_job_id is not None:
-        imports = imports.filter(drafting_job_id=drafting_job_id)
+        imports = imports.filter(drafting_job_id=uuid.UUID(drafting_job_id))
     evidence_import = imports.first()
     if evidence_import is None or evidence_import.drafting_job_id is None:
         return
