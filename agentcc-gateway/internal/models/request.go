@@ -13,6 +13,13 @@ type ChatCompletionRequest struct {
 	// request from ("anthropic" for /v1/messages, "google" for the GenAI
 	// routes); empty for a caller's own chat request. It is never sent.
 	TranslatedFrom string `json:"-"`
+	// CallerModel is the model the caller chose (after the caller's own
+	// aliases and model map), recorded before the gateway may send the
+	// request under another one: complexity routing, a routing target's or
+	// conditional route's model_override, a model fallback, a failover
+	// target, the traffic mirror. Empty when nothing recorded it. It is
+	// never sent.
+	CallerModel string `json:"-"`
 
 	Model               string          `json:"model"`
 	Messages            []Message       `json:"messages"`
@@ -33,10 +40,12 @@ type ChatCompletionRequest struct {
 	Seed                *int            `json:"seed,omitempty"`
 	Tools               []Tool          `json:"tools,omitempty"`
 	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
-	ResponseFormat      *ResponseFormat `json:"response_format,omitempty"`
-	ServiceTier         string          `json:"service_tier,omitempty"`
-	Modalities          []string        `json:"modalities,omitempty"`
-	Audio               *AudioConfig    `json:"audio,omitempty"`
+	// Also retained in Extra for caller-metadata telemetry.
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+	ResponseFormat    *ResponseFormat `json:"response_format,omitempty"`
+	ServiceTier       string          `json:"service_tier,omitempty"`
+	Modalities        []string        `json:"modalities,omitempty"`
+	Audio             *AudioConfig    `json:"audio,omitempty"`
 
 	// Extra captures unknown fields for pass-through to providers.
 	Extra map[string]json.RawMessage `json:"-"`
@@ -107,6 +116,9 @@ func (r ChatCompletionRequest) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	for k, v := range r.Extra {
+		if k == "parallel_tool_calls" && r.ParallelToolCalls != nil {
+			continue
+		}
 		obj[k] = v
 	}
 	return json.Marshal(obj)
@@ -155,8 +167,9 @@ type FunctionCall struct {
 }
 
 type Tool struct {
-	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
+	Type           string       `json:"type"`
+	Function       ToolFunction `json:"function"`
+	AllowedCallers []string     `json:"allowed_callers,omitzero"`
 
 	// Raw holds the caller's original bytes for a tool that is not a plain
 	// "function" — Anthropic's server tools (web_search_20250305 and the

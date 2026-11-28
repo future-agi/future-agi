@@ -12,8 +12,10 @@ import os
 import subprocess
 import tarfile
 import tempfile
+import zlib
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from django.conf import settings
@@ -24,7 +26,9 @@ from minio.error import S3Error
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    CallExecution,
     HostedHarnessJob,
+    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.pydantic_schemas.agent_fix import (
@@ -35,17 +39,25 @@ from simulate.pydantic_schemas.agent_fix import (
     FailureOwner,
 )
 from simulate.selectors.agent_fix import (
+    answers_request,
     check_run_parallelism,
     committed_usd,
     fix_lineage,
-    ran_at,
+    graded_check_runs,
+    is_graded_label,
+    is_outside_attempt,
+    runs_lacking_verdicts,
+    worst_case_usd_per_execution,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.harness_evals import runnable_eval_configs
+from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
+    fail_unscheduled,
     run_idempotency_key,
 )
 from simulate.temporal.client import start_hosted_harness_gateway_workflow
@@ -77,27 +89,153 @@ def _locked_running(fix_run_id: Any) -> AgentFixRun:
     if locked.source_run_id is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     return locked
 
 
+BASE_SOURCE = "base-source.tar.gz"
+# The tree a person's own coding agent submitted, for an outside attempt.
+SUBMITTED_SOURCE = "submitted-source.tar.gz"
+
+
 def source_archive(fix_run: AgentFixRun) -> bytes:
     """The agent's editable files as the fix started from them: a `source/`-rooted tar.gz,
     kept for the whole fix, so every candidate is compared with the same base."""
-    key = _object_key(fix_run, "base-source.tar.gz")
+    key = _object_key(fix_run, BASE_SOURCE)
     body = _load_if_stored(key)
     if body is None:
-        if fix_run.source_run_id is None:
+        source_run = fix_run.source_run
+        if source_run is None:
             raise HostedHarnessError(
                 "fix_source_deleted",
-                "the run this fix started from was deleted",
+                "the run this epoch started from was deleted",
                 status_code=409,
             )
-        body = agent_kind(fix_run.environment).source_archive(fix_run)
+        body = run_source_archive(source_run)
         _put(key, body, "application/gzip")
     return body
+
+
+def run_source_archive(source_run: HostedHarnessJob) -> bytes:
+    """The agent's editable files as the run ran them, read again from its source."""
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    return agent_kind(environment).source_archive(source_run)
+
+
+def submitted_archive(fix_run: AgentFixRun) -> bytes | None:
+    """The tree an outside attempt verifies; None for a fix the engine makes itself."""
+    if not is_outside_attempt(fix_run):
+        return None
+    return _load_if_stored(_object_key(fix_run, SUBMITTED_SOURCE))
+
+
+def store_outside_trees(
+    organization_id: Any, fix_run_id: Any, *, base: bytes, submitted: dict[str, bytes]
+) -> None:
+    """Keep an outside attempt's base and submitted tree before its fix exists, so its
+    engine reads the base the submission was checked on. An object no fix points at is
+    harmless."""
+    _put(
+        fix_object_key(organization_id, fix_run_id, BASE_SOURCE),
+        base,
+        "application/gzip",
+    )
+    _put(
+        fix_object_key(organization_id, fix_run_id, SUBMITTED_SOURCE),
+        pack_tree(submitted),
+        "application/gzip",
+    )
+
+
+def pack_tree(files: dict[str, bytes]) -> bytes:
+    """Files by their path from the agent's root, as a `source/`-rooted tar.gz."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as archive:
+        for path, data in sorted(files.items()):
+            member = tarfile.TarInfo(f"source/{path}")
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    return out.getvalue()
+
+
+def candidate_patch(
+    base: dict[str, bytes], files: dict[str, bytes], locked_paths: list[str]
+) -> bytes:
+    """The files' change on the base as a git patch, refusing a change git cannot write,
+    a change to a locked path and a patch over the size limit."""
+    refuse_unwritable(base, files)
+    _refuse_locked_changes(locked_paths, base, files)
+    patch = _patch(base, files)
+    if len(patch) > MAX_PATCH_BYTES:
+        raise HostedHarnessError(
+            "fix_patch_too_large",
+            "the candidate's patch is too large",
+            status_code=413,
+        )
+    return patch
+
+
+class ChangedFile(NamedTuple):
+    path: str
+    added: int
+    removed: int
+
+
+def patch_files(patch: bytes) -> list[ChangedFile]:
+    """Each file a git patch changes, in its order, with its added and removed lines, as
+    git itself counts them: a path reads as written, never quoted, and a line is a line
+    whatever characters it holds. A binary file counts no lines."""
+    if not patch.strip():
+        return []
+    with tempfile.TemporaryDirectory(prefix="agent-fix-numstat-") as cwd:
+        counted = subprocess.run(
+            ["git", "-c", "core.quotePath=false", "apply", "--numstat", "-z"],
+            cwd=cwd,
+            input=patch,
+            env=dict(os.environ),
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout
+    fields = counted.split(b"\0")
+    files, at = [], 0
+    while at < len(fields):
+        entry = fields[at]
+        at += 1
+        if not entry:
+            continue
+        added, removed, path = entry.split(b"\t", 2)
+        if not path:
+            # A rename names its old path, then its new one.
+            path, at = fields[at + 1], at + 2
+        files.append(
+            ChangedFile(
+                path.decode("utf-8", "replace"),
+                int(added) if added.isdigit() else 0,
+                int(removed) if removed.isdigit() else 0,
+            )
+        )
+    return files
+
+
+def counted_files(fix_run: AgentFixRun, patch: bytes) -> list[ChangedFile] | None:
+    """The patch's files; None, said in the log, when git could not count them. What
+    reads them then has no change line, and nothing else stops."""
+    try:
+        return patch_files(patch)
+    except (subprocess.SubprocessError, ValueError) as exc:
+        logger.warning(
+            "agent_fix_patch_not_counted",
+            fix_run=str(fix_run.id),
+            error=type(exc).__name__,
+        )
+        return None
 
 
 def add_candidate(
@@ -107,25 +245,24 @@ def add_candidate(
     and return it with its check status. The same attempt again returns the candidate made
     the first time, checked again if its check never finished."""
     kind = agent_kind(fix_run.environment)
+    # Before the same attempt's candidate is returned: a relaunched verify run sends the
+    # submitted tree again as attempt 1, and gets the candidate it made.
+    _refuse_other_than_submitted(fix_run, attempt, tree)
     candidate = fix_run.candidates.filter(attempt=attempt).first()
     if candidate is None:
         files = archive_files(tree)
         base = archive_files(source_archive(fix_run))
-        _refuse_locked_changes(fix_run, base, files)
         # Made from the tree, not taken from the engine: the patch a user downloads or a
         # pull request ships is the version that was checked.
-        patch = _patch(base, files)
-        if len(patch) > MAX_PATCH_BYTES:
-            raise HostedHarnessError(
-                "fix_patch_too_large",
-                "the candidate's patch is too large",
-                status_code=413,
-            )
+        patch = candidate_patch(base, files, fix_run.request.get("locked_paths") or [])
         # Storage first, outside the fix's lock: an object no candidate points at is
         # harmless, a candidate without its files is not.
         prepared = kind.prepare_candidate(fix_run, files, attempt)
         patch_key = _object_key(fix_run, f"candidate-{attempt}.patch")
         _put(patch_key, patch, "text/x-diff")
+        # Counted here, outside the fix's lock too, so reading the candidate never
+        # reads its patch.
+        counted = counted_files(fix_run, patch)
         try:
             with transaction.atomic():
                 locked = _locked_running(fix_run.id)
@@ -135,6 +272,9 @@ def add_candidate(
                     attempt=attempt,
                     agent_version=version,
                     patch_object_key=patch_key,
+                    changed_files=None
+                    if counted is None
+                    else [list(one) for one in counted],
                     summary=summary[:4000],
                 )
         except IntegrityError as exc:
@@ -151,11 +291,62 @@ def add_candidate(
     return candidate, kind.check(candidate.agent_version)
 
 
+def refuse_unwritable(base: dict[str, bytes], files: dict[str, bytes]) -> None:
+    """Refuse a change to a path git refuses to write: a name that is not UTF-8, or one
+    with a .git part in any case."""
+    changed = base.keys() | files.keys()
+    invalid = sorted(
+        path.encode("utf-8", "backslashreplace").decode()
+        for path in changed
+        if base.get(path) != files.get(path)
+        and (
+            not _is_utf8(path)
+            or any(part.lower() == ".git" for part in path.split("/"))
+        )
+    )
+    if invalid:
+        raise HostedHarnessError(
+            "fix_tree_invalid",
+            f"the tree changes paths git cannot write: {', '.join(invalid[:10])}",
+            status_code=400,
+        )
+
+
+def _is_utf8(path: str) -> bool:
+    # tarfile decodes a name that is not UTF-8 with surrogate escapes.
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _refuse_other_than_submitted(
+    fix_run: AgentFixRun, attempt: int, tree: bytes
+) -> None:
+    """In an outside attempt, refuse any candidate but the submitted tree as attempt 1. An
+    engine template from before verify mode proposes its own, and stops here."""
+    if not is_outside_attempt(fix_run):
+        return
+    if attempt != 1:
+        raise HostedHarnessError(
+            "fix_outside_attempt_invalid",
+            "this epoch verifies the submitted tree as its first attempt only",
+            status_code=422,
+        )
+    submitted = submitted_archive(fix_run)
+    if submitted is None or archive_files(submitted) != archive_files(tree):
+        raise HostedHarnessError(
+            "fix_outside_tree_mismatch",
+            "this epoch verifies the submitted tree only",
+            status_code=422,
+        )
+
+
 def _refuse_locked_changes(
-    fix_run: AgentFixRun, base: dict[str, bytes], files: dict[str, bytes]
+    locked: list[str], base: dict[str, bytes], files: dict[str, bytes]
 ) -> None:
     """Refuse a candidate whose files differ from the base on any locked path."""
-    locked = fix_run.request.get("locked_paths") or []
     hits = sorted(
         path
         for path in set(base) | set(files)
@@ -213,31 +404,57 @@ def _git(
 
 def archive_files(body: bytes) -> dict[str, bytes]:
     """An agent tree's files by their path from the agent's root, refusing a tree whose
-    unpacked size or file count is over the limit before reading it."""
+    unpacked size, file count or entry count is over the limit before reading a file,
+    and one with a path a patch cannot name as it is: absolute, or with an empty, "."
+    or ".." part.
+
+    The headers are read one at a time, and reading stops at the first over the limit: a
+    small gzip of a huge number of entries, files, folders or links, is never expanded."""
     max_bytes = settings.AGENT_FIX_MAX_TREE_BYTES
     max_files = settings.AGENT_FIX_MAX_TREE_FILES
+    too_large = HostedHarnessError(
+        "fix_tree_too_large",
+        "the candidate's tree is over the size limit",
+        status_code=413,
+    )
     try:
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-            members = [member for member in archive.getmembers() if member.isfile()]
-            if (
-                len(members) > max_files
-                or sum(member.size for member in members) > max_bytes
-            ):
-                raise HostedHarnessError(
-                    "fix_tree_too_large",
-                    "the candidate's tree is over the size limit",
-                    status_code=413,
-                )
+            members: list[tarfile.TarInfo] = []
+            entries = size = 0
+            for member in archive:
+                entries += 1
+                if member.isfile():
+                    size += member.size
+                    members.append(member)
+                # A folder or link is an entry too. A tree has fewer of them than files,
+                # so twice the file limit bounds the entries of every kind.
+                if (
+                    len(members) > max_files
+                    or entries > 2 * max_files
+                    or size > max_bytes
+                ):
+                    raise too_large
             files = {}
             for member in members:
                 extracted = archive.extractfile(member)
                 if extracted is not None:
                     path = member.name.removeprefix("./").removeprefix("source/")
                     files[path] = extracted.read()
-    except tarfile.TarError as exc:
+    # A truncated or corrupt gzip raises past TarError.
+    except (tarfile.TarError, EOFError, zlib.error, OSError) as exc:
         raise HostedHarnessError(
             "fix_tree_invalid", "the candidate's tree is not a tar.gz", status_code=400
         ) from exc
+    if invalid := sorted(
+        path
+        for path in files
+        if any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        raise HostedHarnessError(
+            "fix_tree_invalid",
+            f"the tree has invalid paths: {', '.join(invalid[:10])}",
+            status_code=400,
+        )
     if not files:
         raise HostedHarnessError(
             "fix_tree_empty", "the candidate's tree has no files", status_code=400
@@ -277,14 +494,34 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
     executions = len(request.scenario_keys) * request.trials
     if not replay:
         # Before the usage check, which counts against the organization's quota.
-        _require_budget(fix_run, executions)
+        _require_budget(fix_run, executions, request.label)
         require_harness_call_usage(environment)
     with transaction.atomic():
         locked = _locked_running(fix_run.id)
         if finished is not None:
+            # Read under the fix's lock: the same request, sent twice at once, adopts once.
+            adopted_by, graded_at = (
+                HostedHarnessJob.no_workspace_objects.filter(id=finished.id)
+                .values_list("graded_for_id", "graded_at")
+                .get()
+            )
+            # A run a winner already graded keeps its grading, and its bill, with that
+            # fix: this one reads the grading through its lineage (graded_check_runs).
+            if (
+                is_graded_label(request.label)
+                and adopted_by != locked.id
+                and graded_at is None
+            ):
+                # This retry's winner grades it: its evals are new spend, held against
+                # this fix's limit as its own graded runs' are.
+                _require_budget(locked, executions, request.label, read_again=True)
+                HostedHarnessJob.no_workspace_objects.filter(id=finished.id).update(
+                    graded_for=locked
+                )
+                finished.graded_for = locked
             return finished
         if not replay:
-            _require_budget(locked, executions)
+            _require_budget(locked, executions, request.label)
         run, created = create_selected_harness_run(
             environment,
             scenario_keys=request.scenario_keys,
@@ -301,7 +538,7 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
                 fix_label=request.label
             )
             run.fix_label = request.label
-            transaction.on_commit(lambda: _dispatch(run))
+            transaction.on_commit(lambda: dispatch_run(run))
     return run
 
 
@@ -340,19 +577,18 @@ def _finished_earlier(
         state=HostedHarnessJob.State.COMPLETED,
         deleted=False,
     ).order_by("-created_at"):
-        metadata = (run.payload or {}).get("metadata") or {}
         pins = (run.agent_version_id, run.environment_version_id, run.suite_version_id)
-        if (
-            tuple(str(one) for one in pins) == wanted
-            and metadata.get("selected_scenario_keys") == request.scenario_keys
-            and metadata.get("trials") == request.trials
-            and ran_at(run) == parallelism
+        if tuple(str(one) for one in pins) == wanted and answers_request(
+            run,
+            scenario_keys=request.scenario_keys,
+            trials=request.trials,
+            parallelism=parallelism,
         ):
             return run
     return None
 
 
-def _dispatch(run: HostedHarnessJob) -> None:
+def dispatch_run(run: HostedHarnessJob) -> None:
     """Start the check run's workflow; if it cannot start, the run fails at once instead of
     waiting queued for a workflow that will never come."""
     retry = run.payload["retry"]
@@ -371,22 +607,9 @@ def _dispatch(run: HostedHarnessJob) -> None:
 
 def _fail_unscheduled(run: HostedHarnessJob) -> None:
     message = "the check run could not be scheduled"
-    now = timezone.now()
     with transaction.atomic():
-        marked = HostedHarnessJob.no_workspace_objects.filter(
-            id=run.id, state=HostedHarnessJob.State.QUEUED
-        ).update(
-            state=HostedHarnessJob.State.FAILED,
-            current_stage="failed",
-            terminal_at=now,
-            failure={
-                "domain": "infrastructure",
-                "stage": "queued",
-                "code": "scheduler_unavailable",
-                "message": message,
-            },
-        )
-        if marked:
+        now = fail_unscheduled(run, message)
+        if now is not None:
             TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
                 status=TestExecution.ExecutionStatus.FAILED,
                 completed_at=now,
@@ -394,19 +617,125 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
             )
 
 
-def _worst_case_per_execution() -> Decimal:
-    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION)
-
-
-def _require_budget(fix_run: AgentFixRun, executions: int) -> None:
+def _require_budget(
+    fix_run: AgentFixRun, executions: int, label: str, *, read_again: bool = False
+) -> None:
     budget = Decimal(str(fix_run.request["budget_usd"]))
-    needed = committed_usd(fix_run) + executions * _worst_case_per_execution()
+    worst = worst_case_usd_per_execution(fix_run, graded=is_graded_label(label))
+    if read_again:
+        # A run read again from the failed fix: that fix paid its simulation.
+        worst -= worst_case_usd_per_execution(fix_run, graded=False)
+        if worst <= 0:
+            return
+    needed = committed_usd(fix_run) + executions * worst
     if needed > budget:
         raise HostedHarnessError(
             "fix_budget_exhausted",
             f"this check would bring the fix to ${needed:.2f} of its ${budget:.2f} budget",
             status_code=402,
         )
+
+
+def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
+    """Queue the platform's evals of the baseline and the winner's final check, the runs its
+    warnings compare. A fix's check runs are graded only now, so a fix with no winner pays
+    for none. Called inside the report's transaction: the jobs start once it commits."""
+    configs = list(
+        runnable_eval_configs(fix_run.environment.run_test_id).order_by(
+            "created_at", "id"
+        )
+    )
+    if not configs:
+        return
+    winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
+    base, final = graded_check_runs(fix_run, winner)
+    # A baseline an earlier winner claimed stays that winner's, in its read and its bill.
+    # It is queued and priced again only where a finished call lacks a verdict of a
+    # current eval: a grading that failed or never reached it, or an eval added since.
+    # The queue skips every sealed verdict, so that top-up grades only what is missing.
+    claimed = [
+        run for run in base if fix_run.id not in (run.fix_run_id, run.graded_for_id)
+    ]
+    lacking = runs_lacking_verdicts(claimed, [str(one.id) for one in configs])
+    runs = [
+        run
+        for run in (*base, *final)
+        if fix_run.id in (run.fix_run_id, run.graded_for_id) or run.id in lacking
+    ]
+    configs = _evals_within_budget(fix_run, configs, runs)
+    if not configs:
+        return
+    for run in runs:
+        execution = run.test_execution
+        if execution is None:
+            continue
+        # Every config in one pass: queueing one reopens a call's eval side, so a
+        # call per config would leave all but the first config ungraded.
+        try:
+            counts = queue_evals_for_finished_calls(execution, configs)
+        except ValueError:
+            # A cancelled run is never graded; its evals read as not finished.
+            logger.warning(
+                "agent_fix_grading_not_queued",
+                fix_run=str(fix_run.id),
+                run=str(run.id),
+                exc_info=True,
+            )
+            continue
+        # A run with nothing queued, and none graded before, is left for the next
+        # winner. The dispatch runs once the report commits, so the claim comes after it.
+        if any(one["queued"] or one["skipped_existing"] for one in counts.values()):
+            transaction.on_commit(
+                _graded_once_dispatched(run.id, [str(one.id) for one in configs]),
+                robust=True,
+            )
+
+
+def _graded_once_dispatched(run_id: Any, config_ids: list[str]) -> Callable[[], None]:
+    def mark() -> None:
+        """Claim the run once its grading reached a call: the winner's Epoch then pays
+        for its evals and keeps its read. Whether a finished call still lacks a verdict
+        is read from the calls (runs_lacking_verdicts), so a later winner tops up what
+        this grading did not finish."""
+        run = HostedHarnessJob.no_workspace_objects.filter(id=run_id).first()
+        if run is None:
+            return
+        calls = CallExecution.objects.filter(test_execution_id=run.test_execution_id)
+        if not calls.filter(eval_outputs__has_any_keys=config_ids).exists():
+            return
+        HostedHarnessJob.no_workspace_objects.filter(id=run_id).update(
+            graded_at=timezone.now()
+        )
+
+    return mark
+
+
+def _evals_within_budget(
+    fix_run: AgentFixRun,
+    configs: list[SimulateEvalConfig],
+    runs: list[HostedHarnessJob],
+) -> list[SimulateEvalConfig]:
+    """The evals a winner's grading may queue on ``runs`` within the fix's limit: the
+    oldest first, as many as fit at their worst case on every execution graded. Each check
+    run held the evals the environment had when it was admitted; one added since was held
+    by none, so it is graded only if what is left of the limit covers it."""
+    executions = sum(run.scenario_count for run in runs if run.test_execution_id)
+    per_eval = executions * Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL)
+    if per_eval <= 0:
+        return configs
+    budget = Decimal(str(fix_run.request["budget_usd"]))
+    # What the fix holds without any eval's reserve: the evals queued here are priced
+    # below, from this same list, so no eval is counted twice or from another read.
+    left = budget - committed_usd(fix_run, eval_count=0)
+    fitting = max(0, min(len(configs), int(left / per_eval)))
+    if fitting < len(configs):
+        logger.warning(
+            "agent_fix_grading_over_budget",
+            fix_run=str(fix_run.id),
+            graded=[str(one.id) for one in configs[:fitting]],
+            not_graded=[str(one.id) for one in configs[fitting:]],
+        )
+    return configs[:fitting]
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
@@ -462,6 +791,7 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             AgentFixCandidate.no_workspace_objects.filter(
                 fix_run=locked, id=report.winner_candidate_id
             ).update(outcome=CandidateOutcome.WINNER, updated_at=timezone.now())
+            _grade_winner(locked, report.winner_candidate_id)
         if report.ending is not None:
             # A launch that died left candidates no later report names: none of them won.
             AgentFixCandidate.no_workspace_objects.filter(
@@ -518,7 +848,7 @@ def _ending_failure(
     )
     return {
         "code": "fix_engine_failed",
-        "message": "the improvement engine hit an error it could not recover from",
+        "message": "the engine hit an error it could not recover from",
     }
 
 
@@ -545,7 +875,11 @@ def _load_if_stored(key: str) -> bytes | None:
 
 
 def _object_key(fix_run: AgentFixRun, name: str) -> str:
-    return f"agent-fix/{fix_run.organization_id}/{fix_run.id}/{name}"
+    return fix_object_key(fix_run.organization_id, fix_run.id, name)
+
+
+def fix_object_key(organization_id: Any, fix_run_id: Any, name: str) -> str:
+    return f"agent-fix/{organization_id}/{fix_run_id}/{name}"
 
 
 def _put(key: str, body: bytes, content_type: str) -> None:

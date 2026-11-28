@@ -27,8 +27,8 @@ class WorkerShuttingDownError(Exception):
         activity_type: str,
         task_queue: str,
         attempt: int,
-        workflow_id: str,
-        workflow_type: str,
+        workflow_id: str | None,
+        workflow_type: str | None,
     ):
         self.activity_id = activity_id
         self.activity_type = activity_type

@@ -66,6 +66,9 @@ ENVIRONMENT_UNHASHED_ROOTS = (
 )
 WORLD_SEED_FILES = ("world.sqlite", "store.json", "collections.json", "schema.sql")
 SCENARIO_ROOTS = ("scenarios", "scenario")
+# What ALK's suite index adds to each entry (`folder.write_index`: the case's folder and its solution's step count). They
+# belong to the index only: a case's own document never carries them, and one that does took them from its entry.
+INDEX_ONLY_FIELDS = frozenset({"folder", "steps"})
 
 
 def read_tree(root: Path) -> dict[str, bytes]:
@@ -238,8 +241,25 @@ def _suite_unhashed(path: str) -> bool:
 
 
 def suite_hash(files: Files) -> str:
-    """Checks are derived from the environment's sub-goals, so they are not hashed."""
-    return tree_digest(scenario_files(files), exclude=_suite_unhashed)
+    """Checks are derived from the environment's sub-goals, so they are not hashed.
+
+    A suite that keeps scenarios a rebuild dropped (``dropped.json``) hashes them too, so it is
+    never taken for an earlier version with the same scenarios and lose what a later rebuild
+    restores from. Without drops (no file, an empty one, or one listing none) the hash is ALK's
+    scenario digest unchanged, so existing suite versions keep theirs."""
+    digest = tree_digest(scenario_files(files), exclude=_suite_unhashed)
+    dropped = files.get("dropped.json")
+    if not dropped:
+        return digest
+    try:
+        record = json.loads(dropped)
+    except (TypeError, ValueError):
+        drops = "sha256:" + hashlib.sha256(dropped).hexdigest()
+    else:
+        if isinstance(record, dict) and not record.get("scenarios"):
+            return digest
+        drops = canonical_digest(record)
+    return "sha256:" + hashlib.sha256(f"{digest}\n{drops}".encode()).hexdigest()
 
 
 # Stands in for an overlay field's value: which fields are set still counts, since the
@@ -294,6 +314,90 @@ def sub_goal_digests(sub_goals: Iterable[Mapping[str, Any]]) -> dict[str, str]:
         )
         for goal in sub_goals
     }
+
+
+# The environment's actor limits, listed with its actors so a limits edit reads as a change; never an actor id, which
+# is lowercase letters, digits and underscores.
+ACTOR_LIMITS_KEY = "#limits"
+ACTOR_LIMITS_NAME = "Actor limits"
+# Whatever else `actors.json` holds (an entry without an id, a repeated id, another field), so a change to it still
+# reads as a change: the file itself is left out of the file diff when the cast is shown actor by actor.
+ACTOR_OTHER_KEY = "#other"
+ACTOR_OTHER_NAME = "Other actor settings"
+
+
+def _actor_body(environment: Mapping[str, bytes]) -> dict[str, Any] | None:
+    raw = environment.get("actors.json")
+    try:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _actor_entries(body: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[Any]]:
+    """The first record for each actor id, and every other entry (no id, a repeated id, not a record)."""
+    entries = body.get("actors") or []
+    if not isinstance(entries, list):
+        return [], [entries]
+    records: list[dict[str, Any]] = []
+    other: list[Any] = []
+    seen: set[str] = set()
+    for actor in entries:
+        if isinstance(actor, dict) and actor.get("id") and str(actor["id"]) not in seen:
+            seen.add(str(actor["id"]))
+            records.append(actor)
+        else:
+            other.append(actor)
+    return records, other
+
+
+def _actor_other(body: Mapping[str, Any]) -> dict[str, Any]:
+    rest = {
+        field: value
+        for field, value in body.items()
+        if field not in ("actors", "limits", "schema")
+    }
+    _records, other = _actor_entries(body)
+    return {**rest, **({"actors": other} if other else {})}
+
+
+def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str] | None:
+    """A digest of each actor's record in the environment's `actors.json`, keyed by its id, of the actor limits when
+    any are set, and of anything else the file holds; who last set a record is left out, so only a change to the actor
+    itself reads as a change. None when the file is not a valid JSON object: the cast is unknown."""
+    body = _actor_body(environment)
+    if body is None:
+        return None
+    records, _other = _actor_entries(body)
+    digests = {
+        str(actor["id"]): canonical_digest(
+            {field: value for field, value in actor.items() if field != "provenance"}
+        )
+        for actor in records
+    }
+    if body.get("limits"):
+        digests[ACTOR_LIMITS_KEY] = canonical_digest(body["limits"])
+    other = _actor_other(body)
+    if other:
+        digests[ACTOR_OTHER_KEY] = canonical_digest(other)
+    return digests
+
+
+def actor_names(environment: Mapping[str, bytes]) -> dict[str, str] | None:
+    """Each actor's name by its id, so a change is shown by who it is about; None when the cast is unknown."""
+    body = _actor_body(environment)
+    if body is None:
+        return None
+    records, _other = _actor_entries(body)
+    names = {
+        str(actor["id"]): str(actor.get("name") or actor["id"]) for actor in records
+    }
+    if body.get("limits"):
+        names[ACTOR_LIMITS_KEY] = ACTOR_LIMITS_NAME
+    if _actor_other(body):
+        names[ACTOR_OTHER_KEY] = ACTOR_OTHER_NAME
+    return names
 
 
 def organization_credential_key(organization_id: object) -> bytes:

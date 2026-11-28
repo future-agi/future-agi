@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 import structlog
 from django.core.exceptions import ValidationError
@@ -136,9 +137,11 @@ class GetEvalStructureEvalIdView(APIView):
             organization = getattr(request, "organization", None)
             workspace = getattr(request, "workspace", None)
             user = User.objects.filter(pk=request.user.pk, is_active=True).first()
+            workspace_pk: Any = getattr(workspace, "pk", None)
+            organization_pk: Any = getattr(organization, "pk", None)
             workspace = Workspace.no_workspace_objects.filter(
-                pk=getattr(workspace, "pk", None),
-                organization_id=getattr(organization, "pk", None),
+                pk=workspace_pk,
+                organization_id=organization_pk,
                 is_active=True,
             ).first()
             if (
@@ -323,7 +326,7 @@ class StandaloneEvalView_v2(APIView):
                     }
                 )
 
-            response_data = {
+            response_data: dict[str, Any] = {
                 "eval_status": evaluation.status,
                 "result": {
                     "eval_id": evaluation.id,

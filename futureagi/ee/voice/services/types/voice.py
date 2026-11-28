@@ -184,7 +184,7 @@ class NormalizedTranscriptData:
 class CostBreakdown:
     """Provider-agnostic cost breakdown for a call.
 
-    All values in dollars (not cents). The activity converts to cents
+    All amounts are in dollars (not cents). The activity converts to cents
     when storing to CallExecution model fields.
     """
 
@@ -194,6 +194,8 @@ class CostBreakdown:
     tts: float = 0.0
     transport: float = 0.0  # SIP/telephony costs (VAPI "vapi" cost, LiveKit SIP)
     storage: float = 0.0  # S3 recording storage
+    # Quantities used to calculate these amounts, or None for provider-reported costs.
+    usage_snapshot: dict[str, Any] | None = None
 
 
 @dataclass

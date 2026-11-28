@@ -1,5 +1,6 @@
 """HTTP surface of "Fix my agent": the user's runs, and the engine's calls from its sandbox."""
 
+from django.conf import settings
 from django.http import HttpResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
@@ -12,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import is_browser_session
 from simulate.authentication import AgentFixEngineAuthentication
 from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import (
@@ -27,11 +29,23 @@ from simulate.selectors.agent_fix import (
     fix_runs_for_read,
     launch_options,
 )
+from simulate.selectors.agent_fix_issue import jobs_of_epochs
+from simulate.selectors.agent_fix_outside import (
+    attempt_verdict,
+    coding_agent_brief,
+    hidden_launch_options,
+    run_held_back,
+)
+from simulate.selectors.runs import user_runs
 from simulate.serializers.agent_fix import (
+    AgentFixAttemptVerdictSerializer,
     AgentFixCandidateCreatedSerializer,
     AgentFixCandidateUploadSerializer,
     AgentFixCheckRunCreatedSerializer,
     AgentFixCheckRunRequestSerializer,
+    AgentFixCodingAgentAttemptSerializer,
+    AgentFixCodingAgentBriefQuerySerializer,
+    AgentFixCodingAgentBriefSerializer,
     AgentFixEngineReportSerializer,
     AgentFixEngineStateSerializer,
     AgentFixLaunchOptionsQuerySerializer,
@@ -47,6 +61,7 @@ from simulate.serializers.agent_fix import (
 )
 from simulate.services import agent_fix_engine, agent_fix_models
 from simulate.services.agent_fix_github import open_pull_request
+from simulate.services.agent_fix_outside import submit_outside_attempt
 from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
@@ -55,6 +70,7 @@ from simulate.services.agent_fix_runs import (
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
+    declared_length_over,
     request_organization,
     scope_jobs,
 )
@@ -70,8 +86,19 @@ def _error_response(exc):
     if isinstance(exc, HostedHarnessError):
         return Response(exc.as_dict(), status=exc.status_code)
     if isinstance(exc, PydanticValidationError):
+        # The fields stay in the details for a machine; the message is for a person.
         return _error_response(
-            HostedHarnessError("validation_error", str(exc), status_code=400)
+            HostedHarnessError(
+                "validation_error",
+                "Some settings are not valid. Check them and try again.",
+                status_code=400,
+                details={
+                    "fields": [
+                        ".".join(str(part) for part in error["loc"])
+                        for error in exc.errors()
+                    ]
+                },
+            )
         )
     return _usage_limit_response(exc)
 
@@ -87,21 +114,48 @@ def _not_found():
     )
 
 
+# Multipart framing and an attempt's text fields, on top of its tree.
+_ATTEMPT_FRAMING_BYTES = 1024 * 1024
+
+
+def _tree_too_large(limit: int) -> HostedHarnessError:
+    return HostedHarnessError(
+        "fix_tree_too_large",
+        f"The tree is too large. An attempt takes a tree of at most"
+        f" {limit // (1024 * 1024)} MB.",
+        status_code=413,
+    )
+
+
 class _FixRunPages(ExtendedPageNumberPagination):
     page_size = 25
 
 
 class AgentFixRunViewSet(viewsets.ViewSet):
-    """A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+    """A user's epochs: start one from a finished run, follow it, stop it,
     and ship its winner: the environment's default, or a GitHub pull request."""
 
     permission_classes = [IsAuthenticated]
+    # A coding agent's own attempts: not there at all, for any request, while the
+    # deployment has them off.
+    OUTSIDE_ATTEMPT_ACTIONS = frozenset({"brief", "submit_attempt", "verdict"})
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
+        if (
+            self.action in self.OUTSIDE_ATTEMPT_ACTIONS
+            and not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED
+        ):
+            raise HostedHarnessError("not_found", "Not found", status_code=404)
         check_ee_feature(
             EEFeature.FIX_MY_AGENT, org_id=str(request_organization(request).id)
         )
+        # Refused before the body is parsed: by the time the view runs, the whole
+        # upload has been buffered.
+        if self.action == "submit_attempt":
+            limit = settings.AGENT_FIX_MAX_UPLOAD_BYTES
+            if declared_length_over(request, limit + _ATTEMPT_FRAMING_BYTES):
+                raise _tree_too_large(limit)
 
     def handle_exception(self, exc):
         return _error_response(exc) or super().handle_exception(exc)
@@ -125,6 +179,27 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             .first()
         )
 
+    def _source_run(self, request, test_execution_id):
+        """A user run of one of the caller's environments, by its test execution. An
+        Epoch's own check run or a verify run is never one: an Epoch from it would see the
+        cases its own fix held back."""
+        return (
+            self._jobs(request)
+            .filter(
+                user_runs(),
+                test_execution_id=test_execution_id,
+                environment__isnull=False,
+            )
+            .select_related("environment__environment_version", "environment_version")
+            .first()
+        )
+
+    def _epoch(self, request, fix_run, serializer=AgentFixRunSerializer, **context):
+        """An epoch's read. Only a person's signed-in session sees which cases were held
+        back, so the Epoch page can mark them; a coding agent, the CLI or MCP never."""
+        context.setdefault("held_back_visible", is_browser_session(request))
+        return serializer(fix_run, context=context).data
+
     @validated_request(
         query_serializer=AgentFixListQuerySerializer,
         responses={200: AgentFixRunListSerializer},
@@ -142,10 +217,21 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         paginator = _FixRunPages()
         page = paginator.paginate_queryset(
-            fix_runs_for_environment(environment), request, view=self
+            fix_runs_for_environment(
+                environment, states=request.validated_query_data.get("state")
+            ),
+            request,
+            view=self,
         )
         return paginator.get_paginated_response(
-            AgentFixRunSerializer(page, many=True).data
+            AgentFixRunSerializer(
+                page,
+                many=True,
+                context={
+                    "issue_links": jobs_of_epochs(page or []),
+                    "held_back_visible": is_browser_session(request),
+                },
+            ).data
         )
 
     @validated_request(
@@ -155,21 +241,86 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"], url_path="launch-options")
     def launch_options(self, request):
         """What the launch form shows and prefills for a finished run, and what would
-        refuse the launch now."""
-        source_run = (
-            self._jobs(request)
-            .filter(
-                test_execution_id=request.validated_query_data["source_run_id"],
-                environment__isnull=False,
+        refuse the launch now. Only a person's signed-in session reads the cases an Epoch
+        on the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP
+        never."""
+        source_run = self._source_run(
+            request, request.validated_query_data["source_run_id"]
+        )
+        if source_run is None:
+            return _not_found()
+        options = launch_options(source_run)
+        if not is_browser_session(request):
+            options = hidden_launch_options(
+                options, run_held_back(source_run, options.scenarios)
             )
-            .select_related("environment__environment_version", "environment_version")
-            .first()
+        return Response(AgentFixLaunchOptionsSerializer(options).data)
+
+    @validated_request(
+        query_serializer=AgentFixCodingAgentBriefQuerySerializer,
+        responses={200: AgentFixCodingAgentBriefSerializer},
+    )
+    @action(detail=False, methods=["get"], url_path="coding-agent-brief")
+    def brief(self, request):
+        """What a person's own coding agent reads to fix a finished run: its failing cases,
+        never a held-back one, the agent's files, the rules, and how to submit."""
+        source_run = self._source_run(
+            request, request.validated_query_data["source_run_id"]
         )
         if source_run is None:
             return _not_found()
         return Response(
-            AgentFixLaunchOptionsSerializer(launch_options(source_run)).data
+            AgentFixCodingAgentBriefSerializer(coding_agent_brief(source_run)).data
         )
+
+    @validated_request(
+        request_serializer=AgentFixCodingAgentAttemptSerializer,
+        responses={201: AgentFixRunSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="coding-agent-attempts",
+        # Multipart only: the tree is a file, which a urlencoded form cannot carry.
+        parser_classes=[MultiPartParser],
+    )
+    def submit_attempt(self, request):
+        """Submit the tree a person's own coding agent made for a finished run. Future AGI
+        checks it as a short Epoch: no model proposes a change, but each check runs the
+        agent on the run's cases and uses credits. Read its verdict."""
+        data = request.validated_data
+        source_run = self._source_run(request, data["source_run_id"])
+        if source_run is None:
+            return _not_found()
+        limit = settings.AGENT_FIX_MAX_UPLOAD_BYTES
+        if data["tree"].size > limit:
+            raise _tree_too_large(limit)
+        fix_run = submit_outside_attempt(
+            source_run,
+            tree=data["tree"].read(),
+            summary=data["summary"],
+            sent_base_commit=data["base_commit"],
+            locked_paths=data.get("locked_paths"),
+            budget_credits=data.get("budget_credits"),
+            user=request.user,
+        )
+        return Response(
+            self._epoch(
+                request, self._fix_run(request, fix_run.id), held_back_visible=False
+            ),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @validated_request(responses={200: AgentFixAttemptVerdictSerializer})
+    @action(detail=True, methods=["get"])
+    def verdict(self, request, pk=None):
+        """An outside attempt's verdict: each tier's status, the static and target tiers'
+        detail, and its must-pass regressions, none on a held-back case."""
+        fix_run = self._fix_run(request, pk)
+        if fix_run is None:
+            return _not_found()
+        return Response(AgentFixAttemptVerdictSerializer(attempt_verdict(fix_run)).data)
 
     @validated_request(
         request_serializer=AgentFixLaunchSerializer,
@@ -178,12 +329,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     )
     def create(self, request):
         data = request.validated_data
-        source_run = (
-            self._jobs(request)
-            .filter(test_execution_id=data["source_run_id"], environment__isnull=False)
-            .select_related("environment")
-            .first()
-        )
+        source_run = self._source_run(request, data["source_run_id"])
         if source_run is None:
             return _not_found()
         fix_run = launch_fix_run(
@@ -195,9 +341,13 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             budget_usd=data["budget_credits"] / 100,
             max_minutes=data.get("max_minutes"),
             user=request.user,
+            allowed_models=data.get("allowed_models"),
+            reply_latency_margin_pct=data.get("reply_latency_margin_pct"),
+            cost_margin_pct=data.get("cost_margin_pct"),
+            cost_limit_usd=data.get("cost_limit_usd"),
         )
         return Response(
-            AgentFixRunSerializer(self._fix_run(request, fix_run.id)).data,
+            self._epoch(request, self._fix_run(request, fix_run.id)),
             status=status.HTTP_201_CREATED,
         )
 
@@ -206,7 +356,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         fix_run = self._fix_run(request, pk)
         if fix_run is None:
             return _not_found()
-        return Response(AgentFixRunDetailSerializer(fix_run).data)
+        return Response(self._epoch(request, fix_run, AgentFixRunDetailSerializer))
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
@@ -221,7 +371,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         retried = retry_fix_run(fix_run, user=request.user)
         return Response(
-            AgentFixRunSerializer(self._fix_run(request, retried.id)).data,
+            self._epoch(request, self._fix_run(request, retried.id)),
             status=status.HTTP_201_CREATED,
         )
 
@@ -235,7 +385,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         if fix_run is None:
             return _not_found()
         request_stop(fix_run)
-        return Response(AgentFixRunSerializer(self._fix_run(request, pk)).data)
+        return Response(self._epoch(request, self._fix_run(request, pk)))
 
     def _candidate(self, request, pk, candidate_id):
         fix_run = self._fix_run(request, pk)
@@ -249,6 +399,20 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             .first()
         )
 
+    @staticmethod
+    def _override_reason(request) -> str:
+        """The reason to ship a candidate its checks refused. Only a person decides that,
+        in Future AGI: an API key, the CLI or MCP is refused."""
+        reason: str = request.validated_data["override_reason"]
+        if reason and not is_browser_session(request):
+            raise HostedHarnessError(
+                "fix_override_needs_person",
+                "A person decides whether to ship a candidate its checks refused. Open"
+                " the Epoch in Future AGI to ship it.",
+                status_code=403,
+            )
+        return reason
+
     @validated_request(
         request_serializer=AgentFixShipSerializer,
         responses={200: AgentFixMakeDefaultSerializer},
@@ -260,13 +424,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         url_path=r"candidates/(?P<candidate_id>[0-9a-f-]{36})/make-default",
     )
     def make_default(self, request, pk=None, candidate_id=None):
+        reason = self._override_reason(request)
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
             return _not_found()
         outcome = make_candidate_default(
-            candidate,
-            user=request.user,
-            override_reason=request.validated_data["override_reason"],
+            candidate, user=request.user, override_reason=reason
         )
         return Response({"outcome": outcome})
 
@@ -283,14 +446,11 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     def pull_request(self, request, pk=None, candidate_id=None):
         """A GitHub agent's winner, or a candidate only its must-pass check refused with
         the user's reason, opened once as a pull request on its repository."""
+        reason = self._override_reason(request)
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
             return _not_found()
-        url = open_pull_request(
-            candidate,
-            user=request.user,
-            override_reason=request.validated_data["override_reason"],
-        )
+        url = open_pull_request(candidate, user=request.user, override_reason=reason)
         return Response({"pull_request_url": url})
 
     @swagger_auto_schema(
@@ -345,6 +505,14 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         body = agent_fix_engine.source_archive(self._fix_run)
         return HttpResponse(body, content_type="application/gzip")
 
+    @action(detail=True, methods=["get"])
+    def submitted(self, request, pk=None):
+        """The tree an outside attempt verifies, `source/`-rooted like ``source``."""
+        body = agent_fix_engine.submitted_archive(self._fix_run)
+        if body is None:
+            return _not_found()
+        return HttpResponse(body, content_type="application/gzip")
+
     @validated_request(
         request_serializer=AgentFixCandidateUploadSerializer,
         responses={201: AgentFixCandidateCreatedSerializer},
@@ -383,12 +551,16 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     )
     def check_run(self, request, pk=None, run_id=None):
         # A retry reads the check runs the fixes it retries finished, as its own.
-        run = HostedHarnessJob.no_workspace_objects.filter(
-            id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
-        ).first()
+        run = (
+            HostedHarnessJob.no_workspace_objects.filter(
+                id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
+            )
+            .select_related("fix_run")
+            .first()
+        )
         if run is None:
             return _not_found()
-        return Response(check_run_status(run).model_dump(mode="json"))
+        return Response(check_run_status(run, self._fix_run).model_dump(mode="json"))
 
     @validated_request(
         request_serializer=AgentFixEngineReportSerializer,

@@ -121,15 +121,12 @@ const DevelopBarLeftSection = ({
     color: isData ? "text.primary" : "text.disabled",
   };
 
-  const handleHeightSelect = (mappingObject) => {
-    const height = mappingObject.height;
-    if (gridApi && gridApi.current) {
-      gridApi?.current?.api.forEachNode((node) => {
-        node.setRowHeight(height);
-      });
-    }
+  const handleHeightSelect = ({ height }) => {
+    const api = gridApi?.current;
+    if (!api) return;
 
-    gridApi?.current?.api.onRowHeightChanged();
+    api.forEachNode((node) => node.setRowHeight(height));
+    api.onRowHeightChanged();
   };
 
   const { data: datasetList } = useDevelopDatasetList();

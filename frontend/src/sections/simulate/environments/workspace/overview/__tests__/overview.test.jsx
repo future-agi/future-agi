@@ -8,9 +8,11 @@ import OverviewPanel from "../OverviewPanel";
 
 // The drawer's real-data panel has its own tests; here it only has to mount.
 vi.mock("../../agents/AgentVersionsPanel", () => ({
-  default: ({ env }) => (
-    <div data-testid="agent-versions-panel">{env.id}</div>
-  ),
+  default: ({ env }) => <div data-testid="agent-versions-panel">{env.id}</div>,
+}));
+// The locked-version card reads the versions query and has its own tests.
+vi.mock("../LockedVersionCard", () => ({
+  default: ({ envId }) => <div data-testid="locked-version-card">{envId}</div>,
 }));
 import { HardRulesCard } from "../OverviewCards";
 
@@ -232,6 +234,23 @@ describe("OverviewPanel", () => {
     const manage = () =>
       screen.queryByRole("button", { name: "Manage versions" });
 
+    it("shows the locked-version card while versioning is on", () => {
+      renderPanel({ env: versioned });
+
+      expect(screen.getByTestId("locked-version-card")).toHaveTextContent(
+        "env-1",
+      );
+    });
+
+    it("keeps the locked-version card out while building or without versioning", () => {
+      const { unmount } = renderPanel({ env: versioned, buildMode: true });
+      expect(screen.queryByTestId("locked-version-card")).toBeNull();
+      unmount();
+
+      renderPanel();
+      expect(screen.queryByTestId("locked-version-card")).toBeNull();
+    });
+
     it("opens the agent versions in a drawer while versioning is on", async () => {
       const user = userEvent.setup();
       renderPanel({ env: versioned });
@@ -254,6 +273,20 @@ describe("OverviewPanel", () => {
       await waitFor(() =>
         expect(screen.queryByTestId("agent-versions-panel")).toBeNull(),
       );
+    });
+
+    it("opens from the link in the URL and drops it on close", async () => {
+      const user = userEvent.setup();
+      window.history.pushState({}, "", "/?tab=overview&agentVersions=open");
+      renderPanel({ env: versioned });
+      expect(screen.getByTestId("agent-versions-panel")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() =>
+        expect(screen.queryByTestId("agent-versions-panel")).toBeNull(),
+      );
+      expect(window.location.search).toBe("?tab=overview");
+      window.history.pushState({}, "", "/");
     });
 
     it("offers nothing while versioning is off", () => {

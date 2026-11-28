@@ -30,7 +30,8 @@ from types import SimpleNamespace
 import uuid
 
 from scripts.update_rehearsal_shipping import (
-    ShippingRehearsal, ProductWitnesses, configuration_preimage, producer, wire,
+    REHEARSAL_TELEMETRY, ShippingRehearsal, ProductWitnesses, configuration_preimage, producer,
+    pull_compose_image, require_rehearsal_telemetry, wire,
 )
 from deploy.tests.update_e2e.real_automatic import ProductHarness
 
@@ -395,7 +396,7 @@ class SnapshotMilestone(ShippingRehearsal):
             for sock in sockets: sock.close()
         values = dict(self.ports, COMPOSE_PROJECT_NAME=self.project, COMPOSE_PROFILES='',
             FUTURE_AGI_VERSION=self.source_version+'@'+self.source_digest, GOOGLE_APPLICATION_CREDENTIALS='/dev/null',
-            FUTURE_AGI_TELEMETRY_DISABLED='true')
+            **REHEARSAL_TELEMETRY)
         values['INTEGRATION_ENCRYPTION_KEY'] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         for key in ('SECRET_KEY','REDIS_PASSWORD','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD',
                     'AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN','AGENTCC_WEBHOOK_SECRET'):
@@ -419,6 +420,7 @@ class SnapshotMilestone(ShippingRehearsal):
         model = self.installation.config(refresh=True)
         p.need(set(model['services'])=={'app','postgres','clickhouse'} and
                set(model['volumes'])==set(p.VOLUME_ROLES), 'unsupported retained deployment')
+        require_rehearsal_telemetry(model)
         # The native historical /dev/null bind is retained, not transformed.
         for service in model['services'].values():
             p.need(not service.get('build') and not service.get('privileged') and
@@ -431,8 +433,12 @@ class SnapshotMilestone(ShippingRehearsal):
         p.equal(parse_image_ref(model['services']['app']['image']), parse_image_ref(self.source_image),
                 'source is not digest-pinned')
         self.image_inspections = {}
+        # A retained dependency lock (QualificationRehearsal) is pulled by its
+        # digest; the boot still compares what the daemon holds with the lock.
+        locks = getattr(self, 'dependencies', None) or ()
         for name, service in model['services'].items():
-            self.installation.docker_run('pull','--platform',self.platform,service['image'])
+            pull_compose_image(self.installation.docker_run, self.platform, name, service['image'],
+                               () if name == 'app' else locks)
             image = self._json('image','inspect',service['image'])[0]
             p.equal(image['Os']+'/'+image['Architecture'], self.platform, 'non-native source image')
             self.image_inspections[name] = {k:image[k] for k in ('Id','Os','Architecture','RepoDigests')}
@@ -441,6 +447,9 @@ class SnapshotMilestone(ShippingRehearsal):
                    for ref in self.image_inspections['app']['RepoDigests']),
                'source digest identity unavailable')
         self.record('image-inspections.json', self.image_inspections)
+        if locks:
+            # _wait_healthy starts Compose. Check the full inspected set before any service starts.
+            self._checked_dependency_images(model, locks)
         self._wait_healthy()
         self._remember_resources()
         from deploy.update.contracts import InstallationBinding
@@ -449,6 +458,25 @@ class SnapshotMilestone(ShippingRehearsal):
             self.root, self.root/'.env', self.root/'.env', 'standalone', False, self.project,
             (self.root/'docker-compose.yml',), (), self.context, self.daemon, os.geteuid())
         self.registration = SimpleNamespace(binding=binding)
+
+    def _checked_dependency_images(self, model, retained):
+        """Return the canonical observed rows, refusing any difference from a retained lock."""
+        from deploy.update.manifest import parse_image_ref
+        p = producer()
+        actual = []
+        for service in ('postgres', 'clickhouse'):
+            # Retained Compose files use short Hub names (postgres:16); signed
+            # proofs require the canonical tagged reference for the same image.
+            image = parse_image_ref(model['services'][service]['image'])
+            digests = {parse_image_ref(ref).digest for ref in self.image_inspections[service]['RepoDigests']
+                       if parse_image_ref(ref).name == image.name}
+            p.need(len(digests) == 1, 'dependency image digest is ambiguous')
+            actual.append(dict(service=service, image=str(image), digest=digests.pop()))
+        if retained:
+            p.equal(sorted(actual, key=lambda row: row['service']),
+                    sorted((dict(row, image=str(parse_image_ref(row['image']))) for row in retained),
+                           key=lambda row: row['service']), 'retained dependency lock differs')
+        return tuple(sorted(actual, key=lambda row: row['service']))
 
     def _wait_healthy(self):
         p = producer()

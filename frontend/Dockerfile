@@ -6,19 +6,27 @@
 #   frontend-base -> build and dev stages only, never shipped: node with
 #     `yarn install` already baked in (see Dockerfile.base). Republish it
 #     (base-image-publish.yml) when package.json/yarn.lock change.
-#   nginx:1.31.6-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
-#     nginx:alpine (amd64, Docker Hub, 2026-09-25). nginx.conf uses only core
+#   nginx:1.31.8-alpine-slim -> the served image: 5.8 MB gzip, vs 26.3 MB for
+#     nginx:alpine (amd64, Docker Hub, 2026-11-14). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
-#     docker-entrypoint.sh below needs only busybox sh/printenv/sed, so none of
-#     the modules alpine-slim leaves out (njs, geoip, image-filter, xslt, acme)
-#     nor nginx:alpine's curl are used.
+#     docker-entrypoint.sh and the healthcheck use busybox sh/printenv/sed/
+#     cat/md5sum/sleep/kill/wget/stat, and awk/tr/base64/od/date to read a
+#     certificate's expiry (plus the base image's ssl_client for HTTPS), so
+#     none of the modules alpine-slim leaves out (njs, geoip, image-filter,
+#     xslt, acme) nor nginx:alpine's curl are used.
 ARG NODE_IMAGE=futureagi/frontend-base:v1.1.0-dev@sha256:bc90d2229b7155ed6ba69c47f3e5a634a0cd85fafab1e8f6c6609f0c1762e2ad
-ARG NGINX_IMAGE=nginx:1.31.6-alpine-slim@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
+ARG NGINX_IMAGE=nginx:1.31.8-alpine-slim@sha256:4c734d33ee731135dc9f2349914a34551c920f4451fca8bb05bf5880eb9079e8
 
 # Stage 1: Build the React app.
 # dist/ is architecture-independent, so build it once on the build host
 # ($BUILDPLATFORM) instead of running Vite under QEMU for linux/arm64.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
+
+WORKDIR /app
+# Refresh the pinned base's dependency snapshot if the lockfile changed.
+# Bundle inputs (including Vite flags) must not invalidate the install.
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --non-interactive
 
 # Build args forwarded from docker-compose. Vite reads env vars prefixed
 # VITE_ at build time and bakes them into the bundle.
@@ -26,8 +34,6 @@ ARG VITE_HOST_API=http://localhost:8000
 ARG VITE_ENVIRONMENT=production
 ENV VITE_HOST_API=${VITE_HOST_API} \
     VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
-
-WORKDIR /app
 
 COPY . ./
 
@@ -46,8 +52,7 @@ ARG PRUNE_PUBLIC_ASSETS="assets/readme assets/login_signup assets/images/home as
 
 # vite.config.js already sets build.sourcemap=false; deleting *.map is a guard
 # so a config change cannot ship source maps.
-RUN yarn install --frozen-lockfile --non-interactive \
-    && yarn build \
+RUN yarn build \
     && find dist -name '*.map' -delete \
     && for dir in $PRUNE_PUBLIC_ASSETS; do rm -rf "dist/$dir"; done \
     && if [ -n "$PRUNE_PUBLIC_ASSETS" ]; then \
@@ -81,6 +86,7 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
 
 COPY --chmod=755 docker-entrypoint.sh /docker-entrypoint.sh
+COPY --chmod=755 frontend-healthcheck.sh /usr/local/bin/frontend-healthcheck
 
 EXPOSE 80
 EXPOSE 443
@@ -94,9 +100,10 @@ EXPOSE 443
 USER root
 # nginx: SIGQUIT finishes the requests in flight, SIGTERM drops them.
 STOPSIGNAL SIGQUIT
-# busybox wget; -Y off ignores any HTTP(S)_PROXY in the environment.
+# Probes the HTTP listener, or the HTTPS one when HTTP is off
+# (FRONTEND_HTTP_ENABLED=false); see frontend-healthcheck.sh.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["wget", "-q", "-Y", "off", "-T", "5", "-O", "/dev/null", "http://127.0.0.1/"]
+    CMD ["/usr/local/bin/frontend-healthcheck"]
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
 

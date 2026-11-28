@@ -16,6 +16,12 @@ vi.mock("src/api/ossSetup/oss-setup", () => ({
   }),
 }));
 
+// The URL the browser reaches the API on: the SDK's FI_BASE_URL.
+vi.mock("src/config-global", async (importOriginal) => ({
+  ...(await importOriginal()),
+  HOST_API: "http://localhost:8100/",
+}));
+
 const theme = createTheme({ palette: { amber: { 600: "#CA8A04" } } });
 
 const check = (over) => ({
@@ -219,7 +225,10 @@ describe("ValidationStep", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Open Keys in the sidebar/)).toBeInTheDocument();
     expect(
-      screen.getByText("FI_BASE_URL=http://localhost:4318"),
+      screen.getByText("FI_BASE_URL=http://localhost:8100"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("FI_TRACES_URL=http://localhost:4318"),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tracing guide" })).toHaveAttribute(
       "href",
@@ -237,7 +246,10 @@ describe("ValidationStep", () => {
     };
     renderStep();
     expect(
-      await screen.findByText("FI_BASE_URL=http://localhost:4320"),
+      await screen.findByText("FI_TRACES_URL=http://localhost:4320"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("FI_BASE_URL=http://localhost:8100"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/localhost:4318/)).toBeNull();
   });

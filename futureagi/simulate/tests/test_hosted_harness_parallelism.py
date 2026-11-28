@@ -23,6 +23,7 @@ from simulate.models import HostedHarnessEvent, HostedHarnessJob, HostedHarnessR
 from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
+    begin_scenarios,
     canonical_digest,
     clamp_parallelism,
     create_hosted_job,
@@ -780,6 +781,7 @@ def _preflight(payload):
 
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     # The advisory under test is the parallelism echo; source scanning and the
@@ -1049,3 +1051,65 @@ def test_preflight_keeps_parallel_input_available_when_larger_profile_is_qualifi
     assert response.data["parallelism_enabled"] is True
     response = _preflight(_payload(parallelism=4, scenario_count=10))
     assert response.data["effective_parallelism"] == 4
+
+
+@pytest.mark.django_db
+def test_a_run_s_trials_are_counted_by_their_execution_keys(organization):
+    from simulate.models import HostedHarnessExecution, HostedHarnessScenario
+
+    job, _ = create_hosted_job(
+        organization,
+        _payload(parallelism=4, scenario_count=2),
+        idempotency_key="execution-counts",
+    )
+    first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    provision_scenarios(
+        first.attempt,
+        {
+            "operation": "provision",
+            "name": "Execution counts",
+            "personas": [
+                {"scenario_key": f"scenario-{i}", "name": f"Caller {i}"}
+                for i in range(1, 3)
+            ],
+        },
+    )
+    first.attempt.job.refresh_from_db()
+    begin_scenarios(
+        first.attempt,
+        {
+            "operation": "begin",
+            "run_test_id": str(first.attempt.job.run_test_id),
+            "scenario_keys": ["scenario-1", "scenario-2"],
+        },
+    )
+    # Each trial runs as an execution with its own hashed key, which its events and receipt name, and its call hangs
+    # off the execution, not the authored scenario.
+    for index, registration in enumerate(
+        HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
+            "scenario_key"
+        )
+    ):
+        call = registration.call_execution
+        HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+            call_execution=None
+        )
+        HostedHarnessExecution.no_workspace_objects.create(
+            job=job,
+            source_scenario=registration,
+            execution_key=f"9f2c{index}e1a",
+            trial_index=0,
+            call_execution=call,
+        )
+        HostedHarnessEvent.no_workspace_objects.create(
+            attempt=first.attempt,
+            event_id=f"started-{index}",
+            sequence=index + 1,
+            stage="running",
+            event_type="scenario_started",
+            payload={"scenario_key": f"9f2c{index}e1a"},
+            digest="sha256:" + "a" * 64,
+            emitted_at=datetime.now(UTC),
+        )
+
+    assert serialize_job(job)["status"]["active_scenarios"] == 2

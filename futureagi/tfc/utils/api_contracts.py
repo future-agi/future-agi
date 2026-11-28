@@ -12,7 +12,10 @@ from rest_framework.response import Response
 
 from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.schema_defaults import EncodedInputDefaultInspector
+from tfc.utils.schema_defaults import (
+    EncodedInputDefaultInspector,
+    RepeatedQueryArrayInspector,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -53,6 +56,7 @@ class ManagementAPIAutoSchema(SwaggerAutoSchema):
 
     field_inspectors = [
         EncodedInputDefaultInspector,
+        RepeatedQueryArrayInspector,
         *SwaggerAutoSchema.field_inspectors,
     ]
 

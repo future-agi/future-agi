@@ -34,6 +34,9 @@ from scripts.update_rehearsal_eval_task_reference import (
 from scripts.update_rehearsal_usage_reference import (
     USAGE_REFERENCE_MODELS, seed_usage_reference, verify_usage_reference,
 )
+from scripts.update_rehearsal_investigation_reference import (
+    INVESTIGATION_REFERENCE_MODELS, INVESTIGATION_REFERENCE_SHARED_TABLES, seed_investigation_reference_family,
+)
 
 REHEARSAL_CONTRACT = 'standalone-disposable-rehearsal-v1'
 # Explicit incompleteness, not an admission flag. Do not flip this constant to
@@ -41,6 +44,20 @@ REHEARSAL_CONTRACT = 'standalone-disposable-rehearsal-v1'
 # executable assertion sets must replace the incomplete methods below first.
 SHIPPING_TRANSACTION_INTEGRATED = False
 PREFIX = 'fagi-upd-e2e-release-'
+
+
+# Opt-out still sends a minimal registration. Never send it off the test stack.
+REHEARSAL_TELEMETRY = {
+    'FUTURE_AGI_TELEMETRY_DISABLED': 'true',
+    'FUTURE_AGI_TELEMETRY_URL': 'http://127.0.0.1:9',
+}
+
+
+def require_rehearsal_telemetry(model):
+    # A retained Compose definition may ignore or override the generated .env.
+    environment = model['services']['app'].get('environment') or {}
+    if any(environment.get(key) != value for key, value in REHEARSAL_TELEMETRY.items()):
+        raise ValueError('retained app must disable telemetry and use the loopback URL')
 
 
 def producer():
@@ -844,6 +861,48 @@ def copy_retained_files(source, destination, execution):
         p.equal(hash_path(destination,name),digest,'copied deployment hash differs')
 
 
+def locked_dependency_ref(service, reference, locks):
+    """The name@digest a retained lock fixes for this Compose service, else None.
+
+    Only a lock row for this service, with the same canonical repository and
+    tag as the Compose reference, applies. Any other row is not applied here,
+    so the caller's lock comparison still refuses it.
+    """
+    from deploy.update.manifest import parse_image_ref
+    wanted = parse_image_ref(reference)
+    if wanted.digest is not None or wanted.tag is None:
+        return None
+    rows = []
+    for row in locks or ():
+        if not isinstance(row, dict) or row.get('service') != service:
+            continue
+        image = parse_image_ref(row['image'])
+        if (image.name, image.tag, image.digest) == (wanted.name, wanted.tag, None):
+            rows.append(row)
+    if len(rows) != 1:
+        return None
+    return str(parse_image_ref(wanted.name+'@'+rows[0]['digest']))
+
+
+def pull_compose_image(docker, platform, service, reference, locks=()):
+    """Pull one Compose service image; a locked dependency is pulled by digest.
+
+    Retained Compose files name dependencies by tag (postgres:16). The tag can
+    be pushed again upstream after a release locked the digest it qualified,
+    and pulling the tag would then boot another image. A locked dependency is
+    fetched as name@digest and tagged locally as the Compose reference, so
+    `up --pull never` boots the locked image. Callers still compare the
+    daemon's RepoDigests with the lock. Returns the pinned reference or None.
+    """
+    pinned = locked_dependency_ref(service, reference, locks)
+    if pinned is None:
+        docker('pull','--platform',platform,reference)
+        return None
+    docker('pull','--platform',platform,pinned)
+    docker('image','tag',pinned,reference)
+    return pinned
+
+
 class ShippingRehearsal:
     """One owned stack. Mutation methods delegate to the actual shipping APIs."""
     def __init__(self,workspace,row,target,*,docker_context,resource_prefix,budgets,deadline,registry):
@@ -997,7 +1056,7 @@ class ShippingRehearsal:
         finally:
             for sock in sockets: sock.close()
         values.update(self.ports,COMPOSE_PROJECT_NAME=self.project,COMPOSE_PROFILES='',GOOGLE_APPLICATION_CREDENTIALS='/dev/null',
-            FUTURE_AGI_TELEMETRY_DISABLED='true',FUTURE_AGI_VERSION=self.row.release.manifest['version'])
+            FUTURE_AGI_VERSION=self.row.release.manifest['version'], **REHEARSAL_TELEMETRY)
         values['INTEGRATION_ENCRYPTION_KEY']=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         for key in ('SECRET_KEY','REDIS_PASSWORD','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD','AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN'):
             values[key]=secrets.token_hex(32)
@@ -1022,6 +1081,7 @@ class ShippingRehearsal:
         p.equal(daemon_info['OSType']+'/'+arch,self.row.platform,'native product rehearsal required')
         model=self.installation.config(refresh=True)
         p.need(set(model['services'])=={'app','postgres','clickhouse'} and set(model['volumes'])==set(p.VOLUME_ROLES),'unsupported rehearsal model')
+        require_rehearsal_telemetry(model)
         for service in model['services'].values():
             p.need(not service.get('build') and service.get('restart','no') in ('no','unless-stopped') and not service.get('privileged'),'unsupported rehearsal model')
             for mount in service.get('volumes',[]):
@@ -1031,7 +1091,8 @@ class ShippingRehearsal:
         from deploy.update.manifest import parse_image_ref
         dependencies=[]
         for name,service in model['services'].items():
-            self.installation.docker_run('pull','--platform',self.row.platform,service['image'])
+            pull_compose_image(self.installation.docker_run,self.row.platform,name,service['image'],
+                               () if name=='app' else self.dependencies)
             inspection=self._json('image','inspect',service['image'])[0]
             p.equal(inspection['Os']+'/'+inspection['Architecture'],self.row.platform,'non-native image')
             if name=='app':
@@ -1149,6 +1210,14 @@ class ShippingRehearsal:
                 {name: known.get(name) for name in ('database','app_label','model','table')},
                 requested_rows=rows if type(rows) is int and 0 <= rows <= 100000000 else None)
                 if known is not None else None)
+        if (entry.get('database')=='postgres' and entry.get('table') in INVESTIGATION_REFERENCE_SHARED_TABLES
+                and ERROR_FEED_REFERENCE_MODELS.get(key)==entry.get('table')
+                and any(row.get('database')=='postgres' and row.get('table') in INVESTIGATION_REFERENCE_MODELS.values()
+                        for row in getattr(self, 'reference_registry', None) or ())):
+            # The investigation fixture also writes these Error Feed tables, which
+            # registry order measures first. Seed-time and pre-backup measurements
+            # must be equal, so complete that family before this table is seeded.
+            self.seed_investigation_reference_family(rows)
         if key in USAGE_REFERENCE_MODELS or entry.get('table') in USAGE_REFERENCE_MODELS.values():
             if (entry.get('database')=='postgres' and key in USAGE_REFERENCE_MODELS
                     and entry.get('table')==USAGE_REFERENCE_MODELS[key]):
@@ -1169,6 +1238,11 @@ class ShippingRehearsal:
                     and entry.get('table')==EVAL_TASK_REFERENCE_MODELS[key]):
                 return self.seed_eval_task_reference(rows)
             raise p.ManualRelease('high_volume_reference_unavailable')
+        if key in INVESTIGATION_REFERENCE_MODELS or entry.get('table') in INVESTIGATION_REFERENCE_MODELS.values():
+            if (entry.get('database')=='postgres' and key in INVESTIGATION_REFERENCE_MODELS
+                    and entry.get('table')==INVESTIGATION_REFERENCE_MODELS[key]):
+                return self.seed_investigation_reference_family(rows)
+            raise p.ManualRelease('high_volume_reference_unavailable')
         if entry['database']!='postgres' or key not in APPEND_ONLY_MODELS:
             # A6 needs product-specific distributions for each registered table.
             # Never create a generic all-default row or silently skip a table.
@@ -1183,6 +1257,9 @@ class ShippingRehearsal:
 
     def seed_usage_reference(self, rows):
         return seed_usage_reference(self, rows, prefix=DJANGO_PREFIX, producer=producer())
+
+    def seed_investigation_reference_family(self, rows):
+        return seed_investigation_reference_family(self, rows, prefix=DJANGO_PREFIX, producer=producer())
 
     def seed_error_feed_reference_family(self, rows):
         """Build the whole graph once; later callbacks can only re-verify it.

@@ -61,7 +61,7 @@ func TestNonChatRoutesRecordTheInstanceThatAnswered(t *testing.T) {
 	observer := &servedByObserver{}
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost, observer), nil, nil, nil, nil, db, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetReportedCostVendors(srv.ReportedCostVendor)
 	srv.ready.Store(true)
 	want, _ := registry.GetProvider("openrouter")

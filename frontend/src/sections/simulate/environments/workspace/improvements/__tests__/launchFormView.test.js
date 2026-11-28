@@ -1,15 +1,23 @@
 import { describe, it, expect } from "vitest";
 
 import {
-  heldBackCount,
+  heldBackNote,
+  testSplitKeys,
   countsLine,
   reviewSentence,
   budgetSteps,
   minuteSteps,
   launchError,
   variationsNote,
-  blockedReason,
+  blockerOf,
+  costLimitOf,
+  isTraced,
+  seesModels,
+  seenModelsOf,
+  tracesUnreadable,
+  marginSteps,
 } from "../launchFormView";
+import { heldBackOf } from "../epochBlockers";
 
 const LIMITS = {
   budget_credits_max: 50000,
@@ -32,24 +40,98 @@ const SURFACES = [
 ];
 
 describe("held back", () => {
-  it("holds back a third from 12 picked", () => {
-    expect(heldBackCount(11)).toBe(0);
-    expect(heldBackCount(12)).toBe(4);
-    expect(heldBackCount(25)).toBe(8);
+  it("counts what is fixed, held back and protected, as the server holds back", () => {
+    expect(countsLine(12, 9, LIMITS, { keys: ["a", "b", "c", "d"] })).toBe(
+      "12 failing: 8 to fix, 4 held back to prove it · 9 protected",
+    );
+    // The server held back fewer than a third: its count, not a guess.
+    expect(countsLine(12, 9, LIMITS, { keys: ["a", "b", "c"] })).toBe(
+      "12 failing: 9 to fix, 3 held back to prove it · 9 protected",
+    );
+    expect(countsLine(3, 1, LIMITS, { keys: [] })).toBe(
+      "3 failing to fix · 1 protected",
+    );
+    expect(countsLine(12, 1, LIMITS, { pending: "edited" })).toBe(
+      "12 failing to fix · 1 protected",
+    );
+  });
+});
+
+// A run of lock 2026.11.1: two failing cases in its test split, one
+// in train. The server held back the suggested targets' test-split cases.
+const LOCKED = {
+  held_back_from: "locked_version",
+  locked_version_label: "2026.11.1",
+  held_back_scenario_keys: ["a", "b"],
+  suggested: { target_scenario_keys: ["a", "b", "c"] },
+  limits: FLOOR,
+  scenarios: [
+    { key: "a", split: "test" },
+    { key: "b", split: "test" },
+    { key: "c", split: "train" },
+    { key: "d", split: null },
+  ],
+};
+
+describe("held back on a locked version", () => {
+  it("holds back the picked cases of the test split, however few", () => {
+    expect(testSplitKeys(LOCKED)).toEqual(["a", "b"]);
+    expect(heldBackOf(LOCKED, ["a", "b", "c"])).toEqual({ keys: ["a", "b"] });
+    expect(countsLine(2, 0, LIMITS, heldBackOf(LOCKED, ["a", "c"]))).toBe(
+      "2 failing: 1 to fix, 1 held back to prove it · 0 protected",
+    );
   });
 
-  it("counts what is fixed, held back and protected", () => {
-    expect(countsLine(12, 9)).toBe(
-      "12 failing: 8 to fix, 4 held back to prove it · 9 must keep passing",
-    );
-    expect(countsLine(3, 1)).toBe("3 failing to fix · 1 must keep passing");
+  it("holds back only test-split cases, whatever the pick", () => {
+    // An edited pick, below cases_min: the test split still says which.
+    expect(heldBackOf(LOCKED, ["a", "c"])).toEqual({ keys: ["a"] });
+    expect(heldBackOf(LOCKED, ["c"])).toEqual({ keys: [] });
+    // A server answer outside the test split is never shown as held back.
+    expect(
+      heldBackOf({ ...LOCKED, held_back_scenario_keys: ["a", "c"] }, [
+        "a",
+        "b",
+        "c",
+      ]),
+    ).toEqual({ keys: ["a", "b"] });
+  });
+
+  it("samples off a locked version", () => {
+    const sampled = {
+      held_back_from: "sample",
+      locked_version_label: null,
+      held_back_scenario_keys: ["c"],
+      suggested: { target_scenario_keys: ["a", "b", "c"] },
+      limits: LIMITS,
+      scenarios: LOCKED.scenarios,
+    };
+    expect(heldBackOf(sampled, ["a", "b", "c"])).toEqual({ keys: ["c"] });
+    expect(heldBackNote(sampled)).toBeNull();
+  });
+
+  it("names the lock whose test split is held back", () => {
+    expect(heldBackNote(LOCKED)).toMatch(/lock 2026\.11\.1/);
+  });
+
+  it("refuses a pick that is all test split, as the launch does", () => {
+    const check = (targets) =>
+      launchError({
+        targets,
+        protectedKeys: [],
+        surfaces: ["prompt"],
+        limits: LIMITS,
+        testKeys: testSplitKeys(LOCKED),
+      });
+    expect(check(["a", "b"])).toMatch(/in the test split/);
+    expect(check(["a"])).toMatch(/in the test split/);
+    expect(check(["a", "c"])).toBeNull();
   });
 });
 
 describe("variations", () => {
   it("writes variations first below the floor, instead of refusing", () => {
     expect(countsLine(5, 1, FLOOR)).toBe(
-      "5 failing, and up to 15 variations of them · 1 must keep passing",
+      "5 failing, and up to 15 variations of them · 1 protected",
     );
     expect(variationsNote(7, FLOOR)).toBe(
       "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",
@@ -65,9 +147,10 @@ describe("variations", () => {
     ).toBeNull();
   });
 
-  it("says a fix from too few cases can only end with Limited validation", () => {
+  it("says a fix from too few cases can end with Limited validation at best", () => {
+    // Nothing held back ends weaker still: Proven on the targets only.
     const tail =
-      "With fewer than 6 failing cases it can only end with Limited validation";
+      "With fewer than 6 failing cases it can end with Limited validation at best";
     expect(variationsNote(5, FLOOR, "archive")).toMatch(
       new RegExp(`${tail}\\.$`),
     );
@@ -88,11 +171,42 @@ describe("variations", () => {
       },
       limits: FLOOR,
     };
-    expect(blockedReason(options, 5)).toBe("Save first");
-    expect(blockedReason(options, 12)).toBeNull();
-    expect(blockedReason({ ...options, blocked: { message: "Busy" } }, 5)).toBe(
-      "Busy",
-    );
+    expect(blockerOf(options, 5)).toEqual(options.variations_blocked);
+    expect(blockerOf(options, 12)).toBeNull();
+    const busy = { code: "environment_updating", message: "Busy" };
+    expect(blockerOf({ ...options, blocked: busy }, 5)).toBe(busy);
+  });
+});
+
+describe("held back on the form", () => {
+  const options = (keys, suggested, casesMin = 12) => ({
+    held_back_scenario_keys: keys,
+    suggested: { target_scenario_keys: suggested },
+    limits: { cases_min: casesMin },
+  });
+  const twelve = Array.from({ length: 12 }, (_, i) => `c${i}`);
+
+  it("shows the server's cases for the suggested targets", () => {
+    expect(heldBackOf(options(["c1"], twelve), twelve)).toEqual({
+      keys: ["c1"],
+    });
+  });
+
+  it("says the launch picks them from targets the person changed", () => {
+    const thirteen = [...twelve, "c12"];
+    expect(heldBackOf(options(["c1"], thirteen), twelve)).toEqual({
+      pending: "edited",
+    });
+  });
+
+  it("says they come with the variations below the floor, however the targets were set", () => {
+    expect(heldBackOf(options(null, twelve.slice(0, 5)), twelve.slice(0, 5))).toEqual({
+      pending: "variations",
+    });
+    // Unticked down below the floor: variations first, not a promise of held-back cases.
+    expect(heldBackOf(options(["c1"], twelve), twelve.slice(0, 10))).toEqual({
+      pending: "variations",
+    });
   });
 });
 
@@ -162,7 +276,84 @@ describe("launch checks", () => {
       "A case can't be both fixed and protected.",
     ],
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
+    [{ ...ok, seenModels: ["m1"], models: ["m1"] }, null],
+    [{ ...ok, seenModels: ["m1"], models: [] }, "Allow at least one model."],
+    [
+      { ...ok, seenModels: ["m1", "vertex_ai/m2"], models: ["m1"] },
+      "Allow every model this run called: vertex_ai/m2.",
+    ],
+    [{ ...ok, seenModels: ["m1", "vertex_ai/m2"], models: ["m1", "M2"] }, null],
+    // A fix that sees no model needs none allowed.
+    [{ ...ok, seenModels: [], models: [] }, null],
+    [{ ...ok, costLimit: "0.05" }, null],
+    [
+      { ...ok, costLimit: "0" },
+      "The cost limit must be a number of dollars above 0.",
+    ],
+    [
+      { ...ok, costLimit: "five" },
+      "The cost limit must be a number of dollars above 0.",
+    ],
   ])("passes a valid pick and refuses the rest %#", (input, message) => {
     expect(launchError(input)).toBe(message);
+  });
+});
+
+describe("constraints", () => {
+  it("reads an empty cost limit as none", () => {
+    expect(costLimitOf("")).toBeNull();
+    expect(costLimitOf("  ")).toBeNull();
+    expect(costLimitOf(" 0.02 ")).toBe(0.02);
+    expect(costLimitOf("-1")).toBeNaN();
+  });
+
+  it("offers the margins with the default among them", () => {
+    expect(marginSteps(25)).toEqual([0, 10, 25, 50, 100]);
+    expect(marginSteps(40)).toEqual([0, 10, 25, 40, 50, 100]);
+    // No increase is a choice of its own, offered once even when it is the value.
+    expect(marginSteps(0)).toEqual([0, 10, 25, 50, 100]);
+  });
+
+  it("tells an unreadable run's traces from an untraced agent", () => {
+    expect(
+      tracesUnreadable({ blocked: { code: "fix_traces_unreadable" } }),
+    ).toBe(true);
+    expect(tracesUnreadable({ blocked: { code: "fix_run_active" } })).toBe(
+      false,
+    );
+    expect(tracesUnreadable({ blocked: null })).toBe(false);
+  });
+
+  it("calls an agent traced when its spans named a model or measured its cost", () => {
+    const options = (allowed_models, agent_cost_metered) => ({
+      defaults: { allowed_models, agent_cost_metered },
+    });
+    expect(isTraced(options([], false))).toBe(false);
+    expect(isTraced(options([], true))).toBe(true);
+    expect(isTraced(options(["m1"], false))).toBe(true);
+    expect(seesModels(options([], true))).toBe(false);
+    expect(seesModels(options(["m1"], false))).toBe(true);
+  });
+
+  it("reads options that don't list the models as a run that saw none, without throwing", () => {
+    expect(seesModels({ defaults: {} })).toBe(false);
+    expect(seesModels({})).toBe(false);
+    expect(seenModelsOf({ defaults: {} })).toEqual([]);
+    expect(seenModelsOf({ defaults: { allowed_models: ["m1"] } })).toEqual([
+      "m1",
+    ]);
+  });
+
+  it("says only the minimum when the options leave out how variations fill the gap", () => {
+    const older = { scenarios_min: 12, scenarios_max: 200 };
+    const input = {
+      targets: ["a"],
+      protectedKeys: [],
+      surfaces: ["prompt"],
+      limits: older,
+    };
+    expect(launchError(input)).toBe("Needs at least 12 failing cases.");
+    expect(variationsNote(1, older)).toBeNull();
+    expect(countsLine(1, 9, older)).toBe("1 failing to fix · 9 protected");
   });
 });

@@ -1,49 +1,62 @@
 """Start, stop and close "Fix my agent" runs, and make a candidate the default."""
 
-from collections import Counter
-from collections.abc import Mapping, Sequence
-from hashlib import sha256
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Row
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    HarnessAgentVersionRuntime,
     HarnessSuiteMember,
     HostedHarnessJob,
     HostedHarnessScenario,
     Scenarios,
 )
 from simulate.pydantic_schemas.agent_fix import (
-    HELD_BACK_SHARE,
-    HELD_BACK_VERIFIED_MIN,
+    MARGIN_PCT_DEFAULT,
     VARIATIONS_PER_CASE,
+    EvalGrading,
     FixRequest,
     Surface,
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    eval_review,
     fewest_failing_cases,
+    held_back_keys,
+    is_outside_attempt,
     is_retryable,
     launch_blocker,
+    measured_automatically,
+    model_key,
+    models_called,
     overridable_regressions,
     recent_lost_models,
     scenario_results,
+    source_run_usage,
+    split_held_back,
     variations_blocker,
+    was_the_retry,
     written_variations,
 )
+from simulate.selectors.evidence_import import evidence_origins
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.alk_simulate_ingestion import GROUPED_SCENARIOS_ORIGIN
 from simulate.services.harness_agent_versions import discard_agent_version
 from simulate.services.harness_usage import (
     require_agent_fix_usage,
     require_harness_authoring,
+)
+from simulate.services.harness_versioning.locked_versions import (
+    run_locked_version,
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -59,43 +72,26 @@ from simulate.temporal.client import (
 logger = structlog.get_logger(__name__)
 
 
-HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
+def locked_test_keys(source_run: HostedHarnessJob) -> frozenset[str]:
+    """The run's scenarios in its locked version's test split; none off one."""
+    locked_version = run_locked_version(source_run)
+    return locked_version.test_keys if locked_version else frozenset()
 
 
-def split_held_back(
-    seed: str,
-    failing: Mapping[str, list[str]],
-    parents: Mapping[str, str] | None = None,
-) -> list[str]:
-    """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
-    the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
-    and never the last cases left to search on for a failing sub-goal. None below twelve.
-
-    A variation (a key of ``parents``) goes with the case it varies: a case and its
-    variations are held back together or not at all."""
-    parents = parents or {}
-    cases = [key for key, names in failing.items() if names]
-    if len(cases) < HELD_BACK_MIN_CASES:
-        return []
-    families: dict[str, list[str]] = {}
-    for key in cases:
-        families.setdefault(parents.get(key, key), []).append(key)
-    quota = len(cases) // HELD_BACK_SHARE
-    searched = Counter(name for key in cases for name in failing[key])
-    held: list[str] = []
-    for parent in sorted(
-        families, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
-    ):
-        if len(held) == quota:
-            break
-        family = families[parent]
-        names = Counter(name for key in family for name in failing[key])
-        if len(held) + len(family) <= quota and all(
-            searched[name] > count for name, count in names.items()
-        ):
-            held.extend(family)
-            searched.subtract(names)
-    return held
+def all_in_test_split(cases: int, *, picked: bool = True) -> HostedHarnessError:
+    """The refusal of a fix whose every failing case is in the test split: it would have
+    nothing to learn from. A user who ``picked`` the cases is told how to pick others."""
+    subject = (
+        "The only failing case is" if cases == 1 else f"All {cases} failing cases are"
+    )
+    message = (
+        f"{subject} in the test split. Pick failing cases from the train split."
+        if picked
+        else f"{subject} in the test split, so the Epoch has nothing to learn from."
+    )
+    return HostedHarnessError(
+        "fix_targets_all_test", message, status_code=422, details={"cases": cases}
+    )
 
 
 def launch_fix_run(
@@ -108,13 +104,19 @@ def launch_fix_run(
     max_minutes: int | None,
     user: Any,
     protected_scenario_keys: Sequence[str] = (),
+    allowed_models: Sequence[str] | None = None,
+    reply_latency_margin_pct: int | None = None,
+    cost_margin_pct: int | None = None,
+    cost_limit_usd: float | None = None,
 ) -> AgentFixRun:
     """Start fixing the agent of a finished run on the scenarios the user chose; without
-    ``max_minutes``, within the time the launch form suggests for the run's suite."""
+    ``max_minutes``, within the time the launch form suggests for the run's suite,
+    without ``allowed_models``, locked to the models the run's spans show, and without a
+    margin, at the default margin."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
-            "fix_source_not_a_run", "Fix my agent starts from a run", status_code=422
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
     # Usage is checked below, to answer with the usage refusal itself.
     if blocked := launch_blocker(source_run, usage=False):
@@ -123,7 +125,7 @@ def launch_fix_run(
     if refused := sorted(set(surfaces) - kind.surfaces):
         raise HostedHarnessError(
             "fix_surface_not_allowed",
-            f"a fix cannot change this agent's {', '.join(refused)}",
+            f"an epoch cannot change this agent's {', '.join(refused)}",
             status_code=422,
         )
     base_version_id = kind.base_version_id(source_run)
@@ -149,6 +151,15 @@ def launch_fix_run(
             f"{', '.join(unproven)}",
             status_code=400,
         )
+    locked_version = run_locked_version(source_run)
+    # A must-pass case steers the search, so a test-split one would teach the fix.
+    if locked_version and set(protected_scenario_keys) & locked_version.test_keys:
+        raise HostedHarnessError(
+            "fix_protected_in_test",
+            "Cases in the test split can't be must-pass: the Epoch would learn from"
+            " them.",
+            status_code=422,
+        )
     by_scenario = {key: ran[key].failing_sub_goals for key in target_scenario_keys}
     failing = list(
         dict.fromkeys(name for names in by_scenario.values() for name in names)
@@ -160,12 +171,18 @@ def launch_fix_run(
             status_code=422,
         )
     failing_cases = sum(1 for names in by_scenario.values() if names)
+    if locked_version is None:
+        held_back = split_held_back(str(source_run.id), by_scenario)
+    else:
+        held_back = held_back_keys(source_run, by_scenario, locked_version)
+        if len(held_back) == failing_cases:
+            raise all_in_test_split(failing_cases)
     # Below the floor the fix first writes variations of each failing case.
     variations = failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES
     if failing_cases < fewest_failing_cases():
         raise HostedHarnessError(
             "fix_targets_too_few",
-            f"a fix needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
+            f"an epoch needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
             f"to be proven; these have {failing_cases}, too few to reach it even with "
             f"{VARIATIONS_PER_CASE} variations of each",
             status_code=422,
@@ -178,23 +195,60 @@ def launch_fix_run(
         max_minutes = default_max_minutes(
             len(ran) + (VARIATIONS_PER_CASE * failing_cases if variations else 0)
         )
+    usage = source_run_usage(source_run)
+    seen = models_called(usage)
+    allowed = list(dict.fromkeys(seen if allowed_models is None else allowed_models))
+    # A fix that sees the agent's models with none allowed, or without one the run
+    # called, would refuse every candidate once the base version's run showed it.
+    if seen and not allowed:
+        raise HostedHarnessError(
+            "fix_models_empty",
+            "allow at least one model: this agent's model calls are traced, and each"
+            " must name an allowed model",
+            status_code=400,
+        )
+    kept = {model_key(model) for model in allowed}
+    if left_out := [model for model in seen if model_key(model) not in kept]:
+        raise HostedHarnessError(
+            "fix_models_exclude_source",
+            "allow every model this run's agent called, or the epoch would refuse every"
+            f" candidate: {', '.join(left_out)}",
+            status_code=400,
+        )
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
-        held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
+        held_back_scenario_keys=held_back,
+        locked_version_id=locked_version.id if locked_version else None,
         failing_sub_goals=failing,
         surfaces=surfaces,
         locked_paths=locked_paths,
         budget_usd=budget_usd,
         max_minutes=max_minutes,
+        evidence=evidence_origins(environment, target_scenario_keys),
         variations_pending=variations,
+        allowed_models=allowed,
+        reply_latency_margin_pct=(
+            MARGIN_PCT_DEFAULT
+            if reply_latency_margin_pct is None
+            else reply_latency_margin_pct
+        ),
+        cost_margin_pct=MARGIN_PCT_DEFAULT
+        if cost_margin_pct is None
+        else cost_margin_pct,
+        cost_limit_usd=cost_limit_usd,
+        observes_models=bool(seen),
+        meters_agent_cost=bool(usage),
+        # Only when the sandbox's measuring did export spans: an agent that names no
+        # tracing may still have had none of its calls measured.
+        measured_automatically=bool(usage) and measured_automatically(source_run),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))
     if variations:
         # The builder's turn that writes the variations bills as authoring.
         require_harness_authoring(str(environment.organization_id))
-    return _create_fix_run(
+    return create_fix_run(
         source_run,
         base_version_id=base_version_id,
         request=request.model_dump(mode="json"),
@@ -206,12 +260,23 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
     """Refuse variations that would not fit: the builder saves the environment's suite with
     them, the fix's suite holds the run's suite with them, and one run plays every failing
     case and its variations once."""
-    added = VARIATIONS_PER_CASE * failing_cases
-    suites = (source_run.suite_version_id, source_run.environment.suite_version_id)
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    suites = (source_run.suite_version_id, environment.suite_version_id)
     largest = max(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version_id=one).count()
         for one in suites
     )
+    require_variation_room(largest, failing_cases)
+
+
+def require_variation_room(largest: int, failing_cases: int) -> None:
+    """Refuse variations of ``failing_cases`` that would not fit a suite of ``largest``
+    scenarios, or one run of the cases and their variations."""
+    added = VARIATIONS_PER_CASE * failing_cases
     if largest + added > CHAT_CHECKPOINT_MAX_SCENARIOS:
         raise HostedHarnessError(
             "scenario_limit_exceeded",
@@ -231,27 +296,25 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
 
 def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     """Start a failed fix again: a new fix with its request, linked to it, so the check runs
-    it finished are reused instead of paid for twice. A fix that wrote variations keeps
-    them, on the same suite version."""
+    it finished are reused instead of paid for twice. Retry on a retry that never started
+    starts the fix it retried. A fix that wrote variations keeps them, on the same suite
+    version."""
     if not is_retryable(failed):
-        raise HostedHarnessError(
-            "fix_not_retryable",
-            "only a failed fix can be started again, and only once",
-            status_code=409,
-        )
-    source_run = failed.source_run
+        raise _retry_refused(failed)
+    original = failed.retried_from or failed
+    source_run = original.source_run
     if source_run is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
-    require_agent_fix_usage(str(failed.organization_id))
+    require_agent_fix_usage(str(original.organization_id))
     if (
-        FixRequest.model_validate(failed.request).variations_pending
-        and failed.suite_version_id is None
+        FixRequest.model_validate(original.request).variations_pending
+        and original.suite_version_id is None
     ):
         # Imported here: the variations step imports this module.
         from simulate.services.agent_fix_variations import failing_targets
@@ -259,25 +322,48 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         # The retry asks the builder again, so the launch's checks for that hold again.
         if blocked := variations_blocker(source_run):
             raise blocked
-        _require_variation_room(source_run, len(failing_targets(failed)))
-        require_harness_authoring(str(failed.organization_id))
+        _require_variation_room(source_run, len(failing_targets(original)))
+        require_harness_authoring(str(original.organization_id))
     # The models the failed fix lost recently, with when: the retry's first launch starts
     # without them. Its last error stays with it.
-    lost_models = recent_lost_models(failed.engine_notes)
-    return _create_fix_run(
-        source_run,
-        base_version_id=failed.base_agent_version_id,
-        request=failed.request,
-        user=user,
-        suite_version_id=failed.suite_version_id,
-        retried_from=failed,
-        engine_notes={"lost_models": lost_models, "last_error": None}
-        if lost_models
-        else None,
-    )
+    lost_models = recent_lost_models(original.engine_notes)
+    with transaction.atomic():
+        # Another Retry may have made its retry since this one read the fix. Both lock the
+        # original, from either page, so they go one at a time, and only while the retry
+        # is free.
+        locked = AgentFixRun.no_workspace_objects.select_for_update().get(
+            id=original.id
+        )
+        if not is_retryable(locked):
+            raise _retry_refused(locked)
+        return create_fix_run(
+            source_run,
+            base_version_id=original.base_agent_version_id,
+            request=original.request,
+            user=user,
+            suite_version_id=original.suite_version_id,
+            retried_from=original,
+            engine_notes={"lost_models": lost_models, "last_error": None}
+            if lost_models
+            else None,
+        )
 
 
-def _create_fix_run(
+def _retry_refused(fix_run: AgentFixRun) -> HostedHarnessError:
+    """Why Retry does not start this fix again, as is_retryable decided it."""
+    after = " Run a new epoch from the run's Debug failures."
+    if is_outside_attempt(fix_run):
+        message = "Your coding agent's attempt is not retried. Submit a new attempt."
+    elif fix_run.state != AgentFixRun.State.FAILED:
+        message = "Only a failed epoch can be retried."
+    elif was_the_retry(fix_run):
+        message = f"This epoch was the retry.{after}"
+    else:
+        message = f"This epoch was retried once already.{after}"
+    return HostedHarnessError("fix_not_retryable", message, status_code=409)
+
+
+def create_fix_run(
     source_run: HostedHarnessJob,
     *,
     base_version_id: Any,
@@ -285,13 +371,17 @@ def _create_fix_run(
     user: Any,
     suite_version_id: Any = None,
     retried_from: AgentFixRun | None = None,
+    attempt_of: AgentFixRun | None = None,
     engine_notes: dict[str, Any] | None = None,
+    fix_run_id: Any = None,
 ) -> AgentFixRun:
-    """The new fix, its workflow started once it is committed; one active fix per environment."""
+    """The new fix, its workflow started once it is committed; one active fix per environment.
+    ``fix_run_id`` is the id when the caller stored the fix's objects before it exists."""
     environment = source_run.environment
     try:
         with transaction.atomic():
             fix_run = AgentFixRun.no_workspace_objects.create(
+                **({"id": fix_run_id} if fix_run_id is not None else {}),
                 organization_id=environment.organization_id,
                 workspace_id=environment.workspace_id,
                 environment=environment,
@@ -299,6 +389,7 @@ def _create_fix_run(
                 base_agent_version_id=base_version_id,
                 suite_version_id=suite_version_id,
                 retried_from=retried_from,
+                attempt_of=attempt_of,
                 created_by=user,
                 request=request,
                 engine_notes=engine_notes,
@@ -309,7 +400,7 @@ def _create_fix_run(
             raise
         raise HostedHarnessError(
             "fix_run_active",
-            "this environment already has a fix in progress",
+            "this environment already has an epoch in progress",
             status_code=409,
         ) from exc
     logger.info(
@@ -317,6 +408,7 @@ def _create_fix_run(
         fix_run=str(fix_run.id),
         environment=str(environment.id),
         retried_from=str(retried_from.id) if retried_from else None,
+        attempt_of=str(attempt_of.id) if attempt_of else None,
     )
     fix_run.refresh_from_db()
     return fix_run
@@ -334,7 +426,7 @@ def _start_workflow(fix_run_id: Any) -> None:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_dispatch_failed",
-                "message": "the fix could not be scheduled; try again",
+                "message": "the epoch could not be scheduled; try again",
             },
         )
 
@@ -467,16 +559,21 @@ def drop_variation_rows(fix_run: AgentFixRun) -> bool:
             Scenarios.all_objects.filter(id__in=[one.id for one in legacy]).update(
                 deleted=True, deleted_at=now
             )
-            if legacy and fix_run.environment.run_test_id:
-                fix_run.environment.run_test.scenarios.remove(*legacy)
+            if legacy and (run_test := fix_run.environment.run_test) is not None:
+                run_test.scenarios.remove(*legacy)
             for scenario in Scenarios.all_objects.filter(
                 id__in={one.scenario_id for one in bound if one.dataset_row_id}
             ).select_related("dataset"):
+                dataset = scenario.dataset
+                if dataset is None:
+                    # A row is only ever bound with the dataset-backed scenario it is in.
+                    raise HostedHarnessError(
+                        "fix_variation_scenario_unbacked",
+                        "a variation's scenario has no dataset",
+                    )
                 scenario.metadata = {
                     **(scenario.metadata or {}),
-                    "persona_count": scenario.dataset.row_set.filter(
-                        deleted=False
-                    ).count(),
+                    "persona_count": dataset.row_set.filter(deleted=False).count(),
                 }
                 scenario.save(update_fields=["metadata", "updated_at"])
             HostedHarnessScenario._base_manager.filter(
@@ -500,17 +597,25 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
         )
     # Only the winner went through the final check; a finalist passed its screens only.
     if candidate.outcome == AgentFixCandidate.Outcome.WINNER:
+        # Its evals read the winner's final check; it ships once they have.
+        if eval_review(candidate.fix_run).grading == EvalGrading.PENDING:
+            raise HostedHarnessError(
+                "fix_grading_pending",
+                "Platform evals are still scoring this candidate. You can ship it once"
+                " they finish.",
+                status_code=409,
+            )
         if override_reason:
             raise HostedHarnessError(
                 "fix_override_not_needed",
-                "the fix's winner ships without a reason",
+                "the epoch's winner ships without a reason",
                 status_code=422,
             )
         return
-    if not overridable_regressions(candidate):
+    if not ships_only_with_a_reason(candidate):
         raise HostedHarnessError(
             "fix_candidate_not_proven",
-            "only the fix's winner can ship; a candidate only the must-pass check"
+            "only the epoch's winner can ship; a candidate only the must-pass check"
             " refused can ship with a reason, unless it regressed a protected case",
             status_code=422,
         )
@@ -520,6 +625,112 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
             "this candidate regressed on its must-pass check: give the reason to ship it",
             status_code=422,
         )
+
+
+def ships_only_with_a_reason(candidate: AgentFixCandidate) -> bool:
+    """Whether the Epoch ships this candidate only on a person's reason: not its winner,
+    and refused by its must-pass check alone (require_shippable)."""
+    return candidate.outcome != AgentFixCandidate.Outcome.WINNER and bool(
+        overridable_regressions(candidate)
+    )
+
+
+def refuse_outside_the_epoch(
+    *,
+    organization_id: Any,
+    agent_version_id: Any = None,
+    archive_artifact_id: Any = None,
+) -> None:
+    """Refuse to make the default, anywhere but its Epoch's ship route, a version that is
+    an Epoch candidate the Epoch would not ship without a reason, or an upload of the
+    same archive. Only the winner ships without one. A candidate only its must-pass check
+    refused ships in its Epoch, on a person's reason; any other refused one never does.
+
+    Only the organization's own Epochs are matched: uploads are stored per organization,
+    so the same archive id elsewhere is another upload, and its Epoch is never named."""
+    match = Q(pk__in=[])
+    if agent_version_id is not None:
+        match |= Q(agent_version_id=agent_version_id)
+        source = (
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=agent_version_id
+            )
+            .values_list("source", flat=True)
+            .first()
+        )
+        archive_artifact_id = (source or {}).get("archive_artifact_id")
+    if archive_artifact_id:
+        match |= Q(
+            agent_version__harness_runtime__source__archive_artifact_id=str(
+                archive_artifact_id
+            )
+        )
+    candidates = list(
+        AgentFixCandidate.no_workspace_objects.filter(
+            match, fix_run__organization_id=organization_id
+        ).select_related("fix_run")
+    )
+    # The same tree an Epoch proved, whichever candidate made the version.
+    if not candidates or any(
+        one.outcome == AgentFixCandidate.Outcome.WINNER for one in candidates
+    ):
+        return
+    candidate = next(
+        (one for one in candidates if one.agent_version_id == agent_version_id),
+        candidates[0],
+    )
+    number = AgentFixRun.no_workspace_objects.filter(
+        environment_id=candidate.fix_run.environment_id,
+        created_at__lte=candidate.fix_run.created_at,
+    ).count()
+    raise _not_outside_the_epoch(candidate, number)
+
+
+def _not_outside_the_epoch(
+    candidate: AgentFixCandidate, number: int
+) -> HostedHarnessError:
+    """The refusal for a candidate that is not its Epoch's winner, in words that say where
+    the candidate is: still being checked, passed but not picked, or refused."""
+    named = f"This version is Candidate {candidate.attempt} of Epoch {number}"
+    ships = ships_only_with_a_reason(candidate)
+    # An Epoch that ended before checking relabels the pending candidates its report
+    # never named REJECTED, with no verdict: unchecked as much as one still pending. In
+    # any other ending, a rejected candidate with no verdict is the engine's refusal.
+    unchecked = candidate.verdict is None and (
+        candidate.outcome == AgentFixCandidate.Outcome.PENDING
+        or (
+            candidate.outcome == AgentFixCandidate.Outcome.REJECTED
+            and candidate.fix_run.state in AgentFixRun.UNCHECKED_ENDINGS
+        )
+    )
+    if candidate.fix_run.state in AgentFixRun.ACTIVE_STATES:
+        code = "fix_candidate_still_checking"
+        message = f"{named}, which is still checking it. Wait for the Epoch to finish."
+    elif unchecked:
+        # An Epoch that ended never finishes checking it: nothing to wait for.
+        code = "fix_candidate_not_checked"
+        message = (
+            f"{named}, which ended before checking it, so it can't be made the default."
+        )
+    elif candidate.outcome != AgentFixCandidate.Outcome.REJECTED:
+        code = "fix_candidate_not_picked"
+        passed = f"{named}, whose checks passed, but Epoch {number} picked another"
+        message = (
+            f"{passed} candidate. To make it the default, open Epoch {number} and ship"
+            " it there."
+            if ships
+            else f"{passed} candidate, so it can't be made the default."
+        )
+    elif ships:
+        code = "fix_candidate_needs_override"
+        message = (
+            f"{named}, whose checks refused it. To make it the default, open Epoch"
+            f" {number} and ship it there with a reason."
+        )
+    else:
+        code = "fix_candidate_not_shippable"
+        message = f"{named}, whose checks refused it, so it can't be made the default."
+    return HostedHarnessError(code, message, status_code=409)
 
 
 def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> None:
@@ -549,8 +760,8 @@ def base_moved(base: str, current: str | None) -> HostedHarnessError:
     )
     return HostedHarnessError(
         "fix_base_moved",
-        f"The agent changed since this fix started: the fix was made on {base} and"
-        f" {now}. Run the environment on the current version and fix it again.",
+        f"The agent changed since this epoch started: the epoch was made on {base} and"
+        f" {now}. Run the environment on the current version, then run a new epoch.",
         status_code=409,
     )
 
@@ -559,7 +770,10 @@ def make_candidate_default(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
     """Make a finished fix's winner the environment's default, on the user's word; never
-    over a default that moved since the fix's base, whatever the reason given."""
+    over a default that moved since the fix's base, whatever the reason given.
+
+    ``validating``: the default moves once the winner's pairing validates.
+    """
     require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
     base = f"v{fix_run.base_agent_version.version_number}"
@@ -589,11 +803,12 @@ def make_candidate_default(
                 else None
             ),
         )
-    if outcome not in ("activated", "already_default"):
+    if outcome not in ("activated", "already_default", "validating"):
         raise HostedHarnessError(
             "fix_candidate_not_activated",
-            f"the version could not become the default: {outcome}",
+            "The version could not become the environment default. Try again.",
             status_code=409,
+            details={"outcome": outcome},
         )
     record_override(candidate, reason=override_reason, user=user)
     return outcome

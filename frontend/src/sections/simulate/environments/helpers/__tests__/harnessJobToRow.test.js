@@ -6,9 +6,19 @@ import {
   jobStatusFor,
   envStatusFor,
 } from "../harnessJobToRow";
-import { ENV_STATUS, BUILD_STATUS } from "../../myEnvironments.constants";
+import {
+  ENV_STATUS,
+  BUILD_STATUS,
+  NOT_PROVIDED,
+} from "../../myEnvironments.constants";
 
-const item = ({ stage, connectors, metadata, jobId = "job-1", updatedAt } = {}) => ({
+const item = ({
+  stage,
+  connectors,
+  metadata,
+  jobId = "job-1",
+  updatedAt,
+} = {}) => ({
   job: { job_id: jobId, metadata },
   status: { stage, updated_at: updatedAt },
   credentials: { detected_connectors: connectors },
@@ -170,9 +180,13 @@ describe("buildStatusFor", () => {
   });
 
   it("maps every stage before the agent connects → building", () => {
-    ["queued", "acquiring_source", "generating_environment", "generating_scenarios", undefined].forEach(
-      (s) => expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
-    );
+    [
+      "queued",
+      "acquiring_source",
+      "generating_environment",
+      "generating_scenarios",
+      undefined,
+    ].forEach((s) => expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING));
   });
 });
 
@@ -188,9 +202,14 @@ describe("jobStatusFor", () => {
     ["failed", cancel, ENV_STATUS.FAILED],
     ["cleaning_up", null, ENV_STATUS.FINALIZING],
     ["running", null, ENV_STATUS.RUNNING],
-  ])("stage %s with cancel_requested_at=%s reads %s", (stage, cancelAt, expected) => {
-    expect(jobStatusFor({ stage, cancel_requested_at: cancelAt })).toBe(expected);
-  });
+  ])(
+    "stage %s with cancel_requested_at=%s reads %s",
+    (stage, cancelAt, expected) => {
+      expect(jobStatusFor({ stage, cancel_requested_at: cancelAt })).toBe(
+        expected,
+      );
+    },
+  );
 
   it("drives the jobs-list row, so a cancel in flight reads Cancelling there too", () => {
     const row = harnessJobToRow({
@@ -217,7 +236,13 @@ describe("envStatusFor", () => {
 
 describe("harnessEnvToRow cleanup and cancel stages", () => {
   const row = (stage, status) =>
-    harnessEnvToRow({ id: "env-1", name: "Support Line", agent_type: "voice", stage, status });
+    harnessEnvToRow({
+      id: "env-1",
+      name: "Support Line",
+      agent_type: "voice",
+      stage,
+      status,
+    });
 
   it("shows Finalizing for a build in cleanup, where the backend reports running", () => {
     expect(row("cleaning_up", "running").status).toBe(ENV_STATUS.FINALIZING);
@@ -245,4 +270,69 @@ describe("harnessEnvToRow cleanup and cancel stages", () => {
       expect(built.status).toBe(ENV_STATUS.READY);
     },
   );
+});
+
+describe("harnessEnvToRow, design columns", () => {
+  const base = {
+    id: "env-1",
+    name: "Support Line",
+    agent_type: "voice",
+    status: "completed",
+    stage: "completed",
+  };
+  const run = (over = {}) => ({
+    status: "completed",
+    run_number: 4,
+    outcome_passed: 6,
+    outcome_failed: 2,
+    outcome_skipped: 5,
+    pass_rate: 75,
+    ...over,
+  });
+
+  it("marks an agent the API does not send as NOT_PROVIDED", () => {
+    expect(harnessEnvToRow(base).agent).toBe(NOT_PROVIDED);
+  });
+
+  it("keeps a sent-but-null agent as null", () => {
+    expect(harnessEnvToRow({ ...base, agent: null }).agent).toBeNull();
+  });
+
+  it("passes the agent through", () => {
+    const row = harnessEnvToRow({
+      ...base,
+      agent: { id: "a1", name: "Billing" },
+    });
+    expect(row.agent).toEqual({ id: "a1", name: "Billing" });
+  });
+
+  it("labels the environment version, or nothing without one", () => {
+    expect(
+      harnessEnvToRow({
+        ...base,
+        environment_version: { id: "v1", version_number: 3 },
+      }).envVersion,
+    ).toBe("v3");
+    expect(harnessEnvToRow(base).envVersion).toBeNull();
+    expect(
+      harnessEnvToRow({ ...base, environment_version: null }).envVersion,
+    ).toBeNull();
+  });
+
+  it("marks a missing last_run key as NOT_PROVIDED, and a null one as no run", () => {
+    expect(harnessEnvToRow(base).lastRun).toBe(NOT_PROVIDED);
+    expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
+  });
+
+  it("takes the last run's rate and number from the API", () => {
+    const row = harnessEnvToRow({ ...base, last_run: run() });
+    expect(row.lastRun).toEqual({ rate: 75, ordinal: 4 });
+  });
+
+  it("shows no rate when the API has none", () => {
+    expect(
+      harnessEnvToRow({ ...base, last_run: run({ pass_rate: null }) }).lastRun,
+    ).toBeNull();
+    expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
+  });
 });

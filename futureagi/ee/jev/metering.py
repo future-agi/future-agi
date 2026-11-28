@@ -66,11 +66,14 @@ def credits_per_answer():
 
 
 def emit_usage_events(evaluator, *, org_id, cell_or_run_id):
-    """Emit a completed run's events at the flat per-run eval fee in credits."""
+    """Emit a completed run's events at the flat per-run eval fee in credits, and return
+    the credits they bill."""
     from ee.usage.services.emitter import emit
 
     amount = credits_per_answer()
-    for event in build_usage_events(
+    events = build_usage_events(
         evaluator, org_id=org_id, cell_or_run_id=cell_or_run_id, amount=amount
-    ):
+    )
+    for event in events:
         emit(event)
+    return sum(event.amount for event in events)

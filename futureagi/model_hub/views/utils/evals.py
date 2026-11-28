@@ -1,3 +1,4 @@
+import copy
 import json
 import time
 import traceback
@@ -32,7 +33,7 @@ from model_hub.views.eval_runner import (
     process_mapping,
 )
 from sdk.utils.helpers import (
-    _emit_jev_usage,
+    _emit_jev_usage_billed,
     _get_api_call_type,
     _get_billing_event_type,
 )
@@ -117,6 +118,8 @@ def run_eval_func(
         workspace = kwargs.get("workspace", None)
         input_data_types = kwargs.get("input_data_types", {})
         error_localizer = kwargs.get("error_localizer", False)
+        # Called with the credits this eval billed, once it billed them.
+        on_billed = kwargs.get("on_billed")
         kb_id = kwargs.get("kb_id", None)
         # Auto-context payloads — forwarded untouched to the evaluator's
         # run() so `{{row.X}}` / `{{span.X}}` / `{{trace.X}}` /
@@ -134,7 +137,8 @@ def run_eval_func(
                 is_only_eval = False
 
         # Run the evaluation and get the result
-        data_config = config.get("config") if config else {}
+        # The evaluator set-up writes its settings into the dict it is given.
+        data_config = copy.deepcopy(config.get("config")) if config else {}
         if not isinstance(data_config, dict):
             data_config = {}
         eval_id = kwargs.get("eval_id", None) or template.config.get("eval_type_id")
@@ -542,32 +546,37 @@ def run_eval_func(
                 else 0
             )
 
+            billed: float | None = 0
             if (
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
-                and not _emit_jev_usage(
+            ):
+                billed = _emit_jev_usage_billed(
                     eval_instance,
                     org_id=str(org.id),
                     run_id=str(api_call_log_row.log_id),
                 )
-            ):
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=_get_billing_event_type(
-                            api_call_type, model, evaluator=eval_instance
-                        ),
-                        amount=credits,
-                        properties={
-                            "source": source,
-                            "source_id": str(template.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **cost_properties,
-                            **token_usage_properties(_token_usage),
-                        },
+                if billed is None:
+                    billed = credits
+                    emit(
+                        UsageEvent(
+                            org_id=str(org.id),
+                            event_type=_get_billing_event_type(
+                                api_call_type, model, evaluator=eval_instance
+                            ),
+                            amount=credits,
+                            properties={
+                                "source": source,
+                                "source_id": str(template.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **cost_properties,
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
                     )
-                )
+            if on_billed is not None:
+                on_billed(billed)
         except Exception:
             pass  # Metering failure must not break the action
 

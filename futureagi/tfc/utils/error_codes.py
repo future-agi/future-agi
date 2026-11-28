@@ -104,8 +104,15 @@ err_dict = {
     "FILTER_VALUE_INVENTORY_TOO_BROAD": [
         "Too many values to browse exactly. Enter a more specific search."
     ],
+    "FILTER_VALUES_UNAVAILABLE": [
+        "Filter values are temporarily unavailable. Please retry."
+    ],
     "DATASET_LIMIT_CHECK_FAILED": [
         "Could not verify your plan's dataset limit. Please try again in a moment."
+    ],
+    "VIEWER_READ_ONLY": [
+        "Viewers can't make changes in this workspace. "
+        "Ask a workspace admin for the Member role."
     ],
     "DATASET_NAME_MISSING": ["Dataset name is required for Hugging Face datasets."],
     "DATASET_EXIST_IN_ORG": [
@@ -855,7 +862,6 @@ err_dict = {
     "MEMBER_ALREADY_ACTIVE": ["Cannot Update Role of Active User."],
     "ROLE_NOT_MENTIONED": ["Please mention the updated role of the user."],
     "USER_CANNOT_CHANGE_ROLE": ["You cannot change your own role."],
-    "MEMBER_NOT_IN_ORG": ["User not found in the organization."],
     "UNABLE_TO_UPDATE_ROLE": ["Unable to update role. Please try again."],
     "FAILED_TO_RUN_EVAL": ["Unable to run evaluation. Please try again."],
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],

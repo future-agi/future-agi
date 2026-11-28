@@ -1,7 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from accounts.views.appsmith import SOSLoginView, UserApiView
 from accounts.views.aws_marketplace import (
     aws_marketplace_launch_software,
     aws_marketplace_signup,
@@ -66,7 +65,6 @@ from accounts.views.user import (
     CustomTokenRefreshView,
     FirstChecksView,
     get_user_info,
-    manage_redis_key,
     user_onboarding,
 )
 from accounts.views.webauthn_views import (
@@ -97,7 +95,6 @@ router.register("key", SecretKeyAPIViewSet, basename="user-secret-keys")
 auth_urls = [
     path("token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("token/refresh/", CustomTokenRefreshView.as_view(), name="token_refresh"),
-    path("redis-key/", manage_redis_key, name="manage-redis-key"),
 ]
 
 signup_urls = [
@@ -152,6 +149,14 @@ user_urls = [
             fromlist=["UnsubscribeAnnotationDigestView"],
         ).UnsubscribeAnnotationDigestView.as_view(),
         name="annotation-digest-unsubscribe",
+    ),
+    path(
+        "notifications/email/unsubscribe/",
+        __import__(
+            "accounts.views.annotation_notifications",
+            fromlist=["EmailUnsubscribeView"],
+        ).EmailUnsubscribeView.as_view(),
+        name="email-notification-unsubscribe",
     ),
     path(
         "notifications/snooze/",
@@ -257,12 +262,6 @@ workspace_member_urls = [
         WorkspaceMemberRemoveAPIView.as_view(),
         name="workspace_member_remove",
     ),
-]
-
-appsmith_urls = [
-    path("appsmith/users/", UserApiView.as_view(), name="all_users"),
-    path("appsmith/users/<uuid:user_id>/", UserApiView.as_view(), name="all_users"),
-    path("appsmith/users/login", SOSLoginView.as_view(), name="sos_login"),
 ]
 
 keys_urls = [
@@ -410,7 +409,6 @@ urlpatterns = (
     + signup_urls
     + user_urls
     + keys_urls
-    + appsmith_urls
     + team_urls
     + rbac_urls
     + workspace_member_urls

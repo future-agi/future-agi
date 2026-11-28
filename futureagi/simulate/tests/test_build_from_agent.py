@@ -1,0 +1,329 @@
+"""Building an environment from a connected agent: the environment binds to the
+agent's chosen version, takes its source and credential names, writes nothing to
+the agent, and stays pinned unless it asks to follow production."""
+
+from unittest.mock import patch
+
+import pytest
+from django.utils import timezone
+from rest_framework import status
+
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    AgentVersionSetup,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
+from simulate.models.run_test import RunTest
+from simulate.services.agent_connect import found_check
+from simulate.services.agent_versions import set_production
+from simulate.services.harness_agent_versions import POLICY_KEY
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.tests.test_harness_agent_creation import (
+    _body,
+    _job,
+    _post,
+)
+from simulate.tests.test_harness_agent_creation import (
+    client as client,  # noqa: F401 - fixture
+)
+from simulate.tests.test_harness_agent_creation import (
+    gates as gates,  # noqa: F401 - fixture
+)
+from simulate.tests.test_harness_agent_provision import _agent_state, _provision
+from simulate.tests.test_harness_agent_versions import _preflight
+from simulate.tests.test_harness_connected_versions import _connect
+from simulate.tests.test_harness_versioning_backfill import (
+    storage as storage,  # noqa: F401 - fixture
+)
+
+pytestmark = pytest.mark.django_db
+
+NUDGE = "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+PUBLIC_ONLY = "simulate.services.harness_agent_changes.validate_github_source"
+INSTALLED = "integrations.services.github_app.installation_connected"
+
+
+@pytest.fixture(autouse=True)
+def versioning_on(settings):
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    settings.HARNESS_PROVIDER = "hosted"
+
+
+@pytest.fixture
+def agent(user, workspace):
+    return AgentDefinition.objects.create(
+        agent_name="support",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        organization=user.organization,
+        workspace=workspace,
+    )
+
+
+@pytest.fixture
+def production(agent):
+    version = _connect(agent)
+    AgentDefinition.objects.filter(id=agent.id).update(found_checked_at=timezone.now())
+    agent.refresh_from_db()
+    with patch(NUDGE):
+        _preflight(version)
+    version.refresh_from_db()
+    return version
+
+
+def test_confirming_before_any_reading_is_stored_is_refused(agent):
+    _connect(agent)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        found_check(agent)
+
+    assert refused.value.code == "reading_not_finished"
+    assert refused.value.status_code == status.HTTP_409_CONFLICT
+    agent.refresh_from_db()
+    assert agent.found_checked_at is None
+
+
+def test_confirming_once_a_reading_is_stored_is_recorded(agent):
+    version = _connect(agent)
+    AgentVersionSetup.no_workspace_objects.create(
+        agent_version=version, status=AgentVersionSetup.Status.STORED
+    )
+
+    assert found_check(agent).found_checked_at is not None
+
+
+def _creation(agent, **metadata):
+    return _body(metadata={"agent_definition_id": str(agent.id), **metadata})
+
+
+def test_an_environment_binds_to_the_agents_production_version(
+    client,
+    user,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    job = _job(_post(client, workspace, _creation(agent)))
+
+    assert job.agent_version_id == production.id
+    metadata = job.payload["metadata"]
+    assert metadata["agent_definition_owner"] == "connected"
+    assert metadata["agent_definition_id"] == str(agent.id)
+    assert metadata["build_agent_version_id"] == str(production.id)
+    assert metadata[POLICY_KEY] == "pinned"
+    assert job.payload["source"]["commit_sha"] == "a" * 40
+    assert job.payload["source"]["repository"] == "acme/agent"
+    assert AgentDefinition.objects.filter(organization=user.organization).count() == 1
+    assert AgentVersion.objects.filter(agent_definition=agent).count() == 1
+    assert job.payload["agent"]["secret_refs"] == {}
+
+
+def test_a_retry_after_production_moved_replays_the_first_environment(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    first = _job(_post(client, workspace, _creation(agent), key="same-request"))
+    second = _connect(agent, parent=production, commit="b")
+    with patch(NUDGE):
+        _preflight(second)
+        set_production(second)
+
+    again = _job(_post(client, workspace, _creation(agent), key="same-request"))
+
+    assert again.id == first.id
+    assert again.agent_version_id == production.id
+
+
+def test_an_environment_follows_production_only_when_asked(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    job = _job(_post(client, workspace, _creation(agent, agent_policy="follow")))
+
+    assert job.agent_version_id == production.id
+    assert job.payload["metadata"][POLICY_KEY] == "follow"
+
+
+def test_a_creation_can_pin_a_specific_ready_version(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    second = _connect(agent, parent=production, commit="b")
+    with patch(NUDGE):
+        _preflight(second)
+    with patch(NUDGE):
+        third = _connect(agent, parent=second, commit="c")
+
+    pinned = _job(
+        _post(
+            client,
+            workspace,
+            _creation(
+                agent, agent_version_id=str(production.id), agent_policy="pinned"
+            ),
+        )
+    )
+    assert pinned.agent_version_id == production.id
+    assert pinned.payload["metadata"][POLICY_KEY] == "pinned"
+
+    not_ready = _post(
+        client, workspace, _creation(agent, agent_version_id=str(third.id))
+    )
+    assert not_ready.status_code == status.HTTP_409_CONFLICT, not_ready.content
+    assert not_ready.json()["error"] == "version_not_ready"
+    assert HostedHarnessJob.no_workspace_objects.count() == 1
+
+
+def test_an_agent_without_a_version_cannot_be_built_from(
+    client,
+    workspace,
+    gates,
+    agent,  # noqa: F811
+):
+    response = _post(client, workspace, _creation(agent))
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.json()["error"] == "agent_has_no_version"
+
+
+def test_build_preflight_names_the_version_its_check_and_its_code(
+    auth_client, agent, production
+):
+    url = f"/simulate/agent-definitions/{agent.id}/build-preflight/"
+
+    response = auth_client.get(url)
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    assert body["ok"] is True
+    assert body["version_id"] == str(production.id)
+    assert [one["name"] for one in body["checks"]] == ["version", "code", "credentials"]
+
+    draft = _connect(agent, parent=production, commit="b")
+    blocked = auth_client.get(url, {"version_id": str(draft.id)}).json()
+
+    assert blocked["ok"] is False
+    assert blocked["checks"][0] == {
+        "name": "version",
+        "status": "blocked",
+        "message": "v2 is pending",
+    }
+
+
+def test_build_preflight_on_an_agent_with_no_version(auth_client, agent):
+    body = auth_client.get(
+        f"/simulate/agent-definitions/{agent.id}/build-preflight/"
+    ).json()
+
+    assert body == {
+        "ok": False,
+        "version_id": None,
+        "checks": [
+            {
+                "name": "version",
+                "status": "blocked",
+                "message": "This agent has no version to build from yet",
+            }
+        ],
+    }
+
+
+def test_a_guest_named_agent_never_replaces_the_connected_agent(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    environment = _job(_post(client, workspace, _creation(agent)))
+    other = AgentDefinition.objects.create(
+        agent_name="other",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        organization=agent.organization,
+        workspace=workspace,
+    )
+    before = _agent_state(agent.id)
+
+    _provision(environment, modality="text", agent_definition_id=str(other.id))
+
+    environment.refresh_from_db()
+    run_test = RunTest.no_workspace_objects.get(id=environment.run_test_id)
+    assert run_test.agent_definition_id == agent.id
+    assert _agent_state(agent.id) == before
+
+
+def _private(version, installation="9001"):
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=version)
+    runtime.agent_payload = {
+        **(runtime.agent_payload or {}),
+        "source_access": {
+            "kind": "github",
+            "visibility": "private",
+            "installation_id": installation,
+            "repository_id": 42,
+        },
+    }
+    runtime.save(update_fields=["agent_payload"])
+
+
+def test_a_private_repository_agent_builds_with_its_stored_access(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    _private(production)
+
+    with patch(PUBLIC_ONLY) as public_only, patch(INSTALLED, return_value=True):
+        job = _job(_post(client, workspace, _creation(agent)))
+
+    public_only.assert_not_called()
+    scanned = gates.scan.call_args.args[1]["source"]
+    assert scanned["visibility"] == "private"
+    assert scanned["installation_id"] == "9001"
+    assert job.payload["source"]["visibility"] == "private"
+    assert job.payload["source"]["installation_id"] == "9001"
+    assert job.payload["source"]["repository"] == "acme/agent"
+
+
+def test_a_private_repository_agent_needs_its_installation_still_connected(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    _private(production)
+
+    with patch(PUBLIC_ONLY), patch(INSTALLED, return_value=False):
+        response = _post(client, workspace, _creation(agent))
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.json()["error"] == "github_installation_not_connected"
+    gates.start.assert_not_called()
+
+
+def test_a_creation_straight_from_a_repository_keeps_the_public_only_check(
+    client,
+    workspace,
+    gates,
+):
+    with patch(PUBLIC_ONLY, return_value=None) as public_only:
+        _post(client, workspace, _body())
+
+    public_only.assert_called()

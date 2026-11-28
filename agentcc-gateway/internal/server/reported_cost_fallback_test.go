@@ -120,7 +120,7 @@ func TestChatModelFallbackRecordsTheInstanceThatAnswered(t *testing.T) {
 	observer := &servedByObserver{}
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost, observer), nil, nil, nil, nil, db, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetReportedCostVendors(srv.ReportedCostVendor)
 	// As handlers_stream_retry_test.go does: with no routing targets the
 	// server builds no failover, which the model fallback chain needs.
@@ -180,7 +180,7 @@ func TestReportedCostOnAnIncompleteResponsesStream(t *testing.T) {
 	observer := &servedByObserver{}
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost, observer), nil, nil, nil, nil, db, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetReportedCostVendors(srv.ReportedCostVendor)
 	srv.ready.Store(true)
 

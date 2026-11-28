@@ -21,6 +21,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import ListToolbar from "src/components/list-toolbar";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
 import {
@@ -60,6 +61,16 @@ const tickableIds = (rows) =>
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
+// "Rowan (5; 1 dropped, 1 not triggered)"
+const callActorChoiceLabel = (item) => {
+  if (item.count == null) return item.label;
+  const missed = [
+    item.dropped && `${item.dropped} dropped`,
+    item.not_triggered && `${item.not_triggered} not triggered`,
+  ].filter(Boolean);
+  return `${item.label} (${[item.count, missed.join(", ")].filter(Boolean).join("; ")})`;
+};
+
 export default function RunTraceTable({
   executionId,
   onOpenCall,
@@ -136,6 +147,8 @@ export default function RunTraceTable({
     if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
+    if (filters.callActor?.length) next.actor = filters.callActor;
+    if (filters.callActor_not?.length) next.actor_not = filters.callActor_not;
     if (filters.status?.length) next.status = filters.status;
     if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
@@ -151,6 +164,7 @@ export default function RunTraceTable({
   // the card never hugs a few rows. Measured, because the header above it
   // varies in height; re-measured on resize.
   const [boxHeight, setBoxHeight] = useState(null);
+  const toolbarRef = useRef(null);
   const measureBox = useCallback(() => {
     const top = scrollRef.current?.getBoundingClientRect().top;
     if (top == null) return;
@@ -162,6 +176,15 @@ export default function RunTraceTable({
     measureBox();
     window.addEventListener("resize", measureBox);
     return () => window.removeEventListener("resize", measureBox);
+  }, [measureBox]);
+  // The toolbar wraps, and its status bar grows and shrinks with the counts,
+  // so its height moves the box's top without a window resize.
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => measureBox());
+    observer.observe(toolbar);
+    return () => observer.disconnect();
   }, [measureBox]);
 
   // Follow the drawer: when prev/next lands on a call on another page, show
@@ -199,8 +222,9 @@ export default function RunTraceTable({
     agentType = null,
     runActive = false,
     isLoading,
+    isFirstLoad = false,
     error,
-  } = useRunCalls(executionId, listQuery);
+  } = useRunCalls(executionId, { ...listQuery, keepPrevious: true });
 
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
@@ -383,6 +407,27 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
+  const callActorFacet = facets.actor;
+  const callActorField = useMemo(
+    () =>
+      callActorFacet?.length
+        ? [
+            {
+              value: "callActor",
+              label: "Actor",
+              type: "enum",
+              choices: callActorFacet.map((item) => item.value),
+              choiceLabels: Object.fromEntries(
+                callActorFacet.map((item) => [
+                  item.value,
+                  callActorChoiceLabel(item),
+                ]),
+              ),
+            },
+          ]
+        : [],
+    [callActorFacet],
+  );
   const filterFields = useMemo(
     () => [
       {
@@ -397,6 +442,7 @@ export default function RunTraceTable({
         type: "enum",
         choices: subGoalOptions,
       },
+      ...callActorField,
       {
         value: "status",
         label: "Status",
@@ -405,7 +451,7 @@ export default function RunTraceTable({
         choiceLabels: OUTCOME_LABELS,
       },
     ],
-    [goalOptions, subGoalOptions],
+    [goalOptions, subGoalOptions, callActorField],
   );
   // Calls handed over from a diagnosis issue; shown as their own chip rather than
   // a Filter-panel field, since the panel cannot express an id list.
@@ -603,6 +649,7 @@ export default function RunTraceTable({
       <StatusFilterChips
         value={statusChip}
         counts={statusCounts}
+        firstLoad={isFirstLoad}
         onChange={(value) => {
           setFilters((current) => {
             const {
@@ -652,146 +699,160 @@ export default function RunTraceTable({
 
   return (
     <>
-      <SectionCard
-        title={title}
-        action={action}
-        wrap
-        sx={{ containerType: "inline-size" }}
-      >
-        {banner && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="center"
+      {/* The toolbar sits above the table card, as on the other list pages;
+          the card holds only the table and its pager. The wrapper is the
+          container the toolbar's compact layout measures. */}
+      <Box sx={{ containerType: "inline-size" }}>
+        <Box ref={toolbarRef}>
+          <ListToolbar
             flexWrap="wrap"
-            gap={1}
-            sx={{
-              px: 2,
-              py: 0.75,
-              typography: "s3",
-              color: "text.subtitle",
-              bgcolor: "background.neutral",
-              borderTop: "1px solid",
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            {banner}
-          </Stack>
-        )}
-        {/* A fixed-height box, like the Scenarios tab: the card keeps its size
-            whatever the row count, and the pager below never moves. The table
-            scrolls inside it, in its own box. */}
-        <Box
-          ref={scrollRef}
-          sx={{
-            // Without a pager, the box takes the pager's room too.
-            height:
-              boxHeight == null
-                ? "calc(100dvh - 400px)"
-                : boxHeight + (showPager ? 0 : PAGER_ROW_PX),
-            overflowY: "auto",
-          }}
-        >
-          {isLoading ? (
-            <EmptyState icon="solar:hourglass-linear" title="Loading calls…" />
-          ) : error ? (
-            <EmptyState
-              icon="solar:danger-triangle-linear"
-              title="Couldn't load calls"
-              body="Something went wrong loading this run's calls. Try again."
-            />
-          ) : tasks.length === 0 ? (
-            <EmptyState
-              icon="solar:filter-linear"
-              title="No calls match that filter"
-            />
-          ) : (
-            <TraceTable
-              key={groupBy}
-              columns={shownColumns}
-              groups={groups}
-              rows={groupBy ? null : tasks}
-              evals={shownEvals}
-              subGoalEvals={subGoalEvals}
-              groupView={groupView}
-              onGroupViewChange={setGroupView}
-              expandedForRef={expandedForRef}
-              firstColumnLabel={
-                groupBy
-                  ? GROUPINGS.find((g) => g.id === groupBy)?.label
-                  : undefined
-              }
-              onOpen={onOpenCall}
-              activeCallId={activeCallId}
-              scrollRef={tableScrollRef}
-              runActive={runActive}
-              renderEvalHeaderAction={
-                evalActions
-                  ? (e) => (
-                      <IconButton
-                        size="small"
-                        aria-label={`Actions for ${e.name}`}
-                        onClick={(event) =>
-                          setEvalMenuFor({
-                            evalId: e.id,
-                            name: e.name,
-                            anchorEl: event.currentTarget,
-                          })
-                        }
-                      >
-                        <Iconify
-                          icon="solar:menu-dots-vertical-linear"
-                          width={16}
-                          sx={{ color: "text.subtitle" }}
-                        />
-                      </IconButton>
-                    )
-                  : null
-              }
-              selection={tableSelection}
-            />
-          )}
-        </Box>
-        {showPager && (
-          <Stack
-            direction="row"
-            alignItems="center"
+            useFlexGap
             justifyContent="space-between"
-            flexWrap="wrap"
-            gap={1}
-            sx={{
-              px: 2,
-              py: 1.5,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
+            sx={{ columnGap: 2, rowGap: 1.25 }}
           >
-            <Typography
+            {title}
+            {action}
+          </ListToolbar>
+        </Box>
+        <SectionCard>
+          {banner && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="center"
+              flexWrap="wrap"
+              gap={1}
               sx={{
+                px: 2,
+                py: 0.75,
                 typography: "s3",
                 color: "text.subtitle",
-                fontVariantNumeric: "tabular-nums",
+                bgcolor: "background.neutral",
+                borderTop: "1px solid",
+                borderBottom: "1px solid",
+                borderColor: "divider",
               }}
             >
-              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}{" "}
-              of {count.toLocaleString()}
-            </Typography>
-            <Pagination
-              size="small"
-              shape="rounded"
-              count={totalPages}
-              page={page}
-              onChange={(_, value) => {
-                setPage(value);
-                tableScrollRef.current?.scrollTo?.({ top: 0 });
+              {banner}
+            </Stack>
+          )}
+          {/* A fixed-height box, like the Scenarios tab: the card keeps its size
+            whatever the row count, and the pager below never moves. The table
+            scrolls inside it, in its own box. */}
+          <Box
+            ref={scrollRef}
+            sx={{
+              // Without a pager, the box takes the pager's room too.
+              height:
+                boxHeight == null
+                  ? "calc(100dvh - 400px)"
+                  : boxHeight + (showPager ? 0 : PAGER_ROW_PX),
+              overflowY: "auto",
+            }}
+          >
+            {isLoading ? (
+              <EmptyState
+                icon="solar:hourglass-linear"
+                title="Loading calls…"
+              />
+            ) : error ? (
+              <EmptyState
+                icon="solar:danger-triangle-linear"
+                title="Couldn't load calls"
+                body="Something went wrong loading this run's calls. Try again."
+              />
+            ) : tasks.length === 0 ? (
+              <EmptyState
+                icon="solar:filter-linear"
+                title="No calls match that filter"
+              />
+            ) : (
+              <TraceTable
+                key={groupBy}
+                columns={shownColumns}
+                groups={groups}
+                rows={groupBy ? null : tasks}
+                evals={shownEvals}
+                subGoalEvals={subGoalEvals}
+                groupView={groupView}
+                onGroupViewChange={setGroupView}
+                expandedForRef={expandedForRef}
+                firstColumnLabel={
+                  groupBy
+                    ? GROUPINGS.find((g) => g.id === groupBy)?.label
+                    : undefined
+                }
+                onOpen={onOpenCall}
+                activeCallId={activeCallId}
+                scrollRef={tableScrollRef}
+                runActive={runActive}
+                renderEvalHeaderAction={
+                  evalActions
+                    ? (e) => (
+                        <IconButton
+                          size="small"
+                          aria-label={`Actions for ${e.name}`}
+                          onClick={(event) =>
+                            setEvalMenuFor({
+                              evalId: e.id,
+                              name: e.name,
+                              anchorEl: event.currentTarget,
+                            })
+                          }
+                        >
+                          <Iconify
+                            icon="solar:menu-dots-vertical-linear"
+                            width={16}
+                            sx={{ color: "text.subtitle" }}
+                          />
+                        </IconButton>
+                      )
+                    : null
+                }
+                selection={tableSelection}
+              />
+            )}
+          </Box>
+          {showPager && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              flexWrap="wrap"
+              gap={1}
+              sx={{
+                px: 2,
+                py: 1.5,
+                borderTop: "1px solid",
+                borderColor: "divider",
               }}
-              siblingCount={1}
-              boundaryCount={1}
-            />
-          </Stack>
-        )}
-      </SectionCard>
+            >
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.subtitle",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                Showing {rangeStart.toLocaleString()}–
+                {rangeEnd.toLocaleString()} of {count.toLocaleString()}
+              </Typography>
+              <Pagination
+                size="small"
+                shape="rounded"
+                count={totalPages}
+                page={page}
+                onChange={(_, value) => {
+                  setPage(value);
+                  tableScrollRef.current?.scrollTo?.({ top: 0 });
+                }}
+                siblingCount={1}
+                boundaryCount={1}
+              />
+            </Stack>
+          )}
+        </SectionCard>
+      </Box>
 
       <FilterPanel
         anchorEl={filterAnchor}

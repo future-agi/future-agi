@@ -17,14 +17,16 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
-        def _p(v):
+        def parse_items(v):
             if isinstance(v, str):
-                try: return json.loads(v)
-                except: return [x.strip() for x in v.split("\n") if x.strip()]
+                try:
+                    parsed = json.loads(v)
+                    return [parsed] if isinstance(parsed, (str, int, float)) else parsed
+                except (ValueError, TypeError): return [x.strip() for x in v.split("\n") if x.strip()]
             if isinstance(v, list): return v
             return [str(v)]
-        ret = _p(kwargs.get("output", output))
-        ref = _p(kwargs.get("expected", expected))
+        ret = parse_items(kwargs.get("output", output))
+        ref = parse_items(kwargs.get("expected", expected))
         if not ref: return {"score": 1.0 if not ret else 0.0, "reason": "No reference contexts"}
         ret_set = set(str(r).lower().strip() for r in ret)
         hits = sum(1 for c in ref if str(c).lower().strip() in ret_set)

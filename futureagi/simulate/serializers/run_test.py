@@ -31,6 +31,7 @@ from simulate.services.harness_evals import (
     is_harness_run_test,
     regrade_mapping,
 )
+from tfc.permissions.utils import cached_is_read_only_user
 from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
@@ -334,7 +335,8 @@ class RunTestSerializer(serializers.ModelSerializer):
                     }
                     try:
                         creds = instance.agent_version.credentials
-                        agent_version_data["api_key"] = creds.get_masked_api_key()
+                        if not cached_is_read_only_user(self.context):
+                            agent_version_data["api_key"] = creds.get_masked_api_key()
                     except Exception:
                         pass
                     data["agent_version"] = agent_version_data
@@ -370,7 +372,10 @@ class RunTestSerializer(serializers.ModelSerializer):
                         }
                         try:
                             creds = latest_version.credentials
-                            agent_version_data["api_key"] = creds.get_masked_api_key()
+                            if not cached_is_read_only_user(self.context):
+                                agent_version_data["api_key"] = (
+                                    creds.get_masked_api_key()
+                                )
                         except Exception:
                             pass
                         data["agent_version"] = agent_version_data

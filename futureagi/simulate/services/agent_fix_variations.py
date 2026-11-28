@@ -45,18 +45,19 @@ from simulate.selectors.agent_fix import (
     VARIATIONS_LABEL,
     fresh_draft_pieces,
     scenario_results,
+    split_held_back,
     unsaved_changes,
     variations_minutes,
     variations_source_moved,
     written_variations,
 )
 from simulate.services.agent_fix_engine import start_check_run
-from simulate.services.agent_fix_runs import close_fix_run, split_held_back
+from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.agent_fix_sandbox import claim
 from simulate.services.harness_scenarios import pair_scenarios
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.rebuild import hand_back_chat
-from simulate.services.harness_versioning.versions import _add_members, suite_documents
+from simulate.services.harness_versioning.versions import add_members, suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -98,12 +99,23 @@ def is_fix_command(command: HostedHarnessConversationMessage | None) -> bool:
     return command is not None and (command.payload or {}).get("_origin") == FIX_ORIGIN
 
 
+def _source_run(fix_run: AgentFixRun) -> HostedHarnessJob:
+    """The run the fix started from, which its variations vary; refused once deleted."""
+    if fix_run.source_run is None:
+        raise HostedHarnessError(
+            "fix_source_deleted",
+            "the run this epoch started from was deleted",
+            status_code=409,
+        )
+    return fix_run.source_run
+
+
 def failing_targets(fix_run: AgentFixRun) -> dict[str, list[str]]:
     """The fix's targets that failed in its source run, with the sub-goals that did not
     hold: the cases its variations vary."""
     request = FixRequest.model_validate(fix_run.request)
     ran = {
-        one.key: one.failing_sub_goals for one in scenario_results(fix_run.source_run)
+        one.key: one.failing_sub_goals for one in scenario_results(_source_run(fix_run))
     }
     return {key: ran[key] for key in request.target_scenario_keys if ran.get(key)}
 
@@ -223,7 +235,7 @@ def _write(fix_run: AgentFixRun) -> VariationsStep:
             return _end(fix_run, AgentFixRun.State.FAILED, *_draft_opened(unsaved))
     if command is None:
         # The builder writes from the environment as it is now: it must be as it ran.
-        moved = variations_source_moved(environment, fix_run.source_run)
+        moved = variations_source_moved(environment, _source_run(fix_run))
         if moved is not None:
             return _end(fix_run, AgentFixRun.State.FAILED, moved.code, moved.message)
         _ask_builder(fix_run)
@@ -341,12 +353,15 @@ def land(
     later chat save from that sandbox never carries the variations into a draft. A save
     that arrives once the fix has landed or ended leaves the workspace alone: that
     outdated it already, and the chat may have moved on since."""
+    fix_run_id = (command.payload or {}).get("_fix_run_id")
     fix_run = (
         AgentFixRun.no_workspace_objects.select_related(
             "source_run__suite_version", "source_run__environment_version"
         )
-        .filter(id=(command.payload or {}).get("_fix_run_id"))
+        .filter(id=fix_run_id)
         .first()
+        if fix_run_id is not None
+        else None
     )
     writing = (
         fix_run is not None
@@ -362,11 +377,11 @@ def land(
     ).exists():
         raise HostedHarnessError(
             "fix_variations_not_final",
-            "Kept for the fix, not saved to the environment: the fix takes these"
+            "Kept for the epoch, not saved to the environment: the epoch takes these"
             " variations when this turn ends",
             status_code=409,
         )
-    if not writing:
+    if fix_run is None or not writing:
         logger.info("agent_fix_variations_save_dropped", command=str(command.id))
         return
     try:
@@ -387,7 +402,7 @@ def land(
         )
         return
     archives.put_archive(prepared.suite_key, prepared.suite_body)
-    source_run = fix_run.source_run
+    source_run = _source_run(fix_run)
     parents = failing_targets(fix_run)
     without = _without_variations(parents, variations)
     with transaction.atomic():
@@ -435,7 +450,7 @@ def land(
             fix_run=locked,
             created_by=locked.created_by,
             summary=f"{len(variations)} variations of {len(parents) - len(without)}"
-            f" of {len(parents)} failing cases, for a fix",
+            f" of {len(parents)} failing cases, for an epoch",
             scenario_count=len(prepared.scenarios),
             **{
                 **prepared.suite_fields,
@@ -458,7 +473,7 @@ def land(
         )
         # Not the default's pairing: no other scenario of the environment is touched.
         paired = pair_scenarios(locked_environment, documents, prune=False, exact=True)
-        _add_members(version, paired)
+        add_members(version, paired)
         # Hidden from the environment's scenarios; a run of the version still loads them.
         HostedHarnessScenario.no_workspace_objects.filter(
             id__in=[row.id for row, _document in paired]
@@ -481,9 +496,9 @@ def _private_suite(
     """The fix's suite from the builder's save: the source run's suite as it ran, plus
     each variation the builder wrote of a failing case, renamed into the fix's keys. Its
     prepared pieces, the variations with the cases they vary, and their documents."""
-    source_run = fix_run.source_run
+    source_run = _source_run(fix_run)
     suite = archives.split_authoring(files).suite
-    base = drafts._piece_files(environment, "suite", source_run.suite_version)
+    base = drafts.piece_files(environment, "suite", source_run.suite_version)
     parents = {_scenario_token(key): key for key in failing_targets(fix_run)}
     sub_goals = {
         _scenario_token(one.get("scenario_key") or one.get("name")): one.get(
@@ -550,10 +565,10 @@ def _private_suite(
         tree["scenarios.json"] = json.dumps(
             [*json.loads(base["scenarios.json"]), *documents], indent=2
         ).encode()
-    _split, prepared = drafts._prepared(
+    _split, prepared = drafts.prepare_sealed_tree(
         environment,
         archives.compose(
-            drafts._piece_files(
+            drafts.piece_files(
                 environment, "environment", source_run.environment_version
             ),
             tree,
@@ -637,13 +652,18 @@ def _settle(
     results = {one.key: one.failing_sub_goals for one in scenario_results(run)}
     kept = {key: parent for key, parent in variations.items() if results.get(key)}
     failing = {**parents, **{key: results[key] for key in kept}}
+    if request.locked_version_id is None:
+        held_back = split_held_back(str(fix_run.source_run_id), failing, kept)
+    else:
+        # The launch held back the locked version's failing test cases. Their
+        # variations go with them, and an unlock since then changes nothing.
+        launched = set(request.held_back_scenario_keys)
+        held_back = [key for key in failing if kept.get(key, key) in launched]
     floor = settings.AGENT_FIX_MIN_FAILING_CASES
     settled = request.model_copy(
         update={
             "target_scenario_keys": [*request.target_scenario_keys, *kept],
-            "held_back_scenario_keys": split_held_back(
-                str(fix_run.source_run_id), failing, kept
-            ),
+            "held_back_scenario_keys": held_back,
             "failing_sub_goals": list(
                 dict.fromkeys(name for names in failing.values() for name in names)
             ),
@@ -678,7 +698,7 @@ def _settle(
                 f"The run had {_count(len(parents), 'failing case')}{unvaried}. The"
                 f" builder wrote {_count(len(variations), 'variation')} of them, and"
                 f" {len(kept)} failed on the current version:"
-                f" {_count(len(failing), 'failing case')}, and a fix needs {floor}.",
+                f" {_count(len(failing), 'failing case')}, and an epoch needs {floor}.",
             )
     logger.info(
         "agent_fix_variations_settled",

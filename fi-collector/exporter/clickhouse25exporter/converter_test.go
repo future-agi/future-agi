@@ -810,16 +810,16 @@ type stubPricer struct {
 	lastModel       string
 }
 
-func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32, projectID string) (float64, bool) {
 	s.calls++
 	s.lastOrg = orgID
 	s.lastModel = model
 	return s.cost, s.ok
 }
 
-func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32, projectID string) (float64, bool) {
 	s.openRouterCalls++
-	return s.TokenCost(ctx, orgID, model, p, c)
+	return s.TokenCost(ctx, orgID, model, p, c, projectID)
 }
 
 // makeLLMSpanOrgID is the org UUID stamped by makeLLMSpan's resource attrs —

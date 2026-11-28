@@ -77,6 +77,7 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.org_config_service import get_or_create_org_config
 from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -222,6 +223,25 @@ def _guardrail_check_key(checks, name):
     return next((alias for alias in aliases if alias in checks), name)
 
 
+def _invalid_threshold_field(guardrail_config):
+    """The threshold field of an update-guardrail payload outside 0..1, if any.
+
+    A guardrail's confidence threshold is a score from 0 to 1. A value such as
+    50 (meant as 50%) would never trigger, and the policy API refuses it.
+    """
+    for field in ("threshold", "confidence_threshold"):
+        if field not in guardrail_config or guardrail_config[field] is None:
+            continue
+        value = guardrail_config[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 <= value <= 1
+        ):
+            return field
+    return None
+
+
 def _guardrail_check_fields(guardrail_config):
     """Map a rules-style guardrail config onto the fields a checks{} entry has."""
     fields = {
@@ -267,6 +287,19 @@ def _build_virtual_gateway(status="healthy", health=None):
         health.pop("status", None)
         data.update(health)
     return data
+
+
+def _normalize_circuit_state(value):
+    """Canonicalise a gateway circuit-breaker state for comparisons.
+
+    The Go gateway reports ``"half-open"`` (hyphen); older payloads and other
+    callers may use ``"half_open"``, ``"HALF-OPEN"`` or ``"half open"``. All
+    of those map to ``"half_open"``. Only used for comparisons; the response
+    keeps the gateway's own (lower-cased) value.
+    """
+    if not isinstance(value, str):
+        return ""
+    return "_".join(value.strip().lower().replace("-", " ").replace("_", " ").split())
 
 
 class AgentccGatewayViewSet(ViewSet):
@@ -643,6 +676,11 @@ class AgentccGatewayViewSet(ViewSet):
 
     @validated_request(
         request_serializer=GatewayProviderUpdateRequestSerializer,
+        serializer_context=lambda request: {
+            "active_providers": AgentccProviderCredential.no_workspace_objects.filter(
+                organization=getattr(request, "organization", None), deleted=False
+            ).only("default_timeout_seconds", "max_concurrent", "conn_pool_size")
+        },
         responses={
             200: GatewayMutationResponseSerializer,
             **GATEWAY_BAD_REQUEST_RESPONSES,
@@ -658,6 +696,21 @@ class AgentccGatewayViewSet(ViewSet):
             provider_config = request.validated_data.get("config")
             if not provider_name or not provider_config:
                 return self._gm.bad_request("name and config are required")
+            lookup = {
+                "organization": org,
+                "provider_name": provider_name,
+                "deleted": False,
+            }
+            providers = AgentccProviderCredential.no_workspace_objects.filter(**lookup)
+            existing = providers.only(
+                "base_url",
+                "default_timeout_seconds",
+                "max_concurrent",
+                "conn_pool_size",
+            ).first()
+            limit_errors = GatewayProviderUpdateRequestSerializer.limit_errors
+            if errors := limit_errors(provider_config, existing):
+                return self._gm.bad_request(errors)
             if provider_name == "vertex":
                 provider_config = _prepare_vertex_provider_config(provider_config)
             elif "service_account_json" in provider_config:
@@ -667,13 +720,7 @@ class AgentccGatewayViewSet(ViewSet):
             provider_config["base_url"] = ProviderBaseURLField(
                 max_length=500, allow_blank=True
             ).run_validation(provider_config.get("base_url", ""))
-            saved_base_url = (
-                AgentccProviderCredential.no_workspace_objects.filter(
-                    organization=org, provider_name=provider_name, deleted=False
-                )
-                .values_list("base_url", flat=True)
-                .first()
-            )
+            saved_base_url = existing.base_url if existing else None
             try:
                 ensure_provider_base_url_allowed(
                     provider_config.get("base_url", ""), saved_base_url=saved_base_url
@@ -746,18 +793,14 @@ class AgentccGatewayViewSet(ViewSet):
                 "display_name": provider_config.get("display_name", "")
                 or provider_name,
             }
-            lookup = {
-                "organization": org,
-                "provider_name": provider_name,
-                "deleted": False,
-            }
             with transaction.atomic():
                 try:
-                    cred = AgentccProviderCredential.no_workspace_objects.select_for_update().get(
-                        **lookup
-                    )
+                    cred = providers.select_for_update().get()
                 except AgentccProviderCredential.DoesNotExist:
                     cred = None
+                # Recheck against the row we will actually update, not the earlier read.
+                if errors := limit_errors(provider_config, cred):
+                    return self._gm.bad_request(errors)
 
                 # Omitted keys keep the stored credentials; an explicit empty
                 # key must still pass the same rules as a new provider.
@@ -1003,6 +1046,9 @@ class AgentccGatewayViewSet(ViewSet):
             guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
+            invalid = _invalid_threshold_field(guardrail_config)
+            if invalid:
+                return self._gm.bad_request(f"{invalid} must be a number from 0 to 1")
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
@@ -1443,9 +1489,10 @@ class AgentccGatewayViewSet(ViewSet):
                 pstats = provider_stats.get(pid, {})
                 healthy = gw_data.get("healthy", True)
                 circuit_state = (gw_data.get("circuit_state") or "n/a").lower()
-                if not healthy or circuit_state == "open":
+                circuit_kind = _normalize_circuit_state(circuit_state)
+                if not healthy or circuit_kind == "open":
                     status = "unhealthy"
-                elif circuit_state == "half_open":
+                elif circuit_kind == "half_open":
                     status = "degraded"
                 else:
                     status = "healthy"
@@ -1794,34 +1841,7 @@ class AgentccGatewayViewSet(ViewSet):
     # --- Per-org config helpers ---
 
     def _get_or_create_org_config(self, org):
-        with transaction.atomic():
-            config = (
-                AgentccOrgConfig.no_workspace_objects.select_for_update()
-                .filter(
-                    organization=org,
-                    is_active=True,
-                    deleted=False,
-                )
-                .first()
-            )
-            if config:
-                normalized = normalize_cost_tracking_config(config.cost_tracking)
-                if normalized != config.cost_tracking:
-                    config.cost_tracking = normalized
-                    config.save(update_fields=["cost_tracking", "updated_at"])
-                return config
-            config, _ = AgentccOrgConfig.no_workspace_objects.get_or_create(
-                organization=org,
-                version=1,
-                is_active=True,
-                deleted=False,
-                defaults={"cost_tracking": default_cost_tracking_config()},
-            )
-            normalized = normalize_cost_tracking_config(config.cost_tracking)
-            if normalized != config.cost_tracking:
-                config.cost_tracking = normalized
-                config.save(update_fields=["cost_tracking", "updated_at"])
-            return config
+        return get_or_create_org_config(org)
 
     def _update_org_config(self, org, updater_fn, user=None, desc=""):
         with transaction.atomic():

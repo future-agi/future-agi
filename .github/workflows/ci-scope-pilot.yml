@@ -1,0 +1,59 @@
+name: Historical scope calibration
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/ci-pilots/stale-base/**'
+      - '.github/workflows/ci-scope-pilot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  calibrate:
+    name: Stale-base replay (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Start attempt evidence
+        run: |
+          mkdir "$RUNNER_TEMP/stale-base-pilot"
+          printf 'run=%s attempt=%s event_sha=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" > "$RUNNER_TEMP/stale-base-pilot/attempt.txt"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify replay prerequisites
+        run: |
+          for tool in bash git jq python3; do
+            command -v "$tool" >> "$RUNNER_TEMP/stale-base-pilot/prerequisites.txt" || {
+              printf 'Missing %s\n' "$tool" | tee -a "$RUNNER_TEMP/stale-base-pilot/prerequisites.txt" >&2
+              exit 1
+            }
+          done
+      - name: Exercise classifier negative controls
+        run: |
+          python3 -I -B .github/ci-pilots/stale-base/test_case.py 2>&1 | tee "$RUNNER_TEMP/stale-base-pilot/classifier.txt"
+      - name: Replay broken and reference controls
+        run: |
+          python3 -I -B .github/ci-pilots/stale-base/run.py | tee "$RUNNER_TEMP/stale-base-pilot/outcome.txt"
+      - name: Summarize observed pair
+        if: always()
+        run: |
+          if [[ -s "$RUNNER_TEMP/stale-base-pilot/outcome.txt" ]]; then
+            { printf '```text\n'; cut -c1-250 "$RUNNER_TEMP/stale-base-pilot/outcome.txt"; printf '```\n'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Unverified: no completed pair summary. See preceding steps.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: scope-pilot-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/stale-base-pilot/
+          if-no-files-found: error
+          retention-days: 7

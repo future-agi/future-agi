@@ -1,0 +1,5 @@
+# Shared by kind smoke and GitOps acceptance; not packaged with the chart.
+config:
+  telemetry: false
+  extraEnv:
+    FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9

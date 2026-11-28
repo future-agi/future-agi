@@ -55,6 +55,23 @@ def _post(client, body=None, *, signature="sign", event="push", **extra):
     return client.post(URL, data=body, content_type="application/json", **headers)
 
 
+def test_a_failed_installation_apply_lets_the_redelivery_through(api_client):
+    body = json.dumps({"action": "deleted", "installation": {"id": 42}}).encode()
+    with patch(
+        "simulate.views.harness_github_webhook.apply_installation_event",
+        side_effect=[RuntimeError("down"), None],
+    ) as apply:
+        with pytest.raises(RuntimeError):
+            _post(api_client, body, event="installation")
+        again = _post(api_client, body, event="installation")
+        third = _post(api_client, body, event="installation")
+
+    assert again.status_code == 204
+    assert third.status_code == 204
+    assert apply.call_count == 2
+    assert apply.call_args.kwargs == {"installation_id": "42", "action": "deleted"}
+
+
 def _reasons(caplog):
     return [
         record.getMessage()

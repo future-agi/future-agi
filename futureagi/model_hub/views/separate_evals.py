@@ -7049,6 +7049,33 @@ class VersionCompareView(APIView):
             return self._gm.bad_request("Evaluation versions could not be compared")
 
 
+def _playground_trace_and_spans(trace_id, org):
+    from tracer.models.project import Project
+    from tracer.models.trace import Trace
+    from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.eval_loader import trace_from_ch_row
+
+    trace = Trace.objects.filter(id=trace_id, project__organization=org).first()
+    with get_reader() as reader:
+        if trace is None:
+            # Collector traces need not have a PG row. Resolve duplicate trace IDs
+            # only among the caller's projects, then pin both reads to the winner.
+            project_ids = Project.objects.filter(organization=org).values_list(
+                "id", flat=True
+            )
+            project_id = reader.newest_trace_project(str(trace_id), project_ids)
+            if not project_id:
+                return None, []
+            row = reader.get_trace_row(str(trace_id), project_id=project_id)
+            trace = (
+                trace_from_ch_row(row)
+                if row
+                else Trace(id=trace_id, project_id=project_id)
+            )
+        spans = reader.list_by_trace(str(trace.id), project_id=str(trace.project_id))
+    return trace, spans
+
+
 def _chspan_to_eval_playground_view(ch_span):
     """Build a span-shaped namespace that `_build_span_context` can consume.
 
@@ -7189,28 +7216,9 @@ class EvalPlayGroundAPIView(APIView):
                     logger.warning(f"Failed to fetch span {_span_id}: {_e}")
             if trace_context is None and _trace_id:
                 try:
-                    from tracer.models.trace import Trace
-                    from tracer.services.clickhouse.v2 import get_reader
-
-                    # Codex P1: scope Trace lookup to org so a caller can't
-                    # feed another tenant's trace_id into the playground.
-                    _t = Trace.objects.filter(
-                        id=_trace_id, project__organization=org
-                    ).first()
+                    _t, _ch_spans = _playground_trace_and_spans(_trace_id, org)
                     if _t:
-                        # CH read replaces two ObservationSpan ORM calls:
-                        #   1. .filter(trace=_t, deleted=False).aggregate(...)
-                        #   2. .filter(trace=_t, deleted=False)
-                        #        .order_by("start_time").values(...)[:200]
-                        # CHSpanReader doesn't expose an `error_count`/
-                        # `total_latency` aggregate, so we list spans once
-                        # (already filtered to is_deleted=0 + ordered by
-                        # start_time, id) and compute aggregates in Python.
-                        # A trace's span count is bounded (FutureAGI caps
-                        # writes via the OTLP ingest pipeline) so a single
-                        # in-process pass is cheaper than two CH round-trips.
-                        with get_reader() as reader:
-                            _ch_spans = reader.list_by_trace(str(_t.id))
+                        # Aggregate all live spans; only the inline list is capped.
                         _span_count = len(_ch_spans)
                         _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
                         _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)

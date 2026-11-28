@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from django.conf import settings
 from django.db.models import (
@@ -27,9 +27,19 @@ from simulate.models import (
     HostedHarnessJob,
     RunTest,
 )
+from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import diffs
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.versions import (
+    actors_enabled,
+    versioning_enabled,
+    with_actor_digests,
+)
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.locked_versions import (
+        LockedVersionItem,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +82,15 @@ def require_versioning() -> None:
         raise HostedHarnessError(
             "versioning_disabled",
             "environment versioning is not enabled",
+            status_code=404,
+        )
+
+
+def require_actors() -> None:
+    if not actors_enabled():
+        raise HostedHarnessError(
+            "actors_disabled",
+            "actors are not enabled",
             status_code=404,
         )
 
@@ -158,10 +177,17 @@ def _newest_first(queryset: QuerySet) -> QuerySet:
     )
 
 
-def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]:
+def _piece_item(
+    version: Any,
+    default_id: Any,
+    *,
+    suite: bool,
+    candidate_states: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(version.id),
         "label": _label(version.version_number),
+        "name": version.name or None,
         "status": version.status,
         "is_default": version.id == default_id,
         "created_at": version.created_at.isoformat(),
@@ -188,7 +214,29 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "requested_here": None,
         "pickable": None,
         "discardable": None,
+        "release_checks": None,
+        "candidate_state": _candidate_state(version, candidate_states or {}),
+        "saved_without_check": _saved_without_check(version),
     }
+
+
+def _saved_without_check(version: Any) -> bool:
+    """Whether ``version`` was saved while the check was unavailable on our side. A
+    list reads the flag as an annotation and never loads the documents for it."""
+    flag = getattr(version, "uncertified_flag", None)
+    if flag is None and "documents" not in version.get_deferred_fields():
+        flag = (version.documents or {}).get("uncertified")
+    return flag in (True, "true")
+
+
+def _candidate_state(version: Any, states: Mapping[str, str]) -> str | None:
+    """How History labels a candidate: validating, ready or failed while it is the live one, superseded or expired
+    once set aside."""
+    if version.status == VersionStatus.CANDIDATE:
+        return states.get(str(version.id), "superseded")
+    if version.discard_reason in (DiscardReason.SUPERSEDED, DiscardReason.EXPIRED):
+        return str(version.discard_reason)
+    return None
 
 
 def _agent_definition_id(job: HostedHarnessJob) -> Any:
@@ -212,6 +260,27 @@ def _agent_definition_id(job: HostedHarnessJob) -> Any:
 def in_workspace(job: HostedHarnessJob) -> Q:
     """Agent versions of the environment's workspace, or of none."""
     return Q(workspace_id=job.workspace_id) | Q(workspace__isnull=True)
+
+
+def agent_in_lineage(job: HostedHarnessJob, agent_id: Any) -> bool:
+    """Whether ``agent_id`` is a version of the environment's agent, in its workspace and organization, and, for an
+    agent environments share, one this environment made or asked for. Every path that takes an agent version id
+    from a request scopes it here."""
+    from simulate.services.harness_agent_versions import lineage_version_ids
+
+    definition_id = _agent_definition_id(job)
+    if (
+        definition_id is None
+        or not AgentVersion.no_workspace_objects.filter(
+            in_workspace(job),
+            id=agent_id,
+            organization_id=job.organization_id,
+            agent_definition_id=definition_id,
+        ).exists()
+    ):
+        return False
+    allowed = lineage_version_ids(job, definition_id)
+    return allowed is None or str(agent_id) in allowed
 
 
 def _agent_versions(
@@ -431,6 +500,7 @@ def _agent_item(
     return {
         "id": str(version.id),
         "label": _agent_label(version.version_name, version.version_number),
+        "name": None,
         "status": (
             _AGENT_STATUS.get(runtime.preflight_status, "active")
             if runtime is not None
@@ -487,6 +557,8 @@ def _agent_item(
         and not _held_elsewhere(
             version, getattr(runtime, "asked_for", None), environment_id
         ),
+        "candidate_state": None,
+        "saved_without_check": False,
     }
 
 
@@ -505,20 +577,53 @@ def agent_version_item(job: HostedHarnessJob, version: AgentVersion) -> dict[str
     )
 
 
-def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
+# A draft Save promoted through its validated candidates is set aside with the version it became: it is listed once,
+# as that version.
+_SAVED_DRAFT = Q(status=VersionStatus.DISCARDED, documents__has_key="saved_version_id")
+
+
+class VersionsRead(TypedDict):
+    """Every version of an environment's three pieces, newest first, and its locks."""
+
+    agent: list[dict[str, Any]]
+    environment: list[dict[str, Any]]
+    suite: list[dict[str, Any]]
+    locked_versions: list[LockedVersionItem]
+
+
+def list_versions(job: HostedHarnessJob) -> VersionsRead:
     environments = _newest_first(
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
+        .exclude(_SAVED_DRAFT)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
+        .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
     )
     suites = _newest_first(
         # A suite version private to a fix is never listed.
         HarnessSuiteVersion.no_workspace_objects.filter(job=job, fix_run__isnull=True)
+        .exclude(_SAVED_DRAFT)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
+        .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
     )
     from simulate.services.harness_agent_versions import _default_lineage
+    from simulate.services.harness_readiness.release import release_checks_for
+    from simulate.services.harness_versioning import locked_versions
 
+    # Two documents of each environment version, read in one query; never the rest.
+    release = {
+        one: release_checks_for(
+            {"stage_outputs": outputs or [], "release_checks": recorded}
+        )
+        for one, outputs, recorded in HarnessEnvironmentVersion.no_workspace_objects.filter(
+            job=job
+        ).values_list("id", "documents__stage_outputs", "documents__release_checks")
+    }
+
+    from simulate.services.harness_versioning.candidate_sets import candidate_states
+
+    states = candidate_states(job)
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
@@ -536,12 +641,24 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             for version in agents
         ],
         "environment": [
-            _piece_item(version, job.environment_version_id, suite=False)
+            {
+                **_piece_item(
+                    version,
+                    job.environment_version_id,
+                    suite=False,
+                    candidate_states=states,
+                ),
+                "release_checks": release.get(version.id),
+            }
             for version in environments
         ],
         "suite": [
-            _piece_item(version, job.suite_version_id, suite=True) for version in suites
+            _piece_item(
+                version, job.suite_version_id, suite=True, candidate_states=states
+            )
+            for version in suites
         ],
+        "locked_versions": locked_versions.locked_version_items(job),
     }
 
 
@@ -599,6 +716,10 @@ def _environment_diff(
         sub_goals=_digests(goals, current_id, "sub_goal_digests") or {},
         previous_files=previous_files if known else None,
         files=files or {},
+        previous_actors=previous.get("actor_digests"),
+        actors=current.get("actor_digests"),
+        previous_actor_names=previous.get("actor_names"),
+        actor_names=current.get("actor_names"),
     )
 
 
@@ -702,7 +823,12 @@ def version_diff(
     previous = _mapping(other.documents, other.id, "documents")
     current = _mapping(version.documents, version.id, "documents")
     if piece == "environment":
-        diff = _environment_diff(previous, current, other.id, version.id)
+        diff = _environment_diff(
+            with_actor_digests(other, previous),
+            with_actor_digests(version, current),
+            other.id,
+            version.id,
+        )
         return {
             "summary": diffs.summarize_environment(diff),
             "diff": diff,
@@ -712,6 +838,8 @@ def version_diff(
         _scenarios(previous, other.id),
         _scenarios(current, version.id),
         removed_reason="not in this version",
+        dropped=current.get("dropped"),
+        was_dropped=previous.get("dropped"),
     )
     return {
         "summary": diffs.summarize_suite(diff),
@@ -757,32 +885,50 @@ def suite_members(job: HostedHarnessJob, version_id: Any) -> list[dict[str, Any]
     ]
 
 
-def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]]:
+def run_version_labels(
+    execution_ids: Iterable[Any], *, readiness: bool = False
+) -> dict[str, dict[str, Any]]:
     """Each hosted run's pinned agent, environment and suite version, by test execution.
 
     Read from the run job's own pins only, never the environment's defaults; an
     unpinned run is absent, so callers show it as before versioning. The newest live
     pinned job wins, as in the run's results. ``agent_differs`` says the run's agent is
-    not the one its environment version was built with.
+    not the one its environment version was built with. With ``readiness``, each also
+    carries ``capability_snapshot``: the readiness the run was created with, and
+    ``readiness_selection``: the cases it held back.
     """
     ids = [one for one in execution_ids if one]
     if not ids:
         return {}
-    rows = (
+    jobs = (
         HostedHarnessJob.no_workspace_objects.filter(test_execution_id__in=ids)
         .exclude(environment_version__isnull=True, suite_version__isnull=True)
         .order_by("created_at")
-        .values_list(
-            "test_execution_id",
-            "environment_version_id",
-            "environment_version__version_number",
-            "suite_version_id",
-            "suite_version__version_number",
-            "agent_version_id",
-            "agent_version__version_name",
-            "agent_version__version_number",
-            "environment_version__agent_version_id",
-        )
+    )
+    rows = jobs.values_list(
+        "test_execution_id",
+        "environment_version_id",
+        "environment_version__version_number",
+        "suite_version_id",
+        "suite_version__version_number",
+        "agent_version_id",
+        "agent_version__version_name",
+        "agent_version__version_number",
+        "environment_version__agent_version_id",
+    )
+    from simulate.services.harness_readiness.report import snapshot_as_read
+
+    snapshots = (
+        {
+            str(one): (snapshot, selection)
+            for one, snapshot, selection in jobs.values_list(
+                "test_execution_id",
+                "capability_snapshot",
+                "payload__metadata__readiness_selection",
+            )
+        }
+        if readiness
+        else {}
     )
     return {
         str(execution_id): {
@@ -800,6 +946,18 @@ def run_version_labels(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]
                 else None
             ),
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
+            **(
+                {
+                    "capability_snapshot": snapshot_as_read(
+                        snapshots.get(str(execution_id), (None,))[0]
+                    ),
+                    "readiness_selection": snapshots.get(
+                        str(execution_id), (None, None)
+                    )[1],
+                }
+                if readiness
+                else {}
+            ),
         }
         for (
             execution_id,

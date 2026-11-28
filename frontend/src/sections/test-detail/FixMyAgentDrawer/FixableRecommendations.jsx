@@ -145,20 +145,22 @@ const FixableRecommendations = ({
                 </ShowComponent>
               </Box>
               <Box sx={{ gap: 1, display: "flex", alignItems: "center" }}>
-                <CustomTooltip
-                  show
-                  title="Refresh"
-                  arrow
-                  size="small"
-                  type="black"
-                >
-                  <RefreshIconButton onClick={refetch}>
-                    <SvgColor
-                      sx={{ width: 20, height: 20 }}
-                      src="/assets/icons/ic_rerun.svg"
-                    />
-                  </RefreshIconButton>
-                </CustomTooltip>
+                <ShowComponent condition={!!refetch}>
+                  <CustomTooltip
+                    show
+                    title="Refresh"
+                    arrow
+                    size="small"
+                    type="black"
+                  >
+                    <RefreshIconButton onClick={refetch}>
+                      <SvgColor
+                        sx={{ width: 20, height: 20 }}
+                        src="/assets/icons/ic_rerun.svg"
+                      />
+                    </RefreshIconButton>
+                  </CustomTooltip>
+                </ShowComponent>
                 <Button
                   variant="contained"
                   color="primary"
@@ -170,7 +172,7 @@ const FixableRecommendations = ({
                     setCreateEditOptimizationOpen(true);
                   }}
                 >
-                  Optimize My Agent
+                  Launch optimization
                 </Button>
               </Box>
             </Box>

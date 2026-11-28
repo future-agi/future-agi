@@ -58,6 +58,13 @@ const SESSION_BULK_ACTIONS = [
     label: "Add to annotation queue",
     icon: "solar:clipboard-list-linear",
   },
+  // Shown to every organization: an environment-only one builds its tests
+  // through its environments, not the legacy Replay.
+  {
+    id: EVIDENCE_ACTION_ID,
+    label: EVIDENCE_COPY.action,
+    icon: "solar:test-tube-linear",
+  },
 ];
 
 // Session-specific
@@ -71,6 +78,12 @@ import {
 } from "./ReplaySessions/store";
 import { REPLAY_ACTION_ID, REPLAY_TYPES } from "./ReplaySessions/constants";
 import { withoutReplayForRestrictedOrgs } from "./ReplaySessions/replayAccess";
+import CreateEnvironmentTestDialog from "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog";
+import {
+  EVIDENCE_ACTION_ID,
+  EVIDENCE_COPY,
+} from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -798,6 +811,29 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // clicked; reset on select-all clear, project change, or filter change.
   const [sessionFilterSelectionMode, setSessionFilterSelectionMode] =
     useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // An import names its sessions one by one: no select-all, and at most the
+  // backend's limit.
+  const bulkActions = useMemo(() => {
+    const picked = (toggledNodes || []).filter(Boolean).length;
+    let disabledReason = null;
+    if (!observeId) disabledReason = EVIDENCE_COPY.actionNoProject;
+    else if (selectAll || sessionFilterSelectionMode)
+      disabledReason = EVIDENCE_COPY.actionAll;
+    else if (picked > MAX_EVIDENCE_SOURCES)
+      disabledReason = EVIDENCE_COPY.actionTooMany;
+    return sessionBulkActions.map((one) =>
+      one.id === EVIDENCE_ACTION_ID
+        ? { ...one, disabled: Boolean(disabledReason), disabledReason }
+        : one,
+    );
+  }, [
+    sessionBulkActions,
+    toggledNodes,
+    selectAll,
+    sessionFilterSelectionMode,
+    observeId,
+  ]);
   useEffect(() => {
     if (!selectAll) setSessionFilterSelectionMode(false);
   }, [selectAll]);
@@ -810,7 +846,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleBulkAction = useCallback(
     (action, event) => {
-      if (action === REPLAY_ACTION_ID) {
+      if (action === EVIDENCE_ACTION_ID) {
+        setEvidenceOpen(true);
+      } else if (action === REPLAY_ACTION_ID) {
         const replayData = {
           project_id: observeId,
           replay_type: REPLAY_MODULES.SESSIONS,
@@ -1102,13 +1140,22 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           });
         }}
         onBulkAction={handleBulkAction}
-        bulkActions={sessionBulkActions}
+        bulkActions={bulkActions}
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
         onInstantEval={observeId ? openAsk : undefined}
         onInsights={observeId ? openInsights : undefined}
       />
 
+      {evidenceOpen ? (
+        <CreateEnvironmentTestDialog
+          open
+          onClose={() => setEvidenceOpen(false)}
+          projectId={observeId}
+          sourceKind="session"
+          ids={(toggledNodes || []).filter(Boolean)}
+        />
+      ) : null}
       <Suspense fallback={null}>
         <AddToQueueDialog
           anchorEl={queueAnchorEl}

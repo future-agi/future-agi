@@ -6,7 +6,7 @@ import _ from "lodash";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
 import ScenarioCellRenderer from "./CellRenderers/ScenarioCellRenderer";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { canonicalKeys } from "src/utils/utils";
 import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { getAnnotationMetricFilterDefinition } from "src/utils/prototypeObserveUtils";
@@ -14,6 +14,7 @@ import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRender
 import { getLabel } from "./PerformanceMetrics/common";
 import EvalReasonCellRenderer from "./CellRenderers/EvalReasonCellRenderer";
 import ToolReasonCellRenderer from "./CellRenderers/ToolReasonCellRenderer";
+import { debugFailuresBlockedReason } from "./debugFailuresRule";
 import {
   reorderMenuList,
   setMenuIcons,
@@ -22,8 +23,7 @@ import { menuIcons } from "src/utils/MenuIconSet/svgIcons";
 import ColumnCellRenderer from "./CellRenderers/ColumnCellRenderer";
 import { useTestDetailStore, useTestExecutionStore } from "./states";
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import useKpis from "src/hooks/useKpis";
-import { useMemo } from "react";
+import useKpis, { kpisQueryOptions } from "src/hooks/useKpis";
 import { LoadingHeader } from "./CellRenderers/ScenarioCellRenderer";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
@@ -628,6 +628,13 @@ export const TestRunLoadingStatus = [
   TestRunExecutionStatus.CANCELLING,
 ];
 
+// A run that will make no more calls: Debug failures checks its connected calls.
+export const FINISHED_RUN_STATUSES = [
+  TestRunExecutionStatus.COMPLETED,
+  TestRunExecutionStatus.CANCELLED,
+  TestRunExecutionStatus.FAILED,
+];
+
 // Per-call statuses for which eval data may still arrive. Used by cell
 // renderers to show a skeleton loader instead of a "-" dash while a call is
 // still in flight.
@@ -684,6 +691,10 @@ const IGNORED_KEYS = [
   // would paint a phantom eval. The simulate harness reads
   // `kpis.completed_calls` directly and never comes through here.
   "completed_calls",
+  // Debug failures' counts and flag, read by useFixMyAgentBlocked; no card shows them.
+  "debug_failures_connected_calls",
+  "failing_calls",
+  "has_debug_failures_analysis",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",
@@ -759,14 +770,6 @@ export const extractKpis = (data, agentType) => {
       `${Math.round(systemMetrics?.agent_talk_percentage)}/${Math.round(systemMetrics?.customer_talk_percentage)}`;
     delete systemMetrics?.agent_talk_percentage;
     delete systemMetrics?.customer_talk_percentage;
-  }
-  if (
-    systemMetrics?.connected_calls !== undefined &&
-    systemMetrics?.calls_attempted !== undefined
-  ) {
-    systemMetrics.percentage_attempted = Math.round(
-      (systemMetrics?.connected_calls / systemMetrics?.calls_attempted) * 100,
-    );
   }
 
   return {
@@ -950,19 +953,53 @@ export const getCompareBaselineTooltipTitle = (status) => {
   return "";
 };
 
+/**
+ * Reads the run's KPIs once more after the grid sees the run finish, so Debug
+ * failures judges a finished run by its final connected count, not by a
+ * snapshot taken while the run was still making calls.
+ *
+ * It records how many KPI reads had landed at the finish: any read that lands
+ * later, this one or a refetch, holds the final count. A KPI read still in
+ * flight may have been sampled before the run finished, and React Query would
+ * hand a new read that answer, so it is cancelled first. The new read retries
+ * once; the promise rejects when it still fails or something cancels it.
+ *
+ * The `["test-execution-detail", executionId]` prefix invalidation is the
+ * refresh the grid made before Debug failures read KPIs, kept as it was. It
+ * matches no query on the run page: the grid's pages are under
+ * `"test-execution-detail-list"`, the KPIs key puts `"KPIS"` second, and only
+ * the dataset summary's CriticalIssues reads that exact key.
+ */
+export const readFinalRunKpis = async (queryClient, executionId) => {
+  const kpis = kpisQueryOptions(executionId);
+  useTestExecutionStore
+    .getState()
+    .setKpisUpdateCountAtFinish(
+      executionId,
+      queryClient.getQueryState(kpis.queryKey)?.dataUpdateCount ?? 0,
+    );
+  queryClient.invalidateQueries({
+    queryKey: ["test-execution-detail", executionId],
+  });
+  await queryClient.cancelQueries({ queryKey: kpis.queryKey });
+  await queryClient.fetchQuery({ ...kpis, staleTime: 0, retry: 1 });
+};
+
+const CHECKING = { disabled: true, reason: "" };
+
 export const useFixMyAgentBlocked = (executionId) => {
+  const queryClient = useQueryClient();
   const { data: kpis, isPending } = useKpis(executionId);
-  const { status } = useTestExecutionStore();
+  const {
+    status,
+    statusExecutionId,
+    kpisUpdateCountAtFinish,
+    finalKpisFailed,
+  } = useTestExecutionStore();
 
-  const { callDetails } = useMemo(() => {
-    return extractKpis(kpis, kpis?.agent_type);
-  }, [kpis]);
-
-  if (isPending || status === null) {
-    return {
-      disabled: true,
-      reason: "",
-    };
+  // Checking until the grid has read this execution's status.
+  if (isPending || status === null || statusExecutionId !== executionId) {
+    return CHECKING;
   }
 
   // the test run is still running and we should ke the fix my agent blocked
@@ -970,17 +1007,37 @@ export const useFixMyAgentBlocked = (executionId) => {
     return {
       disabled: true,
       reason:
-        "The test run is still running, you can optimize your agent after the test run is completed",
+        "The test run is still running. You can debug its failures once it finishes.",
     };
-  } else if (
-    status === TestRunExecutionStatus.COMPLETED ||
-    status === TestRunExecutionStatus.CANCELLED
-  ) {
-    if (callDetails.connectedCalls < 15) {
-      return {
-        disabled: true,
-        reason: "You need at least 15 connected calls to optimize your agent",
-      };
+  } else if (FINISHED_RUN_STATUSES.includes(status)) {
+    // Only a KPI read that landed after the grid saw the run finish holds its
+    // final count.
+    const kpisUpdateCount =
+      queryClient.getQueryState(kpisQueryOptions(executionId).queryKey)
+        ?.dataUpdateCount ?? 0;
+    if (
+      kpisUpdateCountAtFinish === null ||
+      kpisUpdateCount <= kpisUpdateCountAtFinish
+    ) {
+      return finalKpisFailed
+        ? {
+            disabled: true,
+            reason: "Couldn't load the call count. Refresh to try again.",
+          }
+        : CHECKING;
+    }
+    // The rule stops a new analysis, not the one the run already has.
+    if (kpis?.has_debug_failures_analysis === true) {
+      return { disabled: false, reason: "" };
+    }
+    // An older backend sends no count, and a count it did not send blocks nothing.
+    const blockedReason = debugFailuresBlockedReason({
+      // The rule's own count, not the Connected card's.
+      connectedCalls: kpis?.debug_failures_connected_calls,
+      failingCalls: kpis?.failing_calls,
+    });
+    if (blockedReason) {
+      return { disabled: true, reason: blockedReason };
     }
   }
 

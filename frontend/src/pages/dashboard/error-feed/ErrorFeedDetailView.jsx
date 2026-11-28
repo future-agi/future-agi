@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Chip,
   IconButton,
+  ListItemIcon,
+  ListSubheader,
+  Menu,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -22,8 +25,10 @@ import {
   useExportErrorFeedTraces,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
-import ErrorStatusChip from "./components/ErrorStatusChip";
-import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
+import IssueEpochAction from "./epoch/IssueEpochAction";
+import IssueEpochStrip from "./epoch/IssueEpochStrip";
+import RunEpochDrawer from "./epoch/RunEpochDrawer";
+import EscalationReason from "./components/EscalationReason";
 import ErrorMetadataPanel, {
   LinearTeamPicker,
 } from "./components/ErrorMetadataPanel";
@@ -35,7 +40,8 @@ import AnalyzeTab from "./components/AnalyzeTab";
 import { useSharedIssue } from "./sharedIssueContext";
 import { useErrorFeedStore } from "./store";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
-import { downloadCsv, tracesToCsv } from "./exportTracesCsv";
+import { downloadFile, tracesToCsv } from "./exportTracesCsv";
+import { analysisToMarkdown, SAMPLE_TRACE_LIMIT } from "./issueAnalysis";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -79,10 +85,76 @@ const TABS = [
   { key: "overview", label: "Overview", icon: "solar:widget-4-linear" },
   { key: "traces", label: "Traces", icon: "solar:list-linear" },
   { key: "trends", label: "Trends", icon: "solar:graph-up-linear" },
-  { key: "analyze", label: "Fix", icon: "ph:screwdriver" },
+  { key: "analyze", label: "Root cause", icon: "solar:magnifer-linear" },
 ];
 
 // ── Main view ─────────────────────────────────────────────────────────────────
+// The ⋯ menu's rows, as in the prototype: one line each, a quiet note on the
+// right, and small section labels.
+// Render with `disabled`: MenuList reads that prop off the element to skip it
+// when choosing the item that gets initial focus.
+function MenuSectionLabel({ children }) {
+  return (
+    <ListSubheader
+      sx={{
+        typography: "s3",
+        fontWeight: 500,
+        color: "text.tertiary",
+        bgcolor: "transparent",
+        lineHeight: "16px",
+        px: 1.5,
+        pt: 0.75,
+        pb: 0.25,
+      }}
+    >
+      {children}
+    </ListSubheader>
+  );
+}
+MenuSectionLabel.propTypes = {
+  children: PropTypes.node,
+  disabled: PropTypes.bool,
+};
+
+// `rest` carries the autoFocus/tabIndex that MenuList injects into its children.
+function ActionItem({
+  icon,
+  label,
+  ariaLabel,
+  note,
+  onClick,
+  disabled,
+  ...rest
+}) {
+  return (
+    <MenuItem
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel || label}
+      sx={{ gap: 1 }}
+      {...rest}
+    >
+      <ListItemIcon sx={{ minWidth: 0, color: "text.secondary" }}>
+        <Iconify icon={icon} width={16} sx={{ flexShrink: 0 }} />
+      </ListItemIcon>
+      <Typography sx={{ typography: "s2", flex: 1 }}>{label}</Typography>
+      {note && (
+        <Typography sx={{ typography: "s3", color: "text.tertiary", ml: 2 }}>
+          {note}
+        </Typography>
+      )}
+    </MenuItem>
+  );
+}
+ActionItem.propTypes = {
+  icon: PropTypes.string.isRequired,
+  label: PropTypes.string.isRequired,
+  ariaLabel: PropTypes.string,
+  note: PropTypes.string,
+  onClick: PropTypes.func,
+  disabled: PropTypes.bool,
+};
+
 export default function ErrorFeedDetailView() {
   // On the public /shared/<token> page the issue arrives with the share and
   // the page is read-only: no fetches, no triage, no analysis runs.
@@ -94,6 +166,8 @@ export default function ErrorFeedDetailView() {
   const [linearPickerOpen, setLinearPickerOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [clusterIdCopied, setClusterIdCopied] = useState(false);
+  const [exportAnchor, setExportAnchor] = useState(null);
+  const [moreAnchor, setMoreAnchor] = useState(null);
   const setAnalyzePendingStart = useErrorFeedStore(
     (s) => s.setAnalyzePendingStart,
   );
@@ -113,49 +187,81 @@ export default function ErrorFeedDetailView() {
     retry: false,
   });
   const detail = shared ? shared.issue : fetchedDetail;
+  // Epoch on this issue: never on a shared page. Each part checks the org has Epoch
+  // and reads the issue's epoch itself; the reads are shared.
+  const [epochOpen, setEpochOpen] = useState(false);
   const updateIssue = useUpdateErrorFeedIssue();
   const exportTraces = useExportErrorFeedTraces();
   const { enqueueSnackbar } = useSnackbar();
 
   const handleExportTraces = (clusterId) =>
-    exportTraces.mutate(clusterId, {
-      onSuccess: (overview) => {
-        const traces = overview?.representative_traces ?? [];
-        if (!traces.length) {
-          enqueueSnackbar("No traces to export", { variant: "info" });
-          return;
-        }
-        downloadCsv(tracesToCsv(traces), `error-feed-${clusterId}-traces.csv`);
-        const total = overview?.representative_total ?? traces.length;
-        if (total > traces.length) {
-          enqueueSnackbar(
-            `Exported the latest ${traces.length} of ${total} traces`,
-            { variant: "warning" },
+    exportTraces.mutate(
+      { clusterId },
+      {
+        onSuccess: (overview) => {
+          const traces = overview?.representative_traces ?? [];
+          if (!traces.length) {
+            enqueueSnackbar("No traces to export", { variant: "info" });
+            return;
+          }
+          downloadFile(
+            tracesToCsv(traces),
+            `error-feed-${clusterId}-traces.csv`,
+            "text/csv;charset=utf-8",
           );
-        } else {
-          enqueueSnackbar(
-            `Exported ${traces.length} trace${traces.length === 1 ? "" : "s"}`,
-            { variant: "success" },
-          );
-        }
+          const total = overview?.representative_total ?? traces.length;
+          if (total > traces.length) {
+            enqueueSnackbar(
+              `Exported the latest ${traces.length} of ${total} traces`,
+              { variant: "warning" },
+            );
+          } else {
+            enqueueSnackbar(
+              `Exported ${traces.length} trace${traces.length === 1 ? "" : "s"}`,
+              { variant: "success" },
+            );
+          }
+        },
+        onError: () =>
+          enqueueSnackbar("Failed to export traces", { variant: "error" }),
       },
-      onError: () =>
-        enqueueSnackbar("Failed to export traces", { variant: "error" }),
-    });
+    );
+
+  // Built from the stored analysis and an Overview sample; no model call.
+  const handleExportAnalysis = (issue) =>
+    exportTraces.mutate(
+      { clusterId: issue.cluster_id, repLimit: SAMPLE_TRACE_LIMIT },
+      {
+        onSuccess: (overview) => {
+          downloadFile(
+            analysisToMarkdown(issue, overview),
+            `error-feed-${issue.cluster_id}-analysis.md`,
+            "text/markdown;charset=utf-8",
+          );
+          enqueueSnackbar("Exported the analysis", { variant: "success" });
+        },
+        onError: () =>
+          enqueueSnackbar("Failed to export the analysis", {
+            variant: "error",
+          }),
+      },
+    );
 
   const currentError = useMemo(() => {
     if (!detail?.row) return null;
     return {
       ...detail.row,
       description: detail.description,
+      fix_hypothesis: detail.fix_hypothesis,
+      falsifier: detail.falsifier,
       success_trace: detail.success_trace,
       representative_trace: detail.representative_trace,
       rca: detail.rca,
     };
   }, [detail]);
 
-  // On a shared issue the runner only seeds the saved analysis for the Fix
-  // tab; it never opens Falcon or starts a run.
+  // On a shared issue the runner only seeds the saved analysis for the Root
+  // cause tab; it never opens Falcon or starts a run.
   useAnalyzeRunner(currentError?.cluster_id, currentError, {
     enabled: !shared,
   });
@@ -223,118 +329,110 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          {/* Breadcrumb row */}
-          <Stack direction="row" alignItems="center" gap={0.5} mb={1}>
-            {shared ? (
-              <Typography
-                fontSize="12px"
-                color="text.secondary"
-                sx={{ px: 0.75 }}
-              >
-                Error Feed
-              </Typography>
-            ) : (
-              <Button
-                size="small"
-                variant="text"
-                startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-                onClick={() => navigate("/dashboard/error-feed")}
-                sx={{
-                  color: "text.secondary",
-                  minWidth: 0,
-                  "&:hover": { color: "text.primary", bgcolor: "action.hover" },
-                }}
-              >
-                Error Feed
-              </Button>
-            )}
-            <Iconify
-              icon="solar:alt-arrow-right-linear"
-              width={14}
-              sx={{ color: "text.disabled" }}
-            />
-            <Chip
-              label={currentError.error.type
-                .replace(/Error$/, "")
-                .replace(/([A-Z])/g, " $1")
-                .trim()}
-              size="small"
-            />
-          </Stack>
-
-          {/* Error title */}
-          <Stack
-            direction="row"
-            alignItems="flex-start"
-            justifyContent="space-between"
-            gap={2}
-          >
+          {/* Laid out like the prototype's issue header: "Error Feed / title"
+              on one line, the issue's type under it. Status and severity live
+              in the Triage panel and the trace count on the Traces tab, so
+              they aren't repeated here. */}
+          <Stack direction="row" alignItems="center" gap={2}>
             <Stack gap={0.5} flex={1} minWidth={0}>
-              <Typography
-                typography="m3"
-                fontWeight="fontWeightSemiBold"
-                color="text.primary"
-                title={currentError.error.name}
-                sx={{
-                  lineHeight: 1.35,
-                  overflow: "hidden",
-                  display: "-webkit-box",
-                  WebkitBoxOrient: "vertical",
-                  WebkitLineClamp: 2,
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {currentError.error.name}
-              </Typography>
+              <Stack direction="row" alignItems="center" gap={1} minWidth={0}>
+                {!shared && (
+                  <Tooltip title="Back to Error Feed" arrow>
+                    <IconButton
+                      size="small"
+                      aria-label="Back to Error Feed"
+                      onClick={() => navigate("/dashboard/error-feed")}
+                      sx={{ color: "text.secondary", ml: -0.5 }}
+                    >
+                      <Iconify icon="solar:arrow-left-linear" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                <Stack
+                  direction="row"
+                  alignItems="baseline"
+                  gap={0.75}
+                  minWidth={0}
+                >
+                  {/* Not a tab stop: the back arrow already goes here. */}
+                  <Typography
+                    component="span"
+                    onClick={
+                      shared
+                        ? undefined
+                        : () => navigate("/dashboard/error-feed")
+                    }
+                    sx={{
+                      typography: "s1",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                      cursor: shared ? "default" : "pointer",
+                      "&:hover": shared ? {} : { color: "text.primary" },
+                    }}
+                  >
+                    Error Feed
+                  </Typography>
+                  <Typography
+                    sx={{
+                      typography: "s1",
+                      color: "text.disabled",
+                      flexShrink: 0,
+                    }}
+                  >
+                    /
+                  </Typography>
+                  <Tooltip title={currentError.error.name} arrow>
+                    <Typography
+                      component="h1"
+                      noWrap
+                      sx={{
+                        typography: "m1",
+                        fontWeight: 600,
+                        color: "text.primary",
+                        minWidth: 0,
+                      }}
+                    >
+                      {currentError.error.name}
+                    </Typography>
+                  </Tooltip>
+                </Stack>
+              </Stack>
               <Stack
                 direction="row"
                 alignItems="center"
-                gap={1.5}
-                flexWrap="wrap"
+                gap={1}
+                minWidth={0}
+                sx={{ pl: shared ? 0 : 4 }}
               >
-                <Stack direction="row" alignItems="center" gap={0.75}>
-                  <Box
-                    sx={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      bgcolor: "orange.500",
-                      flexShrink: 0,
-                    }}
+                <Tooltip arrow title="Error type">
+                  <Chip
+                    size="small"
+                    label={currentError.error.type
+                      .replace(/Error$/, "")
+                      .replace(/([A-Z])/g, " $1")
+                      .trim()}
+                    sx={{ flexShrink: 0 }}
                   />
-                  <Typography typography="s2" color="text.disabled">
-                    {currentError.error.type}
-                  </Typography>
-                </Stack>
-                <ErrorStatusChip status={currentError.status} />
-                <ErrorSeverityBadge
-                  severity={currentError.severity}
-                  assessmentStatus={currentError.severity_assessment_status}
-                  source={currentError.severity_source}
-                  reason={currentError.severity_reason}
-                />
-                {/* Cluster badge */}
-                <Chip
-                  icon={<Iconify icon="solar:layers-linear" width={14} />}
-                  label={`${currentError.trace_count?.toLocaleString()} traces`}
-                  size="small"
-                />
+                </Tooltip>
+                {/* On the chip's line, not one of its own — the header stays two rows. */}
+                <EscalationReason issue={currentError} inline />
               </Stack>
             </Stack>
 
-            {/* Action buttons */}
             <Stack
               direction="row"
               alignItems="center"
               gap={0.75}
               flexShrink={0}
             >
+              {/* Icon-only, to keep the header to two lines. */}
               <Tooltip
                 title={clusterIdCopied ? "Copied" : "Copy cluster ID"}
                 arrow
               >
                 <IconButton
                   size="small"
+                  aria-label={clusterIdCopied ? "Copied" : "Copy cluster ID"}
                   onClick={handleCopyClusterId}
                   sx={{ color: "text.secondary" }}
                 >
@@ -344,7 +442,7 @@ export default function ErrorFeedDetailView() {
                         ? "solar:check-linear"
                         : "solar:copy-linear"
                     }
-                    width={14}
+                    width={16}
                   />
                 </IconButton>
               </Tooltip>
@@ -353,80 +451,127 @@ export default function ErrorFeedDetailView() {
                   <Tooltip title="Share" arrow>
                     <IconButton
                       size="small"
+                      aria-label="Share"
                       onClick={() => setShareDialogOpen(true)}
                       sx={{ color: "text.secondary" }}
                     >
-                      <Iconify icon="solar:share-linear" width={14} />
+                      <Iconify icon="solar:share-linear" width={16} />
                     </IconButton>
                   </Tooltip>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={
-                      <Iconify icon="solar:download-minimalistic-linear" width={14} />
-                    }
-                    disabled={
-                      exportTraces.isPending || !currentError.trace_count
-                    }
-                    onClick={() => handleExportTraces(currentError.cluster_id)}
-                    sx={{ borderColor: "divider", color: "text.secondary" }}
+                  <Tooltip title="Export" arrow>
+                    <span>
+                      <IconButton
+                        size="small"
+                        aria-label="Export"
+                        aria-haspopup="menu"
+                        disabled={exportTraces.isPending}
+                        onClick={(e) => setExportAnchor(e.currentTarget)}
+                        sx={{ color: "text.secondary" }}
+                      >
+                        <Iconify
+                          icon="solar:download-minimalistic-linear"
+                          width={16}
+                        />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Menu
+                    anchorEl={exportAnchor}
+                    open={Boolean(exportAnchor)}
+                    onClose={() => setExportAnchor(null)}
+                    anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                    transformOrigin={{ vertical: "top", horizontal: "right" }}
+                    slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
                   >
-                    Export
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<Iconify icon="solar:check-linear" width={14} />}
-                    disabled={updateIssue.isPending}
-                    onClick={() =>
-                      updateIssue.mutate({
-                        clusterId: currentError.cluster_id,
-                        status: "resolved",
-                      })
-                    }
-                    sx={{ borderColor: "divider", color: "text.secondary" }}
+                    <MenuSectionLabel disabled>Export</MenuSectionLabel>
+                    <ActionItem
+                      icon="solar:document-text-linear"
+                      label="Traces"
+                      note="CSV"
+                      disabled={!currentError.trace_count}
+                      onClick={() => {
+                        setExportAnchor(null);
+                        handleExportTraces(currentError.cluster_id);
+                      }}
+                    />
+                    <ActionItem
+                      icon="solar:clipboard-text-linear"
+                      label="Analysis"
+                      note="Markdown"
+                      onClick={() => {
+                        setExportAnchor(null);
+                        handleExportAnalysis(currentError);
+                      }}
+                    />
+                  </Menu>
+                  <Tooltip title="More actions" arrow>
+                    <IconButton
+                      size="small"
+                      aria-label="More actions"
+                      aria-haspopup="menu"
+                      onClick={(e) => setMoreAnchor(e.currentTarget)}
+                      sx={{ color: "text.secondary" }}
+                    >
+                      <Iconify icon="solar:menu-dots-bold" width={18} />
+                    </IconButton>
+                  </Tooltip>
+                  <Menu
+                    anchorEl={moreAnchor}
+                    open={Boolean(moreAnchor)}
+                    onClose={() => setMoreAnchor(null)}
+                    anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                    transformOrigin={{ vertical: "top", horizontal: "right" }}
+                    slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
                   >
-                    Resolve
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={
-                      <Iconify icon="solar:check-circle-linear" width={14} />
-                    }
-                    disabled={updateIssue.isPending}
-                    onClick={() =>
-                      updateIssue.mutate({
-                        clusterId: currentError.cluster_id,
-                        status: "acknowledged",
-                      })
-                    }
-                    sx={{ borderColor: "divider", color: "text.secondary" }}
-                  >
-                    Acknowledge
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={
-                      <Iconify icon="solar:eye-closed-linear" width={14} />
-                    }
-                    disabled={updateIssue.isPending}
-                    onClick={() =>
-                      updateIssue.mutate({
-                        clusterId: currentError.cluster_id,
-                        status: "escalating",
-                      })
-                    }
-                    sx={{ borderColor: "divider", color: "text.secondary" }}
-                  >
-                    Ignore issue
-                  </Button>
+                    <MenuSectionLabel disabled>Status</MenuSectionLabel>
+                    {[
+                      ["resolved", "Resolve", "solar:check-linear"],
+                      [
+                        "acknowledged",
+                        "Acknowledge",
+                        "solar:check-circle-linear",
+                      ],
+                      [
+                        "for_review",
+                        "Move to review",
+                        "solar:eye-closed-linear",
+                      ],
+                    ].map(([status, label, icon]) => (
+                      <ActionItem
+                        key={status}
+                        icon={icon}
+                        label={label}
+                        disabled={updateIssue.isPending}
+                        onClick={() => {
+                          setMoreAnchor(null);
+                          updateIssue.mutate({
+                            clusterId: currentError.cluster_id,
+                            status,
+                          });
+                        }}
+                      />
+                    ))}
+                  </Menu>
                 </>
+              )}
+              {!shared && (
+                <IssueEpochAction
+                  clusterId={currentError.cluster_id}
+                  projectId={currentError.project_id}
+                  onOpenDrawer={() => setEpochOpen(true)}
+                />
               )}
             </Stack>
           </Stack>
         </Box>
+
+        {!shared && (
+          <IssueEpochStrip
+            clusterId={currentError.cluster_id}
+            projectId={currentError.project_id}
+            onRunAgain={() => setEpochOpen(true)}
+          />
+        )}
 
         {/* ── Tab bar ── */}
         <Box
@@ -438,7 +583,8 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs sx={{ boxShadow: "none" }}
+          <Tabs
+            sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >
@@ -530,6 +676,13 @@ export default function ErrorFeedDetailView() {
             onClose={() => setShareDialogOpen(false)}
             resourceType="error_feed_issue"
             resourceId={currentError.cluster_id}
+          />
+          <RunEpochDrawer
+            open={epochOpen}
+            onClose={() => setEpochOpen(false)}
+            clusterId={currentError.cluster_id}
+            projectId={currentError.project_id}
+            issueTitle={currentError.error?.name}
           />
         </>
       )}

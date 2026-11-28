@@ -13,6 +13,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  Tooltip,
   TableContainer,
   TableHead,
   TableRow,
@@ -38,7 +39,12 @@ import { useGatewayContext } from "../context/useGatewayContext";
 
 import SetBudgetDialog from "./SetBudgetDialog";
 import { val } from "../utils/analyticsHelpers";
-import { formatCost } from "../utils/formatters";
+import {
+  formatCost,
+  isUnpriced,
+  UNPRICED_LABEL,
+  UNPRICED_TOOLTIP,
+} from "../utils/formatters";
 
 const CHIP_ROLE = {
   success: "success",
@@ -565,9 +571,20 @@ const AuditLogTab = ({ gatewayId }) => {
                     </Typography>
                   </TableCell>
                   <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
-                    <Typography variant="body2">
-                      {formatCost(log.cost)}
-                    </Typography>
+                    {isUnpriced(log) ? (
+                      <Tooltip title={UNPRICED_TOOLTIP} placement="top" arrow>
+                        <Chip
+                          label={UNPRICED_LABEL}
+                          size="small"
+                          variant="outlined"
+                          color="warning"
+                        />
+                      </Tooltip>
+                    ) : (
+                      <Typography variant="body2">
+                        {formatCost(log.cost)}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell>
                     <StatusBadge

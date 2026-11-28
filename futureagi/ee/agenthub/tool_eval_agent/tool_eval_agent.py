@@ -11,6 +11,12 @@ import traceback
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
+from ee.agenthub.tool_eval_agent.adapters import (
+    is_stored_tool_activity,
+    is_stored_tool_result,
+    stored_tool_call_function,
+    stored_tool_result_call_id,
+)
 from ee.agenthub.tool_eval_agent.prompts import (
     TOOL_EVAL_PLANNING_PROMPT,
     TOOL_EVAL_ANALYSIS_PROMPT,
@@ -495,6 +501,8 @@ class ToolEvalAgent:
             conversation_context = []
             messages_list = []
             message_idx = 0
+            # Tool calls with no result yet, in call order.
+            pending_ids: list[str] = []
 
             # Process all user messages and extract MessageArray from content field
             for chat_msg in user_chat_messages:
@@ -553,21 +561,15 @@ class ToolEvalAgent:
                                 )
 
                             # Extract function info
-                            function_info = tool_call_dict.get("function", {})
-                            if isinstance(function_info, dict):
-                                function_dict = function_info
-                            else:
-                                function_dict = (
-                                    dict(function_info)
-                                    if hasattr(function_info, "__dict__")
-                                    else {}
-                                )
+                            function_dict = stored_tool_call_function(tool_call_dict)
+                            tool_call_id = tool_call_dict.get(
+                                "id", f"tool_call_{message_idx}"
+                            )
+                            pending_ids.append(tool_call_id)
 
                             tool_calls_list.append(
                                 {
-                                    "id": tool_call_dict.get(
-                                        "id", f"tool_call_{message_idx}"
-                                    ),
+                                    "id": tool_call_id,
                                     "function": {
                                         "name": function_dict.get("name", "unknown"),
                                         "arguments": function_dict.get(
@@ -599,12 +601,18 @@ class ToolEvalAgent:
                             }
                         )
 
-                    # Handle tool results (messages with role "tool" and tool_call_id)
-                    if role == "tool" and msg_dict.get("tool_call_id"):
+                    # Handle tool results: native chat's role "tool" with a
+                    # tool_call_id, or a harness chat's kind "tool_call_result"
+                    is_tool_result = is_stored_tool_result(msg_dict)
+                    tool_call_id = (
+                        stored_tool_result_call_id(msg_dict, pending_ids)
+                        if is_tool_result
+                        else None
+                    )
+                    if tool_call_id:
                         logger.info(
                             f"Tool result: {msg_dict} FOR MESSAGE {chat_msg.id}"
                         )
-                        tool_call_id = msg_dict.get("tool_call_id")
                         result_content = content
                         tool_name = msg_dict.get("name", "")
 
@@ -630,7 +638,11 @@ class ToolEvalAgent:
                         )
 
                     # Handle regular messages (user/assistant) - add to conversation context
-                    if content and role in ["user", "assistant"]:
+                    if (
+                        content
+                        and role in ["user", "assistant"]
+                        and not is_stored_tool_activity(msg_dict)
+                    ):
                         logger.info(
                             f"Regular message: {content} FOR MESSAGE {chat_msg.id}"
                         )

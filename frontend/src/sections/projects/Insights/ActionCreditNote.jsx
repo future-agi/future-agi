@@ -7,7 +7,7 @@ import { ErrorText } from "./parts";
 export default function ActionCreditNote({ query, label }) {
   if (query.isError || query.data?.unavailable)
     return (
-      <Typography variant="caption" color="error.main">
+      <Typography variant="caption" color="status.danger.fg">
         {query.data?.unavailable
           ? query.data.message
           : "The cost could not be checked."}{" "}
@@ -31,7 +31,7 @@ export default function ActionCreditNote({ query, label }) {
   return (
     <Typography
       variant="caption"
-      color={query.data.limited ? "error.main" : "text.secondary"}
+      color={query.data.limited ? "status.danger.fg" : "text.secondary"}
     >
       {label}: {creditWords(query.data.estimate)} per action. Charged for actual
       usage.

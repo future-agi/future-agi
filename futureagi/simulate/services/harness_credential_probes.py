@@ -8,18 +8,27 @@ only succeeds with a valid key. Adding a provider means adding a row, nothing el
 
 from __future__ import annotations
 
+import ipaddress
+import json
+import re
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 import structlog
 from google.protobuf import json_format
 
+from agentcc.services.url_safety import (
+    ensure_public_http_url,
+    private_provider_urls_allowed,
+)
 from tfc.utils.lazy_extras import load_extra
+from tfc.utils.ssrf_guard import SsrfBlocked, assert_url_host_public, safe_fetch
 
 logger = structlog.get_logger(__name__)
 
@@ -27,6 +36,26 @@ PROBE_TIMEOUT_SECONDS = 8
 LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS = 8
 LIVEKIT_AGENT_POLL_SECONDS = 1
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+LIVEKIT_PROBE_BUDGET_SECONDS = 20
+LIVEKIT_MAX_RESPONSE_BYTES = 1024 * 1024
+LIVEKIT_TOKEN_TTL = timedelta(seconds=60)
+# The variables an SDK reads to reach the provider through a compatible gateway, first wins.
+OPENAI_BASE_ALIASES = ("OPENAI_BASE_URL", "OPENAI_API_BASE")
+ANTHROPIC_BASE_ALIASES = ("ANTHROPIC_BASE_URL",)
+
+
+class BaseUrlRefused(ValueError):
+    """A configured base URL the probe will not call; the message names its variable."""
+
+
+def number_spelled_host(host: str) -> bool:
+    """A host that is an address spelled other than canonically (2130706433,
+    0x7f000001, 0177.0.0.1): no egress list names it, so a base URL may not use it.
+    A canonical IP address and a name (its last label a word) are fine."""
+    try:
+        return str(ipaddress.ip_address(host)) != host
+    except ValueError:
+        return not re.fullmatch(r"[a-z][a-z0-9-]*", host.rsplit(".", 1)[-1].lower())
 
 
 @dataclass(frozen=True)
@@ -43,6 +72,7 @@ class ProviderProbe:
     build: Callable[[Mapping[str, str]], ProbeRequest]
     # Statuses that mean "the key is wrong" rather than "the request is wrong".
     rejected_statuses: frozenset[int] = frozenset({401, 403})
+    base_aliases: tuple[str, ...] = ()
 
     def applies(self, values: Mapping[str, str]) -> bool:
         return all(str(values.get(alias) or "").strip() for alias in self.aliases)
@@ -72,30 +102,161 @@ class ProbeResult:
         return result
 
 
-def _bearer(url: str, alias: str, **extra_headers: str):
+def configured_base(
+    values: Mapping[str, str], names: tuple[str, ...]
+) -> tuple[str, str]:
+    """The first base variable the agent sets, and its value without a trailing slash."""
+    for name in names:
+        base = str(values.get(name) or "").strip().rstrip("/")
+        if base:
+            return name, base
+    return "", ""
+
+
+def _at_base(default_base: str, path: str, base_aliases: tuple[str, ...]):
+    """The probe URL, under the agent's own base when it sets one.
+
+    A configured base often already ends in ``/v1``, so the version is not added twice.
+    """
+
+    def url(values: Mapping[str, str]) -> str:
+        name, base = configured_base(values, base_aliases)
+        if not name:
+            return default_base + path
+        try:
+            parsed = urlparse(base)
+            parsed.port  # noqa: B018 - raises on a malformed port
+        except ValueError:
+            parsed = None
+        if (
+            parsed is None
+            or parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+        ):
+            raise BaseUrlRefused(f"{name} is not an http(s) URL")
+        if parsed.fragment or base.endswith("#"):
+            raise BaseUrlRefused(f"{name} has a fragment (#...); remove it")
+        if number_spelled_host(parsed.hostname):
+            raise BaseUrlRefused(
+                f"{name} spells its host as a number; use a name or a plain IP address"
+            )
+        try:
+            ensure_public_http_url(
+                base, name, allow_private=private_provider_urls_allowed()
+            )
+        except ValueError:
+            raise BaseUrlRefused(
+                f"{name} does not resolve to an address this check may call"
+            ) from None
+        base_path = parsed.path.rstrip("/")
+        tail, _, query = path.partition("?")
+        if base_path.endswith("/v1") and tail.startswith("/v1/"):
+            tail = tail[len("/v1") :]
+        # The path goes into the path; the base's query and the probe's follow it.
+        return urlunparse(
+            parsed._replace(
+                path=base_path + tail,
+                query="&".join(one for one in (parsed.query, query) if one),
+            )
+        )
+
+    return url
+
+
+def _url(
+    url: str | Callable[[Mapping[str, str]], str], values: Mapping[str, str]
+) -> str:
+    return url(values) if callable(url) else url
+
+
+def _bearer(url, alias: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
         return ProbeRequest(
             "GET",
-            url,
+            _url(url, values),
             {"Authorization": f"Bearer {values[alias].strip()}", **extra_headers},
         )
 
     return build
 
 
-def _header(url: str, alias: str, header: str, **extra_headers: str):
+def _header(url, alias: str, header: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
         return ProbeRequest(
-            "GET", url, {header: values[alias].strip(), **extra_headers}
+            "GET", _url(url, values), {header: values[alias].strip(), **extra_headers}
         )
 
     return build
 
 
-def _livekit_http_url(url: str) -> str:
-    parsed = urlparse(url.strip())
-    scheme = {"wss": "https", "ws": "http"}.get(parsed.scheme, parsed.scheme or "https")
-    return f"{scheme}://{parsed.netloc or parsed.path}".rstrip("/")
+class LiveKitUnreadable(ValueError):
+    pass
+
+
+def _livekit_base_url(url: str) -> str:
+    try:
+        parsed = urlparse(str(url or "").strip())
+        port = parsed.port
+    except ValueError as exc:
+        raise SsrfBlocked(f"LIVEKIT_URL is not a valid URL ({exc})") from None
+    if (
+        parsed.scheme not in ("https", "wss")
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise SsrfBlocked(
+            "LIVEKIT_URL must be an https:// or wss:// address with a host"
+        )
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    base = f"https://{host}" + (f":{port}" if port else "")
+    assert_url_host_public(base)
+    return base
+
+
+def _livekit_call(
+    base: str,
+    headers: Mapping[str, str],
+    service: str,
+    method: str,
+    body: Mapping[str, Any],
+    deadline: float,
+) -> dict[str, Any]:
+    remaining = deadline - time.perf_counter()
+    if remaining <= 0:
+        raise requests.Timeout("the LiveKit check ran out of time")
+    response = requests.post(
+        f"{base}/twirp/livekit.{service}/{method}",
+        headers=dict(headers),
+        json=dict(body),
+        timeout=min(PROBE_TIMEOUT_SECONDS, remaining),
+        allow_redirects=False,
+        stream=True,
+    )
+    try:
+        if 300 <= response.status_code < 400:
+            raise requests.HTTPError(
+                f"LiveKit redirected (HTTP {response.status_code})", response=response
+            )
+        response.raise_for_status()
+        content = (
+            response.raw.read(LIVEKIT_MAX_RESPONSE_BYTES + 1, decode_content=True)
+            or b""
+        )
+        if len(content) > LIVEKIT_MAX_RESPONSE_BYTES:
+            raise LiveKitUnreadable("the response is larger than 1 MiB")
+        listing = json.loads(content) if content else {}
+        if not isinstance(listing, dict):
+            raise LiveKitUnreadable("the response is not a JSON object")
+        return listing
+    finally:
+        response.close()
+
+
+def _livekit_token(livekit_api: Any, values: Mapping[str, str]) -> Any:
+    return livekit_api.AccessToken(
+        values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
+    ).with_ttl(LIVEKIT_TOKEN_TTL)
 
 
 def _livekit(values: Mapping[str, str]) -> ProbeRequest:
@@ -103,15 +264,13 @@ def _livekit(values: Mapping[str, str]) -> ProbeRequest:
     from livekit import api as livekit_api
 
     token = (
-        livekit_api.AccessToken(
-            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
-        )
+        _livekit_token(livekit_api, values)
         .with_grants(livekit_api.VideoGrants(room_list=True))
         .to_jwt()
     )
     return ProbeRequest(
         "POST",
-        f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp/livekit.RoomService/ListRooms",
+        f"{_livekit_base_url(values['LIVEKIT_URL'])}/twirp/livekit.RoomService/ListRooms",
         {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
 
@@ -130,22 +289,38 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
     "retell": ProviderProbe(
         "Retell",
         ("RETELL_API_KEY",),
-        _bearer("https://api.retellai.com/list-agents", "RETELL_API_KEY"),
+        lambda values: ProbeRequest(
+            "POST",
+            "https://api.retellai.com/v2/list-agents",
+            {
+                "Authorization": f"Bearer {values['RETELL_API_KEY'].strip()}",
+                "Content-Type": "application/json",
+            },
+        ),
     ),
     "openai": ProviderProbe(
         "OpenAI",
         ("OPENAI_API_KEY",),
-        _bearer("https://api.openai.com/v1/models", "OPENAI_API_KEY"),
+        _bearer(
+            _at_base("https://api.openai.com/v1", "/models", OPENAI_BASE_ALIASES),
+            "OPENAI_API_KEY",
+        ),
+        base_aliases=OPENAI_BASE_ALIASES,
     ),
     "anthropic": ProviderProbe(
         "Anthropic",
         ("ANTHROPIC_API_KEY",),
         _header(
-            "https://api.anthropic.com/v1/models?limit=1",
+            _at_base(
+                "https://api.anthropic.com",
+                "/v1/models?limit=1",
+                ANTHROPIC_BASE_ALIASES,
+            ),
             "ANTHROPIC_API_KEY",
             "x-api-key",
             **{"anthropic-version": "2023-06-01"},
         ),
+        base_aliases=ANTHROPIC_BASE_ALIASES,
     ),
     "gemini": ProviderProbe(
         "Gemini",
@@ -186,29 +361,80 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
 }
 
 
+def _request(
+    method: str, url: str, *, base_name: str, timeout: float, **kwargs: Any
+) -> Any:
+    """Send one probe. A URL under a base the agent set (``base_name``) is resolved
+    again on the same rules and the connection goes to that checked address, the
+    host kept for TLS and ``Host``, never redirected. Without a base, the provider's
+    own URL is sent as is."""
+    if not base_name:
+        return requests.request(method, url, timeout=timeout, **kwargs)
+    try:
+        return safe_fetch(
+            url,
+            method=method,
+            timeout=timeout,
+            headers=dict(kwargs.get("headers") or {}),
+            follow_redirects=False,
+            allow_private=private_provider_urls_allowed(),
+        )
+    except SsrfBlocked:
+        raise BaseUrlRefused(
+            f"{base_name} does not resolve to an address this check may call"
+        ) from None
+    except ValueError as exc:
+        # The connection itself failed (``safe_fetch`` reports it so).
+        raise requests.ConnectionError(str(exc)) from None
+
+
 def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     """Exercise one provider's credentials. Callers pass only providers that ``applies``."""
     spec = PROVIDER_PROBES[provider]
     named = " + ".join(spec.aliases)
+    base_name, _ = configured_base(values, spec.base_aliases)
+    at = f" at {base_name}" if base_name else ""
+    # A base that cannot be called or answers off the API is the base's fault, not the key's.
+    base_fault = (base_name,) if base_name else spec.aliases
     try:
         request = spec.build(values)
-        response = requests.request(
+        response = _request(
             request.method,
             request.url,
+            base_name=base_name,
             headers=dict(request.headers),
             json={} if request.method == "POST" else None,
             timeout=PROBE_TIMEOUT_SECONDS,
+            allow_redirects=False,
+        )
+    except (BaseUrlRefused, ConnectionError) as exc:
+        return ProbeResult(
+            provider,
+            spec.label,
+            base_fault,
+            False,
+            f"{spec.label} check could not run: {exc}",
+        )
+    except SsrfBlocked as exc:
+        return ProbeResult(
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label} URL refused: {exc}",
         )
     except requests.RequestException as exc:
         # The run's own connect stage would hit the same wall, so this is a failure too.
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
-            f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
+            f"{spec.label} is unreachable{at} ({type(exc).__name__}); "
+            f"check {base_name or named}",
         )
-    except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
+    # A malformed URL/secret must not 500 preflight.
+    except Exception as exc:  # noqa: BLE001
         return ProbeResult(
             provider,
             spec.label,
@@ -216,24 +442,33 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
         )
+    if 300 <= response.status_code < 400:
+        return ProbeResult(
+            provider,
+            spec.label,
+            base_fault,
+            False,
+            f"{spec.label}{at} redirected the check (HTTP {response.status_code});"
+            f" check {base_name or named}",
+        )
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
             provider,
             spec.label,
             spec.aliases,
             False,
-            f"{spec.label} rejected {named} (HTTP {response.status_code})",
+            f"{spec.label}{at} rejected {named} (HTTP {response.status_code})",
         )
     if response.status_code >= 400:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
-            f"{spec.label} returned HTTP {response.status_code} for {named}",
+            f"{spec.label}{at} returned HTTP {response.status_code} for {named}",
         )
     return ProbeResult(
-        provider, spec.label, spec.aliases, True, f"{spec.label} accepted {named}"
+        provider, spec.label, spec.aliases, True, f"{spec.label}{at} accepted {named}"
     )
 
 
@@ -284,11 +519,12 @@ def probe_livekit_agent(
         return result(False, str(exc))
 
     room = f"_preflight_agent_{uuid.uuid4().hex[:8]}"
-    base_url = f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp"
+    try:
+        base = _livekit_base_url(values["LIVEKIT_URL"])
+    except (SsrfBlocked, ValueError) as exc:
+        return result(False, f"LiveKit URL refused: {exc}")
     token = (
-        livekit_api.AccessToken(
-            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
-        )
+        _livekit_token(livekit_api, values)
         .with_grants(
             livekit_api.VideoGrants(
                 room_create=True, room_admin=True, room_list=True, room=room
@@ -297,16 +533,12 @@ def probe_livekit_agent(
         .to_jwt()
     )
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    budget = time.perf_counter() + LIVEKIT_PROBE_BUDGET_SECONDS
 
-    def call(service: str, method: str, body: dict[str, Any]) -> dict[str, Any]:
-        response = requests.post(
-            f"{base_url}/livekit.{service}/{method}",
-            headers=headers,
-            json=body,
-            timeout=PROBE_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        return response.json() if response.content else {}
+    def call(
+        service: str, method: str, body: dict[str, Any], deadline: float = 0.0
+    ) -> dict[str, Any]:
+        return _livekit_call(base, headers, service, method, body, deadline or budget)
 
     try:
         call(
@@ -343,8 +575,13 @@ def probe_livekit_agent(
                 time.sleep(LIVEKIT_AGENT_POLL_SECONDS)
         finally:
             try:
-                call("RoomService", "DeleteRoom", {"room": room})
-            except requests.RequestException:
+                call(
+                    "RoomService",
+                    "DeleteRoom",
+                    {"room": room},
+                    time.perf_counter() + PROBE_TIMEOUT_SECONDS,
+                )
+            except (requests.RequestException, ValueError):
                 logger.warning(
                     "livekit_agent_probe_room_cleanup_failed", room=room, exc_info=True
                 )
@@ -360,6 +597,13 @@ def probe_livekit_agent(
             False,
             f"LiveKit returned HTTP {status} while checking agent '{agent_name}'",
         )
+    except (ValueError, json_format.ParseError) as exc:
+        logger.warning("livekit_agent_probe_bad_response", exc_info=True)
+        return result(
+            False,
+            f"LiveKit returned an unreadable response ({type(exc).__name__}); "
+            "retry Preflight",
+        )
     except requests.RequestException as exc:
         logger.warning("livekit_agent_probe_unreachable", exc_info=True)
         return result(
@@ -371,6 +615,234 @@ def probe_livekit_agent(
         f"{LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS}s; check the agent name and that "
         "the agent is running on this LiveKit project",
     )
+
+
+LIVEKIT_ROUTING_ALIASES = (*LIVEKIT_ALIASES, "LIVEKIT_AGENT_NAME")
+# Twirp answers a service the server does not expose with 404 (bad_route) or 501
+# (unimplemented); self-hosted LiveKit has no PhoneNumberService.
+_LIVEKIT_NO_PHONE_NUMBER_SERVICE = frozenset({404, 501})
+
+
+@dataclass(frozen=True)
+class CloudPhoneNumber:
+    e164: str
+    rule_ids: frozenset[str]
+
+
+def _cloud_phone_numbers(items: list[dict[str, Any]]) -> list[CloudPhoneNumber]:
+    numbers = []
+    for item in items:
+        rule_ids = [
+            item.get("sip_dispatch_rule_id"),
+            *(item.get("sip_dispatch_rule_ids") or []),
+        ]
+        numbers.append(
+            CloudPhoneNumber(
+                str(item.get("e164_format") or "").strip(),
+                frozenset(str(rule_id) for rule_id in rule_ids if rule_id),
+            )
+        )
+    return numbers
+
+
+def _accepts_caller(allowed: Iterable[str], caller_number: str) -> bool:
+    allowed = list(allowed)
+    return not caller_number or not allowed or caller_number in allowed
+
+
+def _rule_pin(rule: Any) -> str:
+    kind = rule.rule.WhichOneof("rule")
+    return str(getattr(rule.rule, kind).pin) if kind else ""
+
+
+def _phone_routing_verdict(
+    phone_number: str,
+    agent_name: str,
+    caller_number: str,
+    cloud_numbers: Sequence[CloudPhoneNumber],
+    trunks: Sequence[Any],
+    rules: Sequence[Any],
+) -> tuple[bool, str]:
+    """Decide, from a LiveKit project's listings, whether a number reaches one agent.
+
+    ``trunks`` and ``rules`` are LiveKit ``SIPInboundTrunkInfo`` and
+    ``SIPDispatchRuleInfo`` messages. Trunk selection follows LiveKit's own order: a
+    trunk that lists the number wins; otherwise the project's default trunk (one that
+    lists no numbers) takes every call.
+    """
+    owned = [item for item in cloud_numbers if item.e164 == phone_number]
+    listing = [trunk for trunk in trunks if phone_number in trunk.numbers]
+    holding = listing or [trunk for trunk in trunks if not trunk.numbers]
+    if not owned and not holding:
+        return False, (
+            f"{phone_number} is not on this LiveKit project: no LiveKit phone "
+            "number or inbound trunk lists or accepts it"
+        )
+    if len(holding) > 1:
+        names = ", ".join(sorted(trunk.name or trunk.sip_trunk_id for trunk in holding))
+        what = "list" if listing else "accept any number, including"
+        return False, (
+            f"{len(holding)} inbound trunks {what} {phone_number} ({names}); keep "
+            "one so LiveKit knows where to send our call"
+        )
+    for trunk in holding:
+        if not _accepts_caller(trunk.allowed_numbers, caller_number):
+            return False, (
+                f"inbound trunk {trunk.name or trunk.sip_trunk_id} only accepts "
+                f"calls from its allowed numbers; add {caller_number}, the number "
+                "we call from"
+            )
+    trunk_ids = {trunk.sip_trunk_id for trunk in holding}
+    assigned = (
+        frozenset().union(*(item.rule_ids for item in owned)) if owned else frozenset()
+    )
+    candidates = [
+        rule for rule in rules if _accepts_caller(rule.inbound_numbers, caller_number)
+    ]
+    specific = [
+        rule
+        for rule in candidates
+        if rule.sip_dispatch_rule_id in assigned
+        or phone_number in rule.numbers
+        or trunk_ids & set(rule.trunk_ids)
+    ]
+    catch_all = [rule for rule in candidates if not rule.trunk_ids and not rule.numbers]
+    applying = specific or catch_all
+    if not applying:
+        return False, (
+            f"no dispatch rule routes calls to {phone_number}, so our call would "
+            "ring into an empty room"
+        )
+    if any(_rule_pin(rule) for rule in applying):
+        return False, (
+            f"the dispatch rule for {phone_number} asks callers for a PIN, which "
+            "our simulator cannot enter; use a rule without a PIN"
+        )
+    agents = {
+        agent.agent_name.strip()
+        for rule in applying
+        for agent in rule.room_config.agents
+        if agent.agent_name.strip()
+    }
+    if not agents:
+        return False, (
+            f"the dispatch rule for {phone_number} names no agent; add "
+            f"'{agent_name}' to the rule's agents"
+        )
+    if agent_name not in agents:
+        return False, (
+            f"calls to {phone_number} go to {', '.join(sorted(agents))}, "
+            f"not '{agent_name}'"
+        )
+    if len(agents) > 1:
+        others = ", ".join(sorted(agents - {agent_name}))
+        return False, (
+            f"calls to {phone_number} also go to {others}; route this number "
+            f"to '{agent_name}' only"
+        )
+    message = f"calls to {phone_number} are dispatched to '{agent_name}' only"
+    if holding:
+        message += (
+            "; your carrier must also forward this number to LiveKit, which only "
+            "a call can prove"
+        )
+    return True, message
+
+
+def probe_livekit_phone_routing(
+    phone_number: str, values: Mapping[str, str], caller_number: str = ""
+) -> ProbeResult | None:
+    phone_number = str(phone_number or "").strip()
+    agent_name = str(values.get("LIVEKIT_AGENT_NAME") or "").strip()
+    if (
+        not phone_number
+        or not agent_name
+        or not all(str(values.get(alias) or "").strip() for alias in LIVEKIT_ALIASES)
+    ):
+        return None
+
+    def result(ok: bool, message: str) -> ProbeResult:
+        return ProbeResult(
+            "livekit_routing",
+            "LiveKit phone routing",
+            LIVEKIT_ROUTING_ALIASES,
+            ok,
+            message,
+            agent_name if ok else "",
+        )
+
+    try:
+        livekit_api = load_extra("livekit.api", "voice")
+    except ImportError as exc:
+        logger.warning("livekit_routing_probe_unavailable", exc_info=True)
+        return result(False, str(exc))
+
+    try:
+        base = _livekit_base_url(values["LIVEKIT_URL"])
+    except (SsrfBlocked, ValueError) as exc:
+        return result(False, f"LiveKit URL refused: {exc}")
+    token = (
+        _livekit_token(livekit_api, values)
+        .with_sip_grants(livekit_api.SIPGrants(admin=True))
+        .to_jwt()
+    )
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    budget = time.perf_counter() + LIVEKIT_PROBE_BUDGET_SECONDS
+
+    def listing(service: str, method: str) -> dict[str, Any]:
+        return _livekit_call(base, headers, service, method, {}, budget)
+
+    try:
+        trunks = json_format.ParseDict(
+            listing("SIP", "ListSIPInboundTrunk"),
+            livekit_api.ListSIPInboundTrunkResponse(),
+            ignore_unknown_fields=True,
+        ).items
+        rules = json_format.ParseDict(
+            listing("SIP", "ListSIPDispatchRule"),
+            livekit_api.ListSIPDispatchRuleResponse(),
+            ignore_unknown_fields=True,
+        ).items
+        try:
+            cloud_numbers = _cloud_phone_numbers(
+                list(
+                    listing("PhoneNumberService", "ListPhoneNumbers").get("items") or []
+                )
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            # The key already listed trunks and rules, so a 401/403 here means it
+            # lacks phone-number access, not that it is wrong.
+            if status not in _LIVEKIT_NO_PHONE_NUMBER_SERVICE | {401, 403}:
+                raise
+            cloud_numbers = []
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        if status in {401, 403}:
+            return result(
+                False,
+                f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})",
+            )
+        logger.warning("livekit_routing_probe_http_error", status=status, exc_info=True)
+        return result(
+            False, f"LiveKit returned HTTP {status} while checking {phone_number}"
+        )
+    except (ValueError, json_format.ParseError) as exc:
+        logger.warning("livekit_routing_probe_bad_response", exc_info=True)
+        return result(
+            False,
+            f"LiveKit returned an unreadable response ({type(exc).__name__}); "
+            "retry Preflight",
+        )
+    except requests.RequestException as exc:
+        logger.warning("livekit_routing_probe_unreachable", exc_info=True)
+        return result(
+            False, f"LiveKit is unreachable ({type(exc).__name__}); retry Preflight"
+        )
+    ok, message = _phone_routing_verdict(
+        phone_number, agent_name, caller_number, cloud_numbers, trunks, rules
+    )
+    return result(ok, message)
 
 
 def probe_provider_target(

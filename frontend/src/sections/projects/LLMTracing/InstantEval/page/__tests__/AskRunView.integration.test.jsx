@@ -12,6 +12,7 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
+import { statusColors } from "src/utils/runStatus";
 import { readHandoff } from "src/sections/projects/observeHandoff";
 
 const http = vi.hoisted(() => ({ get: vi.fn() }));
@@ -251,12 +252,19 @@ describe("cancelling a live run", () => {
     const view = render(wrap(live(0)));
     // Polled at its usual pace, nothing extra is read before Cancel asks.
     expect(readNow).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    // Red is kept for the confirmation, not the button that asks for it.
+    expect(screen.getByRole("button", { name: "Stop" })).not.toHaveClass(
+      "MuiButton-outlinedError",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(
       screen.getByText(
-        "Cancel this run? Nothing has been answered yet, and it can't be resumed.",
+        "Stop this run? Nothing has been answered yet, and it can't be resumed.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop run" })).toHaveClass(
+      "MuiButton-containedError",
+    );
     // Read at once, then every 2 s while it asks.
     expect(readNow).toHaveBeenCalledTimes(1);
     act(() => {
@@ -267,7 +275,7 @@ describe("cancelling a live run", () => {
     view.rerender(wrap(live(16)));
     expect(
       screen.getByText(
-        "Cancel this run? The 16 answers so far are kept; it can't be resumed.",
+        "Stop this run? The 16 answers so far are kept; it can't be resumed.",
       ),
     ).toBeInTheDocument();
     // Back keeps it running and stops the extra reads.
@@ -352,6 +360,33 @@ describe("the run's recovery and confidence headline", () => {
     await waitFor(() => expect(http.get).toHaveBeenCalled());
   });
 
+  it("clears the answer filter when the question already shown is chosen again", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const run = runOf({
+      status: "done",
+      questions: [
+        QUESTION,
+        { ...QUESTION, configId: "q2", question: "Satisfied?" },
+      ],
+    });
+    run.summary.counts = { [CONFIG]: { Yes: 50, No: 3 }, q2: { Yes: 53 } };
+    renderRun(run);
+    const table = screen.getByRole("region", { name: "Sessions asked about" });
+    fireEvent.click(screen.getByRole("button", { name: /^No 6% · 3$/ }));
+    expect(
+      within(table).getByText("No · Was the issue resolved?"),
+    ).toBeInTheDocument();
+    const shown = screen.getByRole("tab", {
+      name: "1 · Was the issue resolved?",
+    });
+    expect(shown).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(shown);
+    expect(
+      within(table).queryByText("No · Was the issue resolved?"),
+    ).toBeNull();
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
+  });
+
   it("reads more from the low-data heatmap using the run's control", async () => {
     http.get.mockResolvedValue(response([], 0));
     const run = runOf({
@@ -421,5 +456,288 @@ describe("opening a user from a user question's table", () => {
     expect(dates.dateFilter.map((value) => new Date(value).getTime())).toEqual(
       run.window.map((value) => new Date(value).getTime()),
     );
+  });
+});
+
+// One client across rerenders, so a run can move from state to state.
+function runWrapper() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return function wrap(run) {
+    return (
+      <QueryClientProvider client={client}>
+        <ThemeProvider theme={theme}>
+          <MemoryRouter>
+            <AskRunView projectId="project-1" run={run} unit={run.unit} />
+          </MemoryRouter>
+        </ThemeProvider>
+      </QueryClientProvider>
+    );
+  };
+}
+
+describe("the run's rows table before any row is read", () => {
+  it("waits while Jev reads, asks for a resume when paused or stalled, and says none match once over", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const unread = (status) => {
+      const run = runOf({ status, answered: 0, pending: 53 });
+      run.summary = { ...run.summary, counts: { [CONFIG]: {} } };
+      return run;
+    };
+    const wrap = runWrapper();
+    const view = render(wrap(unread("running")));
+    const table = () =>
+      screen.getByRole("region", { name: "Sessions asked about" });
+    expect(
+      await within(table()).findByText(
+        "Answers will appear here as Jev reads each session.",
+      ),
+    ).toHaveAttribute("role", "status");
+    expect(within(table()).queryByText("No sessions match.")).toBeNull();
+
+    // Pausing still lands the answers in flight: keep waiting.
+    view.rerender(wrap(unread("pausing")));
+    expect(
+      within(table()).getByText(
+        "Answers will appear here as Jev reads each session.",
+      ),
+    ).toBeInTheDocument();
+
+    // Paused, or stalled, nothing more is read until it is resumed.
+    for (const status of ["paused", "stalled"]) {
+      view.rerender(wrap(unread(status)));
+      expect(within(table()).getByRole("status")).toHaveTextContent(
+        "Resume the run to start reading sessions.",
+      );
+      expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
+    }
+
+    // Over, with no rows: none match, and no chart filter to clear.
+    view.rerender(wrap(unread("done")));
+    expect(within(table()).getByText("No sessions match.")).toBeInTheDocument();
+    expect(within(table()).queryByRole("status")).toBeNull();
+    expect(
+      within(table()).queryByRole("button", { name: "Clear filters" }),
+    ).toBeNull();
+  });
+
+  it("offers Clear filters when a finished run's chart filter matches no row", async () => {
+    http.get.mockImplementation((url, { params }) =>
+      Promise.resolve(
+        params.answer === "No" ? response([], 0) : response([row(0)], 53),
+      ),
+    );
+    const wrap = runWrapper();
+    render(wrap(runOf({ status: "done" })));
+    const table = screen.getByRole("region", { name: "Sessions asked about" });
+    expect(
+      await within(table).findByText("Customer question 0"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^No 6% · 3$/ }));
+    expect(
+      await within(table).findByText("No sessions match.", undefined, {
+        timeout: 10000,
+      }),
+    ).toBeInTheDocument();
+    expect(within(table).queryByText(/Answers will appear here/)).toBeNull();
+    fireEvent.click(
+      within(table).getByRole("button", { name: "Clear filters" }),
+    );
+    expect(
+      await within(table).findByText("Customer question 0"),
+    ).toBeInTheDocument();
+    expect(
+      within(table).queryByText("No · Was the issue resolved?"),
+    ).toBeNull();
+  });
+});
+
+describe("a finished run with rows Jev couldn't answer", () => {
+  const mixed = (extra = {}) => {
+    const run = runOf({
+      status: "done",
+      answered: 50,
+      failed: 3,
+      ...extra,
+    });
+    run.summary = {
+      ...run.summary,
+      counts: { [CONFIG]: { Yes: 47, No: 3, __error__: 3 } },
+    };
+    return run;
+  };
+
+  it("reads as Completed, neutral, not as a success", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    renderRun(mixed());
+    const badge = screen.getByTitle(/3 rows couldn't be fully answered/);
+    const dot = badge.firstElementChild;
+    expect(dot).toHaveStyle({
+      backgroundColor: statusColors(theme, "neutral").solid,
+    });
+    expect(dot).not.toHaveStyle({
+      backgroundColor: statusColors(theme, "success").solid,
+    });
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
+  });
+
+  it("still reads as failed when it answered nothing", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const run = runOf({ status: "done", answered: 0, failed: 53 });
+    run.summary = { ...run.summary, counts: { [CONFIG]: { __error__: 53 } } };
+    renderRun(run);
+    const dot = screen.getByTitle(
+      /Couldn't answer any of the 53 sessions/,
+    ).firstElementChild;
+    expect(dot).toHaveStyle({
+      backgroundColor: statusColors(theme, "danger").solid,
+    });
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
+  });
+
+  it("offers Retry rows as a neutral button, not a danger one", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const run = mixed();
+    renderRun(run);
+    const retry = screen.getByRole("button", { name: "Retry 3 rows" });
+    expect(retry).toHaveClass("MuiButton-outlined");
+    expect(retry).not.toHaveClass("MuiButton-outlinedError");
+    fireEvent.click(retry);
+    expect(run.control).toHaveBeenCalledWith("retry_failed", {});
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
+  });
+
+  it("offers the sample banner's Retry rows as a neutral button too", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const run = mixed({
+      sample: {
+        is_sample: true,
+        can_extend: false,
+        population: 1000,
+        requested: 53,
+        read: 53,
+        next_size: 0,
+      },
+    });
+    renderRun(run);
+    // The estimate could move by more than the threshold, so the banner
+    // carries the retry and the run controls don't repeat it.
+    const retries = screen.getAllByRole("button", { name: "Retry 3 rows" });
+    expect(retries).toHaveLength(1);
+    expect(retries[0]).toHaveClass("MuiButton-outlined");
+    expect(retries[0]).not.toHaveClass("MuiButton-outlinedError");
+    expect(
+      screen.getByText(/3 of 53 couldn't be answered/),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
+  });
+});
+
+describe("many questions at phone width", () => {
+  // jsdom has no layout: MUI Tabs decides its arrows from an
+  // IntersectionObserver on the first and last tab inside the scroller, so
+  // lay the tabs out side by side in a 390px scroller and report which fit.
+  const PHONE = 390;
+  const TAB = 220;
+  let restore = [];
+
+  beforeEach(() => {
+    vi.stubGlobal("innerWidth", PHONE);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query) => {
+        const max = /max-width:\s*([\d.]+)px/.exec(query);
+        const min = /min-width:\s*([\d.]+)px/.exec(query);
+        return {
+          matches:
+            (!max || PHONE <= Number(max[1])) &&
+            (!min || PHONE >= Number(min[1])),
+          media: query,
+          onchange: null,
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        };
+      }),
+    );
+    const rect = (left, width) => ({
+      left,
+      right: left + width,
+      width,
+      top: 0,
+      bottom: 32,
+      height: 32,
+      x: left,
+      y: 0,
+    });
+    const original = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.classList?.contains("MuiTabs-scroller")) return rect(0, PHONE);
+      if (this.getAttribute?.("role") === "tab") {
+        const index = Array.from(this.parentElement.children).indexOf(this);
+        return rect(index * TAB, TAB);
+      }
+      return original.call(this);
+    };
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback, { root }) {
+          this.callback = callback;
+          this.root = root;
+        }
+
+        observe(target) {
+          const box = this.root.getBoundingClientRect();
+          const tab = target.getBoundingClientRect();
+          this.callback([
+            {
+              target,
+              isIntersecting: tab.left >= box.left && tab.right <= box.right,
+            },
+          ]);
+        }
+
+        disconnect() {}
+
+        unobserve() {}
+      },
+    );
+    restore = [() => (Element.prototype.getBoundingClientRect = original)];
+  });
+
+  afterEach(() => {
+    restore.forEach((undo) => undo());
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the question tabs' scroll arrows, not hidden on a phone", async () => {
+    http.get.mockResolvedValue(response([], 0));
+    const questions = Array.from({ length: 5 }, (_, i) => ({
+      ...QUESTION,
+      configId: `q${i}`,
+      question: `Did the agent handle part ${i + 1} of the request?`,
+    }));
+    const run = runOf({ status: "done", questions });
+    run.summary.counts = Object.fromEntries(
+      questions.map((item) => [item.configId, { Yes: 50, No: 3 }]),
+    );
+    renderRun(run);
+    const tablist = screen.getByRole("tablist", { name: "Questions" });
+    expect(within(tablist).getAllByRole("tab")).toHaveLength(5);
+    const tabs = tablist.closest(".MuiTabs-root");
+    const arrows = tabs.querySelectorAll(".MuiTabs-scrollButtons");
+    expect(arrows).toHaveLength(2);
+    // MUI hides the arrows below `sm` unless the tabs allow them on mobile.
+    arrows.forEach((arrow) =>
+      expect(arrow).not.toHaveClass("MuiTabs-scrollButtonsHideMobile"),
+    );
+    // At the start: nothing to the left, more to the right.
+    expect(arrows[0]).toHaveClass("Mui-disabled");
+    expect(arrows[1]).not.toHaveClass("Mui-disabled");
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
   });
 });

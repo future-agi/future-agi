@@ -12,6 +12,12 @@ export const DEEP_ANALYSIS_STATUS = Object.freeze({
 });
 
 const KEYS = {
+  escalationSettings: (organizationId, workspaceId) => [
+    "errorFeed",
+    "escalationSettings",
+    organizationId,
+    workspaceId,
+  ],
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
@@ -28,6 +34,54 @@ const KEYS = {
   ],
   linearTeams: (orgId) => ["errorFeed", "linearTeams", orgId ?? null],
   projects: ["errorFeed", "projects"],
+};
+
+const scopeHeaders = (organizationId, workspaceId) => ({
+  "X-Organization-Id": organizationId,
+  "X-Workspace-Id": workspaceId,
+});
+
+export const useErrorFeedEscalationSettings = ({
+  organizationId,
+  workspaceId,
+  enabled = true,
+}) =>
+  useQuery({
+    queryKey: KEYS.escalationSettings(organizationId, workspaceId),
+    queryFn: ({ signal }) =>
+      axios.get(endpoints.errorFeed.escalationSettings, {
+        headers: scopeHeaders(organizationId, workspaceId),
+        signal,
+      }),
+    select: (response) => response.data.result,
+    enabled: enabled && !!organizationId && !!workspaceId,
+    retry: false,
+    staleTime: 30_000,
+  });
+
+export const useUpdateErrorFeedEscalationSettings = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ organizationId, workspaceId, values, revision }) =>
+      axios.patch(
+        endpoints.errorFeed.escalationSettings,
+        { ...values, revision },
+        {
+          headers: scopeHeaders(organizationId, workspaceId),
+        },
+      ),
+    onSuccess: (response, variables) => {
+      queryClient.setQueryData(
+        KEYS.escalationSettings(
+          variables.organizationId,
+          variables.workspaceId,
+        ),
+        response,
+      );
+      queryClient.invalidateQueries({ queryKey: ["errorFeed", "list"] });
+      queryClient.invalidateQueries({ queryKey: ["errorFeed", "stats"] });
+    },
+  });
 };
 
 /**
@@ -126,15 +180,16 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
 export const EXPORT_TRACE_LIMIT = 200;
 
 /**
- * One-shot Overview read for the traces CSV export. Kept apart from
- * useErrorFeedOverview so the larger payload never replaces the tab's cache.
+ * One-shot Overview read for the issue exports: every card up to the max for
+ * the traces CSV, or a smaller sample for the analysis. Kept apart from
+ * useErrorFeedOverview so an export payload never replaces the tab's cache.
  */
 export const useExportErrorFeedTraces = () => {
   return useMutation({
-    mutationFn: (clusterId) =>
+    mutationFn: ({ clusterId, repLimit = EXPORT_TRACE_LIMIT }) =>
       axios
         .get(endpoints.errorFeed.overview(clusterId), {
-          params: { rep_limit: EXPORT_TRACE_LIMIT },
+          params: { rep_limit: repLimit },
         })
         .then((res) => res?.data?.result),
   });

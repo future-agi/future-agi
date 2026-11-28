@@ -5,7 +5,12 @@ from django.core.exceptions import ValidationError
 from django.db import DatabaseError, models
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import (
+    action,
+    api_view,
+    permission_classes,
+    renderer_classes,
+)
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,6 +33,7 @@ from tracer.models.shared_link import (
     SharedLink,
     SharedLinkAccess,
 )
+from tracer.renderers import TraceDetailJSONRenderer
 from tracer.serializers.feed import (
     FeedDetailCoreSerializer,
     FeedSidebarApiResponseSerializer,
@@ -293,6 +299,7 @@ def resolve_shared_link(request, token):
 )
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@renderer_classes([TraceDetailJSONRenderer])
 def resolve_shared_issue_trace(request, token, trace_id):
     """One trace of a shared Error Feed issue, under the issue link's rules.
 

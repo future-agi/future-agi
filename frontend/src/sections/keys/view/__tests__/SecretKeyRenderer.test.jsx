@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, userEvent } from "src/utils/test-utils";
 import SecretKeyRenderer from "../SecretKeyRenderer";
 
 describe("SecretKeyRenderer", () => {
-  it("does not expose copy controls for masked list keys", () => {
+  it("explains why masked list keys cannot be copied", async () => {
+    const user = userEvent.setup();
     render(<SecretKeyRenderer value="abcd**********1234" />);
 
-    expect(screen.getByText("abcd**********1234")).toBeInTheDocument();
+    const masked = screen.getByText("abcd**********1234");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    await user.tab();
+    expect(masked).toHaveFocus();
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(/create a new key/i);
+    expect(masked).toHaveAccessibleDescription(/only be copied when created/i);
   });
 
   it("masks raw fallback values defensively", () => {

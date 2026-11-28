@@ -108,6 +108,12 @@ const CompareData = ({
     gridApiRef.current?.api?.refreshServerSide();
   }, [gridApiRef]);
 
+  const getRowId = useCallback(
+    ({ data, rowPinned }) =>
+      rowPinned ? `compare-summary-${rowPinned}` : data.row_id,
+    [],
+  );
+
   // Update the interval effect to only run when there are pending items
   React.useEffect(() => {
     let intervalId;
@@ -493,7 +499,6 @@ const CompareData = ({
           });
         }
       },
-      getRowId: (data) => data.rowId,
     }),
     [
       selectedDatasetsValues,
@@ -610,6 +615,7 @@ const CompareData = ({
             serverSideInitialRowCount={5}
             paginationPageSizeSelector={false}
             rowModelType="serverSide"
+            getRowId={getRowId}
             serverSideDatasource={dataSource}
             pagination={false}
             cacheBlockSize={10}

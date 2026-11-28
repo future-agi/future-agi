@@ -96,19 +96,42 @@ class TokenRefreshRequestSerializer(serializers.Serializer):
     localhost_bypass = serializers.BooleanField(required=False, default=False)
 
 
-class RedisKeyRequestSerializer(serializers.Serializer):
-    access_token_id = serializers.CharField()
-    key = serializers.CharField()
-    value = serializers.JSONField(required=False)
-    expiry = serializers.IntegerField(required=False, min_value=1)
-
-
 class TimezoneRequestSerializer(serializers.Serializer):
     timezone = serializers.CharField(max_length=64)
 
 
 class TimezoneResponseSerializer(serializers.Serializer):
     timezone = serializers.CharField()
+
+
+class EmailLinkQuerySerializer(serializers.Serializer):
+    """Query of an emailed notification link: the token signs who and what."""
+
+    token = serializers.CharField(
+        allow_blank=True, help_text="Signed token from the emailed link."
+    )
+
+
+class SnoozeLinkQuerySerializer(EmailLinkQuerySerializer):
+    days = serializers.IntegerField(
+        required=False, help_text="Days to pause realtime digests, 1 to 30 (default 7)."
+    )
+
+
+class SnoozeRequestSerializer(serializers.Serializer):
+    """Form body of the snooze page's Pause button."""
+
+    action = serializers.ChoiceField(choices=["snooze"], required=False)
+
+
+class EmailUnsubscribeRequestSerializer(serializers.Serializer):
+    """Form body of the unsubscribe page's buttons, or a mail client's RFC 8058
+    one-click POST, which sends ``List-Unsubscribe=One-Click`` and no
+    ``action`` and means unsubscribe. A POST with neither changes nothing."""
+
+    action = serializers.ChoiceField(
+        choices=["unsubscribe", "resubscribe"], required=False
+    )
 
 
 class AccountsMessageResultSerializer(serializers.Serializer):
@@ -166,27 +189,6 @@ class AccountsBulkUserMutationItemSerializer(serializers.Serializer):
     user_id = serializers.UUIDField()
     message = serializers.CharField(required=False)
     error = serializers.CharField(required=False)
-
-
-class AccountsRedisSetResultSerializer(serializers.Serializer):
-    message = serializers.CharField()
-    key = serializers.CharField()
-    value = serializers.JSONField()
-
-
-class AccountsRedisSetResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = AccountsRedisSetResultSerializer()
-
-
-class AccountsRedisDeleteResultSerializer(serializers.Serializer):
-    message = serializers.CharField()
-    key = serializers.CharField()
-
-
-class AccountsRedisDeleteResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = AccountsRedisDeleteResultSerializer()
 
 
 class PublicRegionConfigSerializer(serializers.Serializer):
@@ -624,6 +626,7 @@ class SecretKeyListItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     enabled = serializers.BooleanField()
     type = serializers.CharField()
+    can_switch = serializers.BooleanField()
     expires_at = serializers.DateTimeField(allow_null=True)
     is_expired = serializers.BooleanField()
 
@@ -725,27 +728,6 @@ class AccountUserItemResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     role = serializers.CharField(allow_blank=True, allow_null=True)
     goals = serializers.ListField(child=serializers.CharField(), required=False)
-
-
-class AccountsPaginatedUserResponseSerializer(serializers.Serializer):
-    count = serializers.IntegerField()
-    next = serializers.CharField(allow_null=True)
-    previous = serializers.CharField(allow_null=True)
-    results = AccountUserItemResponseSerializer(many=True)
-    total_pages = serializers.IntegerField()
-    current_page = serializers.IntegerField()
-    total_queries = serializers.IntegerField(required=False)
-
-
-class AppsmithUserCreateResponseSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField()
-    organization_name = serializers.CharField()
-    send_credential = serializers.BooleanField()
-
-
-class AppsmithPasswordUpdateResponseSerializer(serializers.Serializer):
-    password = serializers.CharField()
 
 
 class WorkspaceAdminSummarySerializer(serializers.Serializer):

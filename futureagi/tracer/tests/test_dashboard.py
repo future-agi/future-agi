@@ -48,6 +48,7 @@ from tracer.services.clickhouse.attribute_cursor_state import (
 )
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS,
+    ATTRIBUTE_READ_METADATA_TIMEOUT_MS,
     AttributeReadMetadata,
     AttributeValueCursorPageRead,
     AttributeValueRead,
@@ -3906,7 +3907,21 @@ class TestMetricsEndpoint:
         assert first_payload["query_complete"] is True
         assert first_payload["query_status"] == "complete"
         assert "query_error_code" not in first_payload
-        selector_init = mock_selector_cls.call_args_list[0].kwargs
+        # The optional retained-window lookup runs on its own bounded selector;
+        # the page selector is built afterwards from the remaining wall.
+        lookup_init, selector_init = (
+            call.kwargs for call in mock_selector_cls.call_args_list[:2]
+        )
+        assert set(lookup_init) == {
+            "typed_only",
+            "json_attribute_mode",
+            "wall_timeout_ms",
+            "retained_lookup_deadline",
+        }
+        assert (
+            lookup_init["retained_lookup_deadline"].total_ms
+            <= ATTRIBUTE_READ_METADATA_TIMEOUT_MS
+        )
         assert set(selector_init) == {
             "typed_only",
             "json_attribute_mode",

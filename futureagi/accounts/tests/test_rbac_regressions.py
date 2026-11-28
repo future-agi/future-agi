@@ -48,6 +48,7 @@ def reader_auth(monkeypatch):
     monkeypatch.setattr(
         user, "get_workspace_role", lambda _: OrganizationRoles.WORKSPACE_VIEWER
     )
+    monkeypatch.setattr(user, "get_membership_level", lambda _: Level.VIEWER)
     auth = APIKeyAuthentication()
     monkeypatch.setattr(auth, "_resolve_organization", lambda *_: organization)
     monkeypatch.setattr(auth, "_get_requested_workspace", lambda *_: workspace)

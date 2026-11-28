@@ -11,6 +11,8 @@ import { LoadingScreen } from "src/components/loading-screen";
 import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
+import LegacyMetricsRedirect from "../components/legacy_metrics_redirect";
+import MetricsGate from "src/sections/derived-metrics/MetricsGate";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
@@ -329,9 +331,6 @@ const SimulatePrebuiltEnvironments = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
 );
-const SimulateUseTemplate = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
-);
 const SimulateEnvironmentWorkspace = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
@@ -454,6 +453,16 @@ const AnnotateWorkspacePage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/annotate-workspace"),
 );
 
+const MetricsListPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricsListPage"),
+);
+const MetricDetailPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricDetailPage"),
+);
+const MetricBuilderPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricBuilderPage"),
+);
+
 const DashboardsListView = lazyWithRetry(
   () => import("src/sections/dashboards/DashboardsListView"),
 );
@@ -486,6 +495,9 @@ const AgentsIndexRedirect = lazyWithRetry(
 );
 const ConnectedAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/ConnectedAgentsTab"),
+);
+const ConnectAgentPage = lazyWithRetry(
+  () => import("src/sections/agent-playground/connect/ConnectAgentPage"),
 );
 const PlaygroundAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
@@ -1355,6 +1367,7 @@ export const dashboardRoutes = (
             { path: "playground", element: <PlaygroundAgentsTab /> },
           ],
         },
+        { path: "connect", element: <ConnectAgentPage /> },
         {
           path: "connected/:agentId",
           element: <AgentDetailLayout />,
@@ -1460,10 +1473,6 @@ export const dashboardRoutes = (
         {
           path: "environments/templates",
           element: <SimulatePrebuiltEnvironments />,
-        },
-        {
-          path: "environments/templates/:templateId",
-          element: <SimulateUseTemplate />,
         },
         {
           // Build is no longer a page of its own — the source panels create the
@@ -1707,6 +1716,28 @@ export const dashboardRoutes = (
           ],
         },
       ],
+    },
+    {
+      path: "metrics",
+      element: (
+        <MetricsGate>
+          <Outlet />
+        </MetricsGate>
+      ),
+      children: [
+        { index: true, element: <MetricsListPage /> },
+        { path: "new", element: <MetricBuilderPage /> },
+        { path: ":metricId", element: <MetricDetailPage /> },
+        { path: ":metricId/edit", element: <MetricBuilderPage /> },
+      ],
+    },
+    {
+      path: "derived-metrics/*",
+      element: (
+        <MetricsGate>
+          <LegacyMetricsRedirect />
+        </MetricsGate>
+      ),
     },
     {
       path: "dashboards",

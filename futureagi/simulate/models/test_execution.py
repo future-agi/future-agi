@@ -656,6 +656,9 @@ class CallTranscript(BaseModel):
         SYSTEM = "system", "System"
         TOOL_CALLS = "tool_calls", "Tool Calls"
         TOOL_CALL_RESULT = "tool_call_result", "Tool Call Result"
+        ACTOR = "actor", "Actor"
+        # A scenario's own start message, when no person or actor sent it.
+        TASK = "task", "Task"
         UNKNOWN = "unknown", "Unknown"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -673,7 +676,6 @@ class CallTranscript(BaseModel):
         default=SpeakerRole.UNKNOWN,
         help_text="Role of the speaker (user or assistant)",
     )
-
     content = models.TextField(help_text="Transcript content")
 
     start_time_ms = models.BigIntegerField(
@@ -696,6 +698,23 @@ class CallTranscript(BaseModel):
 
     def __str__(self):
         return f"{self.speaker_role} - {self.content[:50]}..."
+
+
+class CallTranscriptActor(models.Model):
+    """Who spoke an actor's turn in a call transcript; a side table so the transcript table is unchanged."""
+
+    transcript = models.OneToOneField(
+        CallTranscript,
+        primary_key=True,
+        on_delete=models.CASCADE,
+        db_constraint=False,
+        related_name="actor_turn",
+    )
+    speaker_name = models.CharField(max_length=255, blank=True, default="")
+    actor_id = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_call_transcript_actor"
 
 
 class CallExecutionSnapshot(BaseModel):

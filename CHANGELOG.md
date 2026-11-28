@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **evals:** BLEU and CodeBLEU keep scoring short exact matches correctly and again use add-one smoothing for unmatched n-gram orders in answers of four or more tokens.
+
+- **annotations:** Open returned disagreed items from the Agreement tab in the appropriate workspace mode, show when the returned list is capped, and offer persistent recovery for unavailable items.
+- **evals:** In template usage, two multi-choice runs scored 75% and 0% now average to 37.5%. Older mapped selections still use the mean of their choice weights; empty or malformed results do not count as scored runs.
+- **gateway:** Keep a provider out of routing until the cooldown from its latest failure has elapsed, including failures from calls already in flight. Existing readmission and recovery callbacks are unchanged.
+- **observe:** When a cluster analysis produced no root cause at all, its generic last-resort summary no longer replaces an earlier finished analysis or gets posted to the linked Linear issue. A synthesis the model actually wrote - including one a budget ceiling pushed it to write - still saves and notifies as before.
+
 ## [1.59.1](https://github.com/future-agi/future-agi/compare/v1.59.0...v1.59.1) (2026-11-19)
 
 

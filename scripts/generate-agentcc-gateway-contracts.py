@@ -175,6 +175,8 @@ def py_field_line(name: str, schema: dict[str, Any], required: bool) -> str:
 
     if field_args:
         default = f"Field({default}, {', '.join(field_args)})"
+    elif required:
+        return f"    {field}: {annotation}"
     return f"    {field}: {annotation} = {default}"
 
 

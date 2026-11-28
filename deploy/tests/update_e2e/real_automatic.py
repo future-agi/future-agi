@@ -936,6 +936,8 @@ class ProductHarness:
         self.root = self.evidence / "installation"
         self.compose = ([compose] if isinstance(compose, str) else list(compose or ['docker', 'compose']))
         self.source_manifest = None
+        # Retained dependency lock rows (service/image/digest) A installs at.
+        self.dependency_lock = ()
         # Shared ProductWitnesses records generated secrets for bounded driver
         # diagnostics; acceptance keeps the same driver interface.
         self._secret_values = set()
@@ -986,9 +988,19 @@ class ProductHarness:
         alias = json.loads(self.docker('image','inspect',app_image).stdout)[0]
         if alias['Id'] != image['Id']:
             raise AssertionError('source installer alias differs from frozen image')
+        from scripts.update_rehearsal_shipping import locked_dependency_ref
         for name, service in self.model['services'].items():
-            if name != 'app':
+            if name == 'app':
+                continue
+            # A dependency the qualified proof locked is installed at that
+            # digest under its Compose tag, so an upstream re-push of the tag
+            # after qualification cannot change what this host runs.
+            pinned = locked_dependency_ref(name, service['image'], getattr(self, 'dependency_lock', ()))
+            if pinned is None:
                 self.docker('pull', service['image'], timeout=1800)
+            else:
+                self.docker('pull', '--platform', 'linux/amd64', pinned, timeout=1800)
+                self.docker('image', 'tag', pinned, service['image'])
         return self.boot_source()
 
     def bin_update(self, *args, check=True, timeout=BIN_UPDATE_SECONDS):
@@ -1297,6 +1309,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
                  'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
                  'scripts/update_rehearsal_trace_reference.py', 'scripts/update_rehearsal_eval_task_reference.py',
                  'scripts/update_rehearsal_usage_reference.py',
+                 'scripts/update_rehearsal_investigation_reference.py',
                  'scripts/generate_update_manifest.py', 'deploy/standalone/bin/start',
                  'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
                  # Read at runtime by deploy/update/contracts.py; older retained
@@ -1329,6 +1342,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
 
     def prepare(self, digest: str, *, version='v1.53.0') -> dict:
         from deploy.update.manifest import parse_image_ref, parse_version
+        from scripts.update_rehearsal_shipping import REHEARSAL_TELEMETRY, require_rehearsal_telemetry
         parse_version(version)
         parse_image_ref('futureagi/standalone:'+version+'@'+digest)
         if self.source_manifest is not None and (version != self.source_manifest['version'] or
@@ -1361,7 +1375,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         values = dict(self.ports, COMPOSE_PROJECT_NAME=self.project,
                       FUTURE_AGI_VERSION=version,
                       GOOGLE_APPLICATION_CREDENTIALS='/dev/null' if native_ci() else str(credentials),
-                      FUTURE_AGI_TELEMETRY_DISABLED="true", COMPOSE_PROFILES="")
+                      COMPOSE_PROFILES="", **REHEARSAL_TELEMETRY)
         import secrets
         import base64
         values["INTEGRATION_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
@@ -1389,6 +1403,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         (self.root / ".env").chmod(0o600)
         self.model = json.loads(self.dc("config", "--format", "json").stdout)
         validate_model(self.model, self.project)
+        require_rehearsal_telemetry(self.model)
         self.record("compose-resolved.private.json", self.model)
         self.record("ports.json", self.ports)
         return self.model

@@ -156,13 +156,18 @@ def _queued_within_window(
     return -EVAL_QUEUE_STAMP_SKEW <= elapsed < EVAL_QUEUE_STAMP_WINDOW
 
 
-def _dispatch_one(call_execution_id: str, eval_config_id: str) -> None:
-    """One grading job for one call, in the exact argument shape callers rely on::
+def _dispatch_one(call_execution_id: str, eval_config_ids: list[str]) -> None:
+    """One grading job for one call, carrying every config queued for it, in the
+    exact argument shape callers rely on::
 
         _run_simulate_evaluations_task.apply_async(
             args=(str(call_id),),
-            kwargs={"eval_config_ids": [str(config_id)], "skip_existing": True},
+            kwargs={"eval_config_ids": [str(config_id), ...], "skip_existing": True},
         )
+
+    One job per call, never one per config: the task grades a call's configs one
+    after another on one row, and two jobs grading the same call at once would
+    each save the call's whole ``eval_outputs`` and drop the other's verdict.
 
     Not the bulk task (``test_executor.py::run_new_evals_on_call_executions_task``),
     which hard-codes ``skip_existing: False``. ``skip_existing=True`` is what
@@ -177,7 +182,7 @@ def _dispatch_one(call_execution_id: str, eval_config_id: str) -> None:
     _run_simulate_evaluations_task.apply_async(
         args=(str(call_execution_id),),
         kwargs={
-            "eval_config_ids": [str(eval_config_id)],
+            "eval_config_ids": [str(config_id) for config_id in eval_config_ids],
             "skip_existing": True,
         },
     )
@@ -326,18 +331,21 @@ def _clear_queued_stamps(
 
 
 def _dispatch_batch_after_commit(
-    call_execution_ids: list[str],
-    eval_config_id: str,
+    batch: list[tuple[str, list[str]]],
     test_execution_id: str,
-    previous: dict[str, dict[str, Any]] | None = None,
+    previous: dict[str, dict[str, dict[str, Any]]] | None = None,
     run_reopened: bool = False,
 ) -> None:
     """The ``transaction.on_commit`` callback: dispatch the whole batch in
     order, stopping at the first hand-off failure.
 
-    Runs only once the transaction that stamped every call in
-    ``call_execution_ids`` has committed -- never before, and never while any
-    row lock from that transaction is still held.
+    ``batch`` holds each stamped call with the config ids stamped on it, and
+    each call gets one job for all of them (``_dispatch_one``). ``previous``
+    maps a config id to its calls' records from before the stamp.
+
+    Runs only once the transaction that stamped every call in ``batch`` has
+    committed -- never before, and never while any row lock from that
+    transaction is still held.
 
     One callback for the whole batch, not one per call, and the loop stops at
     the first failure instead of trying every remaining call: a broker that
@@ -369,28 +377,39 @@ def _dispatch_batch_after_commit(
     start together from producing two stored verdicts, so this function does
     not try to tell the two failure modes apart.
     """
-    for index, call_execution_id in enumerate(call_execution_ids):
+    for index, (call_execution_id, eval_config_ids) in enumerate(batch):
         try:
-            _dispatch_one(call_execution_id, eval_config_id)
+            _dispatch_one(call_execution_id, eval_config_ids)
         except Exception as exc:  # noqa: BLE001 - stop the batch, not the request
-            remaining = call_execution_ids[index:]
+            remaining = batch[index:]
             logger.exception(
                 "harness_run_eval_dispatch_failed",
                 call_execution_id=call_execution_id,
-                eval_config_id=eval_config_id,
+                eval_config_ids=eval_config_ids,
                 test_execution_id=test_execution_id,
                 remaining_count=len(remaining),
                 error=str(exc),
             )
-            _clear_queued_stamps(
-                remaining,
-                eval_config_id,
-                previous,
-                reopened_run_id=(
-                    test_execution_id if run_reopened and index == 0 else None
-                ),
-                test_execution_id=test_execution_id,
-            )
+            # Every config stamped on a call not reached is undone, config by
+            # config. The run goes back to `completed` (when nothing was
+            # dispatched) only with the last of them, once no stamp is left.
+            unreached: dict[str, list[str]] = {}
+            for call_id, config_ids in remaining:
+                for config_id in config_ids:
+                    unreached.setdefault(config_id, []).append(call_id)
+            for position, (config_id, call_ids) in enumerate(unreached.items()):
+                last = position == len(unreached) - 1
+                _clear_queued_stamps(
+                    call_ids,
+                    config_id,
+                    (previous or {}).get(config_id),
+                    reopened_run_id=(
+                        test_execution_id
+                        if run_reopened and index == 0 and last
+                        else None
+                    ),
+                    test_execution_id=test_execution_id,
+                )
             return
 
 
@@ -400,6 +419,26 @@ def queue_eval_for_finished_calls(
     """Queue one grading job per finished call of this run that is eligible.
 
     Returns ``{queued, skipped_existing, skipped_in_flight, skipped_pending,
+    completed_calls}``; the four skip/queue counts partition ``completed_calls``.
+    One config of ``queue_evals_for_finished_calls``, which holds the rules.
+    """
+    return queue_evals_for_finished_calls(test_execution, [eval_config])[
+        str(eval_config.id)
+    ]
+
+
+def queue_evals_for_finished_calls(
+    test_execution: TestExecution, eval_configs: list[SimulateEvalConfig]
+) -> dict[str, dict[str, int]]:
+    """Queue the eligible finished calls of this run for each of ``eval_configs``
+    in one pass, one grading job per call carrying every config queued for it,
+    and return each config's counts by its id.
+
+    Several configs go through one pass because queueing one reopens a call's
+    eval side: a second call of this function for another config would read the
+    call as still being graded and skip it as pending. The pass decides every
+    config against the call as it stood when the lock was taken. Each config's
+    counts are ``{queued, skipped_existing, skipped_in_flight, skipped_pending,
     completed_calls}``; the four skip/queue counts partition ``completed_calls``.
 
     Three things to know before editing this:
@@ -414,23 +453,24 @@ def queue_eval_for_finished_calls(
       dispatch that fails afterwards puts its call (and the rest of the
       batch) back as it was, but the returned count is not corrected.
 
-    Backstops for any other caller: ``eval_config`` must be this run's own and
-    have something to grade (``regrade_mapping``), and the run must not be
+    Backstops for any other caller: each ``eval_config`` must be this run's own
+    and have something to grade (``regrade_mapping``), and the run must not be
     cancelled or cancelling (the worker never grades those); the endpoint
     refuses each of these itself with its own status.
     """
-    if eval_config.run_test_id != test_execution.run_test_id:
-        raise ValueError(
-            f"eval_config {eval_config.id} is bound to run test "
-            f"{eval_config.run_test_id!r}, not test_execution "
-            f"{test_execution.id}'s run test {test_execution.run_test_id!r}"
-        )
-    if regrade_mapping(eval_config) is None:
-        raise ValueError(
-            f"eval_config {eval_config.id} has an empty mapping and is not a "
-            "harness suite eval -- it is a result column only the harness "
-            "fills, and cannot be queued for grading"
-        )
+    for eval_config in eval_configs:
+        if eval_config.run_test_id != test_execution.run_test_id:
+            raise ValueError(
+                f"eval_config {eval_config.id} is bound to run test "
+                f"{eval_config.run_test_id!r}, not test_execution "
+                f"{test_execution.id}'s run test {test_execution.run_test_id!r}"
+            )
+        if regrade_mapping(eval_config) is None:
+            raise ValueError(
+                f"eval_config {eval_config.id} has an empty mapping and is not a "
+                "harness suite eval -- it is a result column only the harness "
+                "fills, and cannot be queued for grading"
+            )
     if test_execution.status in (
         TestExecution.ExecutionStatus.CANCELLED,
         TestExecution.ExecutionStatus.CANCELLING,
@@ -440,13 +480,16 @@ def queue_eval_for_finished_calls(
             "the eval worker does not grade a cancelled run, so nothing can "
             "be queued for it"
         )
-    config_id = str(eval_config.id)
+    config_ids = [str(eval_config.id) for eval_config in eval_configs]
     counts = {
-        "queued": 0,
-        "skipped_existing": 0,
-        "skipped_in_flight": 0,
-        "skipped_pending": 0,
-        "completed_calls": 0,
+        config_id: {
+            "queued": 0,
+            "skipped_existing": 0,
+            "skipped_in_flight": 0,
+            "skipped_pending": 0,
+            "completed_calls": 0,
+        }
+        for config_id in config_ids
     }
 
     # Local imports: `scoring_status` imports this module.
@@ -458,6 +501,13 @@ def queue_eval_for_finished_calls(
 
     runnable_ids = runnable_eval_config_ids(test_execution.run_test_id)
     live_ids = live_eval_config_ids(test_execution.run_test_id)
+    stamped: dict[str, list[str]] = {config_id: [] for config_id in config_ids}
+    # Each stamped call, in lock order, with the configs stamped on it: one job each.
+    per_call: dict[str, list[str]] = {}
+    previous: dict[str, dict[str, dict[str, Any]]] = {
+        config_id: {} for config_id in config_ids
+    }
+    run_reopened = False
     with transaction.atomic():
         finished_calls = list(
             CallExecution.objects.select_for_update(of=("self",))
@@ -485,35 +535,30 @@ def queue_eval_for_finished_calls(
         # actually left.
         now = timezone.now()
         to_stamp: list[CallExecution] = []
-        previous: dict[str, dict[str, Any]] = {}
         for call_execution in finished_calls:
-            counts["completed_calls"] += 1
             metadata = _metadata(call_execution)
-            # 1. A stored verdict is never re-graded from here. The task
-            #    would skip it again at run time, but counting it here is
-            #    what lets the user see why nothing was queued. Uses the
-            #    shared predicate, never a bare truthy read: a
-            #    `{"status": "pending"}` placeholder, a `"skipped"` payload,
-            #    and a `"Failed"` errored row are NOT verdicts, the eval task
-            #    will re-grade them, and counting them as `skipped_existing`
-            #    here would misstate what the pipeline actually does.
-            if has_stored_verdict(call_execution, eval_config.id):
-                counts["skipped_existing"] += 1
-                continue
-            # 2. The call's own evaluations have not finished, so no grading
-            #    starts for it. The receipt path starts the platform evaluator
-            #    when the run has a runnable eval selected or its tool-call
-            #    switch is on (and always for a result that carries no harness
-            #    evaluations of its own), and `eval_started` is the latch that keeps that
-            #    start from happening twice. `_run_simulate_evaluations` sets
-            #    the same flag unconditionally when it runs, so queueing here
-            #    before the call's own evaluations finish would close the latch
-            #    ahead of the receipt and leave its dispatch with nothing to do.
-            #    A call the scoring clock already counts as stuck (no progress
-            #    for 10 minutes, or no start within 30) is not waited on: its
-            #    job is lost, and in a run the sweeper never visits nothing
-            #    else would ever close it.
-            if (
+            outputs = call_execution.eval_outputs
+            outputs = dict(outputs) if isinstance(outputs, dict) else {}
+            # What the call held before this pass, read once: queueing one config
+            # changes it, and every config is decided against the call as it was.
+            before = {
+                EVAL_COMPLETED_KEY: metadata.get(EVAL_COMPLETED_KEY, _ABSENT),
+                "eval_started": metadata.get("eval_started", _ABSENT),
+            }
+            # 2 (below), decided once per call: the call's own evaluations have
+            # not finished, so no grading starts for it. The receipt path starts
+            # the platform evaluator when the run has a runnable eval selected or
+            # its tool-call switch is on (and always for a result that carries no
+            # harness evaluations of its own), and `eval_started` is the latch
+            # that keeps that start from happening twice.
+            # `_run_simulate_evaluations` sets the same flag unconditionally when
+            # it runs, so queueing here before the call's own evaluations finish
+            # would close the latch ahead of the receipt and leave its dispatch
+            # with nothing to do. A call the scoring clock already counts as
+            # stuck (no progress for 10 minutes, or no start within 30) is not
+            # waited on: its job is lost, and in a run the sweeper never visits
+            # nothing else would ever close it.
+            pending = (
                 not metadata.get(EVAL_COMPLETED_KEY)
                 and not scoring_due(
                     scoring_input_from_call(call_execution),
@@ -522,38 +567,58 @@ def queue_eval_for_finished_calls(
                     cancelled=False,
                     now=now,
                 ).eval_side
-            ):
-                counts["skipped_pending"] += 1
-                continue
-            # 3. Already queued minutes ago -- a double click, or a retry.
-            if _queued_within_window(metadata, config_id, now=now):
-                counts["skipped_in_flight"] += 1
-                continue
-            outputs = call_execution.eval_outputs
-            outputs = outputs if isinstance(outputs, dict) else {}
-            # What the call holds now, so a dispatch that fails can put it
-            # back instead of leaving a placeholder nothing will ever fill.
-            previous[str(call_execution.id)] = {
-                "entry": outputs.get(config_id, _ABSENT),
-                EVAL_COMPLETED_KEY: metadata.get(EVAL_COMPLETED_KEY, _ABSENT),
-                "eval_started": metadata.get("eval_started", _ABSENT),
-                "stamp": (metadata.get(EVAL_QUEUED_KEY) or {}).get(config_id, _ABSENT),
-            }
-            stamp_eval_queued(metadata, [config_id], now=now)
-            # The call is being graded again: its placeholder and open eval
-            # side hold it, and its run, as scoring until this job's verdict
-            # lands, the way the native rerun views mark theirs.
-            metadata["eval_started"] = True
-            metadata[EVAL_COMPLETED_KEY] = False
-            call_execution.eval_outputs = {**outputs, config_id: {"status": "pending"}}
-            call_execution.call_metadata = metadata
-            # `bulk_update` does not run `auto_now`'s pre-save logic, so
-            # `updated_at` is set by hand here, the same `now` every stamped
-            # call in this batch shares. `_clear_queued_stamps` bumps it the
-            # same way, so both sides of the stamp/unstamp pair stay
-            # consistent about touching this column.
-            call_execution.updated_at = now
-            to_stamp.append(call_execution)
+            )
+            queued_here = False
+            for eval_config, config_id in zip(eval_configs, config_ids, strict=True):
+                counts[config_id]["completed_calls"] += 1
+                # 1. A stored verdict is never re-graded from here. The task
+                #    would skip it again at run time, but counting it here is
+                #    what lets the user see why nothing was queued. Uses the
+                #    shared predicate, never a bare truthy read: a
+                #    `{"status": "pending"}` placeholder, a `"skipped"` payload,
+                #    and a `"Failed"` errored row are NOT verdicts, the eval task
+                #    will re-grade them, and counting them as `skipped_existing`
+                #    here would misstate what the pipeline actually does.
+                if has_stored_verdict(call_execution, eval_config.id):
+                    counts[config_id]["skipped_existing"] += 1
+                    continue
+                # 2. See `pending` above.
+                if pending:
+                    counts[config_id]["skipped_pending"] += 1
+                    continue
+                # 3. Already queued minutes ago -- a double click, or a retry.
+                if _queued_within_window(metadata, config_id, now=now):
+                    counts[config_id]["skipped_in_flight"] += 1
+                    continue
+                # What the call holds now, so a dispatch that fails can put it
+                # back instead of leaving a placeholder nothing will ever fill.
+                previous[config_id][str(call_execution.id)] = {
+                    "entry": outputs.get(config_id, _ABSENT),
+                    **before,
+                    "stamp": (metadata.get(EVAL_QUEUED_KEY) or {}).get(
+                        config_id, _ABSENT
+                    ),
+                }
+                stamp_eval_queued(metadata, [config_id], now=now)
+                # The call is being graded again: its placeholder and open eval
+                # side hold it, and its run, as scoring until this job's verdict
+                # lands, the way the native rerun views mark theirs.
+                metadata["eval_started"] = True
+                metadata[EVAL_COMPLETED_KEY] = False
+                outputs[config_id] = {"status": "pending"}
+                stamped[config_id].append(str(call_execution.id))
+                per_call.setdefault(str(call_execution.id), []).append(config_id)
+                queued_here = True
+            if queued_here:
+                call_execution.eval_outputs = outputs
+                call_execution.call_metadata = metadata
+                # `bulk_update` does not run `auto_now`'s pre-save logic, so
+                # `updated_at` is set by hand here, the same `now` every stamped
+                # call in this batch shares. `_clear_queued_stamps` bumps it the
+                # same way, so both sides of the stamp/unstamp pair stay
+                # consistent about touching this column.
+                call_execution.updated_at = now
+                to_stamp.append(call_execution)
 
         # One UPDATE for every eligible call, not one per row: the lock above
         # is held for this single statement, not N of them.
@@ -562,7 +627,8 @@ def queue_eval_for_finished_calls(
                 to_stamp, ["call_metadata", "eval_outputs", "updated_at"]
             )
 
-        counts["queued"] = len(to_stamp)
+        for config_id in config_ids:
+            counts[config_id]["queued"] = len(stamped[config_id])
 
         # A finished run goes back to scoring while these calls are graded;
         # the settle completes it again, with a new `completed_at`, once the
@@ -578,27 +644,31 @@ def queue_eval_for_finished_calls(
         # but not RUN here: `transaction.on_commit` defers this until the
         # outermost transaction actually commits, so no grading job can
         # start against a stamp that transaction could still roll back. One
-        # callback for the whole batch, not one per call.
-        if to_stamp:
+        # callback for the whole batch, and one job per call carrying every
+        # config stamped on it: jobs for one call's configs running side by
+        # side each save the call's whole `eval_outputs` and drop each other's
+        # verdicts (4 configs, 12 Nov: 177 of 576 verdicts lost).
+        if per_call:
+            execution_id = str(test_execution.id)
+            batch = list(per_call.items())
+
             # `robust=True` so a raise here cannot drop other callbacks
             # queued behind it in the same commit. A closure, not
             # `functools.partial`: Django's robust handler formats its log
             # line with `func.__qualname__`, which a partial does not have.
-            stamped_ids = [str(call_execution.id) for call_execution in to_stamp]
-            execution_id = str(test_execution.id)
-
             def _dispatch_this_batch():
                 _dispatch_batch_after_commit(
-                    stamped_ids, config_id, execution_id, previous, run_reopened
+                    batch, execution_id, previous, run_reopened
                 )
 
             transaction.on_commit(_dispatch_this_batch, robust=True)
 
-    logger.info(
-        "harness_run_eval_queued",
-        test_execution_id=str(test_execution.id),
-        eval_config_id=config_id,
-        run_reopened=run_reopened,
-        **counts,
-    )
+    for config_id in config_ids:
+        logger.info(
+            "harness_run_eval_queued",
+            test_execution_id=str(test_execution.id),
+            eval_config_id=config_id,
+            run_reopened=run_reopened,
+            **counts[config_id],
+        )
     return counts

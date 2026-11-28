@@ -86,6 +86,12 @@ func reasoningOff(req *models.ChatCompletionRequest) bool {
 
 // ChatCompletionViaResponses serves a chat request on the Responses API.
 func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true, StructuredAllowedTools: true})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	req = prepared
+
 	rr, apiErr := toResponsesRequest(req, false)
 	if apiErr != nil {
 		return nil, apiErr
@@ -94,6 +100,7 @@ func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.C
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
 	}
+	logResponsesDrops(req)
 	respBody, _, err := p.CreateResponse(ctx, body)
 	if err != nil {
 		return nil, err
@@ -124,6 +131,12 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true, StructuredAllowedTools: true})
+		if policyErr != nil {
+			errs <- policyErr
+			return
+		}
+		req = prepared
 
 		rr, apiErr := toResponsesRequest(req, true)
 		if apiErr != nil {
@@ -135,6 +148,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 			errs <- models.ErrInternal(fmt.Sprintf("marshaling responses request: %v", err))
 			return
 		}
+		logResponsesDrops(req)
 		stream, _, err := p.StreamResponse(ctx, body)
 		if err != nil {
 			errs <- err
@@ -144,6 +158,7 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 
 		conv := responsesStreamConverter{model: req.Model, created: time.Now().Unix()}
 		send := func(chunk models.StreamChunk) bool {
+			chunk.ReceivedAt = time.Now()
 			select {
 			case chunks <- chunk:
 				return true
@@ -283,11 +298,14 @@ type responsesFunctionTool struct {
 }
 
 // toResponsesRequest translates a chat request into a Responses API request.
-// stop has no Responses equivalent and is not sent; neither are n, seed,
-// presence/frequency penalties, logit_bias, logprobs, modalities, audio or
-// other unknown fields. A tool, tool choice, tool call or content part the
-// Responses API cannot be sent in chat shape is refused with a 400 rather than
-// forwarded or dropped.
+// The Responses API has no stop, seed, presence/frequency penalties or
+// logit_bias, and returns logprobs in another shape. These settings and extra
+// choices (n > 1) are omitted for every caller; the dispatch logs their names
+// and the handlers report them through the translation-drops notes channel.
+// Logprobs are not half-mapped without translating the output shape.
+// Modalities, audio and other unknown fields are not sent. A tool, tool
+// choice, tool call or content part the Responses API cannot be sent in chat
+// shape is refused with a 400 rather than forwarded or dropped.
 func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *responsesRequest, apiErr *models.APIError) {
 	// Word the remedy for the route the caller used: only a caller's own chat
 	// request can set reasoning_effort.
@@ -308,7 +326,9 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 	if out.MaxOutputTokens == nil {
 		out.MaxOutputTokens = req.MaxTokens
 	}
-	if raw, ok := req.Extra["parallel_tool_calls"]; ok {
+	if req.ParallelToolCalls != nil {
+		out.ParallelToolCalls = req.ParallelToolCalls
+	} else if raw, ok := req.Extra["parallel_tool_calls"]; ok {
 		var parallel bool
 		if json.Unmarshal(raw, &parallel) == nil {
 			out.ParallelToolCalls = &parallel
@@ -326,17 +346,6 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 			out.Store = store
 		}
 	}
-	// A response has one output; more choices cannot be asked for. A caller's
-	// own chat request asked for them and is told so. A translated request
-	// (GenAI candidateCount) gets one, as before this route existed.
-	if req.N != nil && *req.N > 1 {
-		if req.TranslatedFrom == "" {
-			return nil, unsupportedOverResponses(fmt.Sprintf("n=%d (more than one choice)", *req.N))
-		}
-		slog.Info("responses route answers one choice; extra candidates dropped",
-			"requested", *req.N, "translated_from", req.TranslatedFrom, "model", req.Model)
-	}
-
 	out.PromptCacheKey = req.Extra["prompt_cache_key"]
 	out.SafetyIdentifier = req.Extra["safety_identifier"]
 	out.Metadata = req.Extra["metadata"]
@@ -365,6 +374,42 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 		out.Text = &responsesText{Format: format, Verbosity: verbosity}
 	}
 	return out, nil
+}
+
+// ChatRouteDrops names the settings omitted by a valid Responses attempt.
+// Called after pre-plugins/tool routing, never from the caller's original body.
+// A conversion error is still an error, not an attempt that dropped settings.
+func (p *Provider) ChatRouteDrops(req *models.ChatCompletionRequest) (models.ChatRoute, []string) {
+	if !p.ChatNeedsResponses(req) {
+		return "", nil
+	}
+	drops := responsesDroppedParams(req)
+	if len(drops) == 0 {
+		return models.RouteResponses, nil
+	}
+	out, err := toResponsesRequest(req, req.Stream)
+	if err != nil {
+		return models.RouteResponses, nil
+	}
+	if _, err := json.Marshal(out); err != nil {
+		return models.RouteResponses, nil
+	}
+	return models.RouteResponses, drops
+}
+
+// responsesDroppedParams is the shared support table, so a response-cache hit
+// names exactly what this route omits from the request it answers.
+func responsesDroppedParams(req *models.ChatCompletionRequest) []string {
+	return models.ResponsesOmittedParams(req)
+}
+
+// Only fixed parameter names reach the warning, never parameter values or
+// caller-supplied model/header strings. This also covers mirror calls,
+// which do not have an HTTP response or a request-log pipeline of their own.
+func logResponsesDrops(req *models.ChatCompletionRequest) {
+	if drops := responsesDroppedParams(req); len(drops) > 0 {
+		slog.Warn("responses route drops chat-only parameters", "parameters", drops)
+	}
 }
 
 // unsupportedOverResponses is the 400 for a request that must go over the
@@ -682,6 +727,7 @@ func responsesAllowedTools(raw json.RawMessage) (json.RawMessage, *models.APIErr
 			Mode  string `json:"mode"`
 			Tools []struct {
 				Type     string `json:"type"`
+				Name     string `json:"name"`
 				Function struct {
 					Name string `json:"name"`
 				} `json:"function"`
@@ -701,10 +747,14 @@ func responsesAllowedTools(raw json.RawMessage) (json.RawMessage, *models.APIErr
 		Tools []tool `json:"tools"`
 	}{Type: "allowed_tools", Mode: chat.AllowedTools.Mode, Tools: []tool{}}
 	for _, t := range chat.AllowedTools.Tools {
-		if t.Type != "function" || t.Function.Name == "" {
+		name := t.Function.Name
+		if name == "" {
+			name = t.Name
+		}
+		if t.Type != "function" || name == "" {
 			return nil, unsupportedOverResponses(fmt.Sprintf("a %q tool in allowed_tools", t.Type))
 		}
-		out.Tools = append(out.Tools, tool{Type: "function", Name: t.Function.Name})
+		out.Tools = append(out.Tools, tool{Type: "function", Name: name})
 	}
 	b, _ := json.Marshal(out)
 	return b, nil
@@ -891,7 +941,11 @@ func (c *responsesStreamConverter) convert(ev *responsesStreamEvent) ([]models.S
 				c.model = ev.Response.Model
 			}
 		}
-		return []models.StreamChunk{c.chunk(models.Delta{Role: "assistant"}, nil)}, nil
+		// Sent at once so the caller sees the stream open, but it is only the
+		// acknowledgement: reasoning comes before the first output.
+		ack := c.chunk(models.Delta{Role: "assistant"}, nil)
+		ack.Acknowledgement = true
+		return []models.StreamChunk{ack}, nil
 
 	case "response.output_text.delta", "response.refusal.delta":
 		delta := ev.Delta
