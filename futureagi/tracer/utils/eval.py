@@ -445,13 +445,14 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
 
         trace_id = getattr(trace, "id", None)
         project_id = getattr(trace, "project_id", None)
-        if trace_id is None:
+        if trace_id is None or not project_id:
+            # Without the trace's project there is no tenant to read in: the
+            # same trace id can exist in another project or organization.
             _agg, _spans = {}, []
         else:
             with get_reader() as reader:
                 _ch_spans = reader.list_by_trace(
-                    str(trace_id),
-                    project_id=(str(project_id) if project_id is not None else None),
+                    str(trace_id), project_id=str(project_id)
                 )
             _span_count = len(_ch_spans)
             _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
@@ -2073,6 +2074,7 @@ def evaluate_observation_span(
     observation_span_id=None,
     custom_eval_config_id=None,
     feedback_id=None,
+    project_id=None,
 ):
     if not observation_span_id or not custom_eval_config_id:
         raise ValueError(
@@ -2083,7 +2085,10 @@ def evaluate_observation_span(
         custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
         from tracer.services.clickhouse.v2.eval_loader import get_observation_span
 
-        observation_span = get_observation_span(observation_span_id)
+        observation_span = get_observation_span(
+            observation_span_id,
+            project_id=_legacy_eval_span_project_id(project_id, custom_eval_config),
+        )
     except CustomEvalConfig.DoesNotExist:
         raise ValueError(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
@@ -2169,6 +2174,64 @@ def _write_eval_logger(
             raise
 
 
+def _legacy_eval_span_project_id(project_id, custom_eval_config) -> str:
+    """The project a span-id-only eval activity reads its span in.
+
+    A span id is not unique across tenants, so the span read needs a project.
+    A direct caller passes the span's verified project; an activity queued
+    with only the span and config ids (run-evaluation fan-out, or a message
+    queued before ``project_id`` existed) reads in the config's project, the
+    project whose spans the config evaluates."""
+    if project_id:
+        return str(project_id)
+    return str(custom_eval_config.project_id)
+
+
+def _runner_span_project_id(observation_span_id, eval_tags) -> str:
+    """The project ``eval_observation_span_runner`` reads its span in.
+
+    The scheduler (``run_evals_on_spans``) dispatches spans it found in the
+    Postgres span table, whose row names the span's project. When that row
+    cannot be read, the project of the configs the version's eval tags name
+    is used: the version's configs belong to the version's project."""
+    from django.db import DatabaseError
+
+    try:
+        project_id = (
+            ObservationSpan.no_workspace_objects.using("default")
+            .filter(id=observation_span_id)
+            .values_list("project_id", flat=True)
+            .first()
+        )
+    except DatabaseError:
+        project_id = None
+    if project_id:
+        return str(project_id)
+    tags = eval_tags
+    if isinstance(tags, str):
+        try:
+            tags = json.loads(tags)
+        except json.JSONDecodeError:
+            tags = []
+    config_ids = [
+        tag.get("custom_eval_config_id")
+        for tag in tags or []
+        if isinstance(tag, dict) and tag.get("custom_eval_config_id")
+    ]
+    config_project = (
+        CustomEvalConfig.objects.filter(id__in=config_ids)
+        .values_list("project_id", flat=True)
+        .first()
+        if config_ids
+        else None
+    )
+    if config_project:
+        return str(config_project)
+    raise ObservationSpan.DoesNotExist(
+        f"No project found for span {observation_span_id}; refusing an unscoped read."
+    )
+
+
 def _redirect_retired_eval_task_activity(eval_task_id) -> bool:
     """Fail closed for per-row activities queued by the retired dispatcher.
 
@@ -2210,6 +2273,7 @@ def evaluate_observation_span_observe(
     custom_eval_config_id=None,
     eval_task_id=None,
     feedback_id=None,
+    project_id=None,
 ):
     if _redirect_retired_eval_task_activity(eval_task_id):
         return
@@ -2221,7 +2285,10 @@ def evaluate_observation_span_observe(
         custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
         from tracer.services.clickhouse.v2.eval_loader import get_observation_span
 
-        observation_span = get_observation_span(observation_span_id)
+        observation_span = get_observation_span(
+            observation_span_id,
+            project_id=_legacy_eval_span_project_id(project_id, custom_eval_config),
+        )
     except CustomEvalConfig.DoesNotExist:
         raise ValueError(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
@@ -2338,7 +2405,10 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
         # in both modes — downstream `except` blocks unchanged.
         from tracer.services.clickhouse.v2.eval_loader import get_observation_span
 
-        observation_span = get_observation_span(observation_span_id)
+        observation_span = get_observation_span(
+            observation_span_id,
+            project_id=_runner_span_project_id(observation_span_id, eval_tags),
+        )
         if not observation_span or not eval_tags:
             return
 
@@ -2362,7 +2432,9 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
             ):
                 try:
                     evaluate_observation_span(
-                        observation_span.id, custom_eval_config_id
+                        observation_span.id,
+                        custom_eval_config_id,
+                        project_id=observation_span.project_id,
                     )
                 except Exception as e:
                     custom_eval_config = CustomEvalConfig.objects.get(

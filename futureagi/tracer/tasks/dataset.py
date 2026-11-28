@@ -11,6 +11,7 @@ import structlog
 from django.db import close_old_connections, transaction
 
 from tfc.temporal import temporal_activity
+from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
 logger = structlog.get_logger(__name__)
 
@@ -209,6 +210,8 @@ def _export_span_rows(
             project_id=str(project_id) if project_id else None,
             org_id=str(org_id) if org_id else None,
         )
+    except UnscopedSpanReadError:
+        raise  # a missing scope fails every half too: never bisect it
     except Exception:
         if len(span_ids) == 1:
             raise
@@ -231,7 +234,9 @@ def _export_span_rows(
         return left
 
 
-def _child_tree_spans_by_trace_ids(reader, trace_ids, project_id=None):
+def _child_tree_spans_by_trace_ids(
+    reader, trace_ids, project_id=None, project_ids=None
+):
     if not trace_ids:
         return {}
 
@@ -239,7 +244,10 @@ def _child_tree_spans_by_trace_ids(reader, trace_ids, project_id=None):
         return reader.child_tree_spans_by_trace_ids(
             [str(trace_id) for trace_id in trace_ids],
             project_id=str(project_id) if project_id else None,
+            project_ids=project_ids,
         )
+    except UnscopedSpanReadError:
+        raise  # a missing scope fails every half too: never bisect it
     except Exception:
         if len(trace_ids) == 1:
             raise
@@ -248,17 +256,36 @@ def _child_tree_spans_by_trace_ids(reader, trace_ids, project_id=None):
             reader,
             trace_ids[:midpoint],
             project_id=project_id,
+            project_ids=project_ids,
         )
         right = _child_tree_spans_by_trace_ids(
             reader,
             trace_ids[midpoint:],
             project_id=project_id,
+            project_ids=project_ids,
         )
         left.update(right)
         return left
 
 
-def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
+def _org_project_ids(org_id) -> list[str]:
+    """Every project of ``org_id`` (any workspace, deleted or not, simulated
+    runs included: the org-wide export selected its spans by org), as the
+    project scope of an org-wide trace read. Spans are not scoped by
+    ``org_id`` itself: a collector span row may carry a NULL ``org_id``."""
+    from tracer.models.project import Project
+
+    return [
+        str(pid)
+        for pid in Project.with_simulation.filter(organization_id=org_id).values_list(
+            "id", flat=True
+        )
+    ]
+
+
+def _serialize_span_trees_batch(
+    span_ids, project_id=None, org_id=None
+) -> dict[str, list]:
     """Batch-serialize child trees for multiple span IDs in minimal CH queries.
 
     Replaces per-span _serialize_span_tree which did N × (reader.get + list_by_trace)
@@ -268,6 +295,9 @@ def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
       3. Fetches all spans for those traces in one argMax query (no FINAL)
 
     Returns {span_id: [child_dicts]} matching the old function's output shape.
+
+    The trace reads are pinned to ``project_id``, or to ``org_id``'s projects
+    for an org-wide export: the same trace id can exist in another tenant.
     """
     from tracer.services.clickhouse.v2 import get_reader
 
@@ -275,10 +305,13 @@ def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
         return {}
 
     str_ids = [str(s) for s in span_ids]
+    scope_project_ids = None if project_id or not org_id else _org_project_ids(org_id)
 
     with get_reader() as reader:
         trace_map = reader.trace_ids_for_span_ids(
-            str_ids, project_id=str(project_id) if project_id else None
+            str_ids,
+            project_id=str(project_id) if project_id else None,
+            project_ids=scope_project_ids,
         )
         unique_trace_ids = list(dict.fromkeys(trace_map.values()))
 
@@ -292,6 +325,7 @@ def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
                     reader,
                     trace_chunk,
                     project_id=project_id,
+                    project_ids=scope_project_ids,
                 )
             )
 
@@ -452,7 +486,7 @@ def process_spans_chunk_task(
         child_spans_cache = {}
         if needs_child_spans:
             child_spans_cache = _serialize_span_trees_batch(
-                span_ids, project_id=project_id
+                span_ids, project_id=project_id, org_id=org_id
             )
 
         # Pre-fetch eval metrics (EvalLogger) if needed — single bulk query, no N+1

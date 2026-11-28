@@ -608,7 +608,7 @@ def patch_voice_verbose():
 # ── Main test runners ───────────────────────────────────────────────────────
 
 
-def run_text_v2(trace_id, save_to_db=False):
+def run_text_v2(trace_id, save_to_db=False, project_id=None):
     """Run text Agent Compass v2 with verbose output."""
     global _chat_log
     from ee.agenthub.traceerroragent.traceerror import TraceErrorAnalysisAgent
@@ -619,9 +619,16 @@ def run_text_v2(trace_id, save_to_db=False):
 
     header(f"Text Agent Compass v2 — Trace: {trace_id}")
 
+    # The agent reads spans only in the trace's project, which the caller
+    # names: the same trace id can exist in another project or organization.
+    if not project_id:
+        print(f"{RED}ERROR: set PROJECT_ID to the trace's project{RESET}")
+        return
+
     start = time.time()
     agent = TraceErrorAnalysisAgent(
         trace_id=trace_id,
+        project_id=str(project_id),
         enable_memory=False,
         save_to_db=save_to_db,
         token_budget=500000,
@@ -792,6 +799,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python test_verbose.py <trace_id> [--extract-only]")
         print("  MODE=voice for voice traces, MODE=text (default) for text traces")
+        print("  PROJECT_ID=<the trace's project> for text traces")
         sys.exit(1)
 
     trace_id = sys.argv[1]
@@ -801,4 +809,4 @@ if __name__ == "__main__":
     if mode == "voice":
         run_voice(trace_id, save_to_db)
     else:
-        run_text_v2(trace_id, save_to_db)
+        run_text_v2(trace_id, save_to_db, os.getenv("PROJECT_ID"))

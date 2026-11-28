@@ -2332,7 +2332,7 @@ def _per_span_eval(monkeypatch, body):
     """Replace the per-span activity the view calls for results with no
     task; ``body`` gets (span_id, config_id) and returns its status."""
 
-    def _activity(span_id, config_id, _task_id=None, _feedback_id=None):
+    def _activity(span_id, config_id, _task_id=None, _feedback_id=None, **_kwargs):
         return body(span_id, config_id)
 
     monkeypatch.setattr(

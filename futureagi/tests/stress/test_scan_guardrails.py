@@ -51,7 +51,9 @@ def test_scan_read_rejected_at_tiny_cap_server_stays_healthy(stress_dataset):
         with scan_ch_guardrails():
             with ch_query_settings(max_memory_usage=_TINY_MEMORY_CAP):
                 with get_reader() as reader:
-                    reader.list_by_trace_ids(noise.trace_ids)
+                    reader.list_by_trace_ids(
+                        noise.trace_ids, project_id=noise.project_id
+                    )
 
     assert "241" in str(exc_info.value)
 
@@ -73,7 +75,7 @@ def test_realistic_scan_batch_peaks_below_cap(stress_dataset):
     with scan_ch_guardrails():
         with ch_query_budget("scan-guardrail-bench") as budget:
             with get_reader() as reader:
-                spans = reader.list_by_trace_ids(batch)
+                spans = reader.list_by_trace_ids(batch, project_id=noise.project_id)
 
     assert budget.count >= 1, "the tagged scanner read was not captured in query_log"
     peak = budget.max("memory_usage")

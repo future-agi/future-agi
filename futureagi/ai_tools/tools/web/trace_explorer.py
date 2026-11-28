@@ -690,11 +690,19 @@ class TraceExplorerTool(BaseTool):
             # CHSpanReader.list_by_trace already filters is_deleted=0 and
             # orders by start_time, id; we hydrate to dicts in the same
             # shape Django's .values() produced so the tree-building
-            # downstream is unchanged. Org-tenant scope: each span carries
-            # project_id, so verify against Project at the project level
-            # (one query) rather than per-span.
+            # downstream is unchanged. Org-tenant scope: the read is pinned to
+            # the org's projects (the same trace id can exist in another
+            # organization), and each span's project is checked again below.
+            org_project_id_list = [
+                str(p)
+                for p in Project.objects.filter(organization=org).values_list(
+                    "id", flat=True
+                )
+            ]
             with get_reader() as reader:
-                ch_spans_raw = reader.list_by_trace(str(trace_id))
+                ch_spans_raw = reader.list_by_trace(
+                    str(trace_id), project_ids=org_project_id_list
+                )
             if ch_spans_raw:
                 project_ids = {s.project_id for s in ch_spans_raw if s.project_id}
                 if project_ids:
@@ -899,13 +907,19 @@ def _fetch_full_span(span_id: str) -> dict | None:
             return None
 
         # CH read replaces ObservationSpan.objects.filter(id=, deleted=False,
-        # project__organization=org).first(). Org-tenant scope is verified
-        # via a Project.filter() lookup on the span's project_id since
-        # FK-join across stores is not possible.
+        # project__organization=org).first(). The read is pinned to the org's
+        # projects (the same span id can exist in another organization), and
+        # the span's project is checked again below.
         from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
+        org_project_ids = [
+            str(p)
+            for p in Project.objects.filter(organization=org).values_list(
+                "id", flat=True
+            )
+        ]
         with get_reader() as reader:
-            span = reader.get(str(span_id))
+            span = reader.get(str(span_id), project_ids=org_project_ids)
         if not span:
             return None
         if not Project.objects.filter(id=span.project_id, organization=org).exists():

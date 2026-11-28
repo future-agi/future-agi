@@ -58,7 +58,7 @@ def test_cutoff_read_filters_after_the_final_merge():
     # UTC text with microseconds, whatever zone the datetime carries.
     assert client.parameters["cutoff"] == "2026-07-01 10:00:00.250000"
     local = CUTOFF.astimezone(timezone(timedelta(hours=5, minutes=30)))
-    _reader_with(client).roots_by_trace_ids(["t1"], cutoff=local)
+    _reader_with(client).roots_by_trace_ids(["t1"], project_id="p1", cutoff=local)
     assert client.parameters["cutoff"] == "2026-07-01 10:00:00.250000"
 
 
@@ -72,9 +72,9 @@ def test_read_without_a_cutoff_is_unchanged():
 
 
 def test_cutoff_read_refuses_the_limit_by_dedup():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="cutoff"):
         _reader_with(_RecordingClient()).roots_by_trace_ids(
-            ["t1"], cutoff=CUTOFF, dedup_via_limit_by=True
+            ["t1"], project_id="p1", cutoff=CUTOFF, dedup_via_limit_by=True
         )
 
 
