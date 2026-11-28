@@ -4,6 +4,7 @@ import contextlib
 import gzip
 import hashlib
 import io
+import json
 import os
 import pathlib
 import re
@@ -378,6 +379,104 @@ class WhatADumpDoesNotCarryTest(Workspace):
             "(see NOT_CARRIED in futureagi/.ci/e2e_db.py). A leg that restores "
             "the saved dump would lack it, with no error.",
         )
+
+
+class SwitchTest(Workspace):
+    """E2E_DB_REUSE: which stacks restore, and what the plan job prints."""
+
+    TOTALS = {"distributed": 8, "standalone": 6}
+    BOTH_FOUND = {
+        "distributed": {"key": "kd", "found": True},
+        "standalone": {"key": "ks", "found": True},
+    }
+
+    def decide(self, switch, totals=None, db=None):
+        lines, result = e2e_db.plan(
+            switch, totals or self.TOTALS, self.BOTH_FOUND if db is None else db
+        )
+        return lines, {stack: entry["restore"] for stack, entry in result.items()}
+
+    def test_unset_empty_or_blank_is_off_for_every_stack(self):
+        for value in (None, "", " ", ",", " , "):
+            with self.subTest(value=value):
+                lines, restores = self.decide(value)
+                self.assertEqual(restores, {"distributed": False, "standalone": False})
+                self.assertIn("E2E_DB_REUSE is not set", lines[0])
+
+    def test_only_the_named_stacks_restore(self):
+        _lines, restores = self.decide("distributed")
+        self.assertEqual(restores, {"distributed": True, "standalone": False})
+        _lines, restores = self.decide(" standalone , distributed ")
+        self.assertEqual(restores, {"distributed": True, "standalone": True})
+        # Names are exact: a stack is named only by its own name.
+        _lines, restores = self.decide("Distributed,distributed-x")
+        self.assertEqual(restores, {"distributed": False, "standalone": False})
+
+    def test_an_unknown_name_warns_quoting_it_and_the_known_names_still_apply(self):
+        lines, restores = self.decide("distributed,standalon")
+        self.assertEqual(restores, {"distributed": True, "standalone": False})
+        warnings = [line for line in lines if line.startswith("::warning")]
+        self.assertEqual(len(warnings), 1, lines)
+        self.assertIn("'standalon'", warnings[0])
+        self.assertIn("It is ignored", warnings[0])
+
+    def test_the_value_read_and_each_stacks_decision_are_printed(self):
+        lines, _ = self.decide("distributed")
+        self.assertEqual(lines[0], "E2E_DB_REUSE is 'distributed'.")
+        self.assertTrue(lines[1].startswith("distributed: restores the saved dump"))
+        self.assertIn(
+            "standalone: migrates from zero: E2E_DB_REUSE does not name it", lines[2]
+        )
+
+    def test_a_value_that_could_hold_a_workflow_command_is_never_printed(self):
+        lines, restores = self.decide("distributed,::error::x\n::warning::y")
+        self.assertEqual(restores["distributed"], True)
+        joined = "\n".join(lines)
+        self.assertNotIn("::error", joined)
+        self.assertNotIn("::warning::y", joined)
+        self.assertIn("a name with other characters", joined)
+
+    def test_no_saved_dump_means_no_restore(self):
+        db = {**self.BOTH_FOUND, "distributed": {"key": "kd", "found": False}}
+        lines, restores = self.decide("distributed,standalone", db=db)
+        self.assertEqual(restores, {"distributed": False, "standalone": True})
+        self.assertIn(
+            "distributed: migrates from zero: no saved dump", "\n".join(lines)
+        )
+        # A stack the fetch never answered for has nothing to restore either.
+        _lines, restores = self.decide("distributed", db={})
+        self.assertEqual(restores, {"distributed": False, "standalone": False})
+
+    def test_a_stack_without_a_zero_leg_and_a_control_leg_never_restores(self):
+        for total, expected in ((1, False), (2, False), (3, True)):
+            with self.subTest(total=total):
+                _lines, restores = self.decide(
+                    "distributed", totals={"distributed": total}
+                )
+                self.assertEqual(restores, {"distributed": expected})
+
+    def test_the_command_line_writes_the_result_and_names_only_known_stacks(self):
+        out = self.dir / "db.json"
+        code, printed = run_tool(
+            "plan",
+            "distributed,nope",
+            '{"distributed": 8}',
+            '{"distributed": {"key": "kd", "found": true}}',
+            str(out),
+        )
+        self.assertEqual(code, 0, printed)
+        self.assertEqual(
+            json.loads(out.read_text()),
+            {"distributed": {"key": "kd", "found": True, "restore": True}},
+        )
+        self.assertIn("::warning", printed)
+        self.assertEqual(
+            run_tool("named", "standalone,nope, distributed"),
+            (0, "standalone distributed\n"),
+        )
+        code, printed = run_tool("plan", "distributed", "not json", "{}", str(out))
+        self.assertEqual(code, 1)
+        self.assertIn("::error", printed)
 
 
 # Stands in for Django and the stack's manage.py: it notes the command line

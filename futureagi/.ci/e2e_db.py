@@ -20,6 +20,7 @@ migrations read and nothing the receivers read. It is a public artifact.
 import argparse
 import hashlib
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -66,6 +67,14 @@ STACKS = {
     ),
 }
 RECORD = ("dump.sql.gz", "preseed", "recipe")
+# The repository variable that turns restoring on, per stack: a comma list of
+# stack names. Unset, empty or naming no stack: every leg migrates from zero.
+SWITCH = "E2E_DB_REUSE"
+# A run restores only with a leg that still boots from zero (shard 2) and one
+# that compares the dump with a fresh migrate (shard 3).
+ZERO_SHARD = 2
+CONTROL_SHARD = 3
+SAFE_NAME = re.compile(r"[A-Za-z0-9_-]{1,40}")
 SKIP_DIRS = frozenset({"node_modules", "site-packages", "__pycache__"})
 # What a plain dump of one database, taken without owners and privileges,
 # does not carry.
@@ -212,6 +221,72 @@ def not_carried(root):
     return found
 
 
+def read_switch(value):
+    """(the stacks the switch names, the other names in it), each once, in order."""
+    named, unknown = [], []
+    for name in (value or "").split(","):
+        name = name.strip()
+        if not name:
+            continue
+        target = named if name in STACKS else unknown
+        if name not in target:
+            target.append(name)
+    return named, unknown
+
+
+def _shown(name):
+    return repr(name) if SAFE_NAME.fullmatch(name) else "a name with other characters"
+
+
+def plan(switch, totals, db):
+    """What each stack's legs do with the saved dump in this run.
+
+    `totals` gives each stack's leg count, `db` each stack's key and whether
+    a saved dump was found. Returns (lines to print, {stack: {key, found,
+    restore}}). A stack restores only when the switch names it, a dump was
+    found and it has a zero leg and a control leg.
+    """
+    named, unknown = read_switch(switch)
+    if not named and not unknown:
+        lines = [f"{SWITCH} is not set or names nothing: every leg migrates from zero."]
+    elif SAFE_NAME.fullmatch(switch.replace(",", "").replace(" ", "")):
+        lines = [f"{SWITCH} is {switch.strip()!r}."]
+    else:
+        lines = [f"{SWITCH} is set, with characters a stack name never has."]
+    for name in unknown:
+        lines.append(
+            f"::warning title=E2E database reuse::{SWITCH} names {_shown(name)}, "
+            f"which is no E2E stack ({', '.join(STACKS)}). It is ignored."
+        )
+    result = {}
+    for stack, total in totals.items():
+        entry = db.get(stack) or {}
+        found = entry.get("found") is True
+        if stack not in named:
+            restore, why = False, f"migrates from zero: {SWITCH} does not name it"
+        elif not found:
+            restore, why = False, "migrates from zero: no saved dump for this commit"
+        elif total < CONTROL_SHARD:
+            restore, why = (
+                False,
+                f"migrates from zero: {total} legs, and restoring needs a zero leg "
+                f"and a control leg (shards {ZERO_SHARD} and {CONTROL_SHARD})",
+            )
+        else:
+            restore, why = (
+                True,
+                f"restores the saved dump on every leg but shard {ZERO_SHARD} "
+                f"(boots from zero); shard {CONTROL_SHARD} compares it with a fresh migrate",
+            )
+        lines.append(f"{stack}: {why}.")
+        result[stack] = {
+            "key": entry.get("key", ""),
+            "found": found,
+            "restore": restore,
+        }
+    return lines, result
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -230,6 +305,13 @@ def main(argv=None):
     sub = commands.add_parser("record")
     for name in ("out", "dump", "preseed", "recipe"):
         sub.add_argument(name)
+    sub = commands.add_parser("named")
+    sub.add_argument("switch")
+    sub = commands.add_parser("plan")
+    sub.add_argument("switch")
+    sub.add_argument("totals", help="JSON: {stack: leg count}")
+    sub.add_argument("db", help="JSON: {stack: {key, found}}")
+    sub.add_argument("out", help="file for the JSON result")
     args = parser.parse_args(argv)
     try:
         if args.command == "key":
@@ -241,9 +323,24 @@ def main(argv=None):
         elif args.command == "differing":
             for name in differing(args.first, args.second):
                 _say(name)
+        elif args.command == "named":
+            _say(" ".join(read_switch(args.switch)[0]))
+        elif args.command == "plan":
+            lines, result = plan(
+                args.switch, json.loads(args.totals), json.loads(args.db)
+            )
+            for line in lines:
+                _say(line)
+            Path(args.out).write_text(json.dumps(result, separators=(",", ":")))
         else:
             write_record(args.out, args.dump, args.preseed, args.recipe)
-    except (db_dump.DumpError, OSError, subprocess.CalledProcessError) as exc:
+    except (
+        db_dump.DumpError,
+        OSError,
+        subprocess.CalledProcessError,
+        ValueError,
+        AttributeError,
+    ) as exc:
         _say(f"::error title=E2E database dump::{exc}")
         return 1
     return 0
