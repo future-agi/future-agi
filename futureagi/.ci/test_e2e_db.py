@@ -34,6 +34,16 @@ with (state / "calls").open("a") as log:
     log.write(" ".join("<wrapper>" if "\n" in a else a for a in args) + "\n")
 def db(name):
     return state / f"db-{name}"
+if args[:2] == ["compose", "run"] and args[-1] == "register_eval_task_search_attributes":
+    # Distributed's replay of tracer 0093: the stack's own command.
+    assert args[2:] == [
+        "--rm", "-T", "--entrypoint", "python", "postgres-schema-bootstrap",
+        "manage.py", "register_eval_task_search_attributes",
+    ], args
+    tries = state / "register-tries"
+    count = int(tries.read_text()) + 1 if tries.exists() else 1
+    tries.write_text(str(count))
+    sys.exit(1 if count <= int(os.environ.get("FAKE_REGISTER_FAILS", "0")) else 0)
 if args[:2] == ["compose", "run"]:
     name = next(a for a in args if a.startswith("PG_DB=")).split("=", 1)[1]
     # The stack's migrate, stopped before post_migrate: the wrapper's text.
@@ -443,6 +453,93 @@ class ReceiverTest(Workspace):
         )
 
 
+class OutsideTest(unittest.TestCase):
+    """Migrations that write outside Postgres: the dump holds them as applied."""
+
+    # A leg that restores the dump never runs these: its boot's migrate finds
+    # them applied. Each one's effect has to reach the stack another way.
+    KNOWN = {
+        # Both stacks set FI_SKIP_CH25_MIGRATION=1; their bootstraps apply the
+        # ClickHouse schema on every start.
+        "tracer/migrations/0078_ch25_apply_schema.py": "skipped",
+        # e2e-db-restore.sh runs the stack's own command on Distributed;
+        # Standalone's bootstrap registers them on every start.
+        "tracer/migrations/0093_register_eval_task_search_attributes.py": "replayed",
+        # Reads ClickHouse only for queue items, and a new database has none.
+        "model_hub/migrations/0117_backfill_queueitem_project.py": "nothing",
+        # Clears cached Redis keys, and a new stack's Redis is empty.
+        "ee/usage/migrations/0023_unlock_features_free_tier.py": "nothing",
+    }
+    OUTSIDE = re.compile(
+        r"^\s*(?:from|import)\s+[\w.]*\b(?:temporalio|temporal|clickhouse|redis|"
+        r"celery|requests|httpx|boto3|botocore|minio|kafka|peerdb)\b"
+        r"|\bget_redis\(|\.apply_async\(|\.delay\(",
+        re.M,
+    )
+
+    def outside(self, root):
+        found = []
+        for path in sorted(root.glob("**/migrations/*.py")):
+            text = path.read_text()
+            if "node_modules" not in path.parts and "RunPython" in text:
+                if self.OUTSIDE.search(text):
+                    found.append(path.relative_to(root).as_posix())
+        return found
+
+    def test_the_migrations_that_write_outside_postgres_are_these(self):
+        self.assertEqual(
+            self.outside(ROOT / "futureagi"),
+            sorted(self.KNOWN),
+            "A migration that reaches Temporal, ClickHouse, Redis or another "
+            "store outside Postgres was added or removed. The saved E2E dump "
+            "holds it only as applied, so a leg that restores the dump never "
+            "runs it. Make its effect another way (e2e-db-restore.sh, or the "
+            "stack's bootstrap), or show it does nothing on a new stack, then "
+            "update KNOWN in futureagi/.ci/test_e2e_db.py.",
+        )
+
+    def test_the_search_finds_each_way_of_reaching_out(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder = pathlib.Path(tmp.name) / "app/migrations"
+        folder.mkdir(parents=True)
+        body = "from django.db import migrations\nops = [migrations.RunPython(f)]\n"
+        samples_ = {
+            "0001_a.py": "    from tfc.temporal.x import y\n",
+            "0002_b.py": "from tracer.services.clickhouse.v2 import get_reader\n",
+            "0003_c.py": "    r = get_redis()\n",
+            "0004_d.py": "    task.delay(1)\n",
+            "0005_e.py": "    import requests\n",
+            # A model named after a store is not reaching it.
+            "0006_f.py": "    model_name='clickhouseannotation'\n",
+        }
+        for name, line in samples_.items():
+            (folder / name).write_text(body + line)
+        (folder / "0007_g.py").write_text(
+            "from tfc.temporal import x\n"
+        )  # no RunPython
+        self.assertEqual(
+            self.outside(pathlib.Path(tmp.name)),
+            [f"app/migrations/{n}" for n in sorted(samples_)[:5]],
+        )
+
+    def test_each_stack_makes_the_effects_the_dump_cannot_hold(self):
+        compose = (ROOT / "docker-compose.distributed.yml").read_text()
+        self.assertIn('  FI_SKIP_CH25_MIGRATION: "1"\n', compose)
+        bootstrap = (ROOT / "deploy/standalone/bin/bootstrap.py").read_text()
+        self.assertIn('os.environ.setdefault("FI_SKIP_CH25_MIGRATION", "1")', bootstrap)
+        self.assertIn("steps.register_search_attributes(log)", bootstrap)
+        self.assertIn(
+            "manage.py register_eval_task_search_attributes", RESTORE.read_text()
+        )
+        self.assertTrue(
+            (
+                ROOT
+                / "futureagi/tfc/management/commands/register_eval_task_search_attributes.py"
+            ).exists()
+        )
+
+
 class SwitchTest(Workspace):
     """E2E_DB_REUSE: which stacks restore, and what the plan job prints."""
 
@@ -669,6 +766,7 @@ class RestoreTest(Workspace):
             os.environ,
             FAKE_PG=str(self.state),
             KEY=KEY,
+            STACK="distributed",
             RESTORE="true",
             ROLE="restore",
             RECORD=str(self.record),
@@ -682,10 +780,18 @@ class RestoreTest(Workspace):
         e2e_db.write_record(self.record, dump, digest, recipe)
 
     def restore(self, **env):
+        # `sleep` between tries: noted, not waited for.
+        stubs = self.dir / "stubs"
+        stubs.mkdir(exist_ok=True)
+        (stubs / "sleep").write_text(
+            '#!/usr/bin/env bash\necho "sleep $*" >> "$FAKE_PG/calls"\n'
+        )
+        (stubs / "sleep").chmod(0o755)
+        path = f"{stubs}:{os.environ['PATH']}"
         run = subprocess.run(
             ["bash", str(RESTORE)],
             cwd=self.work,
-            env={**self.env, **env},
+            env={**self.env, "PATH": path, **env},
             capture_output=True,
             text=True,
         )
@@ -750,6 +856,49 @@ class RestoreTest(Workspace):
                 # Never a half-restored database: no volume is left.
                 self.assertIn("compose down -v", self.calls())
                 self.assertIsNone(self.database())
+
+    REGISTER = "compose run --rm -T --entrypoint python postgres-schema-bootstrap manage.py register_eval_task_search_attributes"
+
+    def test_distributed_registers_temporals_search_attributes_after_the_restore(self):
+        self.save()
+        result, _out = self.restore()
+        self.assertEqual(result, "restored")
+        calls = self.calls()
+        self.assertEqual(calls.count(self.REGISTER), 1)
+        # After the rows are checked: nothing starts on a database that is not the dump.
+        self.assertEqual(calls[-1], self.REGISTER)
+
+    def test_standalone_registers_nothing_its_bootstrap_does_it(self):
+        self.save()
+        self.assertEqual(self.restore(STACK="standalone")[0], "restored")
+        self.assertNotIn(self.REGISTER, self.calls())
+
+    def test_temporal_gets_time_to_add_its_namespace(self):
+        self.save()
+        result, _out = self.restore(FAKE_REGISTER_FAILS="3")
+        self.assertEqual(result, "restored")
+        calls = self.calls()
+        self.assertEqual(calls.count(self.REGISTER), 4)
+        self.assertEqual(calls.count("sleep 10"), 3)
+
+    def test_search_attributes_never_registered_fall_back_to_a_clean_stack(self):
+        self.save()
+        result, out = self.restore(FAKE_REGISTER_FAILS="99")
+        self.assertEqual(
+            result, "fell back: the Temporal search attributes were not registered"
+        )
+        calls = self.calls()
+        self.assertEqual(calls.count(self.REGISTER), 12)
+        # No wait after the last try.
+        self.assertEqual(calls.count("sleep 10"), 11)
+        self.assertEqual(calls[-1], "compose down -v")
+        self.assertIn("::warning title=E2E database reuse::", out)
+        self.assertIsNone(self.database())
+
+    def test_a_leg_with_no_stack_falls_back(self):
+        self.save()
+        self.assertEqual(self.restore(STACK="")[0], "fell back: no stack was named")
+        self.assertIsNone(self.database())
 
     def test_rows_other_than_the_dumps_own_fall_back(self):
         self.save(rows="0" * 64)
@@ -1097,6 +1246,7 @@ class WorkflowTest(unittest.TestCase):
             "ROLE: ${{ matrix.shard == 2 && 'zero' || 'restore' }}\n", restore
         )
         self.assertIn(f"KEY: ${{{{ {self.MINE}.key }}}}\n", restore)
+        self.assertIn("STACK: ${{ matrix.stack }}\n", restore)
         self.assertIn("timeout 600 bash futureagi/.ci/e2e-db-restore.sh ||", restore)
         self.assertNotIn("continue-on-error", restore)
         self.assertNotRegex(restore + download, r"secrets\.|github\.token|TOKEN")

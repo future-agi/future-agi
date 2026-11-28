@@ -689,6 +689,7 @@ jobs:
         if: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
         env:
           KEY: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].key }}
+          STACK: ${{ matrix.stack }}
           RESTORE: "true"
           ROLE: ${{ matrix.shard == 2 && 'zero' || 'restore' }}
           RECORD: ${{ runner.temp }}/e2e-db-record/${{ matrix.stack }}
