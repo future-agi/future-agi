@@ -182,10 +182,12 @@ jobs:
           # A call from Retarget proof forwards no secrets: like a merge group,
           # it runs without the private package (GITHUB_WORKFLOW is the caller's).
           internal=false
-          case "$GITHUB_EVENT_NAME" in
-            pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
-            push|workflow_dispatch|schedule) internal=true ;;
-          esac
+          if [[ $GITHUB_REPOSITORY == "future-agi/future-agi" ]]; then
+            case "$GITHUB_EVENT_NAME" in
+              pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+              push|workflow_dispatch|schedule) internal=true ;;
+            esac
+          fi
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
       - id: shards
         # The pytest shard matrix: the main legs always, the Metrics legs only
