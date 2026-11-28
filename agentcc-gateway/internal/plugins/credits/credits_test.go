@@ -340,3 +340,36 @@ func TestCreditsPlugin_NoSpendCallIsNotRefused(t *testing.T) {
 		t.Fatalf("a call that cannot spend was refused: %v", res.Error.Message)
 	}
 }
+
+// A cache hit serves a stored response with no provider call, so no credits
+// are deducted for any hit kind — even though the cost plugin deliberately
+// still records a catalogue price on semantic/conditional hits.
+func TestCreditsPlugin_CacheHitDeductsNothing(t *testing.T) {
+	for _, status := range []string{"hit_exact", "hit_semantic", "hit_conditional"} {
+		ks := newKeyStore()
+		p := New(true, ks)
+		managed := findKey(ks, "managed")
+		if managed == nil {
+			t.Fatal("expected to find managed key")
+		}
+
+		rc := makeRC(managed.ID, "managed")
+		// Mirrors the cache plugin: every hit path sets both flags, and a
+		// semantic/conditional hit carries the catalogue-priced cost.
+		rc.Flags.CacheHit = true
+		rc.Flags.ShortCircuited = true
+		rc.Metadata["cache_status"] = status
+		rc.Metadata["cost"] = "0.001200"
+
+		if res := p.ProcessResponse(context.Background(), rc); res.Action != pipeline.Continue {
+			t.Fatalf("status %q: expected Continue, got %d", status, res.Action)
+		}
+		if v, ok := rc.Metadata["credits_used"]; ok {
+			t.Errorf("status %q: credits_used = %q on a cache hit", status, v)
+		}
+		if bal := managed.BalanceUSD(); bal != 10.0 {
+			t.Errorf("status %q: balance = %f, want 10.0", status, bal)
+		}
+		rc.Release()
+	}
+}
