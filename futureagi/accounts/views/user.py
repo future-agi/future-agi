@@ -248,8 +248,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 )
 
             try:
-                user.config["remember_me"] = remember_me
-                user.save(update_fields=["config"])
+                user.update_config(remember_me=remember_me)
             except Exception:
                 logger.exception("login_config_save_failed", email=email)
 
@@ -378,9 +377,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 )
 
             _login_org = _first_active_membership.organization
-            user.config["selected_organization_id"] = str(_login_org.id)
-            user.config["currentOrganizationId"] = str(_login_org.id)
-            user.save(update_fields=["config"])
+            user.update_config(
+                selected_organization_id=str(_login_org.id),
+                currentOrganizationId=str(_login_org.id),
+            )
 
             # Auto-accept any pending invites for this active user.
             from accounts.models.organization_invite import (
@@ -1117,13 +1117,9 @@ def user_onboarding(request):
             user.role = validated_data.get("role")
             user.goals = validated_data.get("goals", [])
 
+            user.save(update_fields=["role", "goals"])
             # Also update config for tracking completion timestamp
-            if not user.config:
-                user.config = {}
-
-            user.config["onboarding_completed_at"] = timezone.now().isoformat()
-
-            user.save(update_fields=["role", "goals", "config"])
+            user.update_config(onboarding_completed_at=timezone.now().isoformat())
 
             # Track event
             try:

@@ -76,7 +76,8 @@ class TestVersionsList:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"agent", "environment", "suite"}
+        # The lock preview has its own read.
+        assert set(body) == {"agent", "environment", "suite", "locked_versions"}
         suites = body["suite"]
         assert [one["label"] for one in suites] == ["v2", "v1"]
         assert [one["is_default"] for one in suites] == [True, False]
@@ -156,7 +157,20 @@ class TestVersionsList:
         response = _get(auth_client, f"{BASE}/{environment.id}/versions/")
 
         assert response.status_code == 200
-        assert response.json() == {"agent": [], "environment": [], "suite": []}
+        body = response.json()
+        assert {piece: body[piece] for piece in ("agent", "environment", "suite")} == {
+            "agent": [],
+            "environment": [],
+            "suite": [],
+        }
+        assert body["locked_versions"] == []
+        lock = _get(auth_client, f"{BASE}/{environment.id}/versions/lock-preview/")
+        assert lock.status_code == 200
+        assert lock.json()["can_lock"] is False
+        assert lock.json()["refusal"] == {
+            "code": "lock_not_ready",
+            "message": "Build this environment before you lock it.",
+        }
 
     def test_versioning_off_is_not_found(
         self, auth_client, user, workspace, storage, settings
@@ -178,6 +192,8 @@ class TestVersionsList:
 
         paths = [
             f"{BASE}/{unknown}/versions/",
+            f"{BASE}/{environment.id}/versions/lock-preview/",
+            f"{BASE}/{unknown}/versions/lock-preview/",
             f"{BASE}/{environment.id}/versions/suite/"
             f"{environment.suite_version_id}/diff/",
             f"{BASE}/{unknown}/versions/suite/{environment.suite_version_id}/diff/",
@@ -435,6 +451,19 @@ class TestVersionsList:
             or "simulate_harness_suite_version" in query["sql"]
         ]
         assert version_selects
+        # Only the two documents the release checks read and the saved-without-check
+        # flag, never the whole column.
+        version_selects = [
+            re.sub(
+                r"\"documents\" -> '(stage_outputs|release_checks)'"
+                r"|\"documents\" ->> 'uncertified'"
+                # Whether a set-aside draft became a saved version: a key test, never the column.
+                r"|\"documents\" \? 'saved_version_id'",
+                "",
+                re.sub(r"\"simulate_harness_environment_version\"\.", "", sql),
+            )
+            for sql in version_selects
+        ]
         assert all('"documents"' not in sql for sql in version_selects)
         assert all(
             '"configuration_snapshot"' not in query["sql"]

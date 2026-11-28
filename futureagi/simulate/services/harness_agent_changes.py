@@ -76,9 +76,12 @@ _ASK_AGAIN = (
     "environment_busy",
     "environment_not_ready",
     "rollback_unavailable",
+    "validation_retry",
     "failed",
 )
-# A move refused this many times in a row may never be possible: no more asks.
+# A move held back by one of these this many times in a row may never be possible: no
+# more asks.
+_CAPPED_ASKS = ("rollback_unavailable", "validation_retry")
 _ROLLBACK_ASKS = 3
 # A pair read for a push is not read again for another this soon: the poller is.
 _PUSH_COOLDOWN = 60
@@ -648,8 +651,7 @@ def _settled(entry: Mapping[str, Any]) -> bool:
     """Whether an activation outcome is final: asking again would not move it."""
     outcome = entry.get("outcome")
     return outcome not in _ASK_AGAIN or (
-        outcome == "rollback_unavailable"
-        and int(entry.get("attempts") or 1) >= _ROLLBACK_ASKS
+        outcome in _CAPPED_ASKS and int(entry.get("attempts") or 1) >= _ROLLBACK_ASKS
     )
 
 
@@ -1193,6 +1195,14 @@ def change_agent_source(
                 "The upload expired; upload the folder again",
                 status_code=422,
                 details={"piece": "agent"},
+            )
+        if make_default:
+            # Imported here: the Epoch's services import this module.
+            from simulate.services.agent_fix_runs import refuse_outside_the_epoch
+
+            refuse_outside_the_epoch(
+                organization_id=environment.organization_id,
+                archive_artifact_id=archive_artifact_id,
             )
         return _made(
             parent,

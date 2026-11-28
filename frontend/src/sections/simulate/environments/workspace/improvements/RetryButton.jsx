@@ -10,38 +10,48 @@ import {
   useRetryFixRun,
 } from "src/api/simulate-environments/fixRuns";
 
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
+
+import { fixName } from "./fixRunView";
+
 // A failed fix the backend allows to start again: the new fix takes the same
-// request and reuses the check runs this one finished, then opens.
+// request and reuses the check runs this one finished, then opens. It names the
+// epoch it retries, here and on the issue page. A viewer sees why they can't.
 export default function RetryButton({ fix }) {
   const navigate = useNavigate();
+  const { canRun } = useSimulationAccess();
   const retry = useRetryFixRun(fix);
   if (fix.state !== "failed" || !fix.retryable) return null;
   return (
-    <Button
-      size="small"
-      variant="contained"
-      color="primary"
-      disabled={retry.isPending}
-      startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
-      onClick={() =>
-        retry.mutate(undefined, {
-          onSuccess: (next) =>
-            navigate(
-              paths.dashboard.simulate.environments.improvement(
-                fix.environment_id,
-                next.id,
+    <ViewerLock locked={!canRun} title={WORKSPACE_COPY.viewer.run}>
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        disabled={!canRun || retry.isPending}
+        startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+        onClick={() =>
+          retry.mutate(undefined, {
+            onSuccess: (next) =>
+              navigate(
+                paths.dashboard.simulate.environments.improvement(
+                  fix.environment_id,
+                  next.id,
+                ),
               ),
-            ),
-          onError: (e) =>
-            enqueueSnackbar(
-              fixErrorOf(e).message || "Could not retry the epoch",
-              { variant: "error" },
-            ),
-        })
-      }
-    >
-      Retry
-    </Button>
+            onError: (e) =>
+              enqueueSnackbar(
+                fixErrorOf(e).message || "Could not retry the epoch",
+                { variant: "error" },
+              ),
+          })
+        }
+      >
+        {`Retry ${fixName(fix)}`}
+      </Button>
+    </ViewerLock>
   );
 }
 

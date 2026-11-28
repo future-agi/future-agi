@@ -54,13 +54,15 @@ const VARIATIONS_NOTE =
   'An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.';
 // The epoch page's first step for a fix that writes variations (fixRunView.js variationLines).
 const VARIATIONS_STEP_LINE = 'Writes variations of the 6 failing cases, then keeps those the current version also fails';
-const STEP_IDS = ['step-variations', 'step-reproduce', 'step-search', 'step-verify', 'step-done'];
+const STEP_IDS = ['step-variations', 'step-reproduce', 'step-diagnose', 'step-search', 'step-verify'];
 
 type Json = Record<string, unknown>;
 
 // GET /simulate/v3/test-executions/<id>/calls/: the run's execution, the part
 // the run page reads (fetchRunCalls and useRunDetail in api/simulate-environments).
-function runCalls(executionId: string): Json {
+// Fifteen calls, six of them failing; `connectedCalls` of them connected
+// (RunExecutionSerializer.connected_calls in futureagi/simulate/views/run_results_v3.py).
+function runCalls(executionId: string, connectedCalls: number): Json {
   return {
     count: 0,
     results: [],
@@ -73,10 +75,14 @@ function runCalls(executionId: string): Json {
       agent_version: 'v1',
       started_at: '2026-11-14T09:00:00Z',
       fix_run: null,
-      summary: { total: 12, outcomes: { passed: 6, failed: 6 }, pass_rate: 50 },
+      connected_calls: connectedCalls,
+      summary: { total: 15, outcomes: { passed: 9, failed: 6 }, pass_rate: 60 },
     },
   };
 }
+
+// Debug failures' reason below 15 connected calls (frontend/src/sections/test-detail/debugFailuresRule.ts).
+const TOO_FEW_CALLS = 'You need at least 15 connected calls to debug failures.';
 
 // GET/POST /simulate/test-executions/<id>/debug-analysis/: a finished diagnosis,
 // in the raw shape mapDebugAnalysis (api/simulate-environments/debugAnalysis.js) reads.
@@ -84,7 +90,7 @@ const DIAGNOSIS: Json = {
   status: 'completed',
   report: null,
   error_message: null,
-  summary: { measured_call_count: 12, broken_goal_count: 1, broken_call_count: 6, one_off_count: 0 },
+  summary: { measured_call_count: 12, broken_goal_count: 1, broken_call_count: 6 },
   goals: [
     {
       goal: 'escalated',
@@ -96,10 +102,18 @@ const DIAGNOSIS: Json = {
       unexplained_call_ids: [],
     },
   ],
-  one_offs: [],
+  one_offs: [
+    { id: 'oo-1', title: 'Omits the fare', phrase: 'omits the fare', call_ids: ['call-a', 'call-b'] },
+    { id: 'oo-2', title: 'Omits The Fare', phrase: 'Omits the fare', call_ids: ['call-c'] },
+  ],
 };
 // What the drawer reads when it opens. A finished diagnosis is read, never queued again.
 const DIAGNOSIS_ON_OPEN: Json = DIAGNOSIS;
+// The read of a run with no diagnosis yet. The run page reads it while the rule
+// blocks the button: a diagnosis already made would keep the button open.
+const NOT_DIAGNOSED: Json = {
+  status: 'not_requested', report: null, error_message: null, summary: null, goals: [], one_offs: [], findings: [],
+};
 
 // GET /simulate/api/agent-fix-runs/launch-options/: AgentFixLaunchOptionsSerializer,
 // shaped as fixtureLaunchOptions in frontend/src/api/simulate-environments/__tests__/fixtures/fixRuns.js.
@@ -123,6 +137,8 @@ function launchOptions(executionId: string): Json {
     limits: LIMITS,
     blocked: null,
     variations_blocked: null,
+    held_back_scenario_keys: null,
+    ship: { path: 'make_default', blocked: null },
   };
 }
 
@@ -179,7 +195,9 @@ function queuedEpoch(fixId: string, executionId: string, body: Json): Json {
 const endsWith = (suffix: string) => (url: URL) => url.pathname.endsWith(suffix);
 
 async function stubEpochApi(page: Page, executionId: string, fixId: string) {
-  const seen = { diagnosisPosts: 0, launchSourceRunIds: [] as string[], launchBodies: [] as Json[] };
+  const seen = {
+    connectedCalls: 14, diagnosed: false, diagnosisPosts: 0, launchSourceRunIds: [] as string[], launchBodies: [] as Json[],
+  };
   let epoch: Json | null = null;
 
   // The real capabilities, with only fix_my_agent switched on.
@@ -190,7 +208,7 @@ async function stubEpochApi(page: Page, executionId: string, fixId: string) {
     await route.fulfill({ response, json });
   });
   await page.route(endsWith(`/simulate/v3/test-executions/${executionId}/calls/`), (route) =>
-    route.fulfill({ json: runCalls(executionId) }),
+    route.fulfill({ json: runCalls(executionId, seen.connectedCalls) }),
   );
   // The run header's reliability read: no numbers yet, so ReliabilityHeadline
   // (runs/detail/ReliabilityHeadline.jsx) renders nothing. Unstubbed, it 404s for
@@ -203,7 +221,7 @@ async function stubEpochApi(page: Page, executionId: string, fixId: string) {
       seen.diagnosisPosts += 1;
       return route.fulfill({ json: DIAGNOSIS });
     }
-    return route.fulfill({ json: DIAGNOSIS_ON_OPEN });
+    return route.fulfill({ json: seen.diagnosed ? DIAGNOSIS_ON_OPEN : NOT_DIAGNOSED });
   });
   await page.route(endsWith('/simulate/api/agent-fix-runs/launch-options/'), (route) => {
     const sourceRunId = new URL(route.request().url()).searchParams.get('source_run_id') ?? '';
@@ -228,20 +246,23 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   annotation: flowAnnotation({
     id: 'SIM-E2E-007', area: 'simulate',
     userGoal: 'A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step',
-    steps: ['open a finished run of the environment', 'open Debug failures', 'press Run Epoch',
+    steps: ['open a finished run of the environment with 14 connected calls and point at Debug failures',
+            'open it again with 15 connected calls', 'open Debug failures', 'press Run Epoch',
             'read the Scenarios row of the launch form', 'press Run Epoch in the form', 'read the epoch page'],
     browserChecks: [
+      'at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."',
       'the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each',
       'the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit',
       'the browser lands on the environment\'s improvements/<id> URL of the epoch the POST returned',
-      'the epoch page\'s steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
+      'the epoch page\'s stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
+      'the Also seen list shows the two same-name one-off issues as one "Omits the fare" row with a View',
       'the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)',
     ],
   }),
 }, async ({ page, actor }, testInfo) => {
-  // 7 browser waits, each its own UI_READY: 7 × 60s = 420s, plus 60s headroom
+  // 9 browser waits, each its own UI_READY: 9 × 60s = 540s, plus 60s headroom
   // so a slow run fails on the wait that ran out.
-  test.setTimeout(480_000);
+  test.setTimeout(600_000);
   const executionId = randomUUID();
   const fixId = `e2e-sim7-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   await testInfo.attach('seeded', {
@@ -251,6 +272,19 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   const seen = await stubEpochApi(page, executionId, fixId);
   const runPath = `/dashboard/simulate/environments/${ENV_ID}/runs/${RUN_TEST_ID}/${executionId}`;
 
+  await test.step('ui: check 0, at 14 connected calls Debug failures is held and says why', async () => {
+    await page.goto(runPath);
+    const button = page.getByRole('button', { name: 'Debug failures' });
+    await expect(button).toBeDisabled({ timeout: UI_READY });
+    // A disabled button takes no pointer events; its wrapper carries the tooltip.
+    await button.locator('..').hover();
+    await expect(page.getByRole('tooltip')).toHaveText(TOO_FEW_CALLS, { timeout: UI_READY });
+  }, { timeout: UI_READY });
+
+  seen.connectedCalls = 15;
+  seen.diagnosed = true;
+  // The run page reads the launch options on every load; check 1 counts this load's.
+  seen.launchSourceRunIds.length = 0;
   await test.step('ui: the finished run opens with Debug failures', async () => {
     await page.goto(runPath);
     await expect(page.getByRole('button', { name: 'Debug failures' })).toBeEnabled({ timeout: UI_READY });
@@ -259,6 +293,12 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   await test.step('ui: the diagnosis offers Run Epoch', async () => {
     await page.getByRole('button', { name: 'Debug failures' }).click();
     await expect(page.getByRole('button', { name: 'Run Epoch', exact: true })).toBeVisible({ timeout: UI_READY });
+    // The two same-name one-offs read as one plain row counting their 3 calls, with a View.
+    const fare = page.getByText('Omits the fare', { exact: true });
+    await expect(fare).toHaveCount(1);
+    const fareRow = fare.locator('..');
+    await expect(fareRow.getByText('3', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(fareRow.getByRole('button', { name: 'View', exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
   const dialog = page.getByRole('dialog').filter({ hasText: `Run Epoch on ${AGENT_NAME}` });

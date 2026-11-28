@@ -1,0 +1,109 @@
+name: Batch train
+
+# The batch train (.github/scripts/devflow_train.py) rolls up to 6 approved,
+# green, low-risk pull requests labelled devflow:train into one rollup pull
+# request. The rollup runs the full PR suite; a person approves it; then the
+# train enqueues it (enqueuePullRequest at that head) as one merge-queue
+# entry, so one queue build lands up to 6 pull requests. Neither token here
+# approves anything, and no job lets GITHUB_TOKEN write pull requests.
+#
+# Dark by default: every run prints its plan and writes nothing. Live needs,
+# in this order: the environment devflow-train with deployments from dev only,
+# its secrets TRAIN_APP_ID and TRAIN_APP_PRIVATE_KEY, the train App installed,
+# and then the repository variable DEVFLOW_TRAIN_MODE=live.
+#
+# Every trigger runs dev's copy of this file. A push to dev is the heartbeat.
+# A live run keeps ticking while anything is in flight, up to
+# DEVFLOW_TRAIN_LOOP_MINUTES (default 330, under the 360-minute job limit),
+# and stops after 10 minutes with nothing in flight. A rollup takes longer
+# than the App token's hour, so the script mints a new token before the old
+# one expires. While a run ticks, a newer push waits in the concurrency group
+# and starts when the loop ends. The cost is one runner held while the train
+# is busy.
+# A label or a queue removal on a pull request runs a plan only: a pull
+# request run never gets the environment, so never the App key.
+# workflow_dispatch only triggers when the file is on the default branch
+# (main), and schedule and workflow_run run main's copy, so none of them is
+# used. When dev is idle and no live run is ticking, a newly labelled pull
+# request waits for the next push to dev.
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    types: [labeled, dequeued]
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One train run on dev at a time; a newer push waits and never cancels a
+  # run that is mid-way through building a rollup. Plans run side by side.
+  group: devflow-train-${{ github.event_name == 'push' && 'dev' || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}
+  DEVFLOW_TRAIN_MAX_BATCH: ${{ vars.DEVFLOW_TRAIN_MAX_BATCH }}
+  DEVFLOW_TRAIN_MAX_ROLLUPS: ${{ vars.DEVFLOW_TRAIN_MAX_ROLLUPS }}
+  DEVFLOW_TRAIN_QUEUE_BUILDS: ${{ vars.DEVFLOW_TRAIN_QUEUE_BUILDS }}
+  DEVFLOW_TRAIN_REQUIRE_VERDICT: ${{ vars.DEVFLOW_TRAIN_REQUIRE_VERDICT }}
+  APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
+
+jobs:
+  plan:
+    name: Batch train plan
+    if: github.event_name == 'pull_request' || vars.DEVFLOW_TRAIN_MODE != 'live'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read # open base-red issues pause the train
+      actions: read # failed job logs of a red rollup
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - name: Self-test
+        run: python3 -I .github/scripts/test_devflow_train.py
+      - name: Plan the next batches (writes nothing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: python3 -I .github/scripts/devflow_train.py tick --mode dark
+
+  live:
+    name: Batch train
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.DEVFLOW_TRAIN_MODE == 'live'
+    runs-on: ubuntu-latest
+    # The loop stops at DEVFLOW_TRAIN_LOOP_MINUTES (keep it at 330 or less).
+    timeout-minutes: 345
+    environment: devflow-train
+    permissions:
+      contents: read
+      pull-requests: read # the train App writes labels and comments; nothing approves
+      issues: write # the breaker's base-red issues
+      actions: write # re-run an infra-red rollup's failed jobs; a member's full run
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - name: Self-test
+        run: python3 -I .github/scripts/test_devflow_train.py
+      - name: Run the train while anything is in flight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRAIN_APP_ID: ${{ secrets.TRAIN_APP_ID }}
+          TRAIN_APP_PRIVATE_KEY: ${{ secrets.TRAIN_APP_PRIVATE_KEY }}
+          REPO: ${{ github.repository }}
+          LOOP_MINUTES: ${{ vars.DEVFLOW_TRAIN_LOOP_MINUTES || 330 }}
+          # A crash posts one Slack line, only with DEVFLOW_HEARTBEAT=live.
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python3 -I .github/scripts/devflow_train.py tick --mode live --loop-minutes "$LOOP_MINUTES" --idle-minutes 10

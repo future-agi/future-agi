@@ -10,6 +10,7 @@ it is safe to stop and re-run at any point.
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import IntegrityError, transaction
@@ -176,7 +177,7 @@ def backfill_batch(scans: list[dict], using: str) -> BatchResult:
         )
         .values_list("project_id", "trace_id")
     )
-    issues_by_scan: dict[uuid.UUID, list[dict]] = {}
+    issues_by_scan: dict[uuid.UUID, list[Any]] = {}
     for issue in (
         Issue.using(using)
         .filter(scan_result_id__in=[scan["id"] for scan in pending])

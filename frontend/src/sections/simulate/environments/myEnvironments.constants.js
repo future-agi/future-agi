@@ -1,4 +1,6 @@
 export const ENV_STATUS = {
+  // An adaptation's design, waiting for the person to approve it.
+  AWAITING_APPROVAL: "awaiting_approval",
   BUILDING: "building",
   NOT_RUN: "not_run",
   RUNNING: "running",
@@ -14,6 +16,7 @@ export const ENV_STATUS = {
 // completed | failed, from harness_environment.status_for). A cancel in flight
 // stays building/running until it lands as failed, so these two cover it.
 export const LIVE_ENV_STATUSES = new Set([
+  ENV_STATUS.AWAITING_APPROVAL,
   ENV_STATUS.BUILDING,
   ENV_STATUS.RUNNING,
 ]);
@@ -32,6 +35,7 @@ export const BUILD_STATUS = {
 // The label and status role (theme.palette.status.<role>) of each run-state
 // pill; StatusBadge turns the role into colours.
 export const STATUS_META = {
+  awaiting_approval: { label: "Awaiting approval", role: "warning" },
   building: { label: "Building", role: "info" },
   not_run: { label: "Not run yet", role: "neutral" },
   running: { label: "Running", role: "info" },
@@ -57,12 +61,21 @@ export const ROW_ACTION_LABEL = {
 };
 
 export const BUILDING_TOOLTIP = "Wait for setup to finish";
+export const AWAITING_APPROVAL_TOOLTIP = "Approve its design first";
 
 export const DELETE_DIALOG_COPY = {
   title: "Delete environment?",
   body: "and everything derived from it (scenarios, personas, evals, and run history) will be removed from this workspace. This cannot be undone.",
   cancel: "Cancel",
   confirm: "Delete",
+};
+
+// A delete refused while a version is locked: an admin can unlock it from there.
+// ``pair`` names the unlocked versions, as LOCK_COPY does; null when unknown.
+export const DELETE_REFUSAL_COPY = {
+  unlock: "Unlock versions",
+  unlocked: (label, pair) =>
+    pair ? `Unlocked ${pair} (lock ${label}).` : `Unlocked lock ${label}.`,
 };
 
 // A field the list API doesn't send at all (not even as null). Cells draw a

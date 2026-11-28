@@ -17,20 +17,31 @@ from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .code_archive import CodeArchive
 from .component_evaluation import ComponentEvaluation
-from .eval_config import SimulateEvalConfig
+from .eval_config import SimulateEvalConfig, SimulateEvalConfigRemovedKeys
 from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
+from .harness_release import (
+    HarnessAgentBinding,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+    HostedAgentSpec,
+)
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
+    HarnessLockedVersion,
+    HarnessLockedVersionMember,
     HarnessNudge,
     HarnessSuiteMember,
     HarnessSuiteValidation,
     HarnessSuiteVersion,
+    HarnessTaskSplit,
+    TaskSplit,
 )
 from .hosted_harness import (
     HostedHarnessArtifact,
@@ -92,14 +103,24 @@ __all__ = [
     "HarnessAgentVersionRuntime",
     "HarnessAssembledBundle",
     "HarnessEnvironmentVersion",
+    "HarnessLockedVersion",
+    "HarnessLockedVersionMember",
     "HarnessNudge",
     "HarnessSuiteMember",
     "HarnessSuiteValidation",
     "HarnessSuiteVersion",
+    "HarnessTaskSplit",
+    "TaskSplit",
+    "HarnessAgentBinding",
+    "HarnessEnvironmentRelease",
+    "HarnessRunManifest",
+    "HarnessSuiteRelease",
+    "HostedAgentSpec",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",
     "SimulateEvalConfig",
+    "SimulateEvalConfigRemovedKeys",
     "TestExecution",
     "CallExecution",
     "CallTranscript",

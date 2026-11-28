@@ -1901,6 +1901,12 @@ export const endpoints = {
         "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
         { id, candidate_id: candidateId },
       ),
+    // A person's own coding agent: the brief it fixes a run from, and an
+    // attempt's verdict.
+    codingAgentBrief: () =>
+      apiPath("/simulate/api/agent-fix-runs/coding-agent-brief/"),
+    verdict: (id) =>
+      apiPath("/simulate/api/agent-fix-runs/{id}/verdict/", { id }),
   },
   // An epoch run from an Error Feed issue, before and after it launches.
   agentFixIssues: {
@@ -2086,6 +2092,7 @@ export const endpoints = {
       test: (id) =>
         apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
     },
+    escalationSettings: apiPath("/tracer/feed/escalation-settings/"),
     list: apiPath("/tracer/feed/issues/"),
     stats: apiPath("/tracer/feed/issues/stats/"),
     detail: (clusterId) =>

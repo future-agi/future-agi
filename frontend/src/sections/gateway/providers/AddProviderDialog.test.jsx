@@ -162,6 +162,46 @@ describe("AddProviderDialog validation", () => {
     expect(updateMutate.mock.calls[0][0].config.default_timeout).toBe(30);
   });
 
+  it.each([
+    [-1, 0],
+    [0, 0],
+    [7, 7],
+  ])(
+    "preserves the effective stored concurrency %i on a model-only edit",
+    async (stored, expected) => {
+      renderEditDialog({
+        models: ["old-model"],
+        default_timeout: 60,
+        max_concurrent: stored,
+      });
+      await userEvent.type(
+        await screen.findByPlaceholderText(/Select models/i),
+        "new-model",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Save Changes" }),
+      );
+      expect(updateMutate.mock.calls[0][0].config).toMatchObject({
+        models: ["old-model", "new-model"],
+        max_concurrent: expected,
+        default_timeout: 60,
+      });
+    },
+  );
+
+  it("does not normalize a newly entered negative concurrency on submit", async () => {
+    renderEditDialog({
+      models: ["existing"],
+      default_timeout: 60,
+      max_concurrent: 9,
+    });
+    fireEvent.change(screen.getByLabelText("Max Concurrent"), {
+      target: { value: "-5" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.max_concurrent).toBe(-5);
+  });
+
   const saveEditedProvider = async () => {
     renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
     await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
