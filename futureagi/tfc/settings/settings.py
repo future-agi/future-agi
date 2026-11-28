@@ -1837,6 +1837,27 @@ FI_TRAJECTORY_STORE_READ_ENABLED = os.getenv(
     "FI_TRAJECTORY_STORE_READ_ENABLED", ""
 ).strip().lower() in ("1", "true", "yes", "on")
 
+# Operator switch for trajectory_items GC deletes (rollout step "turn on GC
+# deletes"). Default off: the daily trajectory-items-gc job then issues no
+# ClickHouse or Redis statement. Even when on, GC deletes only while the
+# collectors' reuse contract key is present and the reference audit is clean.
+# Project erasure (trajectory_erase / request_trajectory_erasure) is not gated
+# on this switch or on the read flag.
+FI_TRAJECTORY_GC_DELETES_ENABLED = os.getenv(
+    "FI_TRAJECTORY_GC_DELETES_ENABLED", ""
+).strip().lower() in ("1", "true", "yes", "on")
+# Cluster used to count a project's rows on every replica during erasure. Empty
+# means discover it from system.clusters (the single-shard cluster whose
+# replica count matches system.replicas); lifecycle jobs refuse if that fails.
+FI_TRAJECTORY_CH_CLUSTER = os.getenv("FI_TRAJECTORY_CH_CLUSTER", "").strip()
+# How long erasure waits after publishing the collector invalidation before it
+# clears seen sets and deletes items. The default covers the collector's
+# auth cache_ttl (5m) plus warm_ttl (1h, a stale entry served while a refresh
+# fails) plus one minute.
+FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS = int(
+    os.getenv("FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS", "3960")
+)
+
 # Operational SQL workbench budgets, not edition/pricing entitlements.
 from .sql_workbench import (  # noqa: E402,F401
     SQL_WORKBENCH_AUDIT_RETENTION_DAYS,

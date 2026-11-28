@@ -22,6 +22,19 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         queue="tasks_l",
         description="Resume durable metric erasure and queued snapshot captures",
     ),
+    # Reference-aware GC of trajectory_items. Not EE-gated and not tied to the
+    # trajectory read flag: it runs wherever 040 exists. It deletes only when
+    # FI_TRAJECTORY_GC_DELETES_ENABLED is on, the collectors' reuse contract
+    # key is present and the reference audit is clean; otherwise it issues no
+    # DELETE (with the switch off, no ClickHouse statement at all).
+    ScheduleConfig(
+        schedule_id="trajectory-items-gc",
+        activity_name="tracer.trajectory_items_gc",
+        interval_seconds=86400,
+        catchup_window_seconds=6 * 3600,
+        queue="tasks_l",
+        description="Delete trajectory items no present span can reference",
+    ),
     ScheduleConfig(
         schedule_id="process-inline-evals",
         activity_name="process_in_line_evals",

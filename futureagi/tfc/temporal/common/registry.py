@@ -552,6 +552,22 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_monthly_closing_workflow", error=str(e)
         )
 
+    # Trajectory item erasure after a project's spans are gone. Its activities
+    # are drop-in activities in tracer.tasks (registered on tasks_l below).
+    try:
+        from tfc.temporal.trajectory_erasure import TrajectoryErasureWorkflow
+
+        register_for_queues(
+            queues=["tasks_l"],
+            workflows=[TrajectoryErasureWorkflow],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_trajectory_erasure_workflow", error=str(e)
+        )
+
     _workflows_registered = True
 
 

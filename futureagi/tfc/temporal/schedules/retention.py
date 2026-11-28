@@ -53,7 +53,26 @@ def hard_delete_expired_data_activity():
         data_types_affected=len(result),
         total_rows=total,
     )
+    _run_trajectory_items_gc()
     return result
+
+
+def _run_trajectory_items_gc() -> None:
+    """Follow span hard delete with the trajectory-items GC.
+
+    GC derives every cut from the spans still present, so running it right
+    after span deletion only brings forward what the daily schedule does. It
+    is a no-op unless FI_TRAJECTORY_GC_DELETES_ENABLED is on, and a failure
+    never fails the retention run (the daily schedule retries).
+    """
+    try:
+        from tracer.services.clickhouse.v2.trajectory_lifecycle import (
+            trajectory_items_gc,
+        )
+
+        trajectory_items_gc()
+    except Exception:
+        logger.exception("trajectory_items_gc_after_hard_delete_failed")
 
 
 RETENTION_SCHEDULES: list[ScheduleConfig] = [

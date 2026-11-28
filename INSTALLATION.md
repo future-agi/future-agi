@@ -1277,6 +1277,57 @@ Distributed's MinIO can be mirrored to any S3 endpoint with `mc mirror`. In
 Standalone the stored files live in the `app-data` volume; back that volume up
 alongside Postgres.
 
+### Trajectory item store: backup, restore and erasure
+
+When the trajectory item store is in use (ClickHouse schema `040` applied and
+the collector's `FI_TRAJECTORY_DEDUP_MODE` not `off`), a span may hold
+pointers into the `trajectory_items` table instead of its full input and
+output. The two tables must be backed up and restored together, and the
+collectors' Redis "seen" sets must be cleared after a restore.
+
+Back up and restore:
+
+1. Pause the `trajectory-items-gc` and `retention-hard-delete` schedules
+   (`python manage.py register_temporal_schedules --pause <schedule id>`,
+   once per schedule, or the Temporal UI) and stop the collectors.
+2. Back up `spans` first, then `trajectory_items`
+   (`BACKUP TABLE spans ...`, then `BACKUP TABLE trajectory_items ...`), so
+   the items backup holds everything the spans backup points at.
+3. Restore both tables.
+4. Run `python manage.py trajectory_seen_reset`. It sets a new `traj:epoch`
+   and removes every `traj:seen:*` key, so no collector reuses an item the
+   restore removed. It prints counts only.
+5. Start the collectors.
+6. Run `python manage.py trajectory_audit --since <backup time>` and expect
+   `"violations": 0`.
+7. Re-apply span erasures made after the backup time, then
+   `trajectory_erase` for those projects (below).
+8. Unpause the schedules.
+
+Standalone needs no step 4 on its own: its Redis keeps nothing on disk and the
+updater restores only with the app container stopped, so the collector starts
+with an empty seen store. Distributed runs Redis with `appendonly yes` and
+needs the reset.
+
+Garbage collection. The daily `trajectory-items-gc` job deletes item copies
+that no span still present can reference: per project, copies persisted more
+than 72 hours before the project's oldest span row (or before now, when the
+project has no span rows). It deletes nothing unless
+`FI_TRAJECTORY_GC_DELETES_ENABLED=true` is set on the backend, every collector
+has written the reuse contract key, and an audit of recent spans finds no
+missing or over-age item. It is a no-op until `040` is applied.
+
+Erasing a project (GDPR). Item content is removed together with the spans
+that reference it:
+
+1. Delete the project in the app, then delete its rows from ClickHouse
+   `spans`.
+2. Run `python manage.py trajectory_erase --project <project uuid>`. It
+   refuses while the project still exists or any replica holds a span row for
+   it. Otherwise it starts a background workflow that stops the collectors
+   accepting the project, clears its seen sets, deletes its items, and checks
+   again 72 hours later.
+
 ---
 
 ## Troubleshooting
