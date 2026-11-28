@@ -18,9 +18,14 @@ SPEC.loader.exec_module(real)
 
 def model(project="fagi-upd-e2e-real-unit"):
     volumes = {key: {"name": project + "_" + key} for key in ("app-data", "postgres-data", "clickhouse-data")}
+    services = {key: {"image": "fixture", "restart": "unless-stopped", "volumes": []}
+                for key in ("app", "postgres", "clickhouse")}
+    services["app"]["environment"] = {
+        "FUTURE_AGI_TELEMETRY_DISABLED": "true",
+        "FUTURE_AGI_TELEMETRY_URL": "http://127.0.0.1:9",
+    }
     return {
-        "services": {key: {"image": "fixture", "restart": "unless-stopped", "volumes": []}
-                     for key in ("app", "postgres", "clickhouse")},
+        "services": services,
         "volumes": volumes,
         "networks": {"default": {"name": project + "_default"}},
     }

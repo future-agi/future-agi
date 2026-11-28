@@ -168,6 +168,46 @@ class E2ETelemetryEnvironmentTests(unittest.TestCase):
                 environment = render(str(root / '.env'), (file,))['services']['app']['environment']
                 self.assert_loopback({'app': environment}, ('app',))
 
+    def test_manual_rehearsal_checks_both_retained_layouts_before_boot(self):
+        from deploy.tests.compose_test_tools import compose_command
+
+        harness = ROOT / 'deploy/tests/update_e2e/rehearse_real_standalone.sh'
+        helpers = harness.with_name('standalone_rehearsal_env.sh')
+        # Exercise the helpers below without starting a stack. Also ensure the
+        # entry point still calls the guard before each install/update boot.
+        source = harness.read_text().split('pin_standalone_telemetry "$CHECKOUT/.env"', 1)[1]
+        for version, boot in (
+            ('FROM_VERSION', 'run 20-install.log'),
+            ('TO_VERSION', 'run 55-apply.log'),
+            ('TO_VERSION', 'run 58-install-again.log'),
+            ('FROM_VERSION', 'paste_command 74-rollback.log'),
+            ('TO_VERSION', 'run 85-apply-staged.log'),
+        ):
+            before, marker, source = source.partition(boot)
+            self.assertTrue(marker, boot)
+            self.assertIn(f'require_standalone_telemetry "${version}"', before, boot)
+        for tag in ('v1.51.0', 'v1.52.0'):
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                file = retained_compose(root, tag)
+                env_file = root / '.env'
+                env_file.write_bytes(subprocess.check_output(['git', 'show', f'{tag}:.env.example'], cwd=ROOT))
+                command = [
+                    'bash', '-ec',
+                    'source "$1"; shift; pin_standalone_telemetry .env; check_standalone_telemetry "$PWD" "$@"',
+                    'rehearsal', str(helpers), tag, *compose_command(),
+                ]
+                subprocess.run(command, cwd=root, env=host_env(EXPORTED), check=True)
+                app = render(str(env_file), (file,))['services']['app']['environment']
+                self.assert_loopback({'app': app}, ('app',))
+                for key, value in EXPORTED.items():
+                    with self.subTest(key=key):
+                        override = {'services': {'app': {'environment': {key: value}}}}
+                        (root / 'docker-compose.override.yml').write_text(yaml.safe_dump(override))
+                        result = subprocess.run(command, cwd=root, env=host_env(EXPORTED), capture_output=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(result.stdout, b'')
+
     def test_rehearsal_refuses_retained_app_that_ignores_either_setting(self):
         from scripts.update_rehearsal_shipping import require_rehearsal_telemetry
 

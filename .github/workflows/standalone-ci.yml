@@ -48,6 +48,11 @@ on:
     branches: [dev, main]
     paths:
       - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/helm/futureagi/**"
+      - "scripts/update_rehearsal_milestone.py"
+      - "scripts/update_rehearsal_shipping.py"
+      - ".github/workflows/update-real-boot-smoke.yml"
       - "deploy/standalone/**"
       - "deploy/tests/**"
       - "bin/install*"
@@ -96,6 +101,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       install: ${{ steps.filter.outputs.install || steps.always.outputs.install }}
+      telemetry: ${{ steps.filter.outputs.telemetry }}
       arches: ${{ steps.arches.outputs.arches }}
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +131,12 @@ jobs:
               - 'scripts/test_install_smoke.py'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/standalone-ci.yml'
+            telemetry:
+              - 'docker-compose.distributed.yml'
+              - 'deploy/helm/futureagi/**'
+              - 'scripts/update_rehearsal_milestone.py'
+              - 'scripts/update_rehearsal_shipping.py'
+              - '.github/workflows/update-real-boot-smoke.yml'
             arm64:
               - 'deploy/standalone/**'
               - 'futureagi/Dockerfile.oss'
@@ -159,7 +171,7 @@ jobs:
   standalone-unit:
     name: standalone bootstrap unit tests
     needs: changes
-    if: needs.changes.outputs.install == 'true'
+    if: needs.changes.outputs.install == 'true' || needs.changes.outputs.telemetry == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
