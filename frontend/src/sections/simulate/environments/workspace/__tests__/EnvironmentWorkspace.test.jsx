@@ -859,7 +859,8 @@ describe("EnvironmentWorkspace route shell", () => {
     );
     renderWorkspace("/dashboard/simulate/environments/job-build");
     expect(await screen.findByText("Review the design")).toBeInTheDocument();
-    expect(screen.getByText("Designing")).toBeInTheDocument();
+    // Without the backend's designing state the pill keeps today's "Building".
+    expect(screen.queryByText("Designing")).toBeNull();
     expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
     expect(
       screen.getByRole("button", { name: "Approve and build" }),

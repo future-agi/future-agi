@@ -453,7 +453,8 @@ export default function EnvironmentWorkspace() {
                   buildingTooltip: "Review and approve to continue.",
                   awaitingApproval: true,
                 }
-              : drafting
+              : // The pill says Designing only when the backend says so; until then it reads Building.
+                designState === DESIGN_STATE.DESIGNING
                 ? {
                     ...buildingEnv,
                     buildingLabel: STATUS_META.designing.label,
