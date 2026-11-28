@@ -26,26 +26,32 @@ module.exports = {
     "src/**/*.stories.*",
     "src/assets/**",
   ],
-  // Loaded only so existing eslint-disable comments for these rules resolve;
-  // the rules themselves stay off here (the main config runs them).
-  plugins: ["react", "react-hooks", "react-refresh"],
+  // The React plugins let existing eslint-disable comments resolve.
+  plugins: ["react", "react-hooks", "react-refresh", "@typescript-eslint"],
   overrides: [
+    {
+      files: ["**/*.ts", "**/*.tsx"],
+      parser: "@typescript-eslint/parser",
+    },
     {
       // The shared dialogs are built on MUI Dialog.
       files: [
         "src/components/custom-dialog/**",
         "src/components/ModalWrapper/**",
       ],
-      rules: { "no-restricted-imports": "off" },
+      rules: {
+        "no-restricted-imports": "off",
+        "@typescript-eslint/no-restricted-imports": "off",
+      },
     },
   ],
   rules: {
     "react/prop-types": "off",
     "react-hooks/exhaustive-deps": "off",
     "react-refresh/only-export-components": "off",
-    // A warning, not an error: CI prints it for added imports but doesn't fail.
-    "no-restricted-imports": [
-      "warn",
+    // Separate import rules so Dialog fails CI but legacy components only warn.
+    "@typescript-eslint/no-restricted-imports": [
+      "error",
       {
         paths: [
           {
@@ -55,6 +61,11 @@ module.exports = {
           },
           { name: "@mui/material/Dialog", message: DIALOG_MESSAGE },
         ],
+      },
+    ],
+    "no-restricted-imports": [
+      "warn",
+      {
         // Older components kept for the screens that already use them. A new
         // import of one prints a warning that names the replacement.
         patterns: [

@@ -19,7 +19,8 @@ const srcRoot = path.resolve(__dirname, "..", "src");
 // (seriesColor / seriesColors in src/theme/data-colors.js).
 export const ALLOWED_REASONS = {
   brand: "a third-party or Future AGI brand colour or logo",
-  encoding: "a fixed colour that names a type everywhere it appears (span, label, message role)",
+  encoding:
+    "a fixed colour that names a type everywhere it appears (span, label, message role)",
   "user-picked": "a colour a user chose and the product stores",
   illustration: "decorative artwork or animation",
   "editor theme": "a code editor's syntax colours",
@@ -51,7 +52,8 @@ export const WHOLE_FILE_EXCEPTIONS = [
 export const MAX_DS_OPTOUTS = 81;
 
 const RULE = "no-restricted-syntax";
-const DISABLE = /eslint-disable(-next-line|-line)?\s+([^*\n]*?)(?:\s*\*\/|\s*$)/;
+const DISABLE =
+  /eslint-disable(-next-line|-line)?\s+([^*\n]*?)(?:\s*\*\/|\s*$)/;
 
 const walk = (dir) =>
   fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -59,7 +61,7 @@ const walk = (dir) =>
     if (entry.isDirectory()) {
       return entry.name === "node_modules" ? [] : walk(full);
     }
-    return /\.(js|jsx)$/.test(entry.name) ? [full] : [];
+    return /\.[jt]sx?$/.test(entry.name) ? [full] : [];
   });
 
 const reasonOf = (rest) => {
@@ -94,7 +96,9 @@ for (const file of walk(srcRoot)) {
     }
     optouts += 1;
     if (!reason) {
-      problems.push(`${where}  opt-out without a reason; add "-- ds: <reason>"`);
+      problems.push(
+        `${where}  opt-out without a reason; add "-- ds: <reason>"`,
+      );
     } else if (!allowed(reason)) {
       problems.push(
         `${where}  "${reason}" isn't an allowed reason (${Object.keys(ALLOWED_REASONS).join(", ")})`,

@@ -14,7 +14,7 @@
     "build": "node --max-old-space-size=8192 ./node_modules/.bin/vite build",
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "lint:fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\"",
-    "lint:ds": "eslint --no-eslintrc -c .eslintrc.ds.cjs \"src/**/*.{js,jsx}\"",
+    "lint:ds": "eslint --no-eslintrc -c .eslintrc.ds.cjs \"src/**/*.{js,jsx,ts,tsx}\"",
     "lint:ds:changed": "node scripts/lint-ds-changed.mjs",
     "ds:optouts": "node scripts/ds-optouts.mjs",
     "tokens:build": "python3 -I design-system/tools/build_tokens.py",

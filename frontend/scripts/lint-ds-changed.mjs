@@ -44,11 +44,15 @@ const resolveMergeBase = () => {
   for (const ref of candidates) {
     const mergeBase = tryGit("merge-base", "HEAD", ref);
     if (!mergeBase) continue;
-    const distance = Number(tryGit("rev-list", "--count", `${mergeBase}..HEAD`));
+    const distance = Number(
+      tryGit("rev-list", "--count", `${mergeBase}..HEAD`),
+    );
     if (!best || distance < best.distance) best = { ref, mergeBase, distance };
   }
   if (!best) {
-    console.error(`lint:ds:changed: no merge-base with ${candidates.join(" or ")}`);
+    console.error(
+      `lint:ds:changed: no merge-base with ${candidates.join(" or ")}`,
+    );
     process.exit(2);
   }
   return best;
@@ -59,25 +63,30 @@ const addedLines = (mergeBase) => {
   const diff = git(
     "diff",
     "-U0",
-    "--diff-filter=AM",
+    "--diff-filter=AMR",
     "--no-color",
     mergeBase,
     "--",
     // A plain pathspec `*` crosses directories, so this covers all of src.
     "src/*.js",
     "src/*.jsx",
+    "src/*.ts",
+    "src/*.tsx",
   );
   const repoRoot = git("rev-parse", "--show-toplevel");
   const byFile = new Map();
+  let basePath = null;
   let current = null;
   for (const line of diff.split("\n")) {
-    if (line.startsWith("+++ b/")) {
-      current = path.resolve(repoRoot, line.slice(6));
-      byFile.set(current, new Set());
+    if (line.startsWith("--- ")) {
+      basePath = line.startsWith("--- a/") ? line.slice(6) : null;
+    } else if (line.startsWith("+++ b/")) {
+      current = { basePath, lines: new Set() };
+      byFile.set(path.resolve(repoRoot, line.slice(6)), current);
     } else if (current && line.startsWith("@@")) {
       const [, start, count = "1"] = line.match(/\+(\d+)(?:,(\d+))?/);
       for (let n = 0; n < Number(count); n += 1) {
-        byFile.get(current).add(Number(start) + n);
+        current.lines.add(Number(start) + n);
       }
     }
   }
@@ -86,7 +95,7 @@ const addedLines = (mergeBase) => {
 
 const { ref, mergeBase } = resolveMergeBase();
 const changed = addedLines(mergeBase);
-const files = [...changed.keys()].filter((f) => changed.get(f).size > 0);
+const files = [...changed.keys()].filter((f) => changed.get(f).lines.size > 0);
 
 const eslint = new ESLint({
   cwd: frontendRoot,
@@ -97,30 +106,28 @@ const results = files.length ? await eslint.lintFiles(files) : [];
 
 // An import rule fires on the whole import line, so reformatting or extending an
 // existing import would look new. Count it only if the base file didn't have it.
-const baseImportMessages = async (filePath) => {
-  const rel = path.relative(git("rev-parse", "--show-toplevel"), filePath);
-  const base = tryGit("show", `${mergeBase}:${rel}`);
+const isImportMessage = ({ ruleId }) =>
+  ruleId === "no-restricted-imports" ||
+  ruleId === "@typescript-eslint/no-restricted-imports";
+
+const baseImportMessages = async (filePath, basePath) => {
+  if (!basePath) return new Set();
+  const base = tryGit("show", `${mergeBase}:${basePath}`);
   if (base === null) return new Set();
   const [result] = await eslint.lintText(base, { filePath });
-  return new Set(
-    result.messages
-      .filter((m) => m.ruleId === "no-restricted-imports")
-      .map((m) => m.message),
-  );
+  return new Set(result.messages.filter(isImportMessage).map((m) => m.message));
 };
 
 let count = 0;
 let warnings = 0;
 for (const result of results) {
-  const lines = changed.get(result.filePath);
+  const { basePath, lines } = changed.get(result.filePath);
   let hits = result.messages.filter(
-    (m) => m.message.includes("[DS]") && lines?.has(m.line),
+    (m) => m.message.includes("[DS]") && lines.has(m.line),
   );
-  if (hits.some((m) => m.ruleId === "no-restricted-imports")) {
-    const before = await baseImportMessages(result.filePath);
-    hits = hits.filter(
-      (m) => m.ruleId !== "no-restricted-imports" || !before.has(m.message),
-    );
+  if (hits.some(isImportMessage)) {
+    const before = await baseImportMessages(result.filePath, basePath);
+    hits = hits.filter((m) => !isImportMessage(m) || !before.has(m.message));
   }
   for (const m of hits) {
     const isError = m.severity === 2;
