@@ -17,7 +17,6 @@ from django.test import override_settings
 
 from conftest import (
     _ch_test_apply_v2_schema,
-    _ch_test_http_port,
     _ch_test_native_client,
     _ch_test_owned_database,
 )
@@ -37,32 +36,13 @@ SCHEMA_DIR = Path(apply_schema.__file__).parent / "schema"
 
 
 def _apply_pre040_schema(database: str) -> None:
-    import os
-
     files = [
         p.name
         for p in sorted(SCHEMA_DIR.glob("*.sql"))
         if not p.name.startswith("_") and p.name != "040_trajectory_items.sql"
     ]
-    rc = apply_schema.main(
-        [
-            "--schema-dir",
-            str(SCHEMA_DIR),
-            "--ch-host",
-            os.environ.get("CH25_HOST", "127.0.0.1"),
-            "--ch-http-port",
-            str(_ch_test_http_port().port),
-            "--ch-user",
-            os.environ.get("CH25_USER") or os.environ.get("CH_USERNAME") or "default",
-            "--ch-password",
-            os.environ.get("CH25_PASSWORD") or os.environ.get("CH_PASSWORD") or "",
-            "--ch-database",
-            database,
-            "--files",
-            *files,
-        ]
-    )
-    assert rc == 0, f"pre-040 schema apply failed with rc={rc}"
+    # Shared helper: proves the target is the CI sidecar before applying.
+    _ch_test_apply_v2_schema(database, files=files)
 
 
 def _span_columns(client, database: str) -> dict[str, tuple[str, str, str]]:
@@ -74,18 +54,11 @@ def _span_columns(client, database: str) -> dict[str, tuple[str, str, str]]:
     return {name: (typ, kind, expr) for name, typ, kind, expr in rows}
 
 
-def _metadata_filter(key: str) -> list[dict]:
-    return [
-        {
-            "column_id": f"metadata.{key}",
-            "filter_config": {
-                "filter_type": "text",
-                "filter_op": "equals",
-                "filter_value": "inline",
-                "col_type": "SPAN_ATTRIBUTE",
-            },
-        }
-    ]
+def _metadata_filter(key: str, col_type: str | None) -> list[dict]:
+    config = {"filter_type": "text", "filter_op": "equals", "filter_value": "inline"}
+    if col_type:
+        config["col_type"] = col_type
+    return [{"column_id": f"metadata.{key}", "filter_config": config}]
 
 
 @pytest.fixture(scope="module")
@@ -101,14 +74,20 @@ def pre040_database():
 
 
 @override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=False)
+@pytest.mark.parametrize("col_type", [None, "SPAN_ATTRIBUTE"], ids=["normal", "attr"])
 @pytest.mark.parametrize("pointer", TRAJECTORY_SPAN_COLUMNS)
-def test_metadata_filter_on_pointer_name_executes_without_040(pre040_database, pointer):
+def test_metadata_filter_on_pointer_name_executes_without_040(
+    pre040_database, pointer, col_type
+):
+    """A NORMAL filter interpolates ``metadata.<pointer>`` into the SQL, so the
+    word-boundary scanner sees the bare pointer name. Before the fix it packed
+    ``argMax(tuple(..., <pointer>))`` and this statement failed without 040."""
     _database, client = pre040_database
     builder = SpanListQueryBuilderV2(
         project_id=PROJECT_ID,
         page_number=0,
         page_size=50,
-        filters=_metadata_filter(pointer),
+        filters=_metadata_filter(pointer, col_type),
         sort_params=[],
         eval_config_ids=[],
         annotation_label_ids=[],

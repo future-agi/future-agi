@@ -9,7 +9,7 @@ import re
 import sys
 import types
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
@@ -444,9 +444,16 @@ def _open_ch_test_http_client(
 
 
 def _ch_test_apply_v2_schema(
-    database: str, *, environ: Mapping[str, str] = os.environ
+    database: str,
+    *,
+    environ: Mapping[str, str] = os.environ,
+    files: Sequence[str] | None = None,
 ) -> None:
-    """Apply the repo's v2 schema to one owned test database, or fail the test."""
+    """Apply the repo's v2 schema to one owned test database, or fail the test.
+
+    ``files`` limits the apply to those schema file names (for example every file
+    before a migration under test). The sidecar check runs first either way.
+    """
 
     from tracer.services.clickhouse.v2 import apply_schema
 
@@ -472,6 +479,7 @@ def _ch_test_apply_v2_schema(
             environ.get("CH25_PASSWORD") or environ.get("CH_PASSWORD") or "",
             "--ch-database",
             database,
+            *(["--files", *files] if files else []),
         ]
     )
     assert rc == 0, f"v2 schema apply failed with rc={rc}"

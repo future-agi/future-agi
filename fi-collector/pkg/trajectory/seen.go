@@ -73,9 +73,11 @@ type lruEntry struct {
 //  2. Turns hitting different pods behind a load balancer resolve via Redis so
 //     items are neither redundantly written nor double-billed to the customer.
 //  3. Redis outages fail open to local LRU + ClickHouse ReplacingMergeTree.
-//  4. Entries expire after sessionTTL / projectTTL so long-lived pods refresh
-//     active project-scoped prompts/tools into current monthly partitions and
-//     never outlive retention boundaries.
+//  4. Local entries expire after sessionTTL / projectTTL and are re-checked
+//     against Redis. trajectory_items is partitioned by a stable project
+//     bucket, so a re-sent item merges with its earlier copy; the Redis set's
+//     own TTL is refreshed on every commit (see the retention item on the
+//     PR's enable list before relying on expiry).
 type SeenStore struct {
 	rdb        *redis.Client
 	sessionTTL time.Duration
@@ -189,8 +191,7 @@ func (s *SeenStore) CheckNew(ctx context.Context, items []Item) (newItems []Item
 				reusedBytes += int64(len(it.Content))
 				continue
 			}
-			// Expired: evict and re-verify via Tier 2 / ClickHouse so active
-			// project-scoped prompts periodically refresh into current partitions.
+			// Expired: evict and re-verify via Tier 2 (Redis).
 			s.ll.Remove(elem)
 			delete(s.entries, k)
 		}
