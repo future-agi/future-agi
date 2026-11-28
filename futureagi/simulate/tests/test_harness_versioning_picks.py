@@ -1,8 +1,10 @@
+import io
 import re
 import uuid
 from unittest.mock import patch
 
 import pytest
+from django.core.management import call_command
 from django.db import connection
 from django.db.models import RestrictedError
 from django.test.utils import CaptureQueriesContext
@@ -2096,6 +2098,30 @@ class TestSplitRuns:
             _rerun_saved(user, workspace, source, settings)
 
         assert caught.value.code == "split_needs_locked_version"
+
+
+def _sql(migration):
+    out = io.StringIO()
+    call_command("sqlmigrate", "simulate", migration, stdout=out)
+    return out.getvalue()
+
+
+class TestSplitRunMigration:
+    """The hosted-jobs table is read and written by every run: no step that adds the
+    run's locked version holds its lock for a scan or an index build."""
+
+    def test_the_columns_are_added_alone(self):
+        sql = _sql("0126")
+
+        assert 'ADD COLUMN "locked_version_id" uuid NULL' in sql
+        assert "REFERENCES" not in sql
+        assert "FOREIGN KEY" not in sql
+        assert "CREATE INDEX" not in sql
+
+    def test_the_index_follows_concurrently(self):
+        sql = _sql("0127")
+
+        assert 'CREATE INDEX CONCURRENTLY "idx_hjob_locked_version"' in sql
 
 
 class TestSplitRunKeepsItsLockedVersion:
