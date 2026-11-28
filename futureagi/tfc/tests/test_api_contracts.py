@@ -553,6 +553,21 @@ def test_core_management_endpoints_have_runtime_backed_contracts():
     )
 
 
+def test_optional_source_paths_document_blank_and_relative_values():
+    import re
+
+    definitions = _swagger()["definitions"]
+    for model, name in [
+        ("AgentConnectRequest", "subfolder"),
+        ("AgentConnectRequest", "entry"),
+        ("HarnessSource", "subfolder"),
+    ]:
+        pattern = definitions[model]["properties"][name]["pattern"]
+        assert re.fullmatch(pattern, "")
+        assert re.fullmatch(pattern, "agents/support")
+        assert not re.fullmatch(pattern, "agents//support")
+
+
 def test_websocket_request_schema_matches_object_messages_and_optional_uuid():
     schema = _swagger()["definitions"]["CallWebsocketRequest"]
     assert schema["required"] == ["message"]
