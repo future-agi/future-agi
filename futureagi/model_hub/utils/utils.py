@@ -24,7 +24,7 @@ from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
 from model_hub.services.custom_endpoint import post_custom_endpoint
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
-from sockets.targets import relay_group
+from sockets.targets import relay_delivery
 from tfc.settings.settings import (
     HUGGINGFACE_API_TOKEN,
     HUGGINGFACE_API_TOKEN_1,
@@ -472,12 +472,10 @@ async def send_message_to_channel_async(organization_id, message):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
         return
-    channel_name = relay_group(organization_id)
+    channel_name, event = relay_delivery(organization_id, message)
     channel_layer = get_channel_layer()
     try:
-        await channel_layer.group_send(
-            channel_name, {"type": "send_data", "data": message}
-        )
+        await channel_layer.group_send(channel_name, event)
     except Exception as e:
         logger.exception(
             f"websocket: Error sending message to channel {channel_name}: {str(e)}"
@@ -489,14 +487,15 @@ async def send_message_to_uuid_async(uuid, message, organization_id=None):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
         return
-    channel_name = (
-        relay_group(organization_id, uuid)
-        if organization_id is not None
-        else f"uuid_{uuid}"
-    )
+    if uuid is None:
+        return
+    if organization_id is None:
+        # The legacy unscoped producer does not participate in the v2 protocol.
+        channel_name, event = f"uuid_{uuid}", {"type": "send_data", "data": message}
+    else:
+        channel_name, event = relay_delivery(organization_id, message, uuid)
     channel_layer = get_channel_layer()
     try:
-        event = {"type": "send_data", "data": message}
         await channel_layer.group_send(channel_name, event)
     except Exception as e:
         logger.exception(
@@ -509,23 +508,9 @@ async def broadcast_to_uuid_async(uuid, data, organization_id=None):
     if not isinstance(data, dict):
         logger.exception(f"Message is not a dictionary: {data}")
         return
-    channel_layer = get_channel_layer()
-    try:
-        event = {
-            "type": "send_data",
-            "data": {"type": "message_type", "data": data, "uuid": uuid},
-        }
-        channel_name = (
-            relay_group(organization_id, uuid)
-            if organization_id is not None
-            else f"uuid_{uuid}"
-        )
-        await channel_layer.group_send(channel_name, event)
-    except Exception as e:
-        logger.exception(
-            f"websocket: Error sending message to channel uuid {uuid}: {str(e)}"
-        )
-        # raise e
+    await send_message_to_uuid_async(
+        uuid, {"type": "message_type", "data": data, "uuid": uuid}, organization_id
+    )
 
 
 def send_message_to_channel(organization_id, message):

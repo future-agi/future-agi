@@ -225,7 +225,12 @@ async def send_to_target(org, target, message):
     from channels.layers import get_channel_layer
 
     await get_channel_layer().group_send(
-        f"ws2.{org.pk}.{target}", {"type": "send_data", "data": message}
+        f"ws2.{org.pk}.{target}",
+        {
+            "type": "send_data",
+            "target": {"kind": "subscription", "id": target},
+            "data": message,
+        },
     )
 
 

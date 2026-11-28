@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -388,7 +389,11 @@ def test_relay_accepts_only_internal_callers(relay_server, caller, targeted):
     target = str(uuid4()) if targeted else None
     headers = caller_headers(relay_server, caller, org, owner, member, key)
     with subscriber(relay_server, org, owner, target) as ws:
-        response, _ = relay(relay_server, headers, target)
+        # A rejected request must not even reach the publisher, regardless of
+        # whether its destination has an active listener.
+        with patch("tfc.views.socket.get_channel_layer") as layer:
+            response, _ = relay(relay_server, headers, target)
+        layer.assert_not_called()
         delivered = receive_optional(ws)
 
         # The internal caller is the positive control on the same socket.

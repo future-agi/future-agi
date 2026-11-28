@@ -5,7 +5,7 @@ from django.http.request import RawPostDataException
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.views import APIView
 
-from sockets.targets import relay_group
+from sockets.targets import relay_delivery
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     CallWebsocketErrorResponseSerializer,
@@ -78,15 +78,11 @@ class CallWebsocketView(APIView):
         try:
             data = request.validated_data
             message = data["message"]
-            org_id = organization.id
-            # Never publish the authenticated relay to the legacy unscoped group.
-            group = relay_group(
-                org_id, data["uuid"] if data.get("send_to_uuid") else None
-            )
+            subscription = data["uuid"] if data.get("send_to_uuid") else None
             # Let enqueue failures reach the caller, rather than using the
             # best-effort helpers that swallow channel-layer exceptions.
             async_to_sync(get_channel_layer().group_send)(
-                group, {"type": "send_data", "data": message}
+                *relay_delivery(organization.id, message, subscription)
             )
             return self._gm.success_response("Message sent to websocket")
         except Exception as exc:  # noqa: BLE001 - relay boundary; logs a sanitized traceback

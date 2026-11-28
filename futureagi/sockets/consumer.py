@@ -403,7 +403,6 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         Send data to the WebSocket, checking if we're subscribed to the channel
         """
         data = event.get("data", {})
-        uuid = data.get("uuid")
 
         if not await self._guard.ensure_live(inbound=False):
             return
@@ -412,9 +411,20 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             if not await self._membership.ensure_member():
                 return
             await self._answer_pending_subscription_frames()
-        if uuid and self._uuid_group_name(uuid) != self.current_subscription:
-            return
         if not await self._membership.ensure_member():
+            return
+        # Group membership can change while an event sits in the queue.
+        # Only the publisher's resolved destination has routing significance.
+        target = event.get("target")
+        if not isinstance(target, dict) or not isinstance(target.get("id"), str):
+            return
+        if target.get("kind") == "organization":
+            if target["id"] != self.organization_id:
+                return
+        elif target.get("kind") == "subscription":
+            if self._uuid_group_name(target["id"]) != self.current_subscription:
+                return
+        else:
             return
         try:
             await self.send_json(data)
