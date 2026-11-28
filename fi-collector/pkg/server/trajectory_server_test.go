@@ -908,11 +908,14 @@ func TestItemsV1BatchUnknownColumnClosesGate(t *testing.T) {
 		t.Fatal("the inline resend must be logged")
 	}
 	usage.mu.Lock()
-	if len(usage.dedup) != 1 || usage.stored[0] != usage.raw[0] {
-		usage.mu.Unlock()
-		t.Fatalf("a refused pointer batch must bill raw bytes: %+v", usage)
+	billedRaw := len(usage.dedup) >= 1 && len(usage.dedup)+usage.legacy == 2
+	for i := range usage.raw {
+		billedRaw = billedRaw && usage.stored[i] == usage.raw[i]
 	}
 	usage.mu.Unlock()
+	if !billedRaw {
+		t.Fatalf("every request of a refused pointer batch must bill raw bytes: %+v", usage)
+	}
 
 	// The next request is converted inline and sent on dev's URL.
 	ch.reset()
