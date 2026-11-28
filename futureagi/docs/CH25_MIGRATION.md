@@ -385,8 +385,9 @@ repository) covers when each field is set:
 - The marker is set in the same change that first turns the collector's dedup
   env on (S5).
 
-Its PR checks and its rollout executor refuse two things: a target below the
-floor, and any change that lowers the file. A manual `helm rollback` is not
+Once a region's marker is set, its PR checks and its rollout executor refuse
+two things: a target below the floor, and any change that lowers the file.
+Before that, the staged values may still be corrected. A manual `helm rollback` is not
 checked, so judge the target revision with that runbook first. To stop new
 deduplicated writes, close the store gate or set the collector env to off.
 Rows already written still need hydration-capable readers, so neither step is
