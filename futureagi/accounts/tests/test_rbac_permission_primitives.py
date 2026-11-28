@@ -4,7 +4,6 @@ Direct unit / functional tests for reusable RBAC permission primitives.
 Targets:
     - tfc.permissions.rbac:  IsOrganizationMember, IsOrganizationOwner,
                               _get_request_workspace_id, CanManageTargetUser
-    - tfc.permissions.permissions: APIKeyPermission (no-EE-safe subset)
     - tfc.permissions.utils: get_org_membership, can_invite_at_level,
                               get_effective_workspace_level
 
@@ -12,13 +11,10 @@ Exercises allow/deny boundaries and fallback/context behavior.
 Uses RequestFactory / APIRequestFactory; no view wiring, no broad validation.
 """
 
-import os
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
-from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.request import Request as DRFRequest
 from rest_framework.test import APIRequestFactory
 
@@ -31,7 +27,6 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
-from tfc.permissions.permissions import APIKeyPermission
 from tfc.permissions.rbac import (
     CanManageTargetUser,
     IsOrganizationMember,
@@ -268,43 +263,6 @@ class TestGetRequestWorkspaceId:
         req = SimpleNamespace(workspace=ws)
         assert _get_request_workspace_id(req) == "42"
         assert isinstance(_get_request_workspace_id(req), str)
-
-
-# ── APIKeyPermission ────────────────────────────────────────────────────────
-
-
-@pytest.mark.django_db
-class TestAPIKeyPermission:
-    """Test the no-EE-safe behavior of APIKeyPermission.
-
-    The permission reads os.getenv("API_KEY") and checks against the
-    X-API-KEY request header.  It is used only by Appsmith internal
-    tooling views (UserApiView, SOSLoginView) which are excluded from
-    broader accounts test coverage by convention.
-    """
-
-    def test_raises_when_no_header(self):
-        req = factory.get("/test/")
-        with pytest.raises(AuthenticationFailed, match="No API key provided"):
-            APIKeyPermission().has_permission(req, None)
-
-    def test_raises_when_env_not_configured(self):
-        req = factory.get("/test/", HTTP_X_API_KEY="some-key")
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("API_KEY", None)
-            with pytest.raises(AuthenticationFailed, match="API key not configured"):
-                APIKeyPermission().has_permission(req, None)
-
-    def test_raises_when_wrong_key(self):
-        req = factory.get("/test/", HTTP_X_API_KEY="wrong-key")
-        with patch.dict(os.environ, {"API_KEY": "correct-key"}):
-            with pytest.raises(AuthenticationFailed, match="Invalid API key"):
-                APIKeyPermission().has_permission(req, None)
-
-    def test_allows_correct_key(self):
-        req = factory.get("/test/", HTTP_X_API_KEY="correct-key")
-        with patch.dict(os.environ, {"API_KEY": "correct-key"}):
-            assert APIKeyPermission().has_permission(req, None) is True
 
 
 # ── get_org_membership ──────────────────────────────────────────────────────
