@@ -740,6 +740,22 @@ sealed environment and a suite proved against it. It recomputes both digests
 
 Re-registering identical releases returns the existing rows.
 
+The ready environments are registered the same way, as system releases, on every
+deploy. `futureagi/simulate/ready_environments.json` pins the list an
+agent-learning-kit release publishes: each environment's archive
+(`ready-environment-<name>.tar.gz`, holding `environment/` and `suite/`), its
+SHA-256 and size, and both release digests, with the URL the archives are attached
+under. The release workflow opens the pull request that updates it. The bootstrap
+runs `python manage.py seed_ready_environments` after `seed_system_evals`
+(`bootstrap_install`, the Standalone bootstrap and `entrypoint.sh` with
+`SERVICE_TYPE=bootstrap`). For each listed environment whose two releases are not
+registered yet, it downloads the archive, refuses it unless its size and SHA-256
+are the listed ones, unpacks only regular files under `environment/` and `suite/`,
+registers it as above, and refuses it unless the registered digests are the listed
+ones. One already registered (a deleted one too, so one an operator took off the
+shelf stays off it) is skipped without a download. A failure is logged and leaves
+that environment off the shelf until the next deploy; it never stops the bootstrap.
+
 ### 7.3 Compositions
 
 A composition (the UI's "adapted environment") is a completed

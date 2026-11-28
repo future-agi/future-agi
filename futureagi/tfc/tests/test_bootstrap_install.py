@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from model_hub.apps import OPERATOR_STARTUP_MUTATION_COMMANDS
 from tfc.management.commands import bootstrap_install as command
@@ -245,10 +246,43 @@ def test_migrate_and_seed_order_and_prompt_label_hook(
     command.migrate_and_seed(logged.append)
 
     # createcachetable failing is logged and does not stop the bootstrap.
-    assert [name for name, _ in ran] == ["migrate", "seed_system_evals"]
+    assert [name for name, _ in ran] == [
+        "migrate",
+        "seed_system_evals",
+        "seed_ready_environments",
+    ]
     assert ran[0][1] == {"interactive": False, "verbosity": 1}
     assert connected == ["model_hub_seed_default_prompt_labels"]
     assert any("createcachetable failed (continuing)" in line for line in logged)
+
+
+def test_ready_environments_failure_never_stops_the_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing(name, log, **options):
+        raise CommandError("2 ready environment(s) were not registered")
+
+    monkeypatch.setattr(command, "call", failing)
+    logged: list[str] = []
+
+    command.ready_environments(logged.append)
+
+    assert logged == [
+        "seed_ready_environments failed (continuing): "
+        "2 ready environment(s) were not registered"
+    ]
+
+
+def test_ready_environments_refused_authorization_is_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refused(name, log, **options):
+        raise command.BootstrapError("seed_ready_environments is not authorized here.")
+
+    monkeypatch.setattr(command, "call", refused)
+
+    with pytest.raises(command.BootstrapError):
+        command.ready_environments(lambda _: None)
 
 
 def test_clickhouse_native_schema_failure_is_fatal(

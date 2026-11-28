@@ -59,6 +59,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "register_harness_release",
         "register_temporal_schedules",
         "seed_system_evals",
+        "seed_ready_environments",
         "purge_sql_results",
         "erase_metric_data",
     }

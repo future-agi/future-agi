@@ -9,7 +9,9 @@ same order, so every install path prepares the datastores the same way:
   1. wait until Postgres, ClickHouse, Redis and Temporal accept connections
   2. createcachetable (a failure other than an authorization refusal is
      logged, not fatal, as in entrypoint.sh)
-  3. migrate, then seed_system_evals
+  3. migrate, then seed_system_evals, then seed_ready_environments (the ready
+     environments simulate/ready_environments.json pins, downloaded and
+     registered once each; a failure is logged, not fatal)
   4. ClickHouse native schema (``oss_cdc_install --phase native --apply``)
   5. the Metrics ClickHouse schema (``schema_install --apply``: packaged files
      009, 011 and 028-038), only while METRICS_ENABLED is on
@@ -243,6 +245,20 @@ def migrate_and_seed(log: Callable[[str], None]) -> None:
         log(f"createcachetable failed (continuing): {exc}")
     call("migrate", log, interactive=False, verbosity=1)
     call("seed_system_evals", log)
+    ready_environments(log)
+
+
+def ready_environments(log: Callable[[str], None]) -> None:
+    """The ready environments simulate/ready_environments.json pins, each downloaded and
+    registered once. Advisory: an environment that cannot be fetched or registered (no egress
+    to GitHub, storage refused) is logged and left off the shelf; the next run tries again,
+    and the rest of the install still starts."""
+    try:
+        call("seed_ready_environments", log)
+    except BootstrapError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - advisory step, logged and retried next run
+        log(f"seed_ready_environments failed (continuing): {exc}")
 
 
 def clickhouse_native_schema(log: Callable[[str], None], timeout: int) -> None:
