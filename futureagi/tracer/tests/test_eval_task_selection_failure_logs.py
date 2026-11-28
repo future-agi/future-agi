@@ -51,7 +51,9 @@ BUDGET_REASON = (
         (
             RunType.HISTORICAL,
             ActivityTimeoutError(
-                "worker timed out", type=TimeoutType.HEARTBEAT, last_heartbeat_details=[]
+                "worker timed out",
+                type=TimeoutType.HEARTBEAT,
+                last_heartbeat_details=[],
             ),
             None,
         ),
@@ -149,12 +151,20 @@ def test_failed_selection_reason_in_empty_logs(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("status", [EvalTaskStatus.FAILED, EvalTaskStatus.PENDING])
-def test_details_only_expose_a_current_failure(auth_client, eval_task, status):
+@pytest.mark.parametrize(
+    ("status", "stored", "expected"),
+    [
+        (EvalTaskStatus.FAILED, "READ_BUDGET", BUDGET_REASON),
+        (EvalTaskStatus.PENDING, "READ_BUDGET", None),
+        (EvalTaskStatus.FAILED, "UNKNOWN_FUTURE_CODE", None),
+    ],
+)
+def test_details_only_expose_a_current_failure(
+    auth_client, eval_task, status, stored, expected
+):
     eval_task.status = status
-    eval_task.failure_reason = "READ_BUDGET"
+    eval_task.failure_reason = stored
     eval_task.save(update_fields=["status", "failure_reason"])
-    expected = BUDGET_REASON if status == EvalTaskStatus.FAILED else None
 
     response = auth_client.get(
         "/tracer/eval-task/get_eval_details/", {"eval_id": str(eval_task.pk)}

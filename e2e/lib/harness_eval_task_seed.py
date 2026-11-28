@@ -31,7 +31,9 @@ def main():
         config = CustomEvalConfig.objects.create(
             project=project,
             name=f"{name}-eval",
-            eval_template=EvalTemplate.objects.get(owner="system", name="contains_valid_link"),
+            eval_template=EvalTemplate.objects.get(
+                owner="system", name="contains_valid_link"
+            ),
             mapping={"text": "output.value"},
         )
         task = EvalTask.objects.create(
