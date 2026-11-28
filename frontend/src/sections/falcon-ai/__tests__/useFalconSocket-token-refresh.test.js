@@ -49,8 +49,9 @@ class FakeWebSocket {
   static CLOSED = 3;
   static instances = [];
 
-  constructor(url) {
+  constructor(url, protocols) {
     this.url = url;
+    this.protocols = protocols;
     this.readyState = FakeWebSocket.CONNECTING;
     this.onopen = null;
     this.onmessage = null;
@@ -83,10 +84,6 @@ class FakeWebSocket {
   acceptThenReject() {
     this.open();
     this.closeWith(4003);
-  }
-
-  get token() {
-    return new URL(this.url).searchParams.get("token");
   }
 }
 
@@ -136,8 +133,13 @@ describe("useFalconSocket token handling", () => {
     renderHook(() => useFalconSocket());
 
     expect(sockets()).toHaveLength(1);
-    expect(lastSocket().url).toContain("/ws/falcon-ai/");
-    expect(lastSocket().token).toBe("refreshed-token");
+    expect(lastSocket().url).toBe(
+      "wss://api.example.test/ws/falcon-ai/?workspace_id=ws-1",
+    );
+    expect(lastSocket().protocols).toEqual([
+      "fi.auth.v1",
+      "bearer.refreshed-token",
+    ]);
   });
 
   it("refreshes the token before reconnecting after a 4003 rejection", async () => {
@@ -146,7 +148,7 @@ describe("useFalconSocket token handling", () => {
     refreshStoresNewTokens();
 
     renderHook(() => useFalconSocket());
-    expect(lastSocket().token).toBe("token-1");
+    expect(lastSocket().protocols).toEqual(["fi.auth.v1", "bearer.token-1"]);
 
     await act(async () => {
       lastSocket().acceptThenReject();
@@ -158,7 +160,7 @@ describe("useFalconSocket token handling", () => {
     });
 
     expect(sockets()).toHaveLength(2);
-    expect(lastSocket().token).toBe("token-2");
+    expect(lastSocket().protocols).toEqual(["fi.auth.v1", "bearer.token-2"]);
   });
 
   it("backs off between repeated 4003 rejections and then stops reconnecting", async () => {
@@ -257,7 +259,7 @@ describe("useFalconSocket token handling", () => {
 
     expect(mocks.get).not.toHaveBeenCalled();
     expect(sockets()).toHaveLength(2);
-    expect(lastSocket().token).toBe("token-2");
+    expect(lastSocket().protocols).toEqual(["fi.auth.v1", "bearer.token-2"]);
   });
 
   it("still does not retry on the other auth close codes", async () => {

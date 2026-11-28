@@ -1,4 +1,4 @@
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 import structlog
 from channels.db import database_sync_to_async
@@ -11,9 +11,12 @@ logger = structlog.get_logger(__name__)
 
 User = get_user_model()
 
+AUTH_PROTOCOL = "fi.auth.v1"
+AUTH_PATHS = {"/ws/connect/", "/ws/falcon-ai/"}
+
 
 class JWTAuthMiddleware:
-    """Middleware to authenticate WebSocket connections using JWT from query parameters."""
+    """Authenticate WebSocket connections before dispatching to a consumer."""
 
     def __init__(self, inner):
         self.inner = inner
@@ -37,24 +40,38 @@ class JWTAuthMiddleware:
         )
 
     async def __call__(self, scope, receive, send):
-        query_string = parse_qs(scope["query_string"].decode())
-        token = query_string.get("token", [None])[0]
+        protocols = scope.get("subprotocols", [])
+        path = scope["path"].removeprefix(scope.get("root_path", ""))
+        reply = send
+        if path in AUTH_PATHS and AUTH_PROTOCOL in protocols:
+            # Browsers require a selected protocol even to receive a 4003 close.
+            async def select_protocol(message):
+                if message["type"] == "websocket.accept":
+                    message = {**message, "subprotocol": AUTH_PROTOCOL}
+                await send(message)
 
-        if token:
-            auth_result = await self.get_user_from_token(token)
-            if auth_result is None:
-                await self.close_connection(send, 4003, "Invalid token provided")
-                return
-
-            user, auth_scope, _token = auth_result
-            scope["user"] = user
-            scope["auth_scope"] = auth_scope
-            scope["auth_token_id"] = getattr(auth_scope, "token_id", None)
+            reply = select_protocol
+            token = None
+            if (
+                len(protocols) == 2
+                and protocols[0] == AUTH_PROTOCOL
+                and protocols[1].startswith("bearer.")
+            ):
+                token = unquote(protocols[1].removeprefix("bearer."))
         else:
-            await self.close_connection(send, 4003, "Invalid token provided")
+            # Older clients and routes not yet migrated use the original handshake.
+            token = parse_qs(scope["query_string"].decode()).get("token", [""])[0]
+
+        auth_result = await self.get_user_from_token(token) if token else None
+        if auth_result is None:
+            await self.close_connection(reply, 4003, "Invalid token provided")
             return
 
-        return await self.inner(scope, receive, send)
+        user, auth_scope, _token = auth_result
+        scope["user"] = user
+        scope["auth_scope"] = auth_scope
+        scope["auth_token_id"] = getattr(auth_scope, "token_id", None)
+        return await self.inner(scope, receive, reply)
 
     @database_sync_to_async
     def get_user_from_token(self, token):

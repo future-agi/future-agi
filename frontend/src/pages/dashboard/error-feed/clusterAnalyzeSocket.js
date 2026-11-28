@@ -14,7 +14,7 @@
 // the client. A page reload starts fresh (the synthesis is cached server-side on
 // the cluster, so the headline still shows the last result).
 
-import { HOST_API } from "src/config-global";
+import { openAuthenticatedSocket } from "src/components/websocket/open-authenticated-socket";
 import { createConversation } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import { useErrorFeedStore } from "./store";
 import {
@@ -82,15 +82,6 @@ if (import.meta.hot) {
   });
 }
 
-function buildWsUrl(token, workspaceId) {
-  const isSecure = HOST_API.includes("https");
-  const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  const protocol = isSecure ? "wss" : "ws";
-  const params = new URLSearchParams({ token });
-  if (workspaceId) params.set("workspace_id", workspaceId);
-  return `${protocol}://${wsHost}/ws/falcon-ai/?${params.toString()}`;
-}
-
 function ensureSocket(token, workspaceId) {
   if (
     socket &&
@@ -102,7 +93,7 @@ function ensureSocket(token, workspaceId) {
   }
 
   socketReady = new Promise((resolve, reject) => {
-    const ws = new WebSocket(buildWsUrl(token, workspaceId));
+    const ws = openAuthenticatedSocket("/ws/falcon-ai/", token, workspaceId);
     socket = ws;
 
     ws.onopen = () => {

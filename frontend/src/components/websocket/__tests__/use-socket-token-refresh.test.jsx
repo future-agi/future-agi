@@ -40,6 +40,7 @@ vi.mock("src/utils/logger", () => ({
   },
 }));
 
+import logger from "src/utils/logger";
 import { WebSocketProvider } from "../use-socket";
 
 class FakeWebSocket {
@@ -49,8 +50,9 @@ class FakeWebSocket {
   static CLOSED = 3;
   static instances = [];
 
-  constructor(url) {
+  constructor(url, protocols) {
     this.url = url;
+    this.protocols = protocols;
     this.readyState = FakeWebSocket.CONNECTING;
     this.listeners = {};
     this.sent = [];
@@ -84,10 +86,6 @@ class FakeWebSocket {
     this.emit("open");
     this.readyState = FakeWebSocket.CLOSED;
     this.emit("close", { code: 4003 });
-  }
-
-  get token() {
-    return new URL(this.url).searchParams.get("token");
   }
 }
 
@@ -130,12 +128,26 @@ describe("WebSocketProvider token handling", () => {
 
   it("connects with the stored token the REST client refreshed, not the stale context token", () => {
     signIn("stale-context-token");
-    localStorage.setItem("accessToken", "refreshed-token");
+    localStorage.setItem("accessToken", "refreshed-token==");
 
     renderProvider();
 
     expect(sockets()).toHaveLength(1);
-    expect(lastSocket().token).toBe("refreshed-token");
+    expect(lastSocket().url).toBe("wss://api.example.test/ws/connect/");
+    expect(lastSocket().protocols).toEqual([
+      "fi.auth.v1",
+      "bearer.refreshed-token%3D%3D",
+    ]);
+    act(() => lastSocket().emit("error"));
+    expect(logger.addBreadcrumb).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: {
+          path: "/ws/connect/",
+          readyState: "CONNECTING",
+          reconnectAttempts: 0,
+        },
+      }),
+    );
   });
 
   it("refreshes the token before reconnecting after a 4003 rejection", async () => {
@@ -148,7 +160,7 @@ describe("WebSocketProvider token handling", () => {
     });
 
     renderProvider();
-    expect(lastSocket().token).toBe("token-1");
+    expect(lastSocket().protocols).toEqual(["fi.auth.v1", "bearer.token-1"]);
 
     await act(async () => {
       lastSocket().acceptThenReject();
@@ -160,7 +172,7 @@ describe("WebSocketProvider token handling", () => {
     });
 
     expect(sockets()).toHaveLength(2);
-    expect(lastSocket().token).toBe("token-2");
+    expect(lastSocket().protocols).toEqual(["fi.auth.v1", "bearer.token-2"]);
   });
 
   it("backs off between repeated 4003 rejections and then stops reconnecting", async () => {
