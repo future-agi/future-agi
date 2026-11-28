@@ -1,0 +1,49 @@
+# Hourly upkeep for the docs declaration (.github/scripts/docs-declaration.mjs sweep):
+#   1. qualifying TH tickets (planned or in flight) get a `Docs: <title>` sub-issue (sdlc:docs)
+#   2. new TH tickets with no type label get one comment asking for Bug / Feature / Improvement
+#   3. Docs sub-issues whose docs PR merged → Done
+#   4. Docs sub-issues whose parent closed with no docs PR → Canceled
+#   5. docs PRs still open 2+ days after their feature merged to dev → one nudge on the PR and ticket
+#
+# Writes only when vars.DOCS_GATE_SWEEP == 'on'. Until then every scheduled run is a dry run
+# whose log shows exactly what it would do. A manual run defaults to dry run.
+name: docs-declaration-sweep
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log intended changes without writing to Linear or GitHub'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: docs-declaration-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: github.repository == 'future-agi/future-agi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Sweep
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || vars.DOCS_GATE_SWEEP != 'on' }}
+        run: node .github/scripts/docs-declaration.mjs sweep
