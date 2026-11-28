@@ -144,7 +144,7 @@ function launchOptions(executionId: string): Json {
 
 // POST /simulate/api/agent-fix-runs/ and GET .../<id>/: a queued epoch that
 // writes variations first, in AgentFixRunSerializer's read shape (the fix() fixture).
-function queuedEpoch(fixId: string, executionId: string, body: Json): Json {
+function queuedEpoch(fixId: string, executionId: string, body: Json) {
   return {
     id: fixId,
     number: 1,
@@ -257,12 +257,12 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
       'the epoch page\'s stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
       'the Also seen list shows the two same-name one-off issues as one "Omits the fare" row with a View',
       'the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)',
+      'if too few cases fail, the ending lists the variation the epoch kept with its original case and links to the check that ran it',
     ],
   }),
 }, async ({ page, actor }, testInfo) => {
-  // 9 browser waits, each its own UI_READY: 9 × 60s = 540s, plus 60s headroom
-  // so a slow run fails on the wait that ran out.
-  test.setTimeout(600_000);
+  // Leave room for each browser step to report its own timeout.
+  test.setTimeout(660_000);
   const executionId = randomUUID();
   const fixId = `e2e-sim7-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   await testInfo.attach('seeded', {
@@ -346,4 +346,22 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   await test.step('ui: check 5, the finished diagnosis was never queued again', async () => {
     expect(seen.diagnosisPosts).toBe(0);
   });
+
+  await test.step('ui: check 6, the too-few ending keeps the variation and its check run visible', async () => {
+    const queued = queuedEpoch(fixId, executionId, seen.launchBodies[0]);
+    const variation = 'refund-over-200-v1';
+    const checkId = randomUUID();
+    await page.route(endsWith(`/simulate/api/agent-fix-runs/${fixId}/`), (route) => route.fulfill({ json: {
+      ...queued, state: 'too_few_cases', stage: 'Finished', finished_at: new Date().toISOString(),
+      request: { ...queued.request, variations_pending: false, target_scenario_keys: [...FAILING, variation],
+        variation_parents: { [variation]: FAILING[0] } },
+      scenario_names: { [variation]: 'Split refund', [FAILING[0]]: 'Large refund' },
+      check_runs: [{ label: 'variations', state: 'completed', run_id: RUN_TEST_ID, test_execution_id: checkId }],
+    } }));
+    const ending = page.getByTestId('epoch-ending');
+    await expect(ending.getByRole('listitem')).toHaveText('Split refund — variation of Large refund', { timeout: UI_READY });
+    await expect(ending.getByRole('link', { name: 'Open variations run' })).toHaveAttribute(
+      'href', `/dashboard/simulate/environments/${ENV_ID}/runs/${RUN_TEST_ID}/${checkId}`,
+    );
+  }, { timeout: UI_READY });
 });
