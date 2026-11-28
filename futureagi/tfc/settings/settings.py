@@ -1696,6 +1696,7 @@ CHANNEL_LAYER_BACKEND, CHANNEL_LAYERS = channel_layer_settings(
 )
 
 
+CACHES: dict[str, dict[str, object]]
 if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
     CACHES = {
         "default": {
@@ -1717,6 +1718,14 @@ else:
             "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
         }
     }
+
+# Schema responses can be several MB. Bound their storage separately from
+# application data; replacing a worker also discards its previous schema.
+CACHES["openapi"] = {
+    "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    "LOCATION": "openapi-responses",
+    "OPTIONS": {"MAX_ENTRIES": 12},
+}
 
 # Authentication Security Settings
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
