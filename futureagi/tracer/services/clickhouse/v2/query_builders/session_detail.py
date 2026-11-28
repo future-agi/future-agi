@@ -7,6 +7,7 @@ ID, or a tombstone must still participate in FINAL before membership is tested.
 """
 
 from tracer.services.clickhouse.query_builders.trace_usage import (
+    deterministic_sum_sql,
     source_summary_sql,
     usage_aggregate_sql,
     usage_coverage_sql,
@@ -89,7 +90,7 @@ def build_session_detail_aggregate_query(project_id, session_group_ids):
             min(trace_start) AS session_start,
             max(trace_end) AS session_end,
             if(countIf(isNull(usage_cost)) > 0,
-               CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS total_cost,
+               CAST(NULL, 'Nullable(Float64)'), {deterministic_sum_sql("usage_cost")}) AS total_cost,
             sum(usage_total_tokens) AS total_tokens,
             count() AS total_traces,
             toString(argMaxIfMerge(user_state)) AS end_user_id,

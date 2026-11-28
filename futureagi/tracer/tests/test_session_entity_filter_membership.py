@@ -220,7 +220,7 @@ def test_latest_physical_replay_remaps_and_all_root_metrics_are_preserved():
     assert "SELECT project_id, session_id FROM member_session_scope" in members
     usage = _cte(sql, "session_usage")
     assert "countIf(isNull(usage_cost)) > 0" in usage
-    assert "sum(usage_cost)) AS member_total_cost" in usage
+    assert "[arraySort(groupArray(usage_cost))])[1])) AS member_total_cost" in usage
     assert "sum(usage_total_tokens) AS member_total_tokens" in usage
     assert "GROUP BY project_id, member_session_id" in usage
     sessions = _cte(sql, "sessions")

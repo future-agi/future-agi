@@ -21,6 +21,7 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
 )
 from tracer.tests._base_list_parity import (
     _load_frozen_session_builder,
+    approved_native_deltas,
     assert_sql_and_parameters_equal,
     baseline_fixture,
     baseline_statements,
@@ -162,9 +163,10 @@ def test_native_dev_parity_is_not_one_self_snapshot(project, page_size, offset):
         ),
         ("build_page_hydration_query", ([str(UUID(int=101)), str(UUID(int=202))],), {}),
     ):
+        native_sql, native_params = getattr(native, method)(*args, **options)
         assert_sql_and_parameters_equal(
             getattr(current, method)(*args, **options),
-            getattr(native, method)(*args, **options),
+            (approved_native_deltas(method, native_sql), native_params),
         )
 
 

@@ -24,6 +24,7 @@ from tracer.services.derived_metrics.storage import (
 from tracer.tests._base_list_parity import (
     FixtureAuthority,
     FixtureCurrentFactsRead,
+    approved_native_deltas,
     assert_sql_and_parameters_equal,
     baseline_fixture,
     baseline_statements,
@@ -92,7 +93,7 @@ def test_vendored_baseline_runs_without_git_history(monkeypatch, tmp_path):
     for name, statement in baseline_statements(native_session_builder()).items():
         assert_sql_and_parameters_equal(
             (actual[name]["sql"], actual[name]["params"]),
-            (statement["sql"], statement["params"]),
+            (approved_native_deltas(name, statement["sql"]), statement["params"]),
         )
 
 
@@ -126,8 +127,10 @@ def test_native_unbound_entry_point_is_identical_to_recorded_baseline():
         "build_candidate_count_query",
         "build_candidate_cursor_page_query",
     ):
+        old_sql, old_params = getattr(old, method)()
         assert_sql_and_parameters_equal(
-            getattr(current, method)(), getattr(old, method)()
+            getattr(current, method)(),
+            (approved_native_deltas(method, old_sql), old_params),
         )
 
 
@@ -358,7 +361,10 @@ def test_native_hydration_source_seam_preserves_baseline_sql_and_parameters():
         ids
     )
     # CTE extraction changes only lexer whitespace relative to pinned native dev.
-    assert_sql_and_parameters_equal((sql, params), (old_sql, old_params))
+    assert_sql_and_parameters_equal(
+        (sql, params),
+        (approved_native_deltas("build_page_hydration_query", old_sql), old_params),
+    )
 
 
 def test_current_hydration_uses_members_and_loses_access_after_pin_release():
