@@ -81,7 +81,8 @@ func newServiceAccountFile(t *testing.T) (string, *rsa.PublicKey) {
 // provider sends and answers with a numbered token.
 type fakeTokenEndpoint struct {
 	*httptest.Server
-	hits atomic.Int64
+	hits   atomic.Int64
+	issued atomic.Pointer[string]
 }
 
 func newFakeTokenEndpoint(t *testing.T, pub *rsa.PublicKey) *fakeTokenEndpoint {
@@ -93,8 +94,9 @@ func newFakeTokenEndpoint(t *testing.T, pub *rsa.PublicKey) *fakeTokenEndpoint {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		n := f.hits.Add(1)
-		fmt.Fprintf(w, `{"access_token":"ya29.fake-%d","expires_in":3600}`, n)
+		tok := fmt.Sprintf("ya29.fake-%d", f.hits.Add(1))
+		f.issued.Store(&tok)
+		fmt.Fprintf(w, `{"access_token":%q,"expires_in":3600}`, tok)
 	}))
 	t.Cleanup(f.Close)
 	return f
@@ -196,11 +198,13 @@ func TestTokenProvider_Cached(t *testing.T) {
 }
 
 func TestTokenProvider_VertexAICall(t *testing.T) {
-	tp, _ := newLocalProvider(t)
+	tp, endpoint := newLocalProvider(t)
 	tok := tp.Token()
-	if tok == "" {
-		t.Fatal("no token")
+	issued := endpoint.issued.Load()
+	if issued == nil {
+		t.Fatal("token endpoint issued no token")
 	}
+	want := "Bearer " + *issued
 
 	const project, location, model = "test-project", "us-central1", "gemini-2.5-flash"
 	wantPath := "/v1/projects/" + project + "/locations/" + location +
@@ -210,8 +214,8 @@ func TestTokenProvider_VertexAICall(t *testing.T) {
 		switch {
 		case r.Method != http.MethodPost || r.URL.Path != wantPath:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-		case r.Header.Get("Authorization") != "Bearer "+tok:
-			t.Errorf("Authorization header does not carry the provider's token")
+		case r.Header.Get("Authorization") != want:
+			t.Errorf("Authorization header does not carry the token the endpoint issued")
 		case r.Header.Get("Content-Type") != "application/json":
 			t.Errorf("Content-Type %q", r.Header.Get("Content-Type"))
 		case !strings.Contains(string(body), `"contents"`):
