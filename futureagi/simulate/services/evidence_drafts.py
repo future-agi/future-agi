@@ -750,7 +750,21 @@ def forget(evidence_import_id: str, drafting_job_id: str | None = None) -> None:
             conversation=conversation
         ).first()
         ref = str(getattr(lease, "provider_ref", "") or "")
-        if ref and not ref.startswith("pending:"):
+        if ref.startswith("pending:"):
+            # The starter may still hand back a sandbox. Keep its claim until then,
+            # but do not keep a dead starter's placeholder past its deadline.
+            if not HostedHarnessConversationLease._base_manager.filter(
+                conversation=conversation,
+                provider_ref=ref,
+                expires_at__lte=timezone.now(),
+            ).update(provider_ref=""):
+                raise HostedHarnessError(
+                    "drafting_sandbox_start_pending",
+                    "The drafting sandbox start has not returned yet.",
+                    status_code=503,
+                    retryable=True,
+                )
+        elif ref:
             if not HostedHarnessGateway()._delete_chat_sandbox(ref, conversation.id):
                 raise HostedHarnessError(
                     "drafting_sandbox_delete_unconfirmed",

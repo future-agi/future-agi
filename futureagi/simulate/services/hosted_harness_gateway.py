@@ -3854,11 +3854,14 @@ class HostedHarnessGateway:
         claim_hash = hashlib.sha256(claim_ref.encode()).hexdigest()
         retired_ref = ""
         with transaction.atomic():
-            conversation = (
-                HostedHarnessConversation.no_workspace_objects.select_for_update().get(
-                    id=conversation.id
-                )
+            locked_chat = (
+                HostedHarnessConversation.no_workspace_objects.select_for_update()
+                .filter(id=conversation.id)
+                .first()
             )
+            if locked_chat is None:
+                return None  # Cleanup retired the chat while its start was queued.
+            conversation = locked_chat
             lease = (
                 HostedHarnessConversationLease.no_workspace_objects.select_for_update()
                 .filter(conversation=conversation)
@@ -3976,6 +3979,31 @@ class HostedHarnessGateway:
                 claim_again=False,
             )
         return started
+
+    def _discard_unclaimed_sandbox(
+        self,
+        conversation: HostedHarnessConversation,
+        claim_ref: str | None,
+        provider_ref: str,
+    ) -> None:
+        """Hand a late sandbox back to cleanup without changing a newer claim."""
+        expired = HostedHarnessConversationLease._base_manager.filter(
+            conversation=conversation,
+            state=HostedHarnessConversationLease.State.EXPIRED,
+        )
+        if claim_ref is not None:
+            expired.filter(provider_ref=claim_ref).update(provider_ref=provider_ref)
+        handed_back = expired.filter(provider_ref=provider_ref)
+        if self._delete_chat_sandbox(provider_ref, conversation.id):
+            handed_back.update(provider_ref="")
+            return
+        if handed_back.filter(conversation__deleted=True).exists():
+            return  # The draft sweep owns this retired lease.
+        # The old claim can already be gone or replaced. Retry by immutable
+        # sandbox ID rather than attaching it to the new runtime's lease.
+        from simulate.tasks.harness_nudges import schedule_sandbox_stop
+
+        schedule_sandbox_stop(conversation.id, provider_ref)
 
     def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> bool:
         """True if the provider confirmed deletion or the sandbox was already gone."""
@@ -4105,7 +4133,9 @@ class HostedHarnessGateway:
                 claim_ref=claim_ref,
             )
             if capability is None:
-                self._delete_chat_sandbox(str(sandbox.id), conversation.id)
+                self._discard_unclaimed_sandbox(
+                    conversation, claim_ref, str(sandbox.id)
+                )
                 return None
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
