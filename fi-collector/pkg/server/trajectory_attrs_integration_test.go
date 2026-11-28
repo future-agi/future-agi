@@ -84,6 +84,22 @@ func TestClickHouseTrajectoryAttrsMatchDedupOff(t *testing.T) {
 	if !strings.Contains(dedupKeys, "__fi_promoted_input_key") || strings.Contains(baseKeys, "__fi_promoted") {
 		t.Fatalf("sentinels: dedup %s, dedup off %s", dedupKeys, baseKeys)
 	}
+	// With the sentinels mapped back to input/output, the top-level keys are
+	// the twin's; every other key holds the twin's value; and input/output
+	// hold the twin's sub-keys apart from the promoted value. The same SQL
+	// runs on both databases (the twin has no sentinel, so it is unchanged).
+	logicalSQL := `WITH toJSONString(attributes_extra) AS j,
+ arrayFilter(k -> NOT startsWith(k, '__fi_promoted_'), JSONExtractKeys(j)) AS ks
+ SELECT id,
+ arraySort(arrayDistinct(arrayConcat(ks, ['input', 'output']))),
+ arrayMap(k -> (k, JSONExtractRaw(j, k)), arraySort(arrayFilter(k -> NOT has(['input', 'output'], k), ks))),
+ arraySort(arrayFilter(k -> k != 'value', JSONExtractKeys(j, 'input'))),
+ arraySort(arrayFilter(k -> k != 'value', JSONExtractKeys(j, 'output')))` + where
+	dedupLogical := observedLocalSQL(t, e.origin, dedupDB, logicalSQL)
+	baseLogical := observedLocalSQL(t, e.origin, baseDB, logicalSQL)
+	if dedupLogical != baseLogical || strings.Count(baseLogical, "\n")+1 != 3 {
+		t.Fatalf("attributes_extra differs from the dedup-off twin beyond the promoted keys:\n%s\nwant\n%s", dedupLogical, baseLogical)
+	}
 	if got := observedLocalSQL(t, e.origin, dedupDB, "SELECT countIf(JSONExtractString(toJSONString(attributes_extra), '__fi_promoted_input_key') = 'input.value' AND JSONExtractString(toJSONString(attributes_extra), '__fi_promoted_output_key') = 'output.value') FROM spans WHERE project_id = '"+pid+"'"); got != "3" {
 		t.Fatalf("every items_v1 span must carry both sentinels, got %s", got)
 	}
