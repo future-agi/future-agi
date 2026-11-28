@@ -15,8 +15,21 @@ from tracer.services.clickhouse import oss_cdc_bootstrap as cdc
 from tracer.services.clickhouse import oss_native_bootstrap as native
 
 DATABASE = "offline_native"
+UPGRADE = "native:040_trajectory_store"
+# Test-side sentinel naming the spans ALTER in fail_create/ignore_create.
+UPGRADE_ALTER = "spans:040_alter"
+# Independent copy of the six 040 spans columns (040_trajectory_items.sql).
+TRAJECTORY_COLUMNS = (
+    "input_item_hashes",
+    "output_item_hashes",
+    "tool_def_hashes",
+    "item_scope_id",
+    "payload_encoding",
+    "payload_envelope",
+)
 DEFAULT_NAMES = (
     "traces end_users trace_sessions end_user_id_remap trace_session_id_remap "
+    "trajectory_items "
     "trace_dict end_users_dict trace_sessions_dict spans spans_per_session "
     "spans_hourly_rollup trace_count_rollup spans_per_session_mv "
     "spans_hourly_rollup_mv trace_count_rollup_mv"
@@ -197,6 +210,22 @@ class MemoryClient:
 
     def command(self, sql):
         self.events.append(("command", sql))
+        if sql == native.native_upgrade_statements(DATABASE)["spans"]:
+            # ADD COLUMN IF NOT EXISTS: only absent columns appear, in file order.
+            assert "spans" in self.tables
+            if self.fail_create == UPGRADE_ALTER:
+                raise RuntimeError("secret-password://uncertain-write")
+            if self.ignore_create != UPGRADE_ALTER:
+                parsed, _, _ = cdc._table(self.definitions["spans"])
+                for column in TRAJECTORY_COLUMNS:
+                    if column not in self.columns["spans"]:
+                        t, k, e = parsed[column]
+                        self.columns["spans"][column] = (
+                            " ".join(t),
+                            k,
+                            " ".join(e),
+                        )
+            return
         name = next(n for n, ddl in self.definitions.items() if ddl == sql)
         assert sql.startswith(
             (
@@ -287,7 +316,7 @@ def test_fresh_then_retained_complete_is_zero_writes():
     assert native.inspect_native(client, database=DATABASE) == tuple(DEFAULT_NAMES)
     assert not client.writes
     assert native.bootstrap_native(client, database=DATABASE) == tuple(DEFAULT_NAMES)
-    assert len(client.writes) == 15
+    assert len(client.writes) == len(DEFAULT_NAMES)
     before = (
         copy.deepcopy(client.tables),
         copy.deepcopy(client.columns),
@@ -330,10 +359,10 @@ def test_incomplete_layout_with_curated_history_also_refuses():
 
 def test_empty_partial_prefix_can_be_explicitly_resumed():
     client = MemoryClient()
-    for name in DEFAULT_NAMES[:8]:
+    for name in DEFAULT_NAMES[:9]:
         client.install(name, client.definitions[name])
     assert native.bootstrap_native(client, database=DATABASE) == tuple(
-        DEFAULT_NAMES[8:]
+        DEFAULT_NAMES[9:]
     )
     assert len(client.writes) == 7
 
@@ -539,8 +568,8 @@ def test_uncertain_create_stops_without_retry_or_cleanup():
         native.NativeBootstrapError, match="partial state retained, no retry"
     ) as exc:
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 6
-    assert set(client.tables) == set(DEFAULT_NAMES[:5])
+    assert len(client.writes) == 7
+    assert set(client.tables) == set(DEFAULT_NAMES[:6])
     assert "secret-password" not in "".join(traceback.format_exception(exc.value))
 
 
@@ -549,7 +578,7 @@ def test_silent_create_failure_is_not_success_or_replayed():
     client.ignore_create = "trace_count_rollup_mv"
     with pytest.raises(native.NativeBootstrapError, match="postflight incomplete"):
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 15
+    assert len(client.writes) == len(DEFAULT_NAMES)
 
 
 @pytest.mark.parametrize(
@@ -664,7 +693,7 @@ def test_silent_late_corruption_fails_postflight_without_retry():
     client.command = corrupt
     with pytest.raises(native.NativeBootstrapError, match="traces: incompatible"):
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 15
+    assert len(client.writes) == len(DEFAULT_NAMES)
 
 
 def test_late_incompatible_object_precedes_any_retained_row_scan():
@@ -711,7 +740,7 @@ def test_nullable_session_key_without_fixed_nonnull_predicate_is_rejected(monkey
     client = MemoryClient()
     with pytest.raises(native.NativeBootstrapError, match="inferred aggregate header"):
         native.bootstrap_native(client, database=DATABASE)
-    assert list(client.tables) == DEFAULT_NAMES[:9]
+    assert list(client.tables) == DEFAULT_NAMES[:10]
 
 
 @pytest.mark.parametrize("column", ["project_id", "span_count", "total_tokens_sum"])
@@ -723,7 +752,7 @@ def test_other_nullable_inputs_are_not_permitted_by_session_identity_exception(c
     ]
     with pytest.raises(native.NativeBootstrapError, match="inferred aggregate header"):
         native.bootstrap_native(client, database=DATABASE)
-    assert list(client.tables) == DEFAULT_NAMES[:9]
+    assert list(client.tables) == DEFAULT_NAMES[:10]
 
 
 def test_fresh_header_mismatch_after_spans_stops_before_rollup_or_mv_create():
@@ -734,8 +763,8 @@ def test_fresh_header_mismatch_after_spans_stops_before_rollup_or_mv_create():
     )
     with pytest.raises(native.NativeBootstrapError, match="inferred aggregate header"):
         native.bootstrap_native(client, database=DATABASE)
-    assert list(client.tables) == DEFAULT_NAMES[:9]
-    assert len(client.writes) == 9
+    assert list(client.tables) == DEFAULT_NAMES[:10]
+    assert len(client.writes) == 10
     assert not any("CREATE MATERIALIZED VIEW" in sql for sql in client.writes)
     assert not any(
         name in client.tables
@@ -748,7 +777,7 @@ def test_invisible_spans_create_does_not_allow_dependents_or_retry():
     client.ignore_create = "spans"
     with pytest.raises(native.NativeBootstrapError, match="spans CREATE not visible"):
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 9
+    assert len(client.writes) == 10
     assert not any("CREATE MATERIALIZED VIEW" in sql for sql in client.writes)
 
 
@@ -766,7 +795,7 @@ def test_all_optional_fresh_tables_have_final_no_ttl_but_retained_ttl_is_untouch
                 include_dashboard_rollup=True,
             )
         )
-        == 19
+        == len(DEFAULT_NAMES) + 4
     )
     row = client.tables["spans_v2_dead_letter"]
     client.tables["spans_v2_dead_letter"] = (
@@ -817,3 +846,253 @@ def test_current_fact_opt_in_adds_only_packaged_immutable_tables():
 def test_current_fact_bootstrap_option_requires_explicit_boolean(value):
     with pytest.raises(native.NativeBootstrapError):
         native.native_definitions(DATABASE, include_current_lists=value)
+
+
+def _pre040_client(*, rows=True, keep=()):
+    """A retained layout as the previous release left it: no trajectory_items
+    and spans without the 040 columns (``keep`` leaves a hand-applied subset).
+    """
+    client = MemoryClient(complete=True)
+    client.remove("trajectory_items")
+    for column in TRAJECTORY_COLUMNS:
+        if column not in keep:
+            del client.columns["spans"][column]
+    if rows:
+        client.data["spans"] = client.data["traces"] = True
+    return client
+
+
+def _pre040_spans_ddl(client):
+    """The spans CREATE of the previous release: the same declarations
+    without the six 040 columns (that release's inspection contract)."""
+    head, entries, tail = native._table_parts(client.definitions["spans"])
+    entries = [e for e in entries if cdc._tokens(e)[0] not in TRAJECTORY_COLUMNS]
+    assert len(entries) == len(native._table_parts(client.definitions["spans"])[1]) - 6
+    return head + "(\n" + ",\n".join(entries) + "\n)" + tail
+
+
+def _040_columns(client):
+    return {c: client.columns["spans"][c] for c in TRAJECTORY_COLUMNS}
+
+
+def test_fresh_install_includes_040():
+    definitions = native.native_definitions(DATABASE)
+    upgrade = native.native_upgrade_statements(DATABASE)
+    assert native.NATIVE_040_UPGRADE == UPGRADE
+    assert native.NATIVE_UPGRADES == (UPGRADE,)
+    assert definitions["trajectory_items"] == upgrade["trajectory_items"]
+    assert definitions["trajectory_items"].startswith(
+        f"CREATE TABLE IF NOT EXISTS {DATABASE}.trajectory_items\n"
+    )
+    columns, _, clauses = cdc._table(definitions["spans"])
+    # Fresh spans carry exactly the packaged 040 declarations, codec included.
+    packaged = (
+        native.Path(native.__file__).with_name("v2")
+        / "schema"
+        / "040_trajectory_items.sql"
+    ).read_text()
+    for column in TRAJECTORY_COLUMNS:
+        line = next(
+            line.strip().removesuffix(",").removesuffix(";")
+            for line in packaged.splitlines()
+            if f"IF NOT EXISTS {column} " in line
+        )
+        declaration = " ".join(line.split()[6:])
+        assert f"{column} {declaration}" in " ".join(definitions["spans"].split())
+        assert columns[column] == cdc._column(cdc._tokens(declaration))
+    assert "TTL" not in clauses
+    client = MemoryClient()
+    assert native.bootstrap_native(client, database=DATABASE) == tuple(DEFAULT_NAMES)
+    assert not any(sql.startswith("ALTER") for sql in client.writes)
+    assert native.inspect_native(client, database=DATABASE) == ()
+
+
+def test_upgrade_statements_are_the_packaged_040_text():
+    upgrade = native.native_upgrade_statements(DATABASE)
+    assert list(upgrade) == ["trajectory_items", "spans"]
+    alter = upgrade["spans"]
+    assert alter.startswith(f"ALTER TABLE {DATABASE}.spans\n")
+    groups = cdc._groups(cdc._tokens(alter)[5:])
+    assert [g[:6] for g in groups] == [
+        ("ADD", "COLUMN", "IF", "NOT", "EXISTS", column)
+        for column in TRAJECTORY_COLUMNS
+    ]
+    assert not {"DROP", "MODIFY", "UPDATE", "DELETE", "MATERIALIZE"} & set(
+        cdc._tokens(alter)
+    )
+    for bad in ("", "system", "a.b", None):
+        with pytest.raises(native.NativeBootstrapError):
+            native.native_upgrade_statements(bad)
+
+
+def test_retained_pre040_plans_exactly_create_then_alter():
+    client = _pre040_client()
+    # The previous release's strict inspector accepts this layout as is.
+    cdc._check_table(
+        "spans",
+        client.tables["spans"],
+        client.columns["spans"],
+        {},
+        _pre040_spans_ddl(client),
+        database=DATABASE,
+        native=True,
+    )
+    assert native.inspect_native(client, database=DATABASE) == (UPGRADE,)
+    assert not client.writes
+    upgrade = native.native_upgrade_statements(DATABASE)
+    assert native.bootstrap_native(client, database=DATABASE) == (UPGRADE,)
+    assert client.writes == [upgrade["trajectory_items"], upgrade["spans"]]
+    assert "trajectory_items" in client.tables
+    parsed, _, _ = cdc._table(client.definitions["spans"])
+    assert _040_columns(client) == {
+        c: (" ".join(parsed[c][0]), parsed[c][1], " ".join(parsed[c][2]))
+        for c in TRAJECTORY_COLUMNS
+    }
+    # Retained rows were never read to plan the upgrade (no incomplete-layout
+    # refusal: trajectory_items is the only exempt object).
+    assert not any(sql.startswith("SELECT 1 FROM ") for kind, sql in client.events)
+
+
+def test_second_run_is_noop():
+    client = _pre040_client()
+    native.bootstrap_native(client, database=DATABASE)
+    before = (copy.deepcopy(client.tables), copy.deepcopy(client.columns))
+    writes = list(client.writes)
+    assert native.inspect_native(client, database=DATABASE) == ()
+    assert native.bootstrap_native(client, database=DATABASE) == ()
+    assert client.writes == writes
+    assert before == (client.tables, client.columns)
+    # The previous release's strict spans inspector, with its own pre-040
+    # spans contract, accepts the result (a downgrade still boots).
+    cdc._check_table(
+        "spans",
+        client.tables["spans"],
+        client.columns["spans"],
+        {},
+        _pre040_spans_ddl(client),
+        database=DATABASE,
+        native=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "keep",
+    [TRAJECTORY_COLUMNS[:1], TRAJECTORY_COLUMNS[:3], TRAJECTORY_COLUMNS[:5]],
+    ids=["one", "three", "five"],
+)
+@pytest.mark.parametrize("table", [True, False], ids=["items", "no-items"])
+def test_partial_exact_subset_resumes_in_r2(keep, table):
+    client = _pre040_client(keep=keep)
+    if table:
+        client.install("trajectory_items", client.definitions["trajectory_items"])
+    upgrade = native.native_upgrade_statements(DATABASE)
+    assert native.inspect_native(client, database=DATABASE) == (UPGRADE,)
+    assert native.bootstrap_native(client, database=DATABASE) == (UPGRADE,)
+    expected = ([] if table else [upgrade["trajectory_items"]]) + [upgrade["spans"]]
+    assert client.writes == expected
+    assert set(client.columns["spans"]) >= set(TRAJECTORY_COLUMNS)
+    assert native.inspect_native(client, database=DATABASE) == ()
+    # The strict shared inspector still refuses a partial set (CDC phase and
+    # the outbox health check), so only this preflight can resume it.
+    partial = _pre040_client(keep=keep)
+    with pytest.raises(cdc.BootstrapError, match="partial 040"):
+        cdc._check_table(
+            "spans",
+            partial.tables["spans"],
+            partial.columns["spans"],
+            {},
+            _pre040_spans_ddl(partial),
+            database=DATABASE,
+            native=True,
+        )
+
+
+def test_all_six_columns_without_items_table_creates_only_the_table():
+    client = _pre040_client(keep=TRAJECTORY_COLUMNS)
+    assert native.bootstrap_native(client, database=DATABASE) == (UPGRADE,)
+    assert client.writes == [
+        native.native_upgrade_statements(DATABASE)["trajectory_items"]
+    ]
+
+
+@pytest.mark.parametrize(
+    "column,shape",
+    [
+        ("payload_encoding", ("String", "DEFAULT", "'inline'")),
+        ("payload_encoding", ("LowCardinality(String)", "DEFAULT", "'items_v1'")),
+        ("input_item_hashes", ("Array(String)", "MATERIALIZED", "[]")),
+        ("item_scope_id", ("Nullable(String)", "", "")),
+    ],
+)
+@pytest.mark.parametrize("subset", [False, True], ids=["all-six", "subset"])
+def test_wrong_040_type_refused(column, shape, subset):
+    keep = TRAJECTORY_COLUMNS if not subset else (column,)
+    client = _pre040_client(keep=keep)
+    client.columns["spans"][column] = shape
+    with pytest.raises(native.NativeBootstrapError, match="spans: incompatible"):
+        native.bootstrap_native(client, database=DATABASE)
+    assert not client.writes
+
+
+def test_wrong_items_table_refused_before_alter():
+    client = _pre040_client()
+    ddl = client.definitions["trajectory_items"]
+    client.install("trajectory_items", ddl.replace("FixedString(32)", "String", 1))
+    with pytest.raises(native.NativeBootstrapError, match="trajectory_items"):
+        native.bootstrap_native(client, database=DATABASE)
+    assert not client.writes
+
+
+@pytest.mark.parametrize(
+    "missing", ["trace_count_rollup_mv", "end_user_id_remap", "spans_hourly_rollup_mv"]
+)
+def test_retained_rows_missing_other_table_still_refused(missing):
+    client = _pre040_client()
+    client.remove(missing)
+    with pytest.raises(native.NativeBootstrapError, match="retained rows"):
+        native.bootstrap_native(client, database=DATABASE)
+    assert not client.writes
+
+
+def test_missing_core_spans_column_is_not_an_upgrade():
+    client = _pre040_client()
+    del client.columns["spans"]["model"]
+    with pytest.raises(native.NativeBootstrapError, match="spans: incompatible"):
+        native.bootstrap_native(client, database=DATABASE)
+    assert not client.writes
+
+
+def test_interrupted_upgrade_is_terminal_then_resumes():
+    client = _pre040_client()
+    client.fail_create = UPGRADE_ALTER
+    with pytest.raises(native.NativeBootstrapError, match=UPGRADE) as exc:
+        native.bootstrap_native(client, database=DATABASE)
+    assert "secret-password" not in "".join(traceback.format_exception(exc.value))
+    assert len(client.writes) == 2 and "trajectory_items" in client.tables
+    client.fail_create = None
+    assert native.bootstrap_native(client, database=DATABASE) == (UPGRADE,)
+    assert client.writes[2:] == [native.native_upgrade_statements(DATABASE)["spans"]]
+    assert native.inspect_native(client, database=DATABASE) == ()
+
+
+def test_silent_alter_failure_fails_postflight():
+    client = _pre040_client()
+    client.ignore_create = UPGRADE_ALTER
+    with pytest.raises(native.NativeBootstrapError, match="postflight incomplete"):
+        native.bootstrap_native(client, database=DATABASE)
+    assert len(client.writes) == 2
+
+
+def test_empty_pre040_partial_layout_creates_then_upgrades():
+    """A previous-release fresh install that stopped part way, without rows."""
+    client = _pre040_client(rows=False)
+    for name in ("spans_hourly_rollup_mv", "trace_count_rollup_mv"):
+        client.remove(name)
+    upgrade = native.native_upgrade_statements(DATABASE)
+    assert native.bootstrap_native(client, database=DATABASE) == (
+        "spans_hourly_rollup_mv",
+        "trace_count_rollup_mv",
+        UPGRADE,
+    )
+    assert client.writes[-2:] == [upgrade["trajectory_items"], upgrade["spans"]]
+    assert native.inspect_native(client, database=DATABASE) == ()

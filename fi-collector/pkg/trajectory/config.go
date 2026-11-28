@@ -126,6 +126,15 @@ func (c Config) Normalize() Config {
 // handling, billing, retention, reader coverage) is not yet safe, so a stray
 // env var or config block must stop the collector at startup instead of
 // silently writing pointer rows or compacted attributes.
+//
+// It is also the OSS downgrade guarantee: the OSS native bootstrap adds the
+// 040 trajectory store to retained installs, and the previous release reads
+// that layout only while no span references trajectory items. It runs on every
+// deployment, including Distributed Compose and Helm, where the native
+// bootstrap job does not see this collector's env. The native-phase
+// FI_TRAJECTORY_DEDUP_MODE refusal in
+// futureagi/tracer/services/clickhouse/oss_cdc_install.py is only an early
+// check; remove both together, in the release that enables the store.
 func (c Config) RequireDormant() error {
 	if (c.Mode != "" && c.Mode != ModeOff) || c.CompactSpanAttrs || c.BillDedupedBytes ||
 		len(c.CanaryProjectList) > 0 || len(c.CanaryProjects) > 0 {
