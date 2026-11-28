@@ -17,7 +17,7 @@ on PG and migrate here when needed.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -32,6 +32,11 @@ logger = structlog.get_logger(__name__)
 # Includes the trace-level fields denormalized onto every span row
 # (trace_name / trace_session_id) so the agent can derive trace context
 # without a separate PG Trace read.
+if TYPE_CHECKING:
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TrajectoryReadState,
+    )
+
 _SPAN_COLS = (
     "toString(id) AS span_id",
     "toString(trace_id) AS trace_id",
@@ -187,7 +192,7 @@ def read_span(project_id: str, span_id: str) -> dict[str, Any] | None:
 
 
 def _hydrate_rca_rows(
-    project_id: str, rows: list[dict[str, Any]], state
+    project_id: str, rows: list[dict[str, Any]], state: TrajectoryReadState
 ) -> list[dict[str, Any]]:
     """Hydrate any items_v1 rows in place and strip trajectory pointer columns.
 

@@ -54,10 +54,12 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     _SENTINEL_MARKER,
     CONTENT_INLINE,
     CONTENT_STATE_KEY,
+    CONTENT_UNAVAILABLE_KEY,
     ENCODING_INLINE,
     ENCODING_ITEMS_V1,
     TRAJECTORY_SPAN_COLUMNS,
     TrajectoryReadState,
+    content_unavailable_sides,
     hydrate_chspans,
     hydrate_span_dicts,
     items_query_settings,
@@ -2081,7 +2083,13 @@ class CHSpanReader:
                     attr_key="attributes_extra",
                 )
             allowed = set(columns)
-            return [{k: d[k] for k in columns if k in allowed} for d in dicts]
+            return [
+                {
+                    **{k: d[k] for k in columns if k in allowed},
+                    **_unavailable_marker(d),
+                }
+                for d in dicts
+            ]
         return self._hydrate_chspans(
             [_row_to_chspan(r) for r in rows],
             scope=_ReadScope.of(project_id=project_id, project_ids=pids, org_id=org_id),
@@ -3948,7 +3956,13 @@ class CHSpanReader:
                     project_id_fallback=str(project_id) if project_id else None,
                     attr_key="attributes_extra",
                 )
-            return {d["trace_id"]: {k: d[k] for k in columns} for d in dicts}
+            return {
+                d["trace_id"]: {
+                    **{k: d[k] for k in columns},
+                    **_unavailable_marker(d),
+                }
+                for d in dicts
+            }
         hydrated = self._hydrate_chspans(
             [_row_to_chspan(r) for r in rows],
             scope=_ReadScope.of(project_id=project_id, project_ids=pids),
@@ -4423,7 +4437,16 @@ class CHSpanReader:
             "custom_eval_config": span.custom_eval_config_id,
             "eval_status": span.eval_status,
             "prompt_version": span.prompt_version_id,
+            **_unavailable_marker(span),
         }
+
+
+def _unavailable_marker(obj: Any) -> dict[str, list[str]]:
+    """``{"content_unavailable": [...]}`` for a row or span with a missing
+    side (its value is a preview), else ``{}``: a projection never drops
+    the state silently, and inline results are unchanged."""
+    sides = content_unavailable_sides(obj)
+    return {CONTENT_UNAVAILABLE_KEY: sides} if sides else {}
 
 
 def _with_read_snapshot(method):

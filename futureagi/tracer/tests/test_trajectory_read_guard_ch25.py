@@ -18,7 +18,7 @@ import json
 import os
 import uuid
 from contextlib import ExitStack
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,6 +64,13 @@ def _jsonl(name: str) -> list[dict]:
 PAYLOADS = _jsonl("payloads.jsonl")
 PROJECT_ID = PAYLOADS[0]["project_id"]
 EXTRACTED = [p for p in PAYLOADS if p["input_extracted"] or p["output_extracted"]]
+_STORED = {row["id"]: row["input"] for row in _jsonl("spans.jsonl")}
+# A case whose stored input preview is shorter than the content.
+LONG = next(
+    p
+    for p in EXTRACTED
+    if p["input_extracted"] and len(_STORED[p["span_id"]]) < len(p["input"])
+)
 
 
 def _ci_requires_clickhouse() -> bool:
@@ -213,7 +220,7 @@ def test_pre040_state_not_ready_and_sql_identical_to_dev(ch):
         project_id=PROJECT_ID,
         trace_id="t",
         span_id="s",
-        start_time=datetime(2026, 11, 20, 12, 0),
+        start_time=datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
     )
     state = trajectory_read_state(analytics)
     assert state is TrajectoryReadState.NOT_READY
@@ -400,7 +407,7 @@ def test_state_flip_mid_request_is_consistent(ch):
         return inner(query, params, timeout_ms=timeout_ms, settings=settings)
 
     analytics.execute_ch_query = recording
-    case = EXTRACTED[0]
+    case = LONG
     detail = trace_detail_reads.read_trace_detail(
         analytics=analytics,
         project_ids=[PROJECT_ID],
@@ -412,4 +419,4 @@ def test_state_flip_mid_request_is_consistent(ch):
     assert calls["n"] == 2
     assert not any("FROM trajectory_items" in s for s in sent)
     assert not any("payload_envelope" in s for s in sent)
-    assert detail.spans[0]["input"] != case["input"] or not case["input_extracted"]
+    assert detail.spans[0]["input"] != case["input"]

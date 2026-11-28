@@ -64,7 +64,13 @@ def _jsonl(name: str) -> list[dict]:
 PAYLOADS = _jsonl("payloads.jsonl")
 SPANS = {row["id"]: row for row in _jsonl("spans.jsonl")}
 PROJECT_ID = PAYLOADS[0]["project_id"]
-CASE = next(p for p in PAYLOADS if p["input_extracted"])
+# A case whose stored preview is shorter than the content, so a preview can
+# never pass for the full input.
+CASE = next(
+    p
+    for p in PAYLOADS
+    if p["input_extracted"] and len(SPANS[p["span_id"]]["input"]) < len(p["input"])
+)
 
 
 @pytest.fixture(autouse=True)
@@ -238,7 +244,8 @@ def test_span_reader_items_query_carries_timeout_and_row_cap(ch):
         "Settings['result_overflow_mode'], Settings['max_threads'] "
         "FROM system.query_log "
         "WHERE type = 'QueryFinish' AND log_comment = %(comment)s "
-        "AND current_database = %(db)s AND position(query, %(pid)s) > 0",
+        "AND current_database = %(db)s AND position(query, %(pid)s) > 0 "
+        "ORDER BY event_time_microseconds",
         {"comment": ITEMS_QUERY_LOG_COMMENT, "db": database, "pid": PROJECT_ID},
     )
     assert rows, "the items query is tagged for system.query_log"

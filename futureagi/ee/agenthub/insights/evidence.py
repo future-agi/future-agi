@@ -67,6 +67,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import PhysicalSpanIdentit
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_ITEMS_V1,
     TrajectoryHydrationUnavailable,
+    TrajectoryReadState,
     content_unavailable_sides,
     hydrate_span_dicts,
     pinned_read_state,
@@ -2803,7 +2804,7 @@ def _read_content_batches(
     status_only: set[int],
     partial: Mapping[int, int],
     limits: EvidenceLimits,
-    read_state,
+    read_state: TrajectoryReadState,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     tiers: list[tuple[list[_Node], int, int, Callable[[_Node], int]]] = [
         ([], limits.max_raw_field_chars, _STATUS_MESSAGE_CHARS, lambda n: n.raw_chars),

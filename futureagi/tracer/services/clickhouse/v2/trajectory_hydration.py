@@ -77,6 +77,12 @@ SENTINEL_PROMOTED_OUTPUT_KEY = "__fi_promoted_output_key"
 SENTINEL_PROMOTED_OUTPUT_JSON = "__fi_promoted_output_json"
 
 _SENTINEL_MARKER = "__fi_promoted_"
+_SENTINEL_KEYS = (
+    SENTINEL_PROMOTED_INPUT_KEY,
+    SENTINEL_PROMOTED_INPUT_JSON,
+    SENTINEL_PROMOTED_OUTPUT_KEY,
+    SENTINEL_PROMOTED_OUTPUT_JSON,
+)
 
 ENVELOPE_VERSION = 2
 SLOT_MESSAGE = "m"
@@ -904,6 +910,9 @@ def restore_promoted_attributes(
     state (the hydrators pass True). A side passed as None is never restored:
     its sentinel is still removed.
     """
+    if not any(k in attrs for k in _SENTINEL_KEYS):
+        # No sentinel: nothing to restore, and no read-state lookup.
+        return attrs
     if not _restore_enabled(enabled):
         return attrs
     in_key = attrs.pop(SENTINEL_PROMOTED_INPUT_KEY, None)
