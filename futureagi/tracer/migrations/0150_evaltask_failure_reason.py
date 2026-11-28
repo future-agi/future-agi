@@ -5,7 +5,7 @@ UPDATE_SCOPE = ("postgres:tracer_eval_task",)
 
 
 class Migration(migrations.Migration):
-    dependencies = [("tracer", "0143_merge_feed_escalation_and_metrics")]
+    dependencies = [("tracer", "0149_alert_when_db_default")]
 
     operations = [
         migrations.AddField(
