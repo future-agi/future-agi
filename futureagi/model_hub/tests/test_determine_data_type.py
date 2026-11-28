@@ -726,3 +726,60 @@ class TestClassifyUrlColumnSampling:
 
         assert result == choices_module.DataTypeChoices.IMAGE.value
         assert calls == []
+
+
+class TestDocumentDataUriClassification:
+    """A document data URL should be a first-class DOCUMENT value, the same way an
+    image data URL is IMAGE and an audio data URL is AUDIO.
+
+    `_check_media_strings` only ever covered "image" and "audio", and step 7 of
+    `determine_data_type` ran the document check only for http(s) URLs. So
+    `data:application/pdf;base64,...` was typed as TEXT even though
+    `is_document_url` already returns True for that prefix and
+    `DataTypeChoices.DOCUMENT` already exists.
+    """
+
+    PDF = "data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK"
+    CSV = "data:text/csv;base64,Y29sdW1uX2EsY29sdW1uX2IK"
+    PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg"
+    MP3 = "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4"
+
+    def test_pdf_data_uri_is_document(self):
+        import pandas as pd
+
+        from model_hub.models.choices import DataTypeChoices, determine_data_type
+
+        column = pd.Series([self.PDF, self.PDF])
+        assert determine_data_type(column) == DataTypeChoices.DOCUMENT.value
+
+    def test_text_data_uri_is_document(self):
+        import pandas as pd
+
+        from model_hub.models.choices import DataTypeChoices, determine_data_type
+
+        column = pd.Series([self.CSV])
+        assert determine_data_type(column) == DataTypeChoices.DOCUMENT.value
+
+    def test_mixed_document_and_image_data_uris_stay_text(self):
+        import pandas as pd
+
+        from model_hub.models.choices import DataTypeChoices, determine_data_type
+
+        column = pd.Series([self.PDF, self.PNG])
+        assert determine_data_type(column) == DataTypeChoices.TEXT.value
+
+    def test_image_and_audio_data_uris_are_unchanged(self):
+        import pandas as pd
+
+        from model_hub.models.choices import DataTypeChoices, determine_data_type
+
+        assert determine_data_type(pd.Series([self.PNG])) == DataTypeChoices.IMAGE.value
+        assert determine_data_type(pd.Series([self.MP3])) == DataTypeChoices.AUDIO.value
+
+    def test_plain_text_that_mentions_a_data_uri_is_not_a_document(self):
+        import pandas as pd
+
+        from model_hub.models.choices import DataTypeChoices, determine_data_type
+
+        column = pd.Series(["see data:application/pdf;base64,abc for details"])
+        assert determine_data_type(column) == DataTypeChoices.TEXT.value
