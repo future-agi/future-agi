@@ -5,10 +5,11 @@ import json
 import time
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
+from uuid import UUID, uuid4
 
 import pytest
 import requests
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 from asgiref.testing import ApplicationCommunicator
 from channels.layers import get_channel_layer
 from django.test import override_settings
@@ -18,6 +19,7 @@ from structlog.testing import capture_logs
 from accounts.models import Organization, OrgApiKey, User
 from model_hub.utils import call_websocket
 from sockets.consumer import DataConsumer
+from sockets.prompt_jobs import create_prompt_job, is_prompt_job, prompt_job_access
 from tfc.utils.websocket_relay_auth import (
     RELAY_SIGNATURE_HEADER,
     RELAY_TIMESTAMP_HEADER,
@@ -95,6 +97,12 @@ MESSAGES = [
 @pytest.fixture(autouse=True)
 def relay_settings():
     with override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": str(uuid4()),
+            }
+        },
         CLOUD_DEPLOYMENT="",
         WEBSOCKET_ENDPOINT="http://localhost:8000/call-websocket/",
         CHANNEL_LAYERS={"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}},
@@ -190,7 +198,14 @@ def test_helper_messages_reach_only_authenticated_organization(message, targeted
     assert_helper_delivery(message, targeted, target)
 
 
-def assert_helper_delivery(message, targeted, target):
+def assert_helper_delivery(message, targeted, target, *, already_bound=False):
+    if is_prompt_job(target) and not already_bound:
+        prefix, suffix = target.split("_", 1)
+        with patch("sockets.prompt_jobs.uuid4", return_value=UUID(suffix)):
+            create_prompt_job(
+                prefix, SimpleNamespace(id=TARGET, organization_id=ORG), ORG
+            )
+
     async def resolve_org(scope, user):
         return user.organization_id
 
@@ -206,9 +221,12 @@ def assert_helper_delivery(message, targeted, target):
                         "text": json.dumps({"type": "subscribe", "uuid": target}),
                     }
                 )
-                assert (await receive_message(socket))[
-                    "type"
-                ] == "subscription_confirmed"
+                expected = (
+                    "subscription_denied"
+                    if socket is other and is_prompt_job(target)
+                    else "subscription_confirmed"
+                )
+                assert (await receive_message(socket))["type"] == expected
             with (
                 patch("model_hub.utils.OrgApiKey.no_workspace_objects") as keys,
                 patch("model_hub.utils.requests.post", side_effect=relay_http) as post,
@@ -234,7 +252,15 @@ def assert_helper_delivery(message, targeted, target):
                 await socket.send_input({"type": "websocket.disconnect", "code": 1000})
                 await socket.wait()
 
-    with patch("sockets.consumer.resolve_socket_organization", side_effect=resolve_org):
+    with (
+        patch("sockets.consumer.resolve_socket_organization", side_effect=resolve_org),
+        patch(
+            "sockets.prompt_jobs._workspace_access",
+            side_effect=lambda user, org, workspace: (
+                (user, org, workspace) == (ORG, ORG, TARGET)
+            ),
+        ),
+    ):
         asyncio.run(run())
 
 
@@ -711,16 +737,28 @@ def test_prompt_endpoint_identifiers_reach_subscribed_consumer(
     request = SimpleNamespace(
         data=data,
         headers={},
-        workspace=None,
+        workspace=SimpleNamespace(id=TARGET, organization_id=ORG),
         user=SimpleNamespace(id=TARGET, organization=SimpleNamespace(id=ORG)),
     )
+
+    def assert_bound_before_dispatch(executor, runner, payload, log):
+        with patch(
+            "sockets.prompt_jobs._workspace_access", return_value=True
+        ) as access:
+            assert async_to_sync(prompt_job_access)(TARGET, ORG, payload[id_field])
+            access.assert_called_once_with(TARGET, ORG, request.workspace.id)
+
     # Exercise the real producer, replacing only billing/model work. The ID must
     # come from its response, not a test's approximation of the endpoint format.
     with (
         patch.object(prompt_template, "count_text_tokens", return_value=1),
         patch.object(prompt_template, "log_and_deduct_cost_for_api_request", None),
         patch.object(prompt_template, "PromptGenerator"),
-        patch.object(prompt_template, "submit_with_retry") as submit,
+        patch.object(
+            prompt_template,
+            "submit_with_retry",
+            side_effect=assert_bound_before_dispatch,
+        ) as submit,
         patch("tfc.ee_gating.check_ee_feature"),
     ):
         response = getattr(prompt_template.PromptTemplateViewSet(), action)(request)
@@ -743,7 +781,7 @@ def test_prompt_endpoint_identifiers_reach_subscribed_consumer(
             "status": "completed",
         }
     )
-    assert_helper_delivery(message, True, target)
+    assert_helper_delivery(message, True, target, already_bound=True)
 
 
 @pytest.mark.django_db(transaction=True)

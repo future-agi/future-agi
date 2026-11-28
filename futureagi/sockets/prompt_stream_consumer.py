@@ -1,5 +1,4 @@
 import asyncio
-import uuid
 from urllib.parse import parse_qs
 from uuid import uuid4
 
@@ -14,6 +13,7 @@ from model_hub.utils.async_improve_prompt_runner import improve_prompt_async
 from model_hub.utils.async_prompt_runner import run_template_async
 from model_hub.utils.websocket_direct_manager import WebSocketDirectManager
 from model_hub.views.prompt_template import replace_ids_with_column_name_async
+from sockets.prompt_jobs import JOB_UNAVAILABLE, create_prompt_job, prompt_job_access
 from sockets.saml_guard import SamlSocketGuard
 from sockets.workspace_access import NOT_FOUND, WorkspaceAccessGate
 
@@ -168,7 +168,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             payload.update(correlation)
         await self.send_json(payload)
 
-    def _make_ws_manager(self, org_id, *, with_send=True):
+    def _make_ws_manager(self, org_id, *, with_send=True, send=None):
         """Single construction site for WebSocketDirectManager.
 
         Execute paths need the send callback so the runner can push frames;
@@ -181,7 +181,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             "channel_layer": self.channel_layer,
         }
         if with_send:
-            kwargs["consumer_send_json_func"] = self.send_json
+            kwargs["consumer_send_json_func"] = send or self.send_json
         return WebSocketDirectManager(**kwargs)
 
     async def _handle_stop(self, *, action_name, apply_stop, correlation):
@@ -359,47 +359,68 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             await self._send_ws_error("Improvement Requirements are required")
             return
 
-        payload = {
-            "original_prompt": existing_prompt,
-            "improvement_suggestions": improvement_requirements,
-            "improve_id": f"improve_{uuid.uuid4()}",
-            "user_id": str(self.user.id),
-            "mixpanel_uid": None,
-        }
+        await self._start_prompt_job(
+            "improve",
+            "improve_id",
+            improve_prompt_async,
+            original_prompt=existing_prompt,
+            improvement_suggestions=improvement_requirements,
+            examples="",
+        )
 
+    async def _start_prompt_job(self, kind, id_field, runner, **kwargs):
+        try:
+            workspace, org_id = await self._resolve_workspace_and_org()
+            if workspace is None:
+                return
+            target = await database_sync_to_async(create_prompt_job)(
+                kind, workspace, org_id
+            )
+        except Exception:
+            logger.exception("prompt_job_creation_failed")
+            await self._send_ws_error(JOB_UNAVAILABLE)
+            return
+
+        correlation = {id_field: target}
         await self.send_json(
             {
                 "type": "execution_started",
-                "improve_id": payload["improve_id"],
                 "session_uuid": self.session_uuid,
+                **correlation,
             }
         )
-        self._create_task(
-            self.execute_improve_prompt_async(payload, payload["improve_id"])
-        )
+        denied = False
 
-    async def execute_improve_prompt_async(self, content, improve_id):
-        correlation = {"improve_id": improve_id}
+        async def deliver(data):
+            # Bind the callback to this job, not an ID in the runner's message.
+            nonlocal denied
+            if denied:
+                return
+            if not await prompt_job_access(self.user.id, org_id, target):
+                denied = True
+                await self._send_ws_error(JOB_UNAVAILABLE, correlation=correlation)
+                return
+            await self.send_json(data)
 
-        async def run(workspace, org_id):
-            await improve_prompt_async(
-                original_prompt=content.get("original_prompt", ""),
-                improvement_suggestions=content.get("improvement_suggestions", ""),
-                examples=content.get("examples", ""),
-                improve_id=improve_id,
-                organization_id=org_id,
-                user_id=content.get("user_id"),
-                uid=content.get("mixpanel_uid"),
-                workspace=workspace,
-                ws_manager=self._make_ws_manager(org_id),
-            )
+        async def execute():
+            try:
+                await runner(
+                    **kwargs,
+                    **correlation,
+                    workspace=workspace,
+                    organization_id=org_id,
+                    user_id=str(self.user.id),
+                    uid=None,
+                    ws_manager=self._make_ws_manager(org_id, send=deliver),
+                )
+            except Exception:
+                logger.exception("prompt_job_execution_failed")
+                await self._send_ws_error(
+                    f"{kind.capitalize()} failed. Please retry.",
+                    correlation=correlation,
+                )
 
-        await self._execute_with_org(
-            correlation=correlation,
-            log_context="execute_improve_prompt_async failed",
-            failure_message="Improve failed. Please retry.",
-            run=run,
-        )
+        self._create_task(execute())
 
     async def handle_stop_improve_prompt(self, content):
         improve_id = content.get("improve_id")
@@ -422,42 +443,8 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             await self._send_ws_error("Statement is required")
             return
 
-        generation_id = f"generate_{uuid.uuid4()}"
-        payload = {
-            "description": statement,
-            "generation_id": generation_id,
-            "user_id": str(self.user.id),
-            "mixpanel_uid": None,
-        }
-
-        await self.send_json(
-            {
-                "type": "execution_started",
-                "generation_id": generation_id,
-                "session_uuid": self.session_uuid,
-            }
-        )
-        self._create_task(self.execute_generate_prompt_async(payload, generation_id))
-
-    async def execute_generate_prompt_async(self, content, generation_id):
-        correlation = {"generation_id": generation_id}
-
-        async def run(workspace, org_id):
-            await generate_prompt_async(
-                description=content.get("description", ""),
-                generation_id=generation_id,
-                organization_id=org_id,
-                user_id=content.get("user_id"),
-                uid=content.get("mixpanel_uid"),
-                workspace=workspace,
-                ws_manager=self._make_ws_manager(org_id),
-            )
-
-        await self._execute_with_org(
-            correlation=correlation,
-            log_context="execute_generate_prompt_async failed",
-            failure_message="Generate failed. Please retry.",
-            run=run,
+        await self._start_prompt_job(
+            "generate", "generation_id", generate_prompt_async, description=statement
         )
 
     async def handle_stop_generate_prompt(self, content):
