@@ -292,6 +292,61 @@ def test_production_reaches_a_build_not_yet_linked_to_a_test(agent):
     }
 
 
+def test_production_reaches_an_unlinked_build_only_in_its_agents_scope(agent, user):
+    # A build not yet linked to a test is its agent's where the agent is, as the agent's
+    # count and list read it. A production change moves the one there and neither moves,
+    # reports nor offers anything to the one outside.
+    from accounts.models.workspace import Workspace
+
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+
+    def unlinked(minutes, **fields):
+        environment = _environment(agent, minutes)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            state=HostedHarnessJob.State.COMPLETED,
+            agent_version=first,
+            run_test=None,
+            **fields,
+        )
+        environment.refresh_from_db()
+        return _following(_built_from(environment, first, source_agent()))
+
+    here = unlinked(1)
+    outside = unlinked(
+        2,
+        workspace=Workspace.objects.create(
+            name="Outside",
+            organization=agent.organization,
+            is_active=True,
+            created_by=user,
+        ),
+    )
+
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+        set_production(second)
+
+    here.refresh_from_db()
+    outside.refresh_from_db()
+    assert here.agent_version_id == second.id
+    assert outside.agent_version_id == first.id
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(here.id): "activated",
+    }
+    assert str(outside.id) not in {str(call.args[0]) for call in nudge.call_args_list}
+
+
 def test_production_offers_a_pinned_dead_build_nothing_it_can_show(agent, settings):
     # A build with no policy is pinned, so a production change visits an agent's failed and
     # cancelled builds, linked or not: it leaves each on its version, records it as pinned
