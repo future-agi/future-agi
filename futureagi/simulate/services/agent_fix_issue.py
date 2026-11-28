@@ -66,7 +66,7 @@ from simulate.services.agent_fix_runs import (
     locked_test_keys,
     require_variation_room,
 )
-from simulate.services.evidence_drafts import forget, start_drafting
+from simulate.services.evidence_drafts import start_drafting
 from simulate.services.evidence_import import (
     add_to_suite,
     create_evidence_import,
@@ -620,16 +620,9 @@ def _cancel_run(run: HostedHarnessJob) -> None:
 
 def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
     """Stop a job before its epoch starts. Its baseline is canceled; before Run
-    Epoch, its drafting is forgotten and its import discarded, and only then is it
-    ended, so a stop that fails part way can be asked again. The scenarios Run Epoch
-    added stay in the suite. A launched job's epoch stops on its own page."""
-    if issue_job_phase(job) in (
-        IssueJobPhase.DRAFTING,
-        IssueJobPhase.REVIEW,
-        IssueJobPhase.BLOCKED,
-    ):
-        # Drafting first: an import is not discarded while its builder drafts.
-        forget(str(job.evidence_import_id))
+    Epoch, its builder is retired and its import discarded as the job ends. Sandbox
+    cleanup can retry independently. The scenarios Run Epoch added stay in the
+    suite. A launched job's epoch stops on its own page."""
     with transaction.atomic():
         locked = (
             AgentFixIssueJob.no_workspace_objects.select_for_update(of=("self",))
@@ -655,7 +648,7 @@ def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
             )
         else:
             if phase != IssueJobPhase.MEASURING:
-                discard_evidence_import(locked.evidence_import)
+                discard_evidence_import(locked.evidence_import, stop_builder=True)
             # Ended first, under the job's lock, so the epoch cannot launch from it.
             _set_ending(locked, STOPPED)
             stray = locked.baseline_run if phase == IssueJobPhase.MEASURING else None

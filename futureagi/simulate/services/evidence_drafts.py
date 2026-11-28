@@ -254,7 +254,7 @@ def land(
             from simulate.services.harness_versioning.rebuild import _expire_chat_lease
 
             _expire_chat_lease(conversation)
-            forget_later(import_id)
+            forget_later(import_id, str(conversation.job_id))
 
         transaction.on_commit(close)
 
@@ -681,55 +681,97 @@ def turn_ended(conversation_id: str, command_id: str, outcome: str) -> None:
         last_words = _last_words(command.conversation, command)
         _block(cases, _with_reply(TURN_FAILED, last_words))
         import_id = str(payload.get("_evidence_import_id") or "")
-        transaction.on_commit(lambda: forget_later(import_id))
+        job_id = str(command.conversation.job_id)
+        transaction.on_commit(lambda: forget_later(import_id, job_id))
 
 
-def forget_later(evidence_import_id: str) -> None:
+def forget_later(evidence_import_id: str, drafting_job_id: str) -> None:
     """Delete the drafting job now; the sweep finishes it if this cannot."""
     from simulate.tasks.evidence_drafts import schedule_forget
 
     if not evidence_import_id:
         return
     try:
-        schedule_forget(evidence_import_id)
+        schedule_forget(evidence_import_id, drafting_job_id)
     except Exception:  # noqa: BLE001 - the sweep deletes it on its next pass
         logger.exception(
             "evidence_forget_schedule_failed", evidence_import=evidence_import_id
         )
 
 
-def forget(evidence_import_id: str) -> None:
+def stop_drafting(evidence_import: EvidenceImport) -> None:
+    """Fence the builder under the import's discard lock. Delete its resources
+    only after the discard commits; the sweep retries any unconfirmed cleanup."""
+    if evidence_import.drafting_job_id is not None:
+        _retire_drafting_chat(evidence_import.drafting_job_id)
+        transaction.on_commit(lambda: _forgotten(evidence_import))
+
+
+def _retire_drafting_chat(job_id: uuid.UUID) -> HostedHarnessConversation | None:
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation._base_manager.select_for_update()
+            .filter(job_id=job_id)
+            .first()
+        )
+        if conversation is not None:
+            # A soft-deleted chat stays available to cleanup, but neither recovery
+            # nor an already queued runtime start can claim a new lease for it.
+            if not conversation.deleted:
+                conversation.state = HostedHarnessConversation.State.RETIRED
+                conversation.active_invocation_id = None
+                conversation.delete()
+            HostedHarnessConversationLease._base_manager.filter(
+                conversation=conversation
+            ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+        return conversation
+
+
+def forget(evidence_import_id: str, drafting_job_id: str | None = None) -> None:
     """Delete an import's drafting job and everything its chat left: the sandbox,
     the checkpoints, the chat's rows (messages, events, transcripts, lease) and the
-    job. Each step is safe to repeat, so a pass that stops part way is finished by
-    the next."""
+    job. Deferred callers pass the job ID they observed so a retry cannot touch a
+    later draft on the same import."""
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
     # A deleted import too: its environment's deletion leaves its drafting here.
-    evidence_import = EvidenceImport._base_manager.filter(id=evidence_import_id).first()
+    imports = EvidenceImport._base_manager.filter(id=evidence_import_id)
+    if drafting_job_id is not None:
+        imports = imports.filter(drafting_job_id=uuid.UUID(drafting_job_id))
+    evidence_import = imports.first()
     if evidence_import is None or evidence_import.drafting_job_id is None:
         return
     job_id = evidence_import.drafting_job_id
-    conversation = HostedHarnessConversation._base_manager.filter(job_id=job_id).first()
+    conversation = _retire_drafting_chat(job_id)
     if conversation is not None:
         lease = HostedHarnessConversationLease._base_manager.filter(
             conversation=conversation
         ).first()
         ref = str(getattr(lease, "provider_ref", "") or "")
-        if ref and not ref.startswith("pending:"):
-            try:
-                gateway = HostedHarnessGateway()
-            except HostedHarnessError:
-                # No sandbox provider here, so no sandbox can be running; the
-                # lease is expired already, and the rows below matter more.
-                logger.warning(
-                    "evidence_forget_no_sandbox_provider",
-                    conversation=str(conversation.id),
+        if ref.startswith("pending:"):
+            # The starter may still hand back a sandbox. Keep its claim until then,
+            # but do not keep a dead starter's placeholder past its deadline.
+            if not HostedHarnessConversationLease._base_manager.filter(
+                conversation=conversation,
+                provider_ref=ref,
+                expires_at__lte=timezone.now(),
+            ).update(provider_ref=""):
+                raise HostedHarnessError(
+                    "drafting_sandbox_start_pending",
+                    "The drafting sandbox start has not returned yet.",
+                    status_code=503,
+                    retryable=True,
                 )
-            else:
-                gateway._delete_chat_sandbox(ref, conversation.id)
+        elif ref:
+            if not HostedHarnessGateway()._delete_chat_sandbox(ref, conversation.id):
+                raise HostedHarnessError(
+                    "drafting_sandbox_delete_unconfirmed",
+                    "The provider did not confirm drafting sandbox deletion.",
+                    status_code=503,
+                    retryable=True,
+                )
         client = get_storage_client()
         prefix = (
             f"harness-conversations/{conversation.organization_id}/{conversation.id}/"
@@ -769,7 +811,11 @@ def sweep() -> dict[str, int]:
         conversation = HostedHarnessConversation._base_manager.filter(
             job_id=evidence_import.drafting_job_id
         ).first()
-        command = _drafting_command(conversation) if conversation else None
+        if conversation is not None and conversation.deleted:
+            # Cleanup already fenced this draft; its cases are not a live turn.
+            forgotten += _forgotten(evidence_import)
+            continue
+        command = _drafting_command(conversation)
         waiting = evidence_import.cases.filter(
             id__in=((command.payload or {}) if command else {}).get("_case_ids") or [],
             status=EvidenceImportCase.Status.PENDING,
@@ -788,7 +834,7 @@ def _forgotten(evidence_import: EvidenceImport) -> int:
     """1 once the import's drafting is forgotten, 0 when that failed and the next
     sweep tries again. One import's failure never stops the rest."""
     try:
-        forget(str(evidence_import.id))
+        forget(str(evidence_import.id), str(evidence_import.drafting_job_id))
     except Exception:  # noqa: BLE001 - logged; the next sweep tries again
         logger.exception(
             "evidence_forget_failed", evidence_import=str(evidence_import.id)

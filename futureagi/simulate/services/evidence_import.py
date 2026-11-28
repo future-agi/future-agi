@@ -39,7 +39,7 @@ from simulate.selectors.evidence_import import (
     stored_transcripts,
     transcript_evidence,
 )
-from simulate.services.evidence_drafts import CATALOGUE
+from simulate.services.evidence_drafts import CATALOGUE, stop_drafting
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import DELETE_CANCEL_REASON, HostedHarnessError
@@ -532,12 +532,15 @@ def _store_cases(
         )
 
 
-def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
+def discard_evidence_import(
+    evidence_import: EvidenceImport, *, stop_builder: bool = False
+) -> bool:
     """Discard what a person no longer wants of ``evidence_import``. Nothing of
     it added: the import is deleted, and a transcript's stored text with it.
     Some of it added: only its cases not added are discarded, so the added
     scenarios keep their provenance, and the import counts as finished. Refused
-    while the builder drafts its cases. Returns whether the import was deleted.
+    while the builder drafts its cases unless Stop retires it in this transaction.
+    Returns whether the import was deleted.
 
     Under the environment's lock first, as creating an import and adding to the
     suite take it: an import made meanwhile never repeats a case being discarded,
@@ -547,7 +550,9 @@ def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
         locked = EvidenceImport.no_workspace_objects.select_for_update().get(
             id=evidence_import.id
         )
-        if locked.drafting_job_id is not None:
+        if stop_builder:
+            stop_drafting(locked)
+        elif locked.drafting_job_id is not None:
             raise HostedHarnessError(
                 "evidence_drafting_busy",
                 "This import's cases are being drafted; discard it once drafting ends",

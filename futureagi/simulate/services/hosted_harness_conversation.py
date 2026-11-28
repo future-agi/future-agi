@@ -640,10 +640,15 @@ def enqueue_message(
                 id=job.id
             )
         conversation = (
-            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            HostedHarnessConversation._base_manager.select_for_update()
             .filter(job=job)
             .first()
         )
+        if conversation is not None and conversation.deleted:
+            # Cleanup still owns this job's one chat; never replace or wake it.
+            raise HostedHarnessError(
+                "conversation_closed", "This conversation has ended.", status_code=409
+            )
         if conversation is None:
             conversation = HostedHarnessConversation.no_workspace_objects.create(
                 job=job,
