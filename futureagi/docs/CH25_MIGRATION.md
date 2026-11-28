@@ -356,6 +356,45 @@ soaked for the agreed-on window.
 
 ---
 
+## Trajectory store: the hosted rollback floor
+
+Once a region's collector has written deduplicated trajectory rows
+(`FI_TRAJECTORY_DEDUP_MODE` or `FI_COMPACT_SPAN_ATTRS` was ever on), those
+span rows keep a preview and a pointer into `trajectory_items`. Backend and
+collector images from before the first hydration-capable release cannot read
+them back. Re-inserting full span rows is not a way back either: the
+AggregatingMergeTree rollups (materialized views 008, 010, 012, 016 and 021)
+fire on insert and would count every re-inserted span twice. From that point
+on, rollback in that region only goes forward.
+
+The hosted deployment repository enforces this. Its
+`deploy/trajectory-rollback-floor.json` holds, per region:
+
+- a sticky `dedup_ever` marker;
+- `min_release`;
+- `incapable_digests`, the covered image digests from before the floor.
+
+The backend family and the collector render by digest, so the digest list is
+what actually guards them. `min_release` guards only tag-rendered images.
+
+The runbook beside the file (`docs/trajectory-rollback-floor.md` in that
+repository) covers when each field is set:
+
+- The floor is staged after the first hydration-capable release and one more
+  release are live (rollout step S4).
+- The marker is set in the same change that first turns the collector's dedup
+  env on (S5).
+
+Once a region's marker is set, its PR checks and its rollout executor refuse
+two things: a target below the floor, and any change that lowers the file.
+Before that, the staged values may still be corrected. A manual `helm rollback` is not
+checked, so judge the target revision with that runbook first. To stop new
+deduplicated writes, close the store gate or set the collector env to off.
+Rows already written still need hydration-capable readers, so neither step is
+a reason to go below the floor.
+
+---
+
 ## What stays (intentional)
 
 These CDC mirrors and CH dictionaries are **not** part of this migration:
