@@ -186,6 +186,19 @@ function seedSuffix(): string {
   return `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 }
 
+/** A failed historical task with no entries in the caller's empty Observe project. */
+export function seedFailedEvalTask(opts: {
+  projectId: string; organizationId: string; workspaceId: string; taskName: string;
+}): { taskId: string } {
+  return runSeedScript(
+    resolveBackendContainer(),
+    fileURLToPath(new URL('./harness_eval_task_seed.py', import.meta.url)),
+    `eval-task-seed-${seedSuffix()}.py`,
+    { SEED_PROJECT_ID: opts.projectId, SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId, SEED_TASK_NAME: opts.taskName },
+  ) as { taskId: string };
+}
+
 export function seedCallExecutions(opts: {
   organizationId: string;
   workspaceId: string;
