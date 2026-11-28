@@ -29,7 +29,8 @@ const MIN_GROUP_PATHS = {
   // OTLP trace ingestion routes migrated to fi-collector; Django no longer serves them.
   // Retell webhook route removed in favour of polling.
   tracer: 153,
-  usage: 55,
+  // Unused internal support admin routes (subscription tiers, pricing, limits, organizations) removed.
+  usage: 48,
 };
 const MUTATION_METHODS = new Set(["post", "put", "patch"]);
 const NON_RESPONSE_OPTIONAL_METHODS = new Set(["delete"]);
