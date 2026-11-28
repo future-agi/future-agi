@@ -383,23 +383,22 @@ def select_split(
             f"Lock {pair} to run their train and test splits.",
             status_code=422,
         )
-    in_split = [
-        scenario_id
-        for scenario_id, member_split in locked_version_members(
-            locked_version.id
-        ).items()
-        if member_split == split
-    ]
+    splits = locked_version_members(locked_version.id)
+    # Every member of the suite, not the split's only: a member pairs by its name only
+    # when no member has that key, so the other split's keys must be seen.
     members = list(
         HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=locked_version.suite_version_id,
-            scenario_id__in=in_split,
+            suite_version_id=locked_version.suite_version_id
         )
         .order_by("number")
         .values_list("scenario_id", "scenario_key", "content__name")
     )
     blocked = _blocked_members(members, production_bound(environment, pins))
-    keys = [key for scenario_id, key, _ in members if scenario_id not in blocked]
+    keys = [
+        key
+        for scenario_id, key, _ in members
+        if splits.get(scenario_id) == split and scenario_id not in blocked
+    ]
     if not scenario_keys:
         return SplitSelection(locked_version, keys)
     outside = [key for key in scenario_keys if key not in keys]
