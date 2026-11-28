@@ -1,7 +1,13 @@
 """Fresh-only OSS native CREATEs, using fixed packaged declarations.
 
 The caller owns an authorized, database-bound client, transport deadlines and an
-exclusive schema window with ALL native writers stopped. The injected transport
+exclusive schema window. Fresh CREATEs require ALL native writers stopped. The
+one named 040 upgrade below does not: a Distributed ``compose up`` does not stop
+the running collector first, so a previous-release collector may keep inserting
+during its ALTER. That is tolerated because the ALTER only adds columns with
+constant defaults and those inserts never name them (covered with concurrent
+inserts in test_trajectory_oss_upgrade_ch25.py). Stopping writers first is still
+the recommended operator procedure. The injected transport
 must disable automatic retries/redirects as well. This module does not
 connect, select an environment, initialize PG/CDC, or run historical migrations.
 CH_DATABASE/CH25_DATABASE/FI_CH_DATABASE alignment is a caller prerequisite.
@@ -29,10 +35,20 @@ with two bounded exceptions:
    exempts trajectory_items alone (a new, empty table that no retained span
    references).
 
-Downgrade: the previous release accepts spans with none or all six 040
-columns and ignores trajectory_items, so it boots on an upgraded layout. That
-is safe only while no span references trajectory items, which is why this
-release refuses any trajectory dedup mode other than off (oss_cdc_install).
+Downgrade: the previous release here means the release that ships the tolerant
+spans inspector (none or all six 040 columns, trajectory_items ignored); older
+releases refuse the six columns, so this upgrade must ship at least one release
+after that one. Such a downgrade boots on an upgraded layout only once this
+upgrade ran to completion (that inspector refuses a partial subset, so rerun
+``--phase native --apply`` until nothing is pending before any downgrade). It is
+safe only while no span references trajectory items. What guarantees that on
+every deployment is the collector's startup refusal
+(fi-collector/pkg/trajectory/config.go ``Config.RequireDormant``), which stops
+the collector on any setting that would write pointer rows or compacted
+attributes. The oss_cdc_install native-phase refusal of
+FI_TRAJECTORY_DEDUP_MODE is only an early check where the bootstrap shares the
+collector's env (Standalone). The release that enables dedup must drop both
+together, and from then on a downgrade below it is unsupported.
 
 Existing table compatibility reuses the CDC functional column/engine/key/TTL
 contract, NOT performance equivalence of codecs/indexes/projections/settings.
@@ -256,7 +272,9 @@ def native_upgrade_statements(database):
     ``{"trajectory_items": CREATE, "spans": ALTER}``: the packaged 040 text,
     database-qualified. Deliberately NOT a generic ALTER interpreter: only this
     exact six-column ALTER is permitted, and only bootstrap_native runs it,
-    inside the caller's exclusive writers-stopped window.
+    inside the caller's exclusive schema window. Writers should be stopped, but
+    a previous-release collector still inserting is tolerated (see the module
+    docstring).
     """
     if not _valid_database(database):
         raise NativeBootstrapError("explicit native database required")
@@ -718,6 +736,15 @@ def _update_dictionary_credentials(client, database, definitions, ch_user, ch_pa
     return stale
 
 
+def _write(client, statement, failure):
+    """Run one native write. Any client error is terminal for this invocation
+    and surfaces only as ``failure`` (no SQL, credentials or server text)."""
+    try:
+        client.command(statement)
+    except Exception:
+        raise NativeBootstrapError(failure) from None
+
+
 def bootstrap_native(
     client,
     *,
@@ -750,14 +777,11 @@ def bootstrap_native(
         missing, upgrade = _inspect(client, database, definitions)
         statements = native_upgrade_statements(database) if upgrade else {}
         for name in missing:
-            try:
-                client.command(
-                    with_dictionary_credentials(definitions[name], ch_user, ch_password)
-                )
-            except Exception:
-                raise NativeBootstrapError(
-                    f"native CREATE failed at {name}; partial state retained, no retry"
-                ) from None
+            _write(
+                client,
+                with_dictionary_credentials(definitions[name], ch_user, ch_password),
+                f"native CREATE failed at {name}; partial state retained, no retry",
+            )
             # Empty-server preflight cannot infer SELECT types before spans
             # exists. Verify that newly materialized prerequisite and all target
             # mappings before attaching any rollup/MV to future inserts.
@@ -768,13 +792,12 @@ def bootstrap_native(
                     "spans CREATE not visible; no rollup/MV creation attempted"
                 )
         for step in upgrade:
-            try:
-                client.command(statements[step])
-            except Exception:
-                raise NativeBootstrapError(
-                    f"{NATIVE_040_UPGRADE} failed at {step}; partial state "
-                    "retained, no retry"
-                ) from None
+            _write(
+                client,
+                statements[step],
+                f"{NATIVE_040_UPGRADE} failed at {step}; partial state "
+                "retained, no retry",
+            )
         done = missing + ((NATIVE_040_UPGRADE,) if upgrade else ())
         if done and _outstanding(client, database, definitions):
             raise NativeBootstrapError(

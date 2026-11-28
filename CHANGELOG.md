@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Upgrade Notes
+
+- **self-hosted:** Retained production installs need one explicit native ClickHouse step for the (still disabled) trajectory store: stop the collector and trace-ingesting services, run `clickhouse-native-bootstrap --phase native --apply`, then start the stack. Until then the native check reports `pending_upgrades: ["native:040_trajectory_store"]` and blocks boot. See "Upgrading an existing install: the trajectory store columns" in `deploy/README.md`.
+
 ### Bug Fixes
 
 - **evals:** BLEU and CodeBLEU keep scoring short exact matches correctly and again use add-one smoothing for unmatched n-gram orders in answers of four or more tokens.

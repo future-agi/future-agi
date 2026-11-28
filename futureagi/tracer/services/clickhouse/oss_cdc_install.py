@@ -9,10 +9,13 @@ Its default check is also read-only; --apply creates missing native objects only
 plus the one named retained-layout upgrade (native:040_trajectory_store, see
 oss_native_bootstrap), reported separately as pending/applied upgrades.
 
-This release keeps trajectory dedup off on OSS: the native phase refuses
-FI_TRAJECTORY_DEDUP_MODE other than off. A downgrade to the previous release is
-safe only while no span references trajectory items, and with dedup refused no
-such span can be written.
+This release keeps trajectory dedup off on OSS. A downgrade to the previous
+release is safe only while no span references trajectory items. The guarantee
+is the collector's startup refusal (fi-collector Config.RequireDormant), which
+covers every deployment. The native phase also refuses FI_TRAJECTORY_DEDUP_MODE
+other than off, but only where it shares the collector's env (Standalone); the
+Distributed bootstrap service does not see the collector's settings. Remove
+both refusals together, in the release that enables dedup.
 
 Uses the existing PG_*, CH_*, SRC_PG_*, DST_CH_* connection settings. No Django
 startup hooks, source-table migration replay, mirror creation/resync, or operator
@@ -367,9 +370,12 @@ def run(
         and not config.hosted
         and config.trajectory_dedup_mode != "off"
     ):
-        # Enforces the downgrade contract before any connection: this release
-        # never lets a span reference trajectory items, so the previous release
-        # (which reads every span inline) stays a safe downgrade target.
+        # Early check of the downgrade contract, before any connection: this
+        # release never lets a span reference trajectory items, so the previous
+        # release (which reads every span inline) stays a safe downgrade target.
+        # It only sees the collector's setting where both share an env
+        # (Standalone). The collector's Config.RequireDormant is the guard on
+        # every deployment; lift the two together.
         raise InstallError(
             "FI_TRAJECTORY_DEDUP_MODE must be off in this release: trajectory "
             "dedup is not available on OSS yet. Set it to off or remove it."

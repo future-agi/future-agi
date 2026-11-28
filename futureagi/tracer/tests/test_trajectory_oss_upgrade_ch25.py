@@ -16,11 +16,16 @@ What this proves on a real server, which the metadata doubles cannot:
   retained rows read the constant defaults (``payload_encoding = 'inline'``);
 - the previous release's strict spans inspector accepts the upgraded layout;
 - a second run, a fresh install and a resumed partial ALTER converge with no
-  further statements, and a wrong 040 column type is refused before any write.
+  further statements, and a wrong 040 column type is refused before any write;
+- the ALTER is safe while a previous-release writer keeps inserting (what a
+  Distributed ``compose up`` allows, since it does not stop the running
+  collector first): every insert before, during and after it succeeds, no row
+  is lost, every row reads the defaults and no mutation is queued.
 """
 
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 
 import pytest
@@ -204,6 +209,120 @@ def test_pre040_layout_with_rows_upgrades_metadata_only():
         assert native.inspect_native(second, database=database) == ()
         assert native.bootstrap_native(second, database=database) == ()
         assert second.commands == []
+
+
+class PreviousReleaseWriter(threading.Thread):
+    """Inserts the way a previous-release collector does: pre-040 columns only,
+    a unique id per row, small batches, until stopped or capped."""
+
+    BATCH = 5
+    MAX_BATCHES = 400
+
+    def __init__(self, client, database):
+        super().__init__(daemon=True)
+        self.client = client
+        self.database = database
+        self.rows = 0
+        self.errors: list[str] = []
+        self.stopping = threading.Event()
+        self._progress = threading.Condition()
+
+    def run(self):
+        for batch in range(self.MAX_BATCHES):
+            if self.stopping.is_set():
+                break
+            day = batch % 9 + 1
+            values = ", ".join(
+                f"('{PROJECT_ID}', 'llm', '2026-11-0{day} 00:00:00', '{TRACE_ID}', "
+                f"'live-{batch}-{row}', 'n', 'in', 'out')"
+                for row in range(self.BATCH)
+            )
+            try:
+                self.client.command(
+                    f"INSERT INTO {self.database}.spans "
+                    "(project_id, observation_type, start_time, trace_id, id, name, "
+                    f"input, output) VALUES {values}"
+                )
+            except Exception as exc:
+                with self._progress:
+                    self.errors.append(repr(exc))
+                    self._progress.notify_all()
+                return
+            with self._progress:
+                self.rows += self.BATCH
+                self._progress.notify_all()
+        with self._progress:
+            self._progress.notify_all()
+
+    def wait_for_rows(self, rows, timeout=60):
+        with self._progress:
+            self._progress.wait_for(
+                lambda: self.rows >= rows or self.errors or not self.is_alive(),
+                timeout=timeout,
+            )
+            return self.rows >= rows
+
+
+class AlterWindow(Recorder):
+    """Records how many concurrent rows had landed around the 040 ALTER."""
+
+    def __init__(self, raw, writer):
+        super().__init__(raw)
+        self.writer = writer
+        self.rows_before_alter = None
+        self.rows_after_alter = None
+
+    def command(self, statement):
+        if not statement.startswith("ALTER TABLE"):
+            return super().command(statement)
+        self.rows_before_alter = self.writer.rows
+        try:
+            return super().command(statement)
+        finally:
+            self.rows_after_alter = self.writer.rows
+
+
+def test_upgrade_alter_is_safe_under_concurrent_previous_release_inserts():
+    with _database("test_traj_oss_live_") as (database, raw):
+        _install_pre040(database, raw)
+        # Live ingest keeps merging; only mutations matter here, not part names.
+        raw.command(f"SYSTEM START MERGES {database}.spans")
+        mutations = _mutations(raw, database)
+        live = _open_ch_test_http_client(database=database)
+        writer = PreviousReleaseWriter(live, database)
+        client = AlterWindow(raw, writer)
+        writer.start()
+        try:
+            assert writer.wait_for_rows(writer.BATCH), writer.errors
+            assert native.bootstrap_native(client, database=database) == (UPGRADE,)
+            assert writer.wait_for_rows(client.rows_after_alter + writer.BATCH), (
+                writer.errors
+            )
+        finally:
+            writer.stopping.set()
+            writer.join(timeout=60)
+            live.close()
+        assert not writer.is_alive()
+        assert writer.errors == []
+
+        upgrade = native.native_upgrade_statements(database)
+        assert client.commands == [upgrade["trajectory_items"], upgrade["spans"]]
+        assert client.rows_before_alter >= writer.BATCH
+        assert writer.rows >= client.rows_after_alter + writer.BATCH
+        columns = _columns(raw, database)
+        assert {c: columns[c] for c in EXPECTED_COLUMNS} == EXPECTED_COLUMNS
+        assert _mutations(raw, database) == mutations
+        # Every concurrent insert landed (unique ids, so nothing collapses), and
+        # every row, old or concurrent, reads the 040 defaults.
+        ((total, unique, non_default),) = raw.query(
+            "SELECT count(), uniqExact(id), countIf(payload_encoding != 'inline' "
+            "OR item_scope_id != '' OR payload_envelope != '' "
+            "OR notEmpty(input_item_hashes) OR notEmpty(output_item_hashes) "
+            f"OR notEmpty(tool_def_hashes)) FROM {database}.spans"
+        ).result_rows
+        assert (total, unique, non_default) == (2 + writer.rows, 2 + writer.rows, 0)
+        assert native.inspect_native(Recorder(raw), database=database) == ()
+        _previous_release_accepts(raw, database)
 
 
 def test_fresh_install_includes_040():

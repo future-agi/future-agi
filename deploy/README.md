@@ -177,6 +177,46 @@ A retained legacy span mirror from an older `--distributed` install is inspected
 left untouched. Its source/destination identity, mapping and health must still
 pass validation; upgrading does not require deleting that mirror or its data.
 
+### Upgrading an existing install: the trajectory store columns
+
+This release adds the trajectory store schema to the native ClickHouse layout: a
+new, empty `trajectory_items` table and six pointer columns on `spans`. The store
+stays off; nothing reads or writes them yet. A fresh install creates them in step
+2. A retained install gets them through one named upgrade,
+`native:040_trajectory_store`, which is the first native step that ALTERs an
+existing `spans` table.
+
+The production overlay runs the native job inspect-only, so after pulling this
+release that job reports `"ready": false` with
+`"pending_upgrades": ["native:040_trajectory_store"]` and exits 1. Every job
+that waits on it, including `clickhouse-cdc-bootstrap`, then blocks boot until
+you apply it once:
+
+```bash
+# Stop the span writers first (recommended): the collector and the services
+# that ingest traces. $COMPOSE is defined in the first-install steps above.
+$COMPOSE stop fi-collector backend worker worker-trace-ingestion
+$COMPOSE run --rm clickhouse-native-bootstrap --phase native --apply
+$COMPOSE run --rm clickhouse-native-bootstrap --phase native   # expect "ready": true
+$COMPOSE up -d
+```
+
+The upgrade runs only the packaged `CREATE TABLE IF NOT EXISTS trajectory_items`
+and a six-column `ADD COLUMN IF NOT EXISTS` with constant defaults. That is a
+metadata change: existing parts are not rewritten and no mutation is queued, so
+it takes about a second at any table size. It has also been tested with a
+previous-release collector inserting throughout, so a writer you missed loses no
+data, but stopping writers keeps the window clean. If the job is interrupted,
+run the same `--apply` again until nothing is pending: it resumes from the
+columns already added. Do this before any downgrade, because the previous
+release refuses a partial set of the six columns.
+
+Downgrade to the previous release stays supported after this upgrade: it
+accepts `spans` with all six columns and ignores `trajectory_items`. Do not set
+`FI_TRAJECTORY_DEDUP_MODE`, `FI_TRAJECTORY_DEDUP_PROJECTS`, `FI_COMPACT_SPAN_ATTRS`
+or `FI_BILL_DEDUPED_BYTES`: the collector refuses to start with any of them set
+in this release, and that refusal is what keeps the downgrade safe.
+
 ### Upgrading an existing install: backfill before you cut over
 
 **This release changes where custom-attribute suggestions come from, and the change
