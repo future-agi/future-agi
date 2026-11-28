@@ -48,6 +48,10 @@ def _rewrite_eval_dashboard_tables(sql: str) -> str:
             f"FROM {_EVAL_TRACE_TABLE} AS trace_project_scan",
         )
         .replace(
+            "FROM traces AS trace_pair_scan",
+            f"FROM {_EVAL_TRACE_TABLE} AS trace_pair_scan",
+        )
+        .replace(
             "FROM traces AS trace_window_scan",
             f"FROM {_EVAL_TRACE_TABLE} AS trace_window_scan",
         )

@@ -6298,7 +6298,11 @@ class TestDashboardQueryBuilder:
             assert "usage_main_latest.deleted = 0" in sql
             assert "LIMIT 1 BY if(" in sql
             assert "concat('row:', toString(usage_main_latest.id))" in sql
-            assert "concat('trace:', usage_main_latest.eval_trace_id)" in sql
+            # Each (project, trace) pair elects its own winner (TH-10545).
+            assert (
+                "concat('trace:', toString(usage_trace_project.project_id)"
+                in " ".join(sql.split())
+            )
             assert "usage_main_scan.workspace_id = toUUID(%(workspace_id)s)" in sql
 
     def test_eval_metric_scopes_trace_attached_rows_to_selected_projects(self):
@@ -6329,23 +6333,26 @@ class TestDashboardQueryBuilder:
             compact_sql = " ".join(sql.split())
             assert "trace_dict" not in compact_sql
             assert "FROM traces" in compact_sql
+            # Every live (trace, project) pair of the candidates (TH-10545):
+            # a stamped result keeps its own project's copy of a shared UUID,
+            # and an unstamped one needs the UUID in exactly one project.
             assert (
-                "PREWHERE trace_project_scan.project_id IN %(project_ids)s"
-                in compact_sql
+                "PREWHERE trace_pair_scan.project_id IN %(project_ids)s" in compact_sql
             )
-            assert "AS bounded_trace_candidates" in compact_sql
             assert "usage_trace_candidate" not in compact_sql
             assert compact_sql.count("FROM usage_apicalllog AS") == 2
             assert (
                 "usage_main_scan.id IN ( SELECT usage_main_scan_candidate.id"
                 in compact_sql
             )
-            assert "GROUP BY trace_project_scan.id" in compact_sql
             assert (
-                "uniqExact(trace_project_scan.project_id) AS project_identity_count"
+                "GROUP BY trace_pair_scan.id, trace_pair_scan.project_id" in compact_sql
+            )
+            assert (
+                "count() OVER (PARTITION BY trace_id) AS trace_project_count"
                 in compact_sql
             )
-            assert "WHERE project_identity_count = 1" in compact_sql
+            assert "trace_project_count = 1" in compact_sql
             assert "toUUIDOrZero(usage_main_latest.eval_trace_id)" in compact_sql
             assert "IN %(project_ids)s" in compact_sql
             assert params["project_ids"] == [project_id]
