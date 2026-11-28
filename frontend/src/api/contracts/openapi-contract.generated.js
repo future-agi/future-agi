@@ -53617,6 +53617,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        held_back_verified_min: {
+          title: "Held back verified min",
+          type: "integer",
+          readOnly: true,
+        },
         issue: {
           $ref: "#/definitions/AgentFixEpochIssue",
         },
@@ -53796,6 +53801,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         limited_validation: {
           title: "Limited validation",
           type: "boolean",
+          readOnly: true,
+        },
+        held_back_verified_min: {
+          title: "Held back verified min",
+          type: "integer",
           readOnly: true,
         },
         issue: {

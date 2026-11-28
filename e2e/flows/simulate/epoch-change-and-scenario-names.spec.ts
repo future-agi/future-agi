@@ -64,6 +64,7 @@ test('SIM-E2E-041: an Epoch page shows each candidate\'s change and each scenari
     userGoal: 'A developer opens a finished Epoch and reads what each candidate changes, and each scenario by the name it was stored under, never its key',
     steps: ['open a finished epoch\'s page', 'read the winner\'s row on the Candidates tab', 'open the Scenarios tab'],
     browserChecks: [
+      'the verdict shows the minimum from the epoch read beside the held-back tally',
       'the winner\'s What it changes cell says the read\'s change line, not the engine\'s note',
       'a scenario whose key differs from its stored name reads the stored name',
       'a scenario with no stored name reads Unnamed scenario',
@@ -93,6 +94,8 @@ test('SIM-E2E-041: an Epoch page shows each candidate\'s change and each scenari
     await expect(page).toHaveURL(
       exactPath(`/dashboard/simulate/environments/${ENV_ID}/improvements/${ids.epoch}`), { timeout: UI_READY },
     );
+    const tally = page.getByText('Too few to tell · Fixed 1 of 1 failing scenario it never saw — it takes 7 or more to tell.', { exact: true });
+    await expect(tally).toBeVisible({ timeout: UI_READY });
     // The row's What it changes cell (data-testid="candidate-changes" in CandidatesTable.tsx).
     const changes = page.getByTestId('candidate-1').getByTestId('candidate-changes');
     await expect(changes).toHaveText(CHANGES, { timeout: UI_READY });

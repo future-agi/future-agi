@@ -328,22 +328,23 @@ describe("FixVerdict", () => {
     expect(screen.getByText("How it was decided")).toBeInTheDocument();
   });
 
-  it("labels limited validation, with the held-back tally", async () => {
-    renderUi(
-      <FixVerdict
-        fix={fixOf("fix-ready-archive", { limited_validation: true })}
-      />,
-    );
+  it.each([
+    [7, " — it takes 7 or more to tell."],
+    [undefined, "."],
+  ])("labels limited validation (minimum: %s)", async (minimum, end) => {
+    const fix = fixOf("fix-ready-archive", {
+      limited_validation: true,
+      held_back_verified_min: minimum,
+    });
+    renderUi(<FixVerdict fix={fix} />);
     expect(screen.getByText("Limited validation")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "Too few to tell · Fixed 1 of 2 failing scenarios it never saw — it takes 4 or more to tell.",
+        `Too few to tell · Fixed 1 of 2 failing scenarios it never saw${end}`,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Proven on the targets only")).toBeNull();
-    expect(
-      listResult(fixOf("fix-ready-archive", { limited_validation: true })).note,
-    ).toMatch(/^Limited validation · /);
+    expect(listResult(fix).note).toMatch(/^Limited validation · /);
   });
 
   it("warns with each platform eval's rate pair, and says nothing when the field is absent", () => {

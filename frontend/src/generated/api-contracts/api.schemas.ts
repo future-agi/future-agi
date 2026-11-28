@@ -19549,6 +19549,7 @@ export interface AgentFixRunApi {
   attempt_of_id: string | null;
   counted?: boolean | null;
   readonly limited_validation?: boolean;
+  readonly held_back_verified_min?: number;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
   readonly from_issue?: boolean;
@@ -19865,6 +19866,7 @@ export interface AgentFixRunDetailApi {
   attempt_of_id: string | null;
   counted?: boolean | null;
   readonly limited_validation?: boolean;
+  readonly held_back_verified_min?: number;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
   readonly from_issue?: boolean;

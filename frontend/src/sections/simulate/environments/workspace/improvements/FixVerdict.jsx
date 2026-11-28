@@ -244,10 +244,6 @@ function EvalWarnings({ warnings }) {
 }
 EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
 
-// The held-back cases a fix needs to be called verified. The read does not
-// carry it: mirrors HELD_BACK_VERIFIED_MIN in simulate/pydantic_schemas/agent_fix.py.
-const HELD_BACK_VERIFIED_MIN = 4;
-
 // How many held-back scenarios the winner fixed, scenario by scenario as on
 // the Scenarios tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
@@ -264,6 +260,7 @@ function HeldBackTally({ fix, winner }) {
   );
   if (!failing) return null;
   const scenarios = failing === 1 ? "scenario" : "scenarios";
+  const minimum = fix.held_back_verified_min;
   return (
     <Typography
       sx={{
@@ -274,7 +271,8 @@ function HeldBackTally({ fix, winner }) {
         color: "text.secondary",
       }}
     >
-      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw — it takes ${HELD_BACK_VERIFIED_MIN} or more to tell.`}
+      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw`}
+      {minimum == null ? "." : ` — it takes ${minimum} or more to tell.`}
     </Typography>
   );
 }
