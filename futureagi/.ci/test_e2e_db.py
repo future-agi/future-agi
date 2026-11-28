@@ -1480,11 +1480,26 @@ class WorkflowTest(unittest.TestCase):
                 ' "$RUNNER_TEMP/e2e-db-plan.json" \\',
             ],
         )
-        # The bridges are read from the restore step the legs run.
+        # The bridges are read from the restore step the legs run. This job's
+        # checkout holds .github/scripts alone (run 46149053953 found no file
+        # in the workspace), so the step comes out of Git at the tested
+        # commit, as text, and a commit without one has no bridge.
+        checkout = changes[
+            : changes.index("      - name: One latest migration per app\n")
+        ]
         self.assertIn(
-            '  --restore-script "$GITHUB_WORKSPACE/futureagi/.ci/e2e-db-restore.sh"\n',
-            step,
+            "          sparse-checkout: |\n            .github/scripts\n", checkout
         )
+        self.assertNotIn("$GITHUB_WORKSPACE/futureagi", step)
+        read = (
+            'git show "HEAD:futureagi/.ci/e2e-db-restore.sh" > "$restore" 2> /dev/null'
+            ' || : > "$restore"\n'
+        )
+        self.assertIn('restore="$RUNNER_TEMP/e2e-db-restore.sh"\n', step)
+        self.assertIn(read, step)
+        self.assertLess(step.index(read), step.index('  --restore-script "$restore"\n'))
+        self.assertNotIn('bash "$restore"', step)
+        self.assertNotIn('source "$restore"', step)
         # A dev push fetches for every stack; any other run only for a named one.
         self.assertIn('if [[ $DEV_PUSH == true || $named == *" $stack "* ]] &&\n', step)
         self.assertIn(f"DEV_PUSH: ${{{{ {self.DEV_PUSH} }}}}\n", step)
