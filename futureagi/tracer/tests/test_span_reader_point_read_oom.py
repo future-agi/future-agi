@@ -60,35 +60,35 @@ def _assert_final_oom_safe(client, key_predicate):
 
 def test_get_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).get("span-1")
+    _reader_with(client).get("span-1", project_id="p1")
     _assert_final_oom_safe(client, "id = %(span_id)s")
 
 
 def test_list_by_trace_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).list_by_trace("trace-1")
+    _reader_with(client).list_by_trace("trace-1", project_id="p1")
     _assert_final_oom_safe(client, "trace_id = %(trace_id)s")
 
 
 def test_first_span_by_type_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).first_span_by_type("trace-1", "llm")
+    _reader_with(client).first_span_by_type("trace-1", "llm", project_id="p1")
     _assert_final_oom_safe(client, "trace_id = %(trace_id)s")
 
 
 def test_list_by_parent_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).list_by_parent("parent-1")
+    _reader_with(client).list_by_parent("parent-1", project_id="p1")
     _assert_final_oom_safe(client, "parent_span_id = %(parent)s")
 
 
 def test_list_by_ids_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).list_by_ids(["s1", "s2"])
+    _reader_with(client).list_by_ids(["s1", "s2"], project_id="p1")
     _assert_final_oom_safe(client, "id IN %(ids)s")
 
 
 def test_list_root_spans_by_trace_ids_is_final_oom_safe():
     client = _RecordingClient()
-    _reader_with(client).list_root_spans_by_trace_ids(["t1", "t2"])
+    _reader_with(client).list_root_spans_by_trace_ids(["t1", "t2"], project_id="p1")
     _assert_final_oom_safe(client, "trace_id IN %(tids)s")

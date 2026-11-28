@@ -2490,8 +2490,13 @@ def _build_representative_trace(
     span_context: dict | None = None,
     judge: tuple[str | None, float | None] | None = None,
     _prefetched: bool = False,
+    project_id: str | None = None,
 ) -> RepresentativeTrace:
     """Turn a Trace into a RepresentativeTrace dataclass.
+
+    The single-trace root fallback reads the root span only in
+    ``project_id`` (the cluster's project); without it the root stays None,
+    since the same trace id can exist in another project or organization.
 
     Prefetched values (``root``, ``totals``, ``score``, ``investigation_report``)
     can be supplied by ``_fetch_representative_traces`` to avoid the per-
@@ -2505,8 +2510,8 @@ def _build_representative_trace(
     """
     trace_id_str = str(trace.id)
 
-    if not _prefetched and root is None:
-        root = _get_root_span(trace_id_str)
+    if not _prefetched and root is None and project_id:
+        root = _get_root_span(trace_id_str, project_id)
     if not _prefetched and totals is None:
         totals = _get_trace_totals(trace_id_str)
     latency, prompt_tokens, completion_tokens = totals or (None, None, None)
@@ -2779,6 +2784,7 @@ def _fetch_representative_traces(
             },
             judge=_judge_for(str(trace.id)),
             _prefetched=True,
+            project_id=project_id,
         )
         for trace in deduped
     ]
@@ -3944,6 +3950,27 @@ def _cluster_has_trace(
     return qs.exists()
 
 
+def _cluster_trace_project_id(
+    cluster_id: str, trace_id: str, project_ids: list[str] | None = None
+) -> str | None:
+    """The project of the accessible cluster that links ``trace_id``, or None.
+
+    One query, so the access check and the trace link are the same cluster
+    row. Deep analysis reads, bills and stores in this project: a trace id is
+    not unique across projects and organizations."""
+    project_id = (
+        _current_memberships()
+        .filter(
+            cluster__in=_cluster_qs_for_access(cluster_id, project_ids),
+            trace_id=trace_id,
+        )
+        .order_by("cluster__project_id")
+        .values_list("cluster__project_id", flat=True)
+        .first()
+    )
+    return str(project_id) if project_id else None
+
+
 def get_deep_analysis(
     cluster_id: str, trace_id: str, project_ids: list[str] | None = None
 ) -> DeepAnalysisResponse | None:
@@ -3953,14 +3980,12 @@ def get_deep_analysis(
     part of it. Otherwise always returns a response — the ``status``
     field tells the frontend whether data is available.
     """
-    if not _cluster_qs_for_access(cluster_id, project_ids).exists():
-        return None
-
-    if not _cluster_has_trace(cluster_id, trace_id, project_ids):
+    project_id = _cluster_trace_project_id(cluster_id, trace_id, project_ids)
+    if project_id is None:
         return None
 
     analysis = (
-        TraceErrorAnalysis.objects.filter(trace_id=trace_id)
+        TraceErrorAnalysis.objects.filter(trace_id=trace_id, project_id=project_id)
         .order_by("-analysis_date")
         .first()
     )
@@ -4025,13 +4050,13 @@ def dispatch_deep_analysis(
     # slow transitive imports (agentic_eval, CH vector clients, etc).
     from tracer.tasks import run_deep_analysis_on_demand
 
-    if not _cluster_qs_for_access(cluster_id, project_ids).exists():
+    project_id = _cluster_trace_project_id(cluster_id, trace_id, project_ids)
+    if project_id is None:
         return None
 
-    if not _cluster_has_trace(cluster_id, trace_id, project_ids):
-        return None
-
-    has_analysis = TraceErrorAnalysis.objects.filter(trace_id=trace_id).exists()
+    has_analysis = TraceErrorAnalysis.objects.filter(
+        trace_id=trace_id, project_id=project_id
+    ).exists()
 
     # Idempotent click: cached result exists and user didn't ask for a
     # re-run → no-op, frontend reads existing results from GET.
@@ -4045,6 +4070,8 @@ def dispatch_deep_analysis(
     if not claimed and not force:
         return DeepAnalysisDispatchResponse(status="running", trace_id=str(trace_id))
 
-    run_deep_analysis_on_demand.delay(str(trace_id), bool(force))
+    # The worker reads, bills and stores the analysis in the cluster's
+    # project: the same trace id can exist in another project or organization.
+    run_deep_analysis_on_demand.delay(str(trace_id), bool(force), project_id=project_id)
 
     return DeepAnalysisDispatchResponse(status="running", trace_id=str(trace_id))

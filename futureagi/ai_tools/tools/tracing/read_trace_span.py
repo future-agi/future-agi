@@ -60,7 +60,7 @@ class ReadTraceSpanTool(BaseTool):
 
         # Verify trace access
         try:
-            Trace.objects.get(
+            trace = Trace.objects.get(
                 id=params.trace_id,
                 project__organization=context.organization,
             )
@@ -72,8 +72,12 @@ class ReadTraceSpanTool(BaseTool):
         # .values_list("id", "name") + multiple subsequent .get() calls.
         # Loading once and indexing in Python avoids 1-4 extra CH round-trips
         # for the id/exact-name/case-insensitive-name fallback chain.
+        # Scoped to the verified trace's project: the same trace id can exist
+        # in another project or organization.
         with get_reader() as reader:
-            ch_spans = reader.list_by_trace(str(params.trace_id))
+            ch_spans = reader.list_by_trace(
+                str(params.trace_id), project_id=str(trace.project_id)
+            )
         all_spans = [(s.id, s.name) for s in ch_spans]
         valid_ids = {str(sid) for sid, _ in all_spans}
         valid_names = {name: str(sid) for sid, name in all_spans if name}

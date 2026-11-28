@@ -2056,6 +2056,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     str(observation_span.id),
                     str(custom_eval_config.id),
                     feedback_id=feedback_id,
+                    project_id=str(observation_span.project_id),
                 )
             else:
                 status = evaluate_observation_span_observe(
@@ -2063,6 +2064,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     str(custom_eval_config.id),
                     task_id,
                     feedback_id,
+                    project_id=str(observation_span.project_id),
                 )
         except Exception as exc:
             # Keeps a result the eval wrote before it raised, or puts the

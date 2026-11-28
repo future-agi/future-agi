@@ -1259,8 +1259,12 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # ``project=project_version.project``, so the org/workspace
             # gate is preserved through the trace_ids pre-step.
             trace_ids_str = [str(tid) for tid in trace_ids]
+            # Pinned to the version's project: the same trace id can exist in
+            # another project, whose spans must not enter these metrics.
             with get_reader() as reader:
-                ch_spans = reader.list_by_trace_ids(trace_ids_str)
+                ch_spans = reader.list_by_trace_ids(
+                    trace_ids_str, project_id=str(project_version.project_id)
+                )
 
             # CH stores parent_span_id as non-nullable String (schema 001);
             # root spans have an empty string. Mirror the original

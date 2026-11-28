@@ -693,10 +693,13 @@ def _resolve_ch_source_object(
 
     if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
         from tracer.services.clickhouse.v2 import get_reader
+        from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
         try:
             with get_reader() as reader:
                 span = reader.get(str(source_id), project_ids=project_ids)
+        except UnscopedSpanReadError:
+            raise  # a missing tenant scope is a bug, never a missing span
         except Exception as exc:  # narrow: any CH read failure → deny
             logger.warning(
                 "ch_source_resolve_error",
@@ -814,10 +817,13 @@ def _ch_span_for_item(span_id, *, project_ids=None):
     if not span_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
     try:
         with get_reader() as reader:
             return reader.get(str(span_id), project_ids=project_ids)
+    except UnscopedSpanReadError:
+        raise  # a missing tenant scope is a bug, never a missing span
     except Exception as exc:
         logger.warning("ch_span_render_error", span_id=str(span_id), error=str(exc))
         return None
@@ -851,6 +857,7 @@ def _ch_root_span_for_trace(trace_id, *, project_ids=None):
     if not trace_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
     try:
         with get_reader() as reader:
@@ -869,6 +876,8 @@ def _ch_root_span_for_trace(trace_id, *, project_ids=None):
                 dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
                 project_id=project_id,
             )
+    except UnscopedSpanReadError:
+        raise  # a missing tenant scope is a bug, never a missing span
     except Exception as exc:
         logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))
         return None
@@ -937,6 +946,7 @@ def _batch_ch_spans(
     if not span_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
     try:
         with get_reader() as reader:
@@ -946,6 +956,8 @@ def _batch_ch_spans(
                 include_heavy=include_heavy,
                 dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
             )
+    except UnscopedSpanReadError:
+        raise  # a missing tenant scope is a bug, never a missing span
     except Exception as exc:
         _ch_batch_read_failed(
             exc,
@@ -1013,6 +1025,7 @@ def _batch_ch_trace_roots(
     if not trace_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
     ids = [str(t) for t in trace_ids]
     roots_by_trace: dict[str, list] = {}
@@ -1030,6 +1043,8 @@ def _batch_ch_trace_roots(
                     dedup_via_limit_by=True,
                 ):
                     roots_by_trace.setdefault(str(span.trace_id), []).append(span)
+    except UnscopedSpanReadError:
+        raise  # a missing tenant scope is a bug, never a missing span
     except Exception as exc:
         _ch_batch_read_failed(
             exc,

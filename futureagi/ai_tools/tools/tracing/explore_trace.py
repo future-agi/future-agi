@@ -63,8 +63,12 @@ class ExploreTraceTool(BaseTool):
 
         # Load all spans from CH 25.3 — was ObservationSpan.objects.filter(
         # trace=, deleted=False).order_by("start_time", "created_at").
+        # Scoped to the verified trace's project: the same trace id can exist
+        # in another project or organization.
         with get_reader() as reader:
-            spans = reader.list_by_trace(str(trace.id))
+            spans = reader.list_by_trace(
+                str(trace.id), project_id=str(trace.project_id)
+            )
 
         if not spans:
             return ToolResult(

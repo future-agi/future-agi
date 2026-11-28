@@ -250,10 +250,15 @@ def fetch_comparison_metrics(call_execution: CallExecution, session_id: str):
     return _build_metric_comparisons(base_session_metrics, comparison_call_metrics)
 
 
-def fetch_voice_conversation_span(trace_id: str) -> dict:
+def fetch_voice_conversation_span(trace_id: str, *, project_ids=None) -> dict:
     """
     Fetch the conversation span for a voice trace via ClickHouse.
     Returns a dict with span_attributes and eval_attributes (legacy shape).
+
+    ``project_ids`` (the caller's organization's projects) is required: the
+    same trace id can exist in another organization, and an unscoped read
+    could return that tenant's spans. Without it this raises ``ValueError``,
+    as for a trace with no conversation span.
 
     Voice traces have at most a handful of conversation spans (typically one
     per trace), so list_by_trace + Python filter is bounded. `eval_attributes`
@@ -263,11 +268,15 @@ def fetch_voice_conversation_span(trace_id: str) -> dict:
     """
     if not trace_id:
         raise ValueError("Trace ID is required")
+    if project_ids is None:
+        raise ValueError("The caller's project ids are required")
 
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
-        spans = reader.list_by_trace(str(trace_id))
+        spans = reader.list_by_trace(
+            str(trace_id), project_ids=[str(p) for p in project_ids]
+        )
 
     conversation_span = next(
         (s for s in spans if s.observation_type == "conversation"), None

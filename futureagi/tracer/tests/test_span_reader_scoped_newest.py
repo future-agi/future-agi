@@ -12,7 +12,10 @@ import uuid
 
 import pytest
 
-from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+from tracer.services.clickhouse.v2.span_reader import (
+    CHSpanReader,
+    UnscopedSpanReadError,
+)
 
 OLDER = "11111111-1111-4111-8111-111111111111"
 NEWER = "22222222-2222-4222-8222-222222222222"
@@ -197,7 +200,14 @@ def test_first_span_by_type_reads_only_the_given_project(copies):
             start_time=start_time,
         )
 
-    assert reader.first_span_by_type(TRACE, "llm").project_id == FOREIGN
+    # Unscoped, the read would keep whichever copy's LLM span starts first
+    # (FOREIGN's); it now refuses to run.
+    with pytest.raises(UnscopedSpanReadError):
+        reader.first_span_by_type(TRACE, "llm")
+    assert (
+        reader.first_span_by_type(TRACE, "llm", project_ids=[OLDER, NEWER]).project_id
+        == OLDER
+    )
     assert reader.first_span_by_type(TRACE, "llm", project_id=OLDER).project_id == (
         OLDER
     )

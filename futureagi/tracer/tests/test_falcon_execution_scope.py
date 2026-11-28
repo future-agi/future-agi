@@ -381,7 +381,7 @@ def test_interactive_tools_keep_creation_and_latest_selection(
         {"trace_id": tid, "span_id": "shared-span"}, ctx
     )
     assert not read.is_error and "Own evidence" in read.content
-    reader.list_by_trace.assert_called_once_with(tid)
+    reader.list_by_trace.assert_called_once_with(tid, project_id=str(project.pk))
     finding = registry.get("submit_trace_finding").run(finding_params(tid), ctx)
     assert not finding.is_error and finding.data["analysis_id"] != str(first.pk)
     scores = registry.get("submit_trace_scores").run(score_params(tid), ctx)
