@@ -2,6 +2,7 @@ import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.http.request import RawPostDataException
+from drf_yasg import openapi
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.views import APIView
 
@@ -61,6 +62,24 @@ class CallWebsocketView(APIView):
     # Sending message to websocket
     @validated_request(
         request_serializer=CallWebsocketRequestSerializer,
+        operation_description="Internal relay. Requires the organization's system API key pair and a signed request.",
+        security=[{"X-Api-Key": [], "X-Secret-Key": []}],
+        manual_parameters=[
+            openapi.Parameter(
+                RELAY_SIGNATURE_HEADER,
+                openapi.IN_HEADER,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="Internal relay signature for the request.",
+            ),
+            openapi.Parameter(
+                RELAY_TIMESTAMP_HEADER,
+                openapi.IN_HEADER,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="Unix timestamp in seconds for the signed request.",
+            ),
+        ],
         responses={
             200: CallWebsocketResponseSerializer,
             400: CallWebsocketErrorResponseSerializer,
