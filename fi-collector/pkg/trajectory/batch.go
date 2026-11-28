@@ -30,9 +30,6 @@ type SpanFallback struct {
 	OrigOutput     string
 	PromotedInput  *PromotedAttr
 	PromotedOutput *PromotedAttr
-	// catalogRow is the row as the observed catalog sees it: the same
-	// columns with the dedup-off attributes_extra. Built once by AddFallback.
-	catalogRow map[string]any
 }
 
 // SentinelKeys are the four attributes_extra keys a compacted side writes.
@@ -190,21 +187,9 @@ func (b *Batch) AddItem(it Item) {
 }
 
 // AddFallback records the original inline state for a compacted span row.
-// Call it after the row is compacted: the catalog view is built from the row
-// as it is now.
 func (b *Batch) AddFallback(fb SpanFallback) {
 	if fb.Row == nil {
 		return
-	}
-	if fb.catalogRow == nil && fb.compacted() {
-		if extra, ok := fb.Row["attributes_extra"].(map[string]any); ok {
-			view := make(map[string]any, len(fb.Row))
-			for k, v := range fb.Row {
-				view[k] = v
-			}
-			view["attributes_extra"] = fb.logicalExtra(extra)
-			fb.catalogRow = view
-		}
 	}
 	b.addFallback(fb)
 }
@@ -267,14 +252,27 @@ func (b *Batch) fallbackFor(row map[string]any) (SpanFallback, bool) {
 }
 
 // CatalogRow returns the row the observed catalog must see for row: for a
-// compacted row a shallow copy whose attributes_extra is the dedup-off one
-// (promoted keys present, no sentinel); any other row as it is. The catalog
-// then records the same attributes with dedup on or off.
+// compacted row a shallow copy whose attributes_extra is a copy of the
+// dedup-off one (promoted keys present, no sentinel); any other row as it
+// is. The catalog then records the same attributes with dedup on or off.
+// The copy is built on each call, so only a server with an observed catalog
+// pays for it; it shares no attributes_extra map with the row, so a later
+// RestoreInline does not change it.
 func (b *Batch) CatalogRow(row map[string]any) map[string]any {
-	if fb, ok := b.fallbackFor(row); ok && fb.catalogRow != nil {
-		return fb.catalogRow
+	fb, ok := b.fallbackFor(row)
+	if !ok || !fb.compacted() {
+		return row
 	}
-	return row
+	extra, ok := row["attributes_extra"].(map[string]any)
+	if !ok {
+		return row
+	}
+	view := make(map[string]any, len(row))
+	for k, v := range row {
+		view[k] = v
+	}
+	view["attributes_extra"] = fb.logicalExtra(extra)
+	return view
 }
 
 // InlineCopy returns the self-contained inline form of a row that still

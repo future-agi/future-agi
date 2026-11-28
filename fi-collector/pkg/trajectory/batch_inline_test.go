@@ -143,6 +143,19 @@ func TestCatalogRowIsDedupOffAttributes(t *testing.T) {
 	if _, ok := row["attributes_extra"].(map[string]any)[SentinelPromotedInputKey]; !ok {
 		t.Fatal("the stored row must keep its sentinels")
 	}
+	// The view shares no attributes_extra map with the row, so restoring the
+	// row later leaves an enqueued view as it was.
+	view := b.CatalogRow(row)
+	if reflect.ValueOf(view["attributes_extra"]).UnsafePointer() == reflect.ValueOf(row["attributes_extra"]).UnsafePointer() {
+		t.Fatal("the view must not share the row's attributes_extra")
+	}
+	b.RestoreInline()
+	if !reflect.DeepEqual(view["attributes_extra"], devRow["attributes_extra"]) {
+		t.Fatal("restoring the row changed the catalog view")
+	}
+	if got := b.CatalogRow(row); !reflect.DeepEqual(got["attributes_extra"], devRow["attributes_extra"]) {
+		t.Fatal("the view of a restored row is still the dedup-off attributes")
+	}
 	plain := map[string]any{"id": "x"}
 	if got := b.CatalogRow(plain); reflect.ValueOf(got).UnsafePointer() != reflect.ValueOf(plain).UnsafePointer() {
 		t.Fatal("a row without a fallback is catalogued as it is")
