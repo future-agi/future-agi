@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAuthContext } from "src/auth/hooks";
-import { HOST_API } from "src/config-global";
+import { openAuthenticatedSocket } from "src/components/websocket/open-authenticated-socket";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import {
   AUTH_REJECTED_CLOSE_CODE,
@@ -118,16 +118,11 @@ export const useFalconSocket = () => {
       return;
     }
 
-    const isSecure = HOST_API.includes("https");
-    const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    const protocol = isSecure ? "wss" : "ws";
-    const wsParams = new URLSearchParams({ token });
-    if (currentWorkspaceId) {
-      wsParams.set("workspace_id", currentWorkspaceId);
-    }
-    const url = `${protocol}://${wsHost}/ws/falcon-ai/?${wsParams.toString()}`;
-
-    const ws = new WebSocket(url);
+    const ws = openAuthenticatedSocket(
+      "/ws/falcon-ai/",
+      token,
+      currentWorkspaceId,
+    );
     socketIdRef.current += 1;
     const socketId = socketIdRef.current;
     socketRef.current = ws;

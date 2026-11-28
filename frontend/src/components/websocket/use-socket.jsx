@@ -8,7 +8,7 @@ import React, {
   useMemo,
 } from "react";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
-import { HOST_API } from "src/config-global";
+import { openAuthenticatedSocket } from "./open-authenticated-socket";
 import logger from "src/utils/logger";
 import {
   AUTH_REJECTED_CLOSE_CODE,
@@ -199,13 +199,7 @@ export const WebSocketProvider = ({ children }) => {
     // Close any existing connection before creating a new one
     closeConnection();
 
-    const isSecure = HOST_API.includes("https");
-    const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    const protocol = isSecure ? "wss" : "ws";
-    const query = new URLSearchParams({ token });
-    const wsUrl = `${protocol}://${wsHost}/ws/connect/?${query}`;
-
-    const socket = new WebSocket(wsUrl);
+    const socket = openAuthenticatedSocket("/ws/connect/", token);
     socketIdRef.current += 1;
     const socketId = socketIdRef.current;
     socketRef.current = socket;
@@ -255,8 +249,7 @@ export const WebSocketProvider = ({ children }) => {
 
       const errorContext = {
         readyState: ws ? readyStateMap[ws.readyState] || ws.readyState : "null",
-        url: ws?.url ? ws.url.replace(/token=[^&]+/, "token=***") : "unknown",
-        protocol: ws?.protocol || "none",
+        path: "/ws/connect/",
         reconnectAttempts: reconnectAttempts.current,
       };
 
@@ -302,7 +295,7 @@ export const WebSocketProvider = ({ children }) => {
         return;
       }
 
-      logger.debug("WebSocket closed:", event);
+      logger.debug("WebSocket closed:", { code: event.code });
 
       if (event.code === AUTH_REJECTED_CLOSE_CODE) {
         authFailuresRef.current += 1;

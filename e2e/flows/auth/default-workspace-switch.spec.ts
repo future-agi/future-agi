@@ -58,6 +58,7 @@ test('AUTH-E2E-002: workspace switching updates implicit scope without replacing
       'the unchanged bearer resolves no-workspace-header project reads to A2 after the UI switch',
       'explicit A1 scope returns P1 without changing subsequent implicit A2 scope or persisted preferences',
       'normal navigation and reload retain A2’s sidebar, exact project rows and unchanged bearer',
+      'the signed-in dashboard receives a heartbeat reply on the authenticated connection',
     ],
   }),
 }, async ({ page, scopeActors: scopes, scopeProbe: probe }, testInfo) => {
@@ -238,7 +239,18 @@ test('AUTH-E2E-002: workspace switching updates implicit scope without replacing
 
     await test.step('A1 UI and warmed no-workspace-header baseline', async () => {
       phase = 'A1 baseline';
+      let pongOnBareRoute: boolean | undefined;
+      page.on('websocket', socket => {
+        const url = new URL(socket.url());
+        if (url.pathname !== '/ws/connect/') return;
+        const bareRoute = url.search === '';
+        socket.on('framereceived', frame => {
+          if (/^\{\s*"type"\s*:\s*"pong"\s*\}$/.test(String(frame.payload))) pongOnBareRoute = bareRoute;
+        });
+      });
       await uiProjects('a1-before-switch', p1, a1Label);
+      await expect.poll(() => pongOnBareRoute, { timeout: UI_READY }).toBeDefined();
+      expect(pongOnBareRoute).toBe(true);
       primed = true;
       exactPage(await browserRead('A1 first implicit read', PROJECTS) as ProjectPage, p1);
       exactPage(await browserRead('A1 repeated implicit read', PROJECTS) as ProjectPage, p1);
