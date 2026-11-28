@@ -165,18 +165,23 @@ export default function RunDialog({
     (one) => one.code !== CHANGED_SINCE_PROVED,
   );
   const versioned = Boolean(env?.versioning?.enabled);
+  // A whole split runs the scenarios its plan names: the lock's, less those the
+  // run can't play now.
+  const splitKeys =
+    runAll && runSplit ? plan.data?.scenario_keys ?? null : null;
   // What readiness holds back for these picks and scenarios, and how many run.
-  const selectionKeys = runIds ?? null;
+  const selectionKeys = runIds ?? splitKeys;
   // A selection is asked about only once settled: the suite's scenarios loaded and at least one picked, else the
-  // server refuses the keys.
+  // server refuses the keys. A split waits for its plan.
+  let selectionSettled = runAll;
+  if (runAll && runSplit) selectionSettled = Boolean(splitKeys?.length);
+  else if (!runAll)
+    selectionSettled =
+      !(membersWanted && !memberKeys) && selectionKeys.length > 0;
   const readiness = useReadiness(env?.id, picks, {
     keys: selectionKeys,
     trials,
-    enabled:
-      open &&
-      versioned &&
-      Boolean(data) &&
-      (runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
+    enabled: open && versioned && Boolean(data) && selectionSettled,
   });
   const selection = readiness.data?.selection;
   const readyView = useMemo(
@@ -371,7 +376,7 @@ export default function RunDialog({
     if (runSplit) {
       const line = COPY.split.line(
         runSplit,
-        lockedVersion[runSplit],
+        splitKeys?.length ?? lockedVersion[runSplit],
         lockedVersion.label,
       );
       return `${line}${repeats}`;

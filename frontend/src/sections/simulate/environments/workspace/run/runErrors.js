@@ -14,6 +14,8 @@ const INLINE_ERRORS = new Set([
   "split_needs_locked_version",
   "split_scenario_outside",
   "split_not_for_coding_agent",
+  "split_empty",
+  "split_changed",
 ]);
 
 const isClientError = (error) => {
