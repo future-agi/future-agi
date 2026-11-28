@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Any, cast
@@ -551,28 +551,35 @@ def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
     return entries or None
 
 
-def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
-    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
-    its event start. Refused when the scenario is saved, the same rule the builder keeps.
-    """
-    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+def actor_ids_named(doc: Any) -> set[str]:
+    """Every actor id a scenario names: in its actors, its pre-run sessions (their actors and each line's speaker) and
+    its event start. The one list every reader of a scenario's actors uses."""
+    if not isinstance(doc, dict):
+        return set()
     named = [
-        str((one or {}).get("id") or "")
+        (one.get("id") if isinstance(one, dict) else one)
         for one in doc.get("actors") or []
-        if isinstance(one, dict)
     ]
     for session in doc.get("pre_run") or []:
         if isinstance(session, dict):
-            named += [str(one) for one in session.get("actors") or []]
+            named += list(session.get("actors") or [])
             named += [
-                str((one or {}).get("actor") or "")
+                (one or {}).get("actor")
                 for one in session.get("thread") or []
                 if isinstance(one, dict)
             ]
     starts = doc.get("starts_with")
     if isinstance(starts, dict):
-        named.append(str(starts.get("actor") or ""))
-    missing = sorted({one for one in named if one and one not in known})
+        named.append(starts.get("actor"))
+    return {str(one) for one in named if one and not isinstance(one, (dict, list))}
+
+
+def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
+    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
+    its event start. Refused when the scenario is saved, the same rule the builder keeps.
+    """
+    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+    missing = sorted(one for one in actor_ids_named(doc) if one not in known)
     return [f"{name}: {one} is not an actor in this environment" for one in missing]
 
 
@@ -684,7 +691,7 @@ def _rows_held(
     used: set[Any] = set()
 
     def take(index: int, row: HostedHarnessScenario | None) -> None:
-        if row is not None and row.id not in used:
+        if row is not None and row.id not in used and may_take_back(row, docs[index]):
             held_rows[index] = row
             used.add(row.id)
 
@@ -743,9 +750,12 @@ def index_scenarios(
     docs: list[dict[str, Any]],
     prune: bool = False,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> int:
     """Persist the authored suite so it can be queried, and return how many rows it holds."""
-    return len(pair_scenarios(job, docs, prune=prune, exact=exact))
+    return len(
+        pair_scenarios(job, docs, prune=prune, exact=exact, strict_keys=strict_keys)
+    )
 
 
 @dataclass(frozen=True)
@@ -758,13 +768,54 @@ class PlannedPair:
     doc: dict[str, Any]
 
 
+def restores_own_key(document: Mapping[str, Any]) -> bool:
+    """Whether a scenario is a removed one restored under its own key (`restored_from.key` is its `scenario_key`):
+    the only scenario that takes back a key the environment gave before, with its row and history."""
+    restored = document.get("restored_from")
+    key = str(document.get("scenario_key") or "").strip()
+    return (
+        bool(key)
+        and isinstance(restored, Mapping)
+        and str(restored.get("key") or "").strip() == key
+    )
+
+
+def may_take_back(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document may be written into ``row``: any live row, but a removed or archived one only when the
+    document restores it under its own key or comes back exactly as it was, never a new case that shares its key."""
+    if not row.deleted and row.archived_at is None:
+        return True
+    return restores_own_key(doc) or _comes_back_as_it_was(row, doc)
+
+
+def _comes_back_as_it_was(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document is the removed scenario ``row`` back exactly as its last saved suite held it, as a rebuild
+    restores one whose capability returned: the same case, so it keeps its row. A row no saved suite ever held (an
+    environment from before versions) has nothing to compare with, so it is read as before."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning.versions import _member_content
+
+    last = (
+        HarnessSuiteMember.no_workspace_objects.filter(scenario_id=row.id)
+        .order_by("-suite_version__created_at")
+        .values_list("content", flat=True)
+        .first()
+    )
+    return last is None or last == _member_content(doc)
+
+
 def plan_pairs(
     job: HostedHarnessJob,
     docs: list[dict[str, Any]],
     *,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> list[PlannedPair]:
     """The identity row, key and number each document is written to; writes nothing.
+
+    With ``strict_keys`` a document takes the row with exactly its scenario key, dropped
+    ones included, and nothing else: a sealed suite names its scenarios by key, so another
+    spelling or the same name is another scenario.
 
     With ``exact`` (the default for an environment head that has versions) a document
     that carries a scenario key matches the row the default suite links to the document
@@ -779,7 +830,9 @@ def plan_pairs(
         return []
     from simulate.services.hosted_harness_gateway import _scenario_token
 
-    if exact is None:
+    if strict_keys:
+        exact = False
+    elif exact is None:
         exact = (
             getattr(job, "environment_id", None) is None
             and getattr(job, "environment_version_id", None) is not None
@@ -805,7 +858,13 @@ def plan_pairs(
     taken = max(
         (row.number for row in existing.values() if row.number is not None), default=0
     )
-    held_rows = [None] * len(docs) if exact else _rows_held(rows, docs)
+    held_rows = (
+        [existing.get(doc["scenario_key"]) for doc in docs]
+        if strict_keys
+        else [None] * len(docs)
+        if exact
+        else _rows_held(rows, docs)
+    )
     keys = {row.scenario_key for row in rows}
     # Every key given out, by a row or by this suite, so a repeat gets one nobody holds.
     given = keys | {str(doc.get("scenario_key") or "").strip() for doc in docs}
@@ -824,6 +883,14 @@ def plan_pairs(
             )
         elif exact:
             held = by_token.get(_scenario_token(doc.get("name")))
+        if (
+            exact
+            and held is not None
+            and held.id not in owned
+            and not may_take_back(held, doc)
+        ):
+            # A new case whose key or name a removed one held: a fresh key and row, never the old one's history.
+            held = None
         if (
             exact
             and held is not None
@@ -880,6 +947,7 @@ def pair_scenarios(
     docs: list[dict[str, Any]],
     prune: bool = False,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> list[tuple[HostedHarnessScenario, dict[str, Any]]]:
     """Persist the authored suite and return the identity row each document was written to.
 
@@ -889,7 +957,7 @@ def pair_scenarios(
     seen: set[str] = set()
     # A scenario listed twice is planned twice under one key: both write one row.
     written: dict[str, HostedHarnessScenario] = {}
-    for planned in plan_pairs(job, docs, exact=exact):
+    for planned in plan_pairs(job, docs, exact=exact, strict_keys=strict_keys):
         seen.add(planned.key)
         fields = {
             "number": planned.number,
@@ -913,9 +981,12 @@ def pair_scenarios(
     # soft-deleted even when history points at it, so old Runs retain their foreign key
     # while active-suite reads and new Run selection no longer expose it.
     if prune:
+        # An archived row keeps its identity, runs and evidence: it is never pruned.
         HostedHarnessScenario.no_workspace_objects.filter(job=job).exclude(
             scenario_key__in=seen
-        ).update(deleted=True, deleted_at=timezone.now())
+        ).exclude(archived_at__isnull=False).update(
+            deleted=True, deleted_at=timezone.now()
+        )
     return pairs
 
 
@@ -1001,6 +1072,9 @@ def _default_member_rows(
 
 class ScenarioRows(list):
     """Draft scenario rows, read the way the list, coverage and catalogue read rows."""
+
+    # The draft they come from: its id and revision.
+    draft: dict[str, Any] | None = None
 
     def values(self, *paths: str) -> list[dict[str, Any]]:
         return [{path: _row_value(row, path) for path in paths} for row in self]

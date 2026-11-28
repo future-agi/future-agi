@@ -16,11 +16,12 @@ import FixFinishedView, { FinishedActions } from "./FixFinishedView";
 import FixChangesTab from "./FixChangesTab";
 import FixCostTab from "./FixCostTab";
 import FixScenariosTab from "./FixScenariosTab";
+import OutsideAttemptVerdict from "./OutsideAttemptVerdict";
 
 // One page for a fix: it follows a running one and, once it ends, becomes the
 // place to decide on it. The read polls while the fix is live, so the finished
 // view replaces the running one without a reload.
-export default function FixRunPage({ envId, fixId, runTestId }) {
+export default function FixRunPage({ fixId, runTestId }) {
   const { fix, isLoading } = useFixRun(fixId);
   const [tab, setTab] = useState("trials");
   const [reviewing, setReviewing] = useState(null);
@@ -47,7 +48,7 @@ export default function FixRunPage({ envId, fixId, runTestId }) {
     >
       <FixHeader
         fix={fix}
-        envId={envId}
+        runTestId={runTestId}
         actions={
           live ? null : (
             <FinishedActions
@@ -61,6 +62,7 @@ export default function FixRunPage({ envId, fixId, runTestId }) {
         }
       />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <OutsideAttemptVerdict fix={fix} />
         {live ? (
           <FixRunningView fix={fix} runTestId={runTestId} />
         ) : (
@@ -92,7 +94,6 @@ export default function FixRunPage({ envId, fixId, runTestId }) {
 }
 
 FixRunPage.propTypes = {
-  envId: PropTypes.string.isRequired,
   fixId: PropTypes.string.isRequired,
   runTestId: PropTypes.string,
 };

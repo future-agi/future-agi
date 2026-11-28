@@ -68,6 +68,18 @@ export default function ActorTriggerFields({
           options: actionIds.map((id) => ({ value: id, label: id })),
           startLabel: initial.triggerTool,
         })}
+      {takes("on_call") &&
+        field("triggerOnCall", F.triggerOnCall, {
+          type: "number",
+          helperText: F.triggerOnCallHelp,
+          inputProps: { min: 1, step: 1 },
+        })}
+      {takes("p") &&
+        field("triggerChance", F.triggerChance, {
+          type: "number",
+          helperText: F.triggerChanceHelp,
+          inputProps: { min: 0, max: 100 },
+        })}
       {takes("words") &&
         field("triggerWords", F.triggerWords, {
           helperText: F.triggerWordsHelp,

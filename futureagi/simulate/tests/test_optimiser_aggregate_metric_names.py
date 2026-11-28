@@ -22,6 +22,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
+from tracer.services import simulation_investigation
 
 BUILT_IN_KEYS = {
     "total_calls",
@@ -37,6 +38,18 @@ BUILT_IN_KEYS = {
     "customer_talk_percentage",
     "failed_calls",
 }
+
+
+@pytest.fixture(autouse=True)
+def _debug_failures_readable(monkeypatch):
+    """Lets these few-call runs past Debug failures' minimum-calls-and-a-failure
+    rule; test_optimiser_analysis_refusals.py reads the rule for real."""
+    monkeypatch.setattr(
+        simulation_investigation,
+        "connected_call_count",
+        lambda _: simulation_investigation.MIN_CONNECTED_CALLS,
+    )
+    monkeypatch.setattr(simulation_investigation, "failing_call_count", lambda _: 1)
 
 
 @pytest.fixture

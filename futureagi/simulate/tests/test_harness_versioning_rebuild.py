@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 
 from simulate.models import (
     HarnessEnvironmentVersion,
+    HarnessLockedVersion,
     HarnessNudge,
     HostedHarnessConversation,
     HostedHarnessConversationLease,
@@ -18,6 +19,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.harness_versioning import archives, drafts, nudges, rebuild
+from simulate.services.harness_versioning.locked_versions import lock_preview
 from simulate.services.hosted_harness import HostedHarnessError, canonical_digest
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -30,10 +32,15 @@ from simulate.services.hosted_harness_conversation import (
 )
 from simulate.tasks import harness_nudges as nudge_tasks
 from simulate.tasks import hosted_harness_conversation as conversation_tasks
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
-from simulate.tests.test_harness_nudges import NEW_VALUE, _activated, _answer
+from simulate.tests.test_harness_nudges import (
+    NEW_VALUE,
+    _activated,
+    _answer,
+)
 from simulate.tests.test_harness_nudges import (  # noqa: F401 - fixture
     started as started,
 )
@@ -698,6 +705,60 @@ class TestDispatch:
 
 
 class TestLanding:
+    def test_a_rebuild_leaves_a_locked_version_as_it_was(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-locked",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        e1, s1 = environment.environment_version, environment.suite_version
+        # The split rules have their own tests; this one is about the rebuild.
+        locked_version = HarnessLockedVersion.no_workspace_objects.create(
+            environment=environment,
+            environment_version=e1,
+            suite_version=s1,
+            label="2026.11.1",
+            locked_at=timezone.now(),
+            locked_by=user,
+            train_count=1,
+            test_count=1,
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            nudge = _turn(environment, nudge, storage)
+
+        assert nudge.state == "applied", (nudge.error, nudge.summary)
+        environment.refresh_from_db()
+        assert environment.environment_version_id != e1.id
+        e1.refresh_from_db()
+        assert (e1.status, e1.discard_reason) == ("active", None)
+        locked_version.refresh_from_db()
+        assert (
+            locked_version.environment_version_id,
+            locked_version.suite_version_id,
+        ) == (
+            e1.id,
+            s1.id,
+        )
+        assert locked_version.unlocked_at is None
+        preview = lock_preview(environment)
+        assert preview["environment_version_id"] == environment.environment_version_id
+        assert preview["refusal"] is None or (
+            preview["refusal"]["code"] != "version_already_locked"
+        )
+
     def test_a_rebuild_lands_a_new_environment_version(
         self,
         user,
@@ -743,6 +804,63 @@ class TestLanding:
             job=environment, target="suite"
         )
         assert suite.base_environment_version_id == e2.id
+
+    def test_a_recorded_draft_cites_the_files_and_rows_it_read(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        settings,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment, _nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-file-rows",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        from simulate.services.hosted_harness_gateway import (
+            with_authoring_basis,
+            with_draft_basis,
+        )
+
+        token = drafts.compose_workspace(
+            environment, ensure_conversation(environment)
+        ).token
+        mine = {"agent": "support", "tools": [{"name": "lookup_order"}]}
+        drafts.record_draft(
+            environment,
+            with_draft_basis(
+                with_authoring_basis(_authoring(contract=mine), ""), token
+            ),
+            origin="import",
+            user=user,
+            used_files=[{"file_id": "knowledge/orders.csv", "row": 4}],
+        )
+
+        draft = drafts.open_draft(environment, "environment")
+        used = [
+            one
+            for sources in draft.documents["provenance"].values()
+            for source in sources
+            for one in source["used"]
+        ]
+        assert used and all(
+            one
+            == {
+                "kind": "file",
+                "id": "knowledge/orders.csv",
+                "row": 4,
+                "name": "orders.csv",
+            }
+            for one in used
+        )
 
     def test_the_rebuild_lands_on_top_of_the_unsaved_edits(
         self,
@@ -1080,7 +1198,7 @@ class TestLanding:
             documents={**(e1.documents or {}), "contract": REFUND}
         )
         world = {"tools": [], "tables": {"orders": 1}}
-        files = drafts._piece_files
+        files = drafts.piece_files
 
         def with_world(locked, piece, version):
             found = files(locked, piece, version)
@@ -1088,7 +1206,7 @@ class TestLanding:
                 found = {**found, "manifest.json": json.dumps(world).encode()}
             return found
 
-        with patch.object(drafts, "_piece_files", with_world):
+        with patch.object(drafts, "piece_files", with_world):
             nudge = _turn(
                 environment,
                 nudge,
@@ -2543,9 +2661,13 @@ class TestAgentDefault:
         nudge = _turn(environment, nudge, storage)
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
+        # The draft lands for A2; A3 follows once its pairing with it validates.
+        assert nudge.summary["agent_default_moved"] is False
+        assert nudge.summary["agent_not_moved"] == "validating"
+        settle_validations(environment)
+        environment.refresh_from_db()
         assert environment.agent_version_id == a3.id
         assert environment.environment_version.agent_version_id == a3.id
-        assert nudge.summary["agent_default_moved"] is True
         assert environment.payload["metadata"][HAND_MOVE_KEY]["to"] == str(a3.id)
 
     def test_an_agent_not_prepared_for_lands_for_the_current_one(
@@ -2615,11 +2737,11 @@ class TestAgentDefault:
             pair = default_pair(*args)
             return replace(pair, revision="sha256:" + "9" * 64)
 
-        default_pair = versions._default_pair
+        default_pair = versions.pair_archive
 
         def move_by_hand():
             revisions.append(environment_authoring_revision(environment))
-            with patch.object(versions, "_default_pair", side_effect=recomposed):
+            with patch.object(versions, "pair_archive", side_effect=recomposed):
                 move_default(environment, "agent", a1.id, expected_default_id=a2.id)
             environment.refresh_from_db()
             revisions.append(environment_authoring_revision(environment))
@@ -2723,7 +2845,10 @@ class TestSuite:
         from simulate.tests.test_harness_amend_archive import _key
 
         made = (now + timedelta(minutes=1)).isoformat()
-        proofs = {_key(name): {"holds": True, "proved_at": made} for name in NAMES}
+        proofs = {
+            _key(name): {"format": 2, "holds": True, "proved": True, "proved_at": made}
+            for name in NAMES
+        }
         proofs[_key(NAMES[0])]["proved_at"] = old
 
         suite = _turn(

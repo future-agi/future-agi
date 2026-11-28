@@ -3,7 +3,12 @@
 flows/agents/call-log-eval-columns.spec.ts	factory req=request	1	collector
 flows/alerts/view-trace-scoping.spec.ts	factory req=request	1	collector
 flows/annotations/catalog-score-lifecycle.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/annotations/digest-email-links.spec.ts	binding page,actor,probe,request	1	backendRequestContext
+flows/annotations/digest-email-links.spec.ts	send request.post expiredSnooze	1	reviewed first-hop expression
 flows/annotations/session-score-lifecycle.spec.ts	binding browser,request,scopeActors:scopes,scopeProbe:probe	1	backendRequestContext
+flows/auth/email-unsubscribe-guards.spec.ts	binding page,actor,probe,request	1	backendRequestContext
+flows/auth/email-unsubscribe-guards.spec.ts	send request.post link	1	reviewed first-hop expression
+flows/auth/email-unsubscribe-guards.spec.ts	send request.post valid	2	reviewed first-hop expression
 flows/auth/first-run-existing-account.spec.ts	factory req=pwRequest	1	ApiClient
 flows/auth/google-signin.spec.ts	factory context=browser	1	browser; not an API context
 flows/auth/google-signin.spec.ts	factory req=pwRequest	1	ApiClient
@@ -35,6 +40,7 @@ flows/dashboards/trace-text-annotation-widget.spec.ts	factory ingestion=request	
 flows/dashboards/widget-y-axis.spec.ts	factory req=request	4	collector
 flows/dashboards/widget-y-axis.spec.ts	send req.post `${cfg.collectorUrl}/v1/traces`	1	reviewed first-hop expression
 flows/datasets/pdf-document-preview.spec.ts	attached context.request	1	managed storage
+flows/error-feed/escalation-settings-scope.spec.ts	factory req=request	1	collector
 flows/error-feed/slack-alert.spec.ts	factory req=request	1	collector + Slack mock :28081
 flows/error-feed/slack-alert.spec.ts	send req.get `${E2E.slackMockUrl}/messages`	1	reviewed first-hop expression
 flows/error-feed/slack-integration-management.spec.ts	factory req=request	1	Slack first hop; backend callback is a redirect
@@ -145,6 +151,7 @@ harness/provisioning.spec.ts	factory req=request	1	ApiClient
 lib/backend-request.ts	attached route.fetch(	1	firstHopOptions
 lib/backend-request.ts	binding request,baseURL	1	backendRequestContext
 lib/backend-request.ts	factory -=request	1	backendRequestContext
+lib/error-feed-harness.ts	factory req=request	1	collector
 lib/fixtures.ts	factory req=pwRequest	1	ApiClient
 lib/fresh-actor.ts	factory req=request	1	ApiClient
 lib/google-fixture.ts	factory api=request	1	Google mock HTTPS :28443

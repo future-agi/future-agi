@@ -800,6 +800,15 @@ AVAILABLE_REGIONS = os.environ.get("AVAILABLE_REGIONS", "")
 # CELERY_BROKER_URL set explicitly. The Channels layer never reads it.
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "memory://")
 CELERY_RESULT_BACKEND = "django-db"  # If you want to use Django's ORM
+# While results expire, beat schedules a daily celery.backend_cleanup task that
+# only a worker can run. Celery reads and writes through CELERY_BROKER_READ_URL
+# and CELERY_BROKER_WRITE_URL, each falling back to CELERY_BROKER_URL; when both
+# are the in-process broker no worker exists, so turn expiry off there.
+if all(
+    (os.getenv(name) or CELERY_BROKER_URL).startswith("memory://")
+    for name in ("CELERY_BROKER_READ_URL", "CELERY_BROKER_WRITE_URL")
+):
+    CELERY_RESULT_EXPIRES = None
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -966,6 +975,20 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+# Calculate in shadow mode until replay and managed source flows qualify writes.
+ERROR_FEED_ESCALATION_MODE = (
+    os.getenv("ERROR_FEED_ESCALATION_MODE", "shadow").strip().lower()
+)
+ERROR_FEED_ESCALATION_WORKSPACE_IDS = tuple(
+    value.strip()
+    for value in os.getenv("ERROR_FEED_ESCALATION_WORKSPACE_IDS", "").split(",")
+    if value.strip()
+)
+ERROR_FEED_ESCALATION_SOURCES = tuple(
+    value.strip()
+    for value in os.getenv("ERROR_FEED_ESCALATION_SOURCES", "scanner").split(",")
+    if value.strip()
+)
 ERROR_FEED_OMEGA_DELAY_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_DELAY_SECONDS", "60"))
 ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS", "120"))
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
@@ -1087,6 +1110,11 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
 )
+# How long a Validate (a check of an environment's cases) may run before it is stopped: generous, so a suite of a
+# thousand cases is proved; cases a stopped check did not reach keep their earlier proofs.
+HARNESS_VALIDATION_CHECK_SECONDS = int(
+    os.getenv("HARNESS_VALIDATION_CHECK_SECONDS", "") or 7200
+)
 # Derived from the budget above so the two cannot disagree.
 ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
@@ -1135,6 +1163,11 @@ ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
 # "Fix my agent": the improvement engine runs in its own E2B template, built on the hosted ALK
 # template (the svc-control user and /opt/alk-venv the E2B bootstrap expects).
 AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE", "")
+# A person's own coding agent submits a fix that an Epoch verifies. Turn it on together with
+# an engine template that runs verify mode; off, its routes answer 404.
+AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED = os.getenv(
+    "AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED", "false"
+).lower() in ("true", "1", "yes")
 AGENT_FIX_ENGINE_COMMAND = os.getenv(
     "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
 )
@@ -1188,6 +1221,10 @@ AGENT_FIX_MAX_TREE_BYTES = int(
     os.getenv("AGENT_FIX_MAX_TREE_BYTES", str(128 * 1024 * 1024))
 )
 AGENT_FIX_MAX_TREE_FILES = int(os.getenv("AGENT_FIX_MAX_TREE_FILES", "20000"))
+# The tar.gz an outside attempt uploads, before it is read: half the unpacked limit.
+AGENT_FIX_MAX_UPLOAD_BYTES = int(
+    os.getenv("AGENT_FIX_MAX_UPLOAD_BYTES", str(64 * 1024 * 1024))
+)
 ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
     os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
 )
@@ -1214,6 +1251,11 @@ HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower()
     "true",
     "yes",
 )
+# Validate before Save on every draft save where validation is available, not only once a change was decided: the
+# Save bar validates the drafts, then saves the validated versions. Set to false to let an undecided draft save as is.
+HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = os.getenv(
+    "HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE", "true"
+).lower() in ("1", "true", "yes")
 # A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
 # environment's default pair as before.
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
@@ -1295,7 +1337,9 @@ def _reading_call_limit() -> int:
 
 ALK_HOSTED_READING_MAX_MODEL_CALLS = _reading_call_limit()
 # Most scenarios × trials one simulation Run may submit.
-HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(
+    os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "1000")
+)
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
 # Comma-separated allowlist of provider runtime identifiers certified for W>1.
@@ -1635,9 +1679,11 @@ USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
 
 # Orgs created at or after this instant see only Environments in Simulate. Set it
 # to the start of the deploy that introduces the restriction, in UTC, the same
-# value in every region. Unset restricts no org (self-hosted installs).
+# value in every region. Unset means 2026-10-28T00:00:00Z, the day v1.56.0 (the
+# first release with the restriction) reached self-hosted installs; blank
+# restricts no org.
 RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF = env_datetime(
-    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF", "2026-10-28T00:00:00Z"
 )
 
 # Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |

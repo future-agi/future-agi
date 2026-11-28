@@ -1,14 +1,15 @@
 import { describe, it, expect } from "vitest";
 
 import {
-  heldBackCount,
+  heldBackNote,
+  testSplitKeys,
   countsLine,
   reviewSentence,
   budgetSteps,
   minuteSteps,
   launchError,
   variationsNote,
-  blockedReason,
+  blockerOf,
   costLimitOf,
   isTraced,
   seesModels,
@@ -16,6 +17,7 @@ import {
   tracesUnreadable,
   marginSteps,
 } from "../launchFormView";
+import { heldBackOf } from "../epochBlockers";
 
 const LIMITS = {
   budget_credits_max: 50000,
@@ -38,17 +40,91 @@ const SURFACES = [
 ];
 
 describe("held back", () => {
-  it("holds back a third from 12 picked", () => {
-    expect(heldBackCount(11)).toBe(0);
-    expect(heldBackCount(12)).toBe(4);
-    expect(heldBackCount(25)).toBe(8);
-  });
-
-  it("counts what is fixed, held back and protected", () => {
-    expect(countsLine(12, 9)).toBe(
+  it("counts what is fixed, held back and protected, as the server holds back", () => {
+    expect(countsLine(12, 9, LIMITS, { keys: ["a", "b", "c", "d"] })).toBe(
       "12 failing: 8 to fix, 4 held back to prove it · 9 protected",
     );
-    expect(countsLine(3, 1)).toBe("3 failing to fix · 1 protected");
+    // The server held back fewer than a third: its count, not a guess.
+    expect(countsLine(12, 9, LIMITS, { keys: ["a", "b", "c"] })).toBe(
+      "12 failing: 9 to fix, 3 held back to prove it · 9 protected",
+    );
+    expect(countsLine(3, 1, LIMITS, { keys: [] })).toBe(
+      "3 failing to fix · 1 protected",
+    );
+    expect(countsLine(12, 1, LIMITS, { pending: "edited" })).toBe(
+      "12 failing to fix · 1 protected",
+    );
+  });
+});
+
+// A run of lock 2026.11.1: two failing cases in its test split, one
+// in train. The server held back the suggested targets' test-split cases.
+const LOCKED = {
+  held_back_from: "locked_version",
+  locked_version_label: "2026.11.1",
+  held_back_scenario_keys: ["a", "b"],
+  suggested: { target_scenario_keys: ["a", "b", "c"] },
+  limits: FLOOR,
+  scenarios: [
+    { key: "a", split: "test" },
+    { key: "b", split: "test" },
+    { key: "c", split: "train" },
+    { key: "d", split: null },
+  ],
+};
+
+describe("held back on a locked version", () => {
+  it("holds back the picked cases of the test split, however few", () => {
+    expect(testSplitKeys(LOCKED)).toEqual(["a", "b"]);
+    expect(heldBackOf(LOCKED, ["a", "b", "c"])).toEqual({ keys: ["a", "b"] });
+    expect(countsLine(2, 0, LIMITS, heldBackOf(LOCKED, ["a", "c"]))).toBe(
+      "2 failing: 1 to fix, 1 held back to prove it · 0 protected",
+    );
+  });
+
+  it("holds back only test-split cases, whatever the pick", () => {
+    // An edited pick, below cases_min: the test split still says which.
+    expect(heldBackOf(LOCKED, ["a", "c"])).toEqual({ keys: ["a"] });
+    expect(heldBackOf(LOCKED, ["c"])).toEqual({ keys: [] });
+    // A server answer outside the test split is never shown as held back.
+    expect(
+      heldBackOf({ ...LOCKED, held_back_scenario_keys: ["a", "c"] }, [
+        "a",
+        "b",
+        "c",
+      ]),
+    ).toEqual({ keys: ["a", "b"] });
+  });
+
+  it("samples off a locked version", () => {
+    const sampled = {
+      held_back_from: "sample",
+      locked_version_label: null,
+      held_back_scenario_keys: ["c"],
+      suggested: { target_scenario_keys: ["a", "b", "c"] },
+      limits: LIMITS,
+      scenarios: LOCKED.scenarios,
+    };
+    expect(heldBackOf(sampled, ["a", "b", "c"])).toEqual({ keys: ["c"] });
+    expect(heldBackNote(sampled)).toBeNull();
+  });
+
+  it("names the lock whose test split is held back", () => {
+    expect(heldBackNote(LOCKED)).toMatch(/lock 2026\.11\.1/);
+  });
+
+  it("refuses a pick that is all test split, as the launch does", () => {
+    const check = (targets) =>
+      launchError({
+        targets,
+        protectedKeys: [],
+        surfaces: ["prompt"],
+        limits: LIMITS,
+        testKeys: testSplitKeys(LOCKED),
+      });
+    expect(check(["a", "b"])).toMatch(/in the test split/);
+    expect(check(["a"])).toMatch(/in the test split/);
+    expect(check(["a", "c"])).toBeNull();
   });
 });
 
@@ -95,11 +171,42 @@ describe("variations", () => {
       },
       limits: FLOOR,
     };
-    expect(blockedReason(options, 5)).toBe("Save first");
-    expect(blockedReason(options, 12)).toBeNull();
-    expect(blockedReason({ ...options, blocked: { message: "Busy" } }, 5)).toBe(
-      "Busy",
-    );
+    expect(blockerOf(options, 5)).toEqual(options.variations_blocked);
+    expect(blockerOf(options, 12)).toBeNull();
+    const busy = { code: "environment_updating", message: "Busy" };
+    expect(blockerOf({ ...options, blocked: busy }, 5)).toBe(busy);
+  });
+});
+
+describe("held back on the form", () => {
+  const options = (keys, suggested, casesMin = 12) => ({
+    held_back_scenario_keys: keys,
+    suggested: { target_scenario_keys: suggested },
+    limits: { cases_min: casesMin },
+  });
+  const twelve = Array.from({ length: 12 }, (_, i) => `c${i}`);
+
+  it("shows the server's cases for the suggested targets", () => {
+    expect(heldBackOf(options(["c1"], twelve), twelve)).toEqual({
+      keys: ["c1"],
+    });
+  });
+
+  it("says the launch picks them from targets the person changed", () => {
+    const thirteen = [...twelve, "c12"];
+    expect(heldBackOf(options(["c1"], thirteen), twelve)).toEqual({
+      pending: "edited",
+    });
+  });
+
+  it("says they come with the variations below the floor, however the targets were set", () => {
+    expect(heldBackOf(options(null, twelve.slice(0, 5)), twelve.slice(0, 5))).toEqual({
+      pending: "variations",
+    });
+    // Unticked down below the floor: variations first, not a promise of held-back cases.
+    expect(heldBackOf(options(["c1"], twelve), twelve.slice(0, 10))).toEqual({
+      pending: "variations",
+    });
   });
 });
 

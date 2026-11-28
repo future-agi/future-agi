@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -120,9 +121,11 @@ def workspace_read_only(view_cls):
 class ViewerReadOnly(PermissionDenied):
     default_code = VIEWER_READ_ONLY_CODE
 
-    def __init__(self, action=None):
+    def __init__(self, action=None, advice=None):
         self.action = action
-        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+        super().__init__(
+            viewer_denied_message(action, advice), code=VIEWER_READ_ONLY_CODE
+        )
 
 
 WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
@@ -172,9 +175,13 @@ def _with_viewer_refusal(schema):
     }
 
 
-def viewer_denied(action):
+def viewer_denied(action, *, advice=None):
+    """Name what a Viewer tried. ``advice`` says who can do it when the Member role
+    isn't enough."""
+
     def mark(handler):
         handler._viewer_denied_action = action
+        handler._viewer_denied_advice = advice
         schema = getattr(handler, "_swagger_auto_schema", None) or {}
         methods = [method for method in _WRITE_METHODS if method in schema]
         if methods:
@@ -193,11 +200,20 @@ def workspace_write_denied(request) -> PermissionDenied:
     """The refusal of a write the user's role doesn't allow: simulation routes say
     what a Viewer tried; every other route keeps its original response."""
     if request.path.startswith(_VIEWER_REASON_PREFIX):
-        return ViewerReadOnly(_viewer_denied_action(request))
+        handler = _write_handler(request)
+        return ViewerReadOnly(
+            _handler_text(handler, "_viewer_denied_action"),
+            _handler_text(handler, "_viewer_denied_advice"),
+        )
     return PermissionDenied(WORKSPACE_WRITE_DENIED)
 
 
-def _viewer_denied_action(request):
+def _handler_text(handler, name):
+    value = getattr(handler, name, None)
+    return value if isinstance(value, str) else None
+
+
+def _write_handler(request):
     view_cls = _resolve_view_class(request)
     if view_cls is None:
         return None
@@ -210,10 +226,7 @@ def _viewer_denied_action(request):
         handler_name = method
     if not isinstance(handler_name, str):
         return None
-    action = getattr(
-        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
-    )
-    return action if isinstance(action, str) else None
+    return getattr(view_cls, handler_name, None)
 
 
 def _resolve_view_class(request):
@@ -258,6 +271,20 @@ def is_coding_agent_key(request) -> bool:
     """Whether ``request`` authenticated with a coding agent's key."""
     org_api_key = getattr(request, "org_api_key", None)
     return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
+def is_browser_session(request) -> bool:
+    """Whether ``request`` authenticated as a person's signed-in session: the JWT branch of
+    ``APIKeyAuthentication``, whose ``request.auth`` is the token. An allowlist, so a new
+    way in, a subclass included, is not a session: an API key's ``request.auth`` is None,
+    and an MCP call is forced in (``ForcedAuthentication``) with none either."""
+    authenticator = getattr(request, "successful_authenticator", None)
+    return (
+        type(authenticator) is APIKeyAuthentication
+        and isinstance(getattr(request, "auth", None), str)
+        and bool(request.auth)
+        and getattr(request, "org_api_key", None) is None
+    )
 
 
 class APIKeyAuthentication(BaseAuthentication):
@@ -886,62 +913,75 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         return user, None
 
 
+# Private IPv4 ranges treated as non-routable by get_client_ip.
+_PRIVATE_IPV4_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
+
+def _parse_client_ip(value):
+    """
+    Return ``(host, address)`` for an address-like header value, or None.
+
+    Accepts a bare IPv4/IPv6 address, ``[ipv6]`` or ``[ipv6]:port``, and
+    ``ipv4:port``. ``host`` is the address text as sent (without brackets
+    or port), so valid values keep the exact string used before.
+    """
+    if not isinstance(value, str):
+        return None
+    host = value.strip()
+    candidates = [host]
+    if host.startswith("["):
+        closing = host.find("]")
+        if closing != -1:
+            candidates.append(host[1:closing])
+    elif host.count(":") == 1:
+        candidates.append(host.split(":", 1)[0])
+    for candidate in candidates:
+        try:
+            return candidate, ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+    return None
+
+
 def get_client_ip(request):
     """
     Get client IP address from request object.
     Returns tuple of (ip_address, is_routable).
+
+    The first valid X-Forwarded-For entry is used, as before. Entries that
+    are not IP addresses are skipped; if none is valid, REMOTE_ADDR is
+    used. Malformed values never raise.
     """
+    parsed = None
+
     # Try to get IP from X-Forwarded-For header first
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-
     if x_forwarded_for:
         # X-Forwarded-For header can contain multiple IPs
         # First IP is the client's, followed by proxy IPs
-        ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        # If no X-Forwarded-For header, use REMOTE_ADDR
-        ip = request.META.get("REMOTE_ADDR")
-
-    # Check if IP is private/routable
-    is_routable = True
-
-    # Private IP ranges
-    private_ips = [
-        ("10.0.0.0", "10.255.255.255"),
-        ("172.16.0.0", "172.31.255.255"),
-        ("192.168.0.0", "192.168.255.255"),
-    ]
-
-    # Convert IP string to integer for range comparison
-    ip_parts = ip.split(".")
-    if len(ip_parts) == 4:
-        ip_int = (
-            (int(ip_parts[0]) << 24)
-            + (int(ip_parts[1]) << 16)
-            + (int(ip_parts[2]) << 8)
-            + int(ip_parts[3])
-        )
-
-        for start, end in private_ips:
-            start_parts = start.split(".")
-            end_parts = end.split(".")
-
-            start_int = (
-                (int(start_parts[0]) << 24)
-                + (int(start_parts[1]) << 16)
-                + (int(start_parts[2]) << 8)
-                + int(start_parts[3])
-            )
-            end_int = (
-                (int(end_parts[0]) << 24)
-                + (int(end_parts[1]) << 16)
-                + (int(end_parts[2]) << 8)
-                + int(end_parts[3])
-            )
-
-            if start_int <= ip_int <= end_int:
-                is_routable = False
+        for entry in x_forwarded_for.split(","):
+            parsed = _parse_client_ip(entry)
+            if parsed is not None:
                 break
+
+    if parsed is None:
+        # If no usable X-Forwarded-For entry, use REMOTE_ADDR
+        remote_addr = request.META.get("REMOTE_ADDR")
+        parsed = _parse_client_ip(remote_addr)
+        if parsed is None:
+            return remote_addr or "unknown", False
+
+    ip, address = parsed
+
+    # Only the private IPv4 ranges count as non-routable
+    is_routable = not (
+        address.version == 4
+        and any(address in network for network in _PRIVATE_IPV4_NETWORKS)
+    )
 
     return ip, is_routable
 
@@ -966,7 +1006,26 @@ class AuthMonitoringMiddleware:
     def __call__(self, request):
         if is_oss():
             return self.get_response(request)
+        try:
+            refused = self._refuse_throttled(request)
+        except _CACHE_UNAVAILABLE_ERRORS as exc:
+            if _cache_transport_category(exc) is None:
+                raise
+            # Fail open, like the access-token cache: an unreachable cache must
+            # not turn every login, token, signup and password-reset request
+            # into a 500. Credentials are still checked against the database;
+            # only the per-IP throttle is skipped until the cache is back.
+            logger.warning(
+                "auth_rate_limit_cache_unavailable",
+                component="auth_rate_limit",
+                fallback="not_throttled",
+                **_cache_unavailable_metadata(exc),
+            )
+            refused = None
+        return refused if refused is not None else self.get_response(request)
 
+    def _refuse_throttled(self, request):
+        """The 403 for a throttled IP, or None to let the request through."""
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):
@@ -1031,7 +1090,7 @@ class AuthMonitoringMiddleware:
             requests.append(now)
             cache.set(f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS)
 
-        return self.get_response(request)
+        return None
 
 
 def generate_encrypted_message(key_value_pairs: dict) -> str:

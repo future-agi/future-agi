@@ -3,17 +3,26 @@
 // hold a fix, and it stops at the limit with the best it found.
 import { formatCredits, formatMinutes } from "./fixRunView";
 
-export const HELD_BACK_MINIMUM = 12;
-
-export const heldBackCount = (picked) =>
-  picked >= HELD_BACK_MINIMUM ? Math.floor(picked / 3) : 0;
-
 // Fewer failing cases than a fix needs: it first writes variations of each.
 export const needsVariations = (picked, limits) =>
   picked > 0 && picked < (limits?.cases_min ?? 0);
 
-export function countsLine(picked, protectedCount, limits) {
-  const held = heldBackCount(picked);
+// The run's scenarios in its locked version's test split; none off one.
+export const testSplitKeys = (options) =>
+  (options?.scenarios || [])
+    .filter((s) => s.split === "test")
+    .map((s) => s.key);
+
+export function heldBackNote(options) {
+  if (options?.held_back_from !== "locked_version") return null;
+  if (!options.locked_version_label) return null;
+  return `Held back: lock ${options.locked_version_label}'s test split. It learns only from the train split.`;
+}
+
+// `heldBack` is heldBackOf's answer: the cases the server holds back, or why
+// none are known yet.
+export function countsLine(picked, protectedCount, limits, heldBack) {
+  const held = heldBack?.keys?.length ?? 0;
   let failing = `${picked} failing to fix`;
   if (held) {
     failing = `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`;
@@ -34,23 +43,12 @@ export function variationsNote(picked, limits, agentKind) {
   return `${note} With fewer than ${limits.verified_cases_min} failing cases it can end with Limited validation at best${draft}.`;
 }
 
-// Whether Start is disabled only by the environment's unsaved scenario or setup
-// changes, which the variations would be written on top of: the user can save or
-// discard them.
-export function blockedByDraft(options, picked) {
-  return (
-    !options.blocked &&
-    needsVariations(picked, options.limits) &&
-    options.variations_blocked?.code === "fix_draft_open"
-  );
-}
-
-// Why Start is disabled by the platform: the fix itself, or the variations it
-// would write first.
-export function blockedReason(options, picked) {
-  if (options.blocked) return options.blocked.message;
+// The platform's refusal that disables Start, as `{code, message}`: the fix
+// itself, or the variations it would write first.
+export function blockerOf(options, picked) {
+  if (options.blocked) return options.blocked;
   if (needsVariations(picked, options.limits)) {
-    return options.variations_blocked?.message || null;
+    return options.variations_blocked || null;
   }
   return null;
 }
@@ -153,8 +151,17 @@ export function launchError({
   models = [],
   seenModels = [],
   costLimit = "",
+  testKeys = [],
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
+  // Every case held back: the epoch would have nothing to learn from.
+  if (testKeys.length && targets.every((key) => testKeys.includes(key))) {
+    const subject =
+      targets.length === 1
+        ? "The only failing case is"
+        : `All ${targets.length} failing cases are`;
+    return `${subject} in the test split. Pick failing cases from the train split.`;
+  }
   if (targets.length < limits.scenarios_min) {
     // Only for a backend older than dev: the current schema requires cases_min and
     // variations_per_case. Remove this branch once every environment runs current dev.

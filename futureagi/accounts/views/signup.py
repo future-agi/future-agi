@@ -174,9 +174,10 @@ def _login_payload(user):
     """
     org = user.organization
     if org:
-        user.config["selected_organization_id"] = str(org.id)
-        user.config["currentOrganizationId"] = str(org.id)
-        user.save(update_fields=["config"])
+        user.update_config(
+            selected_organization_id=str(org.id),
+            currentOrganizationId=str(org.id),
+        )
     membership = get_org_membership(user)
     new_org = bool(
         org
@@ -823,9 +824,10 @@ def accept_invitation_mail(request, uidb64, token):
             _activate_memberships(user)
 
         # Set selected org so the auth layer picks it up on first request.
-        user.config["selected_organization_id"] = str(org.id)
-        user.config["currentOrganizationId"] = str(org.id)
-        user.save(update_fields=["config"])
+        user.update_config(
+            selected_organization_id=str(org.id),
+            currentOrganizationId=str(org.id),
+        )
 
         # Generate JWT tokens (same pattern as CustomTokenObtainPairView).
         AuthToken.objects.filter(
