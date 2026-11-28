@@ -143,6 +143,14 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "pplx-...",
     supportedFormats: ["openai"],
   },
+  // OpenAI-compatible. Public base URL: https://www.api-route.com/integrations
+  "api-route": {
+    label: "API Route",
+    baseUrl: "https://global.api-route.com/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your API Route API key",
+    supportedFormats: ["openai"],
+  },
   custom: {
     label: "Custom / Self-hosted",
     baseUrl: "",
