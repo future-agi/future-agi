@@ -71,6 +71,7 @@ PROPERTY_CATALOG_METRIC_SOURCES = (
     "all",
 )
 DASHBOARD_GRANULARITIES = ("minute", "hour", "day", "week", "month")
+DASHBOARD_QUERY_MODES = ("time_series", "distribution")
 DASHBOARD_TIME_RANGE_PRESETS = (
     "30m",
     "6h",
@@ -416,6 +417,7 @@ class DashboardWidgetSerializer(serializers.ModelSerializer):
             "stacked_column",
             "bar",
             "stacked_bar",
+            "distribution",
             "pie",
             "table",
             "metric",
@@ -514,6 +516,9 @@ class DashboardQuerySerializer(StrictInputSerializer):
     granularity = serializers.ChoiceField(
         choices=DASHBOARD_GRANULARITIES, required=False, default="day"
     )
+    query_mode = serializers.ChoiceField(
+        choices=DASHBOARD_QUERY_MODES, required=False, default="time_series"
+    )
     metrics = DashboardMetricSerializer(many=True)
     filters = filter_list_field(required=False, default=list)
     breakdowns = DashboardBreakdownSerializer(many=True, required=False, default=list)
@@ -593,6 +598,49 @@ class DashboardQuerySerializer(StrictInputSerializer):
 
         dataset_workflow = attrs.get("workflow") == "dataset"
         simulation_workflow = attrs.get("workflow") == "simulation"
+
+        if attrs.get("query_mode") == "distribution":
+            if len(metrics) != 1:
+                raise serializers.ValidationError(
+                    {
+                        "metrics": (
+                            "Distribution queries require exactly one numeric eval metric."
+                        )
+                    }
+                )
+            metric = metrics[0]
+            if metric.get("type") != "eval_metric":
+                raise serializers.ValidationError(
+                    {"metrics": "Distribution queries only support eval metrics."}
+                )
+            if metric.get("source", "traces") not in ("traces", "both", "all"):
+                raise serializers.ValidationError(
+                    {
+                        "metrics": (
+                            "Distribution queries only support trace-sourced eval metrics."
+                        )
+                    }
+                )
+            output_type = str(
+                metric.get("output_type") or metric.get("outputType") or "SCORE"
+            ).upper()
+            if output_type not in ("SCORE", "NUMERIC"):
+                raise serializers.ValidationError(
+                    {
+                        "metrics": (
+                            "Distribution queries require a numeric score eval metric."
+                        )
+                    }
+                )
+            if metric.get("aggregation") != "count":
+                raise serializers.ValidationError(
+                    {"metrics": "Distribution queries use count aggregation."}
+                )
+            if attrs.get("breakdowns"):
+                raise serializers.ValidationError(
+                    {"breakdowns": "Distribution queries do not support breakdowns."}
+                )
+
         if (
             not dataset_metrics
             and not dataset_workflow
@@ -651,6 +699,7 @@ class DashboardQuerySerializer(StrictInputSerializer):
                         )
                     }
                 )
+
         return attrs
 
 
@@ -693,13 +742,29 @@ class DashboardRefreshQuerySerializer(StrictInputSerializer):
 
 
 class DashboardQuerySeriesPointSerializer(serializers.Serializer):
-    timestamp = serializers.CharField()
+    timestamp = serializers.CharField(required=False)
+    bucket_start = serializers.FloatField(required=False)
+    bucket_end = serializers.FloatField(required=False)
     value = serializers.FloatField(allow_null=True)
     # Derived-metric points only: the persisted 95% interval of the run's window
     # value. Null bounds mean no interval exists; ci_reason says why.
     ci_low = serializers.FloatField(allow_null=True, required=False)
     ci_high = serializers.FloatField(allow_null=True, required=False)
     ci_reason = serializers.CharField(allow_blank=True, required=False)
+
+    def validate(self, attrs):
+        has_timestamp = "timestamp" in attrs
+        has_bucket_start = "bucket_start" in attrs
+        has_bucket_end = "bucket_end" in attrs
+        if has_bucket_start != has_bucket_end:
+            raise serializers.ValidationError(
+                "bucket_start and bucket_end must be provided together."
+            )
+        if has_timestamp == has_bucket_start:
+            raise serializers.ValidationError(
+                "Provide either timestamp or both bucket_start and bucket_end."
+            )
+        return attrs
 
 
 class DashboardQuerySeriesSerializer(serializers.Serializer):
