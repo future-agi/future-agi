@@ -444,12 +444,16 @@ def create_selected_harness_run(
 
     # Read from storage before the environment is locked: the names the test
     # environment makes for each version this run may resolve to.
+    picked = getattr(picks, "agent_version_id", None)
+    if picked and not agent_version_pickable(environment, picked):
+        # Refused when the pins resolve; nothing of it is read before then.
+        picked = None
     generated = {
         str(version_id): generated_value_names(version_id)
         for version_id in {
             environment.agent_version_id,
             getattr(rerun_of, "agent_version_id", None),
-            getattr(picks, "agent_version_id", None),
+            picked,
         }
         if version_id
     }
