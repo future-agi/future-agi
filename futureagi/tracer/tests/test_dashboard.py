@@ -8729,7 +8729,8 @@ class TestFrontendPayloadSimulation:
         compact_sql = " ".join(sql.split())
 
         assert "eval_score" in sql
-        assert "trace_id IN" in sql
+        # Eval membership compares (project, trace) pairs (TH-10545).
+        assert "(project_id, trace_id) IN" in sql
         assert "usage_apicalllog FINAL" not in sql
         assert "FROM usage_apicalllog AS usage_s_eval_filter_scan_0" in compact_sql
         assert (
@@ -10187,7 +10188,13 @@ class TestDashboardV2RewriteRouting:
 
         assert "AS s.trace_id" not in sql
         assert "AS s.project_id" not in sql
-        assert "s.trace_id IN (" in sql
+        # Eval membership compares (project, trace) pairs (TH-10545).
+        membership = (
+            "(s.project_id, s.trace_id) IN ("
+            if filter_type == "eval_metric"
+            else "s.trace_id IN ("
+        )
+        assert membership in compact_sql
         assert "s.project_id IN %(project_ids)s" in sql
         assert "s.start_time >= %(start_date)s" in sql
         assert "s.start_time < %(end_date)s" in sql
@@ -10221,7 +10228,10 @@ class TestDashboardV2RewriteRouting:
                     in compact_sql
                 )
         else:
-            assert "SELECT usage_s_eval_filter_latest_0.eval_trace_id" in sql
+            assert (
+                "SELECT usage_s_eval_filter_latest_0.eval_project_id, "
+                "usage_s_eval_filter_latest_0.eval_trace_id" in compact_sql
+            )
             assert "usage_s_eval_filter_scan_0._peerdb_version DESC" in sql
             assert "LIMIT 1 BY usage_s_eval_filter_scan_0.id" in sql
             assert "usage_s_eval_filter_latest_0._peerdb_is_deleted = 0" in sql
@@ -10274,7 +10284,10 @@ class TestDashboardV2RewriteRouting:
             )
         compact_sql = " ".join(sql.split())
 
-        assert compact_sql.count("s.trace_id IN (") == 2
+        # The annotation filter keeps trace membership; the eval filter
+        # compares (project, trace) pairs (TH-10545).
+        assert compact_sql.count("s.trace_id IN (") == 1
+        assert compact_sql.count("(s.project_id, s.trace_id) IN (") == 1
         assert "s.project_id IN %(project_ids)s" in sql
         assert "s.start_time >= %(start_date)s" in sql
         assert "s.start_time < %(end_date)s" in sql
@@ -10378,8 +10391,12 @@ class TestDashboardV2RewriteRouting:
             )
         compact_sql = " ".join(sql.split())
 
-        assert compact_sql.count(" AND trace_id IN (") == 2
+        # The annotation filter keeps trace membership; the eval filter
+        # compares (project, trace) pairs (TH-10545).
+        assert compact_sql.count(" AND trace_id IN (") == 1
+        assert compact_sql.count("(project_id, trace_id) IN (") == 1
         assert "s.trace_id IN (" not in sql
+        assert "s.project_id, s.trace_id" not in compact_sql
         assert "LEFT JOIN model_hub_score AS ann0" not in sql
         assert "FROM model_hub_score AS ann0_score" not in sql
         assert "breakdown_value" not in sql
@@ -10679,7 +10696,17 @@ class TestDashboardV2RewriteRouting:
             "if(a.trace_id IS NOT NULL, toString(a.trace_id), "
             "annotation_subject_span.trace_id) IN ("
         )
-        assert compact_sql.count(subject_expr) == 2
+        # The annotation filter keeps trace membership; the eval filter
+        # compares the subject's (project, trace) pair (TH-10545).
+        assert compact_sql.count(subject_expr) == 1
+        assert (
+            compact_sql.count(
+                "annotation_subject_span.project_id), "
+                "if(a.trace_id IS NOT NULL, toString(a.trace_id), "
+                "annotation_subject_span.trace_id)) IN ("
+            )
+            == 1
+        )
         assert "FROM usage_apicalllog AS usage_ann_metric_eval_filter_scan_0" in sql
         assert "FROM model_hub_score AS annotation_ann_metric_filter_1 FINAL" in sql
         assert "created_at >= %(start_date)s" in sql
@@ -11606,10 +11633,19 @@ class TestDashboardV2RewriteRouting:
         assert "e._peerdb_is_deleted" in sql
         assert "e.is_deleted" not in sql
 
-    def test_eval_metric_elects_latest_recorded_result_at_trace_start(self):
+    def test_eval_metric_elects_latest_recorded_result_at_trace_start(
+        self, monkeypatch
+    ):
         """TH-10545: one election per trace over every recorded result, plotted
         at the trace's start. Usage keeps its CDC columns; the trace-date spans
         read is rewritten to CH25 columns."""
+        # The untyped cross-eval breakdown asks the template for its type; an
+        # unknown template has none, so its label takes the score branch.
+        monkeypatch.setattr(
+            DashboardQueryBuilder,
+            "_configured_eval_output_type",
+            lambda self, template_id: None,
+        )
         template_id = str(uuid.uuid4())
         config = _single_metric_config(
             {
@@ -11673,11 +11709,14 @@ class TestDashboardV2RewriteRouting:
         # Failed winners are dropped only after the election.
         assert "e.status = 'success'" in compact_sql
         assert "ev_bd1.status = 'success'" in compact_sql
-        # Ownership: stamped rows must name the trace's project.
+        # Ownership: a stamped row names its own (project, trace) pair; an
+        # unstamped one needs the trace UUID in exactly one selected project.
         assert (
-            "(usage_main_latest.eval_stamped_project_id = '' OR "
+            "((usage_main_latest.eval_stamped_project_id = '' AND "
+            "usage_trace_project.trace_project_count = 1) OR "
+            "(usage_main_latest.eval_stamped_project_id != '' AND "
             "toUUIDOrZero(usage_main_latest.eval_stamped_project_id) = "
-            "usage_trace_project.project_id)" in compact_sql
+            "usage_trace_project.project_id))" in compact_sql
         )
         assert (
             "JSONExtractString(JSONExtractString(usage_main_scan.config), "
@@ -11699,19 +11738,25 @@ class TestDashboardV2RewriteRouting:
             "toUUID(%(organization_id)s) AND "
             "usage_cross_ev_bd1_scan_candidate.workspace_id = "
             "toUUID(%(workspace_id)s) AND "
-            "usage_cross_ev_bd1_scan_candidate.source_id = %(_ev_bd1_tid)s WHERE "
+            "usage_cross_ev_bd1_scan_candidate.source_id = %(_ev_bd1_tid)s AND "
+            "usage_cross_ev_bd1_scan_candidate.created_at >= "
+            "%(start_date)s - INTERVAL 1 DAY WHERE "
             "usage_cross_ev_bd1_scan_candidate.eval_trace_id != '' AND "
             "toUUIDOrZero(usage_cross_ev_bd1_scan_candidate.eval_trace_id) != "
             "toUUID('00000000-0000-0000-0000-000000000000') AND "
             "toUUIDOrZero(usage_cross_ev_bd1_scan_candidate.eval_trace_id) IN"
             in compact_sql
         )
-        assert ") AS bounded_trace_candidates" in compact_sql
-        # A trace without a successful latest result is "(not set)" whether
-        # unmatched LEFT JOIN columns are NULL or type defaults.
         assert (
-            "if((ev_bd1.id IS NULL OR ev_bd1.eval_trace_id = ''), '(not set)', "
-            in compact_sql
+            "PREWHERE trace_pair_scan.project_id IN %(project_ids)s "
+            "AND trace_pair_scan.id IN (" in compact_sql
+        )
+        # A trace without a successful latest result, or whose result has no
+        # numeric score, is "(not set)" whether unmatched LEFT JOIN columns
+        # are NULL or type defaults.
+        assert (
+            "if((ev_bd1.id IS NULL OR ev_bd1.eval_trace_id = '') OR "
+            "NOT ev_bd1.eval_has_numeric_score, '(not set)', " in compact_sql
         )
 
     def test_eval_metric_cross_eval_filter_needs_an_elected_success(self):
@@ -11806,14 +11851,17 @@ class TestDashboardV2RewriteRouting:
             assert "usage_sys_bd_ev0_latest.status IN ('success', 'error')" in (
                 compact_sql
             )
+            # Each root joins its own (project, trace) pair's winner.
+            assert "AND ev0.eval_project_id = s.project_id AND " in compact_sql
+            # No elected result, or one without a numeric score, is "(not set)".
             assert (
-                "if((ev0.id IS NULL OR ev0.eval_trace_id = ''), '(not set)', "
-                in compact_sql
+                "if((ev0.id IS NULL OR ev0.eval_trace_id = '') OR "
+                "NOT ev0.eval_has_numeric_score, '(not set)', " in compact_sql
             )
             # Filter: same election; success is required after it.
             assert (
-                "SELECT usage_s_eval_filter_latest_0.eval_trace_id FROM ("
-                in compact_sql
+                "SELECT usage_s_eval_filter_latest_0.eval_project_id, "
+                "usage_s_eval_filter_latest_0.eval_trace_id FROM (" in compact_sql
             )
             assert (
                 "ORDER BY (usage_s_eval_filter_latest_0_elected.eval_target_type "

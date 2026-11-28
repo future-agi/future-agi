@@ -120,6 +120,15 @@ def compile_metric(config, mode):
     return compact(sql), params
 
 
+def membership_token(family, membership="IN"):
+    """The outer membership test: eval filters compare (project, trace) pairs,
+    so a trace UUID held by two selected projects matches each project on its
+    own result (TH-10545); annotation filters compare traces."""
+    if family == "eval_metric":
+        return f"(project_id, trace_id) {membership} ("
+    return f"trace_id {membership} ("
+
+
 def numeric_expression(alias):
     # Keep this expected nullable rating/value contract independent of the
     # production expression helper: a default-zero extraction would hide absence.
@@ -321,7 +330,7 @@ def test_presence_compiles_typed_scoped_membership(
     config = config_for(membership_filter(family, kind, operator), placement)
     sql, params = compile_metric(config, mode)
     membership = "NOT IN" if operator == "is_not_set" else "IN"
-    assert f"trace_id {membership} (" in sql
+    assert membership_token(family, membership) in sql
     assert "project_id IN %(project_ids)s" in sql
     assert "start_time >= %(start_date)s" in sql
     assert "start_time < %(end_date)s" in sql
@@ -388,7 +397,12 @@ def test_global_and_metric_presence_conjoin_without_alias_or_parameter_collision
         ]
     sql, params = compile_metric(config, mode)
     outer = "s.trace_id" if grouped else "trace_id"
-    assert f"{outer} IN ( SELECT usage_s_eval_filter_latest_0.eval_trace_id" in sql
+    outer_project = "s.project_id" if grouped else "project_id"
+    latest = "usage_s_eval_filter_latest_0"
+    assert (
+        f"({outer_project}, {outer}) IN ( "
+        f"SELECT {latest}.eval_project_id, {latest}.eval_trace_id" in sql
+    )
     assert f"{outer} NOT IN ( WITH annotation_s_candidates_1 AS" in sql
     assert_eval_presence(sql, "PASS_FAIL")
     assert_eval_scope(sql, params)
@@ -460,7 +474,7 @@ def test_numeric_range_binds_both_finite_endpoints_without_dropping_filter(
         membership_filter(family, kind, operator, value=["0", "5"]), placement
     )
     sql, params = compile_metric(config, mode)
-    assert "trace_id IN (" in sql
+    assert membership_token(family) in sql
     lower = [key for key, value in params.items() if value == 0]
     upper = [key for key, value in params.items() if value == 5]
     assert lower and upper, "both range endpoints must be separate bound values"
@@ -656,7 +670,7 @@ def test_null_operator_aliases_match_canonical_presence_without_binding_values(
         config_for(membership_filter(family, kind, canonical)), mode
     )
     membership = "NOT IN" if canonical == "is_not_set" else "IN"
-    assert f"trace_id {membership} (" in alias_sql
+    assert membership_token(family, membership) in alias_sql
     assert alias_sql == canonical_sql
     assert alias_params == canonical_params
     assert not any(key.endswith("_val") for key in alias_params)
@@ -682,7 +696,10 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     sql, params = compile_metric(config, mode)
     scan = "usage_s_eval_filter_scan_0"
     latest = "usage_s_eval_filter_latest_0"
-    assert f"trace_id IN ( SELECT {latest}.eval_trace_id" in sql
+    assert (
+        "(project_id, trace_id) IN ( "
+        f"SELECT {latest}.eval_project_id, {latest}.eval_trace_id" in sql
+    )
     projection = sql.split(f"FROM usage_apicalllog AS {scan}", 1)[0].rsplit(
         "SELECT ", 1
     )[1]
@@ -690,11 +707,13 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     assert {f"{scan}.eval_score", f"{scan}.eval_output_str"} <= projected
     assert f"{scan}.config" not in projected
     assert "*" not in projection  # A wildcard would silently read config too.
-    # The latest-recorded election (TH-10545) reads only the project stamp and
-    # the target type out of config; the raw column is never projected.
+    # The latest-recorded election (TH-10545) reads only the project stamp,
+    # the target type and the score/verdict presence flags out of config; the
+    # raw column is never projected.
     config_reads = re.findall(r"[^\s(]*\bconfig\b[^\s,]*", sql, flags=re.IGNORECASE)
     assert config_reads and set(config_reads) == {f"{scan}.config)"}, config_reads
-    assert sql.count(f"JSONExtractString(JSONExtractString({scan}.config), ") == 2
+    # The stamp, the target type and the verdict flag's text test.
+    assert sql.count(f"JSONExtractString(JSONExtractString({scan}.config), ") == 3
     assert f"JSONExtractString({scan}.config), 'project_id')" in sql
     assert f"JSONExtractString({scan}.config), 'target_type')" in sql
     assert params["s_0_val"] == value
@@ -721,6 +740,9 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     else:
         column = "eval_score" if kind == "SCORE" else "eval_output_str"
         expression = f"{latest}.{column}"
+        if kind == "SCORE":
+            # A missing score is stored as 0: it is no value (TH-10545).
+            expression = f"{latest}.eval_has_numeric_score AND {expression}"
     assert (
         f"AND {latest}.eval_trace_id != '' AND {expression} {comparison} %(s_0_val)s"
     ) in live
