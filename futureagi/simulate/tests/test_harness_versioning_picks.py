@@ -2203,6 +2203,8 @@ class TestSplitApi:
         )
 
         assert response.status_code == 200, response.content
+        # The split's scenarios, so the Run dialog reads their readiness.
+        assert response.json()["scenario_keys"] == TRAIN
         versions = response.json()["versions"]
         assert versions["split"] == "train"
         assert versions["locked_version"] == {
