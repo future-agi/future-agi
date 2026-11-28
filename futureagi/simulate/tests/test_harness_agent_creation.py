@@ -375,6 +375,13 @@ class TestSharedProviderAgent:
 
         definitions = [job.agent_version.agent_definition_id for job in jobs]
         assert len({base, *definitions}) == 6
+        other_version = AgentVersion.no_workspace_objects.get(
+            pk=jobs[0].agent_version_id
+        )
+        assert other_version.workspace_id == other_workspace.pk
+        assert other_version.credentials.get_api_key() == "val-vapi-1"
+        assert other_version.credentials.assistant_id == "asst-1"
+        assert other_version.configuration_snapshot["assistant_id"] == "asst-1"
         chat = AgentDefinition.no_workspace_objects.get(id=definitions[2])
         assert (chat.provider, chat.agent_type) == ("retell", "text")
 

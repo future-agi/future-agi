@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 from django.conf import settings
 from django.db import transaction
 from drf_yasg.utils import swagger_auto_schema
@@ -31,11 +33,14 @@ from simulate.serializers.response.run_test_evals import (
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
     CredentialsNeedReentry,
+    credential_provider,
     is_masked,
+    locked_credential_version,
     refuse_moved_secrets,
     resolve_api_key_for_version,
     resolve_api_secret_for_version,
     resolve_server_url_for_version,
+    snapshot_created_version,
     sync_provider_credentials,
 )
 from simulate.services.agent_overview import version_list_context
@@ -47,6 +52,7 @@ from simulate.utils.eval_summary import (
     _get_completed_call_executions_for_agent_version,
     _get_eval_config_for_agent_version,
 )
+from tfc.routers import force_primary
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
@@ -83,6 +89,18 @@ def _agents_page_only(agent):
         ),
         status=status.HTTP_409_CONFLICT,
     )
+
+
+@contextmanager
+def _locked_agent(request, agent_id):
+    # Serialize version selection with definition edits, including when there
+    # is not yet a version or credential row to lock.
+    with transaction.atomic(), force_primary():
+        yield AgentDefinition.objects.select_for_update(of=("self",)).get(
+            pk=agent_id,
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
+        )
 
 
 class AgentVersionListView(APIView):
@@ -134,6 +152,28 @@ class AgentVersionListView(APIView):
             )
 
 
+def _inherit_key_identity(data, source):
+    """A key edit in a new version inherits the source identity, not the draft's."""
+    snapshot = source.configuration_snapshot
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    if data.provider in ("livekit", "livekit_bridge"):
+        return
+    if data.provider != credential_provider(source.agent_definition, source):
+        return
+    if "assistant_id" in data.model_fields_set:
+        return
+    row = getattr(source, "credentials", None)
+    if row is None:
+        legacy = getattr(source.agent_definition, "credentials_legacy", None)
+        if legacy and legacy.agent_version_id in (None, source.pk):
+            row = legacy
+    if row and row.assistant_id:
+        data.assistant_id = row.assistant_id
+    else:
+        data.assistant_id = snapshot.get("assistant_id") or ""
+
+
 class CreateAgentVersionView(APIView):
     """
     API View to create a new version of an agent definition.
@@ -158,124 +198,114 @@ class CreateAgentVersionView(APIView):
         Create a new version of an agent definition.
         """
         try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
-            refused = _agents_page_only(agent)
-            if refused is not None:
-                return refused
+            with _locked_agent(request, agent_id) as agent:
+                refused = _agents_page_only(agent)
+                if refused is not None:
+                    return refused
 
-            validated = request.validated_data
-            commit_message = validated.get("commit_message", "")
-            observability_enabled = validated.get("observability_enabled")
+                validated = request.validated_data
+                commit_message = validated.get("commit_message", "")
+                observability_enabled = validated.get("observability_enabled")
 
-            incoming_api_key = validated.get("api_key")
-            preserve_existing_api_key = incoming_api_key is not None and is_masked(
-                incoming_api_key
-            )
-            incoming_livekit_api_key = validated.get("livekit_api_key")
-            preserve_livekit_api_key = (
-                incoming_livekit_api_key is not None
-                and is_masked(incoming_livekit_api_key)
-            )
-            incoming_livekit_api_secret = validated.get("livekit_api_secret")
-            preserve_livekit_api_secret = (
-                incoming_livekit_api_secret is not None
-                and is_masked(incoming_livekit_api_secret)
-            )
-            active_version = agent.active_version or agent.latest_version
-            if preserve_livekit_api_key or preserve_livekit_api_secret:
-                refuse_moved_secrets(
-                    stored_url=resolve_server_url_for_version(active_version),
-                    new_url=(validated.get("livekit_url") or "").strip(),
-                    api_key=incoming_livekit_api_key or "",
-                    api_secret=incoming_livekit_api_secret or "",
+                incoming_api_key = validated.get("api_key")
+                preserve_existing_api_key = incoming_api_key is not None and is_masked(
+                    incoming_api_key
                 )
-
-            # Update agent definition fields directly from validated data
-            update_fields = [
-                "agent_name",
-                "agent_type",
-                "description",
-                "provider",
-                "api_key",
-                "assistant_id",
-                "authentication_method",
-                "language",
-                "languages",
-                "contact_number",
-                "inbound",
-                "target_speaks_first",
-                "model",
-                "model_details",
-            ]
-            changed_fields = []
-            for field in update_fields:
-                if field == "api_key" and preserve_existing_api_key:
-                    continue
-                if field in validated:
-                    setattr(agent, field, validated[field])
-                    changed_fields.append(field)
-
-            if "knowledge_base" in validated:
-                kb_id = validated["knowledge_base"]
-                if kb_id is not None:
-                    # Validate knowledge base belongs to organization
-                    organization = (
-                        getattr(request, "organization", None)
-                        or request.user.organization
+                incoming_livekit_api_key = validated.get("livekit_api_key")
+                preserve_livekit_api_key = (
+                    incoming_livekit_api_key is not None
+                    and is_masked(incoming_livekit_api_key)
+                )
+                incoming_livekit_api_secret = validated.get("livekit_api_secret")
+                preserve_livekit_api_secret = (
+                    incoming_livekit_api_secret is not None
+                    and is_masked(incoming_livekit_api_secret)
+                )
+                active_version = locked_credential_version(
+                    agent,
+                    lock_source=bool(incoming_api_key)
+                    or preserve_livekit_api_key
+                    or preserve_livekit_api_secret,
+                )
+                creds_input = ProviderCredentialsInput.from_validated(
+                    validated, request.data, credential_provider(agent, active_version)
+                )
+                if preserve_livekit_api_key or preserve_livekit_api_secret:
+                    refuse_moved_secrets(
+                        stored_url=resolve_server_url_for_version(active_version),
+                        new_url=(validated.get("livekit_url") or "").strip(),
+                        api_key=incoming_livekit_api_key or "",
+                        api_secret=incoming_livekit_api_secret or "",
                     )
-                    if not KnowledgeBaseFile.objects.filter(
-                        id=kb_id, organization=organization
-                    ).exists():
-                        return Response(
-                            build_error_envelope(
-                                "Invalid data for agent update",
-                                status_code=status.HTTP_400_BAD_REQUEST,
-                                details={
-                                    "knowledge_base": [
-                                        "Knowledge base not found in your organization."
-                                    ]
-                                },
-                            ),
-                            status=status.HTTP_400_BAD_REQUEST,
+
+                if preserve_existing_api_key:
+                    creds_input.api_key = resolve_api_key_for_version(active_version)
+                if preserve_livekit_api_key:
+                    creds_input.livekit_api_key = resolve_api_key_for_version(
+                        active_version
+                    )
+                if preserve_livekit_api_secret:
+                    creds_input.livekit_api_secret = resolve_api_secret_for_version(
+                        active_version
+                    )
+
+                if creds_input.api_key and active_version:
+                    _inherit_key_identity(creds_input, active_version)
+
+                # Update agent definition fields directly from validated data
+                update_fields = [
+                    "agent_name",
+                    "agent_type",
+                    "description",
+                    "provider",
+                    "api_key",
+                    "assistant_id",
+                    "authentication_method",
+                    "language",
+                    "languages",
+                    "contact_number",
+                    "inbound",
+                    "target_speaks_first",
+                    "model",
+                    "model_details",
+                ]
+                changed_fields = []
+                for field in update_fields:
+                    if field == "api_key" and preserve_existing_api_key:
+                        continue
+                    if field in validated:
+                        setattr(agent, field, validated[field])
+                        changed_fields.append(field)
+
+                if "knowledge_base" in validated:
+                    kb_id = validated["knowledge_base"]
+                    if kb_id is not None:
+                        # Validate knowledge base belongs to organization
+                        organization = (
+                            getattr(request, "organization", None)
+                            or request.user.organization
                         )
-                agent.knowledge_base_id = kb_id
-                changed_fields.append("knowledge_base")
-            with transaction.atomic():
+                        if not KnowledgeBaseFile.objects.filter(
+                            id=kb_id, organization=organization
+                        ).exists():
+                            return Response(
+                                build_error_envelope(
+                                    "Invalid data for agent update",
+                                    status_code=status.HTTP_400_BAD_REQUEST,
+                                    details={
+                                        "knowledge_base": [
+                                            "Knowledge base not found in your organization."
+                                        ]
+                                    },
+                                ),
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
+                    agent.knowledge_base_id = kb_id
+                    changed_fields.append("knowledge_base")
                 if changed_fields:
                     # Only these columns: a full save would write back this
                     # request's stale copy of the observability link.
                     agent.save(update_fields=[*changed_fields, "updated_at"])
-
-                # Resolve masked secrets *before* creating the new version so we read
-                # them from the active version rather than the brand-new one. The UI
-                # resends the LiveKit key/secret masked (it never holds the real
-                # value), so without this a new version blanks them → the hosted
-                # runner authenticates with empty creds and room create returns 401.
-                existing_api_key = None
-                existing_livekit_api_key = None
-                existing_livekit_api_secret = None
-                if (
-                    preserve_existing_api_key
-                    or preserve_livekit_api_key
-                    or preserve_livekit_api_secret
-                ):
-                    if active_version:
-                        if preserve_existing_api_key:
-                            existing_api_key = resolve_api_key_for_version(
-                                active_version
-                            )
-                        if preserve_livekit_api_key:
-                            existing_livekit_api_key = resolve_api_key_for_version(
-                                active_version
-                            )
-                        if preserve_livekit_api_secret:
-                            existing_livekit_api_secret = (
-                                resolve_api_secret_for_version(active_version)
-                            )
 
                 version = agent.create_version(
                     description=agent.description,
@@ -284,47 +314,6 @@ class CreateAgentVersionView(APIView):
                 )
                 version.activate()
 
-                creds_input = ProviderCredentialsInput(
-                    provider=validated.get("provider") or agent.provider or "",
-                    api_key=(
-                        existing_api_key
-                        if preserve_existing_api_key
-                        else validated.get("api_key")
-                    ),
-                    assistant_id=validated.get("assistant_id"),
-                    livekit_url=validated.get("livekit_url"),
-                    livekit_api_key=(
-                        existing_livekit_api_key
-                        if preserve_livekit_api_key
-                        else validated.get("livekit_api_key")
-                    ),
-                    livekit_api_secret=(
-                        existing_livekit_api_secret
-                        if preserve_livekit_api_secret
-                        else validated.get("livekit_api_secret")
-                    ),
-                    livekit_agent_name=validated.get("livekit_agent_name"),
-                    livekit_config_json=validated.get("livekit_config_json"),
-                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                    provider_was_provided="provider" in request.data,
-                )
-                # The page always sends the provider and LiveKit settings, so a code
-                # agent saved with every credential blank would get an empty row.
-                # A request with no credential fields writes no row, so the agent is
-                # only read when fields were sent.
-                sent_fields = creds_input.provider_was_provided or any(
-                    value is not None
-                    for value in (
-                        creds_input.api_key,
-                        creds_input.assistant_id,
-                        creds_input.livekit_url,
-                        creds_input.livekit_api_key,
-                        creds_input.livekit_api_secret,
-                        creds_input.livekit_agent_name,
-                        creds_input.livekit_config_json,
-                        creds_input.livekit_max_concurrency,
-                    )
-                )
                 # Only the fields the provider's row would save count, so a LiveKit
                 # agent's leftover key or assistant id does not make a blank row.
                 if (creds_input.provider or "").strip() in (
@@ -352,12 +341,12 @@ class CreateAgentVersionView(APIView):
                     != settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
                 if not (
-                    sent_fields
+                    creds_input.has_credential_fields
                     and not has_credential_value
                     and not has_setting_value
                     and agent_is_source(agent)
                 ):
-                    sync_provider_credentials(version, creds_input)
+                    sync_provider_credentials(version, creds_input, new_version=True)
 
                 if observability_enabled is None:
                     # An absent field leaves a code agent's switch as it is.
@@ -373,11 +362,7 @@ class CreateAgentVersionView(APIView):
                     workspace=agent.workspace,
                 )
 
-                # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
-                version.configuration_snapshot = version.create_snapshot(
-                    commit_message=version.commit_message or ""
-                )
-                version.save(update_fields=["configuration_snapshot"])
+                snapshot_created_version(version)
 
             response_data = {
                 "message": "Agent version created successfully",
@@ -469,18 +454,15 @@ class ActivateAgentVersionView(APIView):
         Activate a specific agent version.
         """
         try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
-            refused = _agents_page_only(agent)
-            if refused is not None:
-                return refused
+            with _locked_agent(request, agent_id) as agent:
+                refused = _agents_page_only(agent)
+                if refused is not None:
+                    return refused
 
-            version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
-            version.activate()
+                version = agent.versions.select_for_update(of=("self",)).get(
+                    pk=version_id
+                )
+                version.activate()
 
             response_data = {
                 "message": "Agent version activated successfully",
@@ -524,16 +506,12 @@ class RestoreAgentVersionView(APIView):
         Restore agent definition from a specific version.
         """
         try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
+            with _locked_agent(request, agent_id) as agent:
+                version = agent.versions.select_for_update(of=("self",)).get(
+                    pk=version_id
+                )
 
-            version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
-
-            restored_agent = version.restore_from_snapshot()
+                restored_agent = version.restore_from_snapshot()
 
             response_data = {
                 "message": "Agent definition restored successfully from version",
