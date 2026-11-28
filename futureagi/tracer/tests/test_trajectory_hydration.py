@@ -164,7 +164,10 @@ def test_reconstruct_msg_array_and_missing_item_safety():
 # 2. Zero-query guarantee on inline spans + single batched query on mixed trace
 # --------------------------------------------------------------------------- #
 @pytest.mark.unit
-def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed():
+def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed(
+    settings,
+):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     query_fn = MagicMock()
     inline_rows = [
         {

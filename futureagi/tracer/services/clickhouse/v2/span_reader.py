@@ -1920,21 +1920,11 @@ class CHSpanReader:
                                 d[k] = v
                         to_hydrate.append(d)
                 if to_hydrate:
-                    if include_traj:
-                        self._hydrate_dict_rows(
-                            to_hydrate,
-                            project_id_fallback=str(project_id) if project_id else None,
-                            attr_key="attributes_extra",
-                        )
-                    else:
-                        for d in to_hydrate:
-                            d["attributes_extra"] = (
-                                restore_promoted_in_attributes_extra(
-                                    d.get("attributes_extra"),
-                                    span_input=d.get("input"),
-                                    span_output=d.get("output"),
-                                )
-                            )
+                    self._hydrate_dict_rows(
+                        to_hydrate,
+                        project_id_fallback=str(project_id) if project_id else None,
+                        attr_key="attributes_extra",
+                    )
         allowed = {"id"} | columns
         return {
             str(d["id"]): {k: v for k, v in d.items() if k in allowed} for d in dicts

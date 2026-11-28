@@ -28,8 +28,8 @@
 -- `persisted_at` is the ReplacingMergeTree version: the copy persisted last
 -- wins among rows with the same key (canonical-equal content).
 --
--- Topology: like `spans`, this is created local or Keeper-replicated by
--- apply_schema (--replicated adds ON CLUSTER and the Replicated engine). No v2
+-- Topology: like `spans`, this is created local, or Keeper-coordinated when
+-- apply_schema runs with --replicated (it adds ON CLUSTER at apply time). No v2
 -- table has a Distributed facade yet; a multi-shard layout must add local
 -- storage plus a Distributed table for trajectory_items and alter spans on
 -- every shard, together with the sharding of spans itself.

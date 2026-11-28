@@ -42,6 +42,7 @@ from tracer.services.clickhouse.v2.query_builders.span_list import (
     _PHYSICAL_SPAN_FLOOR_COLUMNS,
     _PHYSICAL_SPAN_GROUP_BY_SQL,
     _PHYSICAL_SPAN_KEY_COLUMNS,
+    _TRAJECTORY_POINTER_COLUMNS,
     SpanListQueryBuilderV2,
 )
 
@@ -277,7 +278,9 @@ def test_projected_column_set_is_the_deployed_stored_column_set():
                 declared = re.match(r"([A-Za-z_]\w*)\s+\S", added.strip())
                 assert declared, (schema.name, added.strip())
                 stored.append(declared.group(1))
-    assert tuple(stored) == _PHYSICAL_SPAN_COLUMNS
+    # The 040 trajectory pointers join the packed set only while the read flag
+    # is on (they do not exist before 040 is applied).
+    assert tuple(stored) == _PHYSICAL_SPAN_COLUMNS + _TRAJECTORY_POINTER_COLUMNS
 
 
 SPANS_FINAL_RE = re.compile(r"\bspans\s+FINAL\b")
