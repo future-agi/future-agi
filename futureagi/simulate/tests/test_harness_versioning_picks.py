@@ -1998,6 +1998,38 @@ class TestSplitRuns:
         assert (created, again.id) == (False, run.id)
         assert caught.value.code == "idempotency_conflict"
 
+    def test_a_repeat_replays_after_an_unlock(self, user, workspace, storage):
+        environment, locked_version = _locked(user, workspace, "sp-idem-off", storage)
+        run, _ = _split_run(environment, "test", key="same")
+        _unlock(locked_version)
+
+        again, created = _split_run(environment, "test", key="same")
+
+        assert (created, again.id) == (False, run.id)
+
+    def test_a_repeat_replays_after_a_relock(self, user, workspace, storage):
+        environment, first = _locked(user, workspace, "sp-idem-relock", storage)
+        run, _ = _split_run(environment, "test", TEST[1:], key="same")
+        _unlock(first)
+        _lock(environment, "2026.11.2")
+
+        again, created = _split_run(environment, "test", TEST[1:], key="same")
+
+        assert (created, again.id, again.locked_version_id) == (False, run.id, first.id)
+
+    def test_a_whole_split_repeat_of_a_picked_run_is_a_conflict(
+        self, user, workspace, storage
+    ):
+        # The repeat reads the split of the lock its run recorded, which is all of TEST.
+        environment, locked_version = _locked(user, workspace, "sp-idem-pick", storage)
+        _split_run(environment, "test", TEST[1:], key="same")
+        _unlock(locked_version)
+
+        with pytest.raises(HostedHarnessError) as caught:
+            _split_run(environment, "test", key="same")
+
+        assert caught.value.code == "idempotency_conflict"
+
     def test_a_rerun_keeps_the_split(self, user, workspace, storage, settings):
         environment, locked_version = _locked(user, workspace, "sp-rerun", storage)
         source, _ = _split_run(environment, "test")
