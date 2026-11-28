@@ -876,6 +876,56 @@ def test_stamped_result_survives_a_trace_uuid_shared_by_two_selected_projects(
     assert _points(only_b) == pytest.approx({day0 + timedelta(days=1): 0.3})
 
 
+@pytest.mark.parametrize(
+    ("operator", "value", "expected"),
+    [
+        pytest.param("is_set", None, "a", id="is_set"),
+        pytest.param("is_not_set", None, "b", id="is_not_set"),
+        pytest.param("equal_to", 0.8, "a", id="equals"),
+    ],
+)
+def test_eval_filters_match_each_project_of_a_shared_trace_uuid_on_its_own_result(
+    observe_project, organization, workspace, seed, operator, value, expected
+):
+    """Previous PR head fails: filter membership compared the trace UUID alone,
+    so with A and B both holding UUID T and only A having a result, A's result
+    also admitted B's trace (is_set and equals counted 2) and excluded it from
+    is_not_set (counted 0). Fixed: membership is per (project, trace) pair, so
+    each project's trace is judged on its own elected result.
+    """
+
+    other_project = Project.objects.create(
+        name="TH-10545 shared-uuid filter project",
+        organization=organization,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    template = str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=6))
+    in_a = seed.trace(observe_project, day0 + timedelta(hours=10))
+    seed.trace(other_project, day0 + timedelta(days=1, hours=10), trace_id=in_a.id)
+    seed.result(in_a, template, day0 + timedelta(hours=11), value=0.8)
+    leaf = {
+        "metric_type": "eval_metric",
+        "metric_name": template,
+        "operator": operator,
+        "output_type": "SCORE",
+    }
+    if value is not None:
+        leaf["value"] = value
+    result = _run_worker(
+        seed,
+        _config(
+            [observe_project, other_project],
+            _custom(day0 - timedelta(days=1), day0 + timedelta(days=3)),
+            [_system_metric("trace_count", "count", filters=[leaf])],
+        ),
+    )
+    a_day, b_day = day0, day0 + timedelta(days=1)
+    assert _points(result, "trace_count") == {(a_day if expected == "a" else b_day): 1}
+
+
 # ---------------------------------------------------------------------------
 # 6. Empty / "reason" / missing output types never fail the widget
 # ---------------------------------------------------------------------------

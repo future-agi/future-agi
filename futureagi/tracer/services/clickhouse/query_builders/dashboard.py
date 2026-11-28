@@ -1983,6 +1983,7 @@ class DashboardQueryBuilder:
             params,
             "s_",
             trace_id_expr="s.trace_id" if has_annotation_bd else "trace_id",
+            project_id_expr="s.project_id" if has_annotation_bd else "project_id",
         )
         params.update(subquery_params)
         all_where = [*where_clauses, *subquery_clauses]
@@ -3046,6 +3047,7 @@ class DashboardQueryBuilder:
                 params,
                 "ann_metric_",
                 trace_id_expr=annotation_subject_trace_id,
+                project_id_expr=annotation_subject_project_id,
                 eval_subject_sql=(
                     "SELECT toUUIDOrZero(trace_id) AS trace_id "
                     f"FROM ({annotation_subject_trace_candidates}) AS annotation_eval_subject"
@@ -3935,8 +3937,14 @@ class DashboardQueryBuilder:
         prefix: str,
         trace_id_expr: str = "trace_id",
         eval_subject_sql: str | None = None,
+        project_id_expr: str = "project_id",
     ) -> tuple[list[str], dict]:
-        """Build IN-subquery clauses for eval/annotation metric filters on spans."""
+        """Build IN-subquery clauses for eval/annotation metric filters on spans.
+
+        Eval membership compares (project, trace) pairs: each pair elects its
+        own latest result, so a trace UUID held by two selected projects
+        matches each project on that project's own result (TH-10545).
+        """
         clauses: list[str] = []
         extra_params: dict[str, Any] = {}
         idx = 0
@@ -4166,8 +4174,8 @@ class DashboardQueryBuilder:
                     dated=False,
                     include_config=needs_raw_output,
                 )
-                subquery = f"""{trace_id_expr} {membership} (
-                    SELECT {latest_alias}.eval_trace_id
+                subquery = f"""({project_id_expr}, {trace_id_expr}) {membership} (
+                    SELECT {latest_alias}.eval_project_id, {latest_alias}.eval_trace_id
                     FROM ({latest_recorded}) AS {latest_alias}
                     WHERE {latest_alias}._peerdb_is_deleted = 0
                       AND {latest_alias}.deleted = 0

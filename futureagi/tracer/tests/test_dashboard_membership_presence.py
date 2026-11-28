@@ -286,7 +286,11 @@ def assert_eval_scope(sql, params, workspace=True, prefix="s_", index=0):
     assert f"{scan}.eval_output_str" in projected
     assert f"{scan}.*" not in projected
     assert f"JSONExtractString({latest}.config), 'output', 'output'" in live
-    assert f"JSONType(JSONExtractString({scan}.config)" not in replay
+    # The election computes its stamp, target type and the score/verdict
+    # presence flags once per row version beside each other (TH-10545); the
+    # filter's own typed presence predicate stays after the collapse.
+    assert "AS eval_has_numeric_score" in replay
+    assert "AS eval_has_verdict" in replay
     for predicate in ("_peerdb_is_deleted = 0", "deleted = 0", "status = 'success'"):
         assert f"{scan}.{predicate}" not in replay
         assert f"{latest}.{predicate}" in live
@@ -347,11 +351,14 @@ def test_not_set_is_complement_of_present_trace_membership(mode, family, kind):
     absent, absent_params = compile_metric(
         config_for(membership_filter(family, kind, "is_not_set")), mode
     )
-    assert "trace_id IN (" in present
-    assert "trace_id NOT IN (" in absent
+    # Eval membership compares (project, trace) pairs (TH-10545).
+    token = "trace_id) IN (" if family == "eval_metric" else "trace_id IN ("
+    negated = token.replace(" IN (", " NOT IN (")
+    assert token in present
+    assert negated in absent
     # The complete scoped latest-live present-value relation is identical.
     # A row-level IS NULL cannot admit traces with no Score/eval row at all.
-    assert absent == present.replace("trace_id IN (", "trace_id NOT IN (", 1)
+    assert absent == present.replace(token, negated, 1)
     assert absent_params == present_params
 
 
@@ -583,14 +590,18 @@ def test_membership_helper_ignores_unrelated_filters_and_preserves_all_inputs(mo
             unrelated, params, "probe_"
         )
         clauses, extra = builder._build_subquery_filters(
-            filters, params, "probe_", trace_id_expr="subject.trace_id"
+            filters,
+            params,
+            "probe_",
+            trace_id_expr="subject.trace_id",
+            project_id_expr="subject.project_id",
         )
     finally:
         assert (config, filters, params) == before
     assert (ignored, ignored_params) == ([], {})
     assert len(clauses) == 2
     assert clauses[0].startswith("subject.trace_id IN (")
-    assert clauses[1].startswith("subject.trace_id NOT IN (")
+    assert clauses[1].startswith("(subject.project_id, subject.trace_id) NOT IN (")
     assert extra == {
         "probe_label_id_0": LABEL,
         "probe_ann_org_id_0": ORGANIZATION,
@@ -626,7 +637,7 @@ def test_output_type_aliases_preserve_presence_sql_and_bindings(
     canonical_sql, canonical_params = compile_metric(
         config_for(membership_filter(family, canonical, "is_not_set")), mode
     )
-    assert "trace_id NOT IN (" in alias_sql
+    assert "NOT IN (" in alias_sql
     assert alias_sql == canonical_sql
     assert alias_params == canonical_params
 
