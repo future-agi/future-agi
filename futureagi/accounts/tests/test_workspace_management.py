@@ -18,8 +18,10 @@ from datetime import UTC, datetime
 import pytest
 from rest_framework import status
 
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
@@ -867,6 +869,41 @@ class TestSwitchWorkspaceAPIView:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize(
+        ("level", "role", "allowed"),
+        [
+            (Level.ADMIN, OrganizationRoles.MEMBER, True),
+            (Level.MEMBER, OrganizationRoles.ADMIN, False),
+        ],
+    )
+    def test_list_and_switch_use_org_level(
+        self, member_client, member_user, second_workspace, level, role, allowed
+    ):
+        OrganizationMembership.no_workspace_objects.update_or_create(
+            user=member_user,
+            organization=second_workspace.organization,
+            defaults={"level": level, "role": role},
+        )
+        target_id = str(second_workspace.id)
+
+        listing = member_client.get("/accounts/workspace/list/")
+        assert listing.status_code == status.HTTP_200_OK
+        listed_ids = {row["id"] for row in listing.json()["results"]}
+        assert (target_id in listed_ids) == allowed
+
+        switch = member_client.post(
+            "/accounts/workspace/switch/",
+            {"new_workspace_id": target_id},
+            format="json",
+        )
+        if allowed:
+            assert switch.status_code == status.HTTP_200_OK
+            result = switch.json()["result"]
+            assert result["access_type"] == "global_access"
+            assert result["user_role"] == OrganizationRoles.WORKSPACE_ADMIN
+        else:
+            assert switch.status_code == status.HTTP_403_FORBIDDEN
 
     def test_switch_workspace_member_no_global_access(
         self, member_client, second_workspace
