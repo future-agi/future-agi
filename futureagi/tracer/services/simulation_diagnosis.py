@@ -67,10 +67,16 @@ def build_diagnosis(
     # The run page's own reading of an errored call (the harness verdict, else the
     # call status), so the drawer and the page count the same calls. Eval ids only
     # matter past that point, so none are needed here.
-    infra = {call.id for call in calls if call_outcome(call, {}) == "error"}
+    infra: set = set()
     verdicts: dict = {}
     for call in calls:
-        if call.id in infra:
+        outcome = call_outcome(call, {})
+        if outcome == "error":
+            infra.add(call.id)
+            continue
+        # A cancelled call is never graded, so it is not measured. It did not
+        # error either, so it is not excluded as one.
+        if outcome == "cancelled":
             continue
         receipt = graded_call_receipt(call.call_metadata) or {}
         # As ingestion reads it: `judged` is only the kind; undecided, not applicable or inconclusive was not tested.

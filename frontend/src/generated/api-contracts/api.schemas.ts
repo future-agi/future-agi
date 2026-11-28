@@ -19796,6 +19796,17 @@ export interface AgentFixCodingAgentBriefApi {
   instructions: string;
 }
 
+/**
+ * What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases.
+ */
+export type AgentFixLaunchOptionsApiHeldBackFrom =
+  (typeof AgentFixLaunchOptionsApiHeldBackFrom)[keyof typeof AgentFixLaunchOptionsApiHeldBackFrom];
+
+export const AgentFixLaunchOptionsApiHeldBackFrom = {
+  locked_version: "locked_version",
+  sample: "sample",
+} as const;
+
 export interface AgentFixLaunchScenarioApi {
   /** @minLength 1 */
   key: string;
@@ -19804,6 +19815,7 @@ export interface AgentFixLaunchScenarioApi {
   passed: boolean | null;
   failing_sub_goals: string[];
   evidence_import_id: string | null;
+  split: "train" | "test" | null;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -19863,6 +19875,9 @@ export interface AgentFixLaunchOptionsApi {
   variations_blocked: AgentFixFailureApi | null;
   held_back_scenario_keys: string[] | null;
   ship: AgentFixShipReadinessApi | null;
+  /** What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases. */
+  held_back_from: AgentFixLaunchOptionsApiHeldBackFrom;
+  locked_version_label: string | null;
 }
 
 export type AgentFixRunDetailApiState =

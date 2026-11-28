@@ -45,9 +45,13 @@ class AgentVersionSetup(BaseModel):
     gaps = ArrayField(models.CharField(max_length=32), default=list, blank=True)
     instrumentation = models.CharField(max_length=16, default="none")
     raw_setup = models.JSONField(default=dict, blank=True)
-    contract_object_key = models.CharField(max_length=255, default="", blank=True)
+    # db_default too: a build from before these columns inserts setups without
+    # them during a rollout, and after a rollback.
+    contract_object_key = models.CharField(
+        max_length=255, default="", db_default="", blank=True
+    )
     origin = models.CharField(
-        max_length=8, choices=Origin.choices, default=Origin.BUILD
+        max_length=8, choices=Origin.choices, default=Origin.BUILD, db_default="build"
     )
 
     class Meta:

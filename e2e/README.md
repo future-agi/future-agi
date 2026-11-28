@@ -613,6 +613,13 @@ name any ref with the `sdk-ref` input. The account comes from `sdkgen/local_api_
 (signup, token, user-info, keys — the same calls as `lib/provisioning.ts`). The suites take about a
 minute; they are skipped only when the stack never booted.
 
+The Python suite asserts each operation's route, status and, for refusals, the exact response
+body, including the Epoch, evidence-import and Debug failures operations (MCP group `epoch`). A PR
+that changes one of those, or removes an operation the SDK calls, fails here against SDK `dev`.
+Push an SDK branch with the same name as this PR's branch that updates the SDK to match; this job
+then runs that branch instead. The SDK branch's own CI pairs with this PR's branch by the same name
+and checks the SDK's contract and MCP descriptions against it.
+
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
 label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. A pull request run

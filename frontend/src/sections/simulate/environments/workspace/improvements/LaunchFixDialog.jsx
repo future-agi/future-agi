@@ -23,6 +23,7 @@ import {
   blockerOf,
   costLimitOf,
   countsLine,
+  heldBackNote,
   isTraced,
   callsUnmeasured,
   seesModels,
@@ -30,6 +31,7 @@ import {
   tracesUnreadable,
   launchError,
   reviewSentence,
+  testSplitKeys,
   variationsNote,
 } from "./launchFormView";
 import {
@@ -137,6 +139,7 @@ export default function LaunchFixDialog({
     models,
     seenModels: seenModelsOf(options),
     costLimit,
+    testKeys: testSplitKeys(options),
   });
   const blocker = blockerOf(options, targets.length);
   const blockedReason = blocker
@@ -151,6 +154,7 @@ export default function LaunchFixDialog({
   const shipAction = ship?.blocked
     ? blockerAction(ship.blocked.code, envId)
     : null;
+  const lockNote = heldBackNote(options);
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   // No agent when neither the run nor its environment has an agent version: the
   // refusal says what to do, and there is no version to name.
@@ -274,6 +278,14 @@ export default function LaunchFixDialog({
                   data-testid="epoch-held-back"
                 >
                   {HELD_BACK_PENDING[heldBack.pending]}
+                </Typography>
+              ) : null}
+              {lockNote ? (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+                  data-testid="epoch-held-back-note"
+                >
+                  {lockNote}
                 </Typography>
               ) : null}
               {initialNote && showOpeningNote ? (

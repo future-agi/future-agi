@@ -63,8 +63,9 @@ describe("generated launch options contract", () => {
     expect(blocked.parse(null)).toBeNull();
   });
 
-  // An unnumbered, unfinished run of an unversioned environment, an uploaded agent
-  // with no ref, and a scenario with no verdict that no evidence import added.
+  // An unnumbered, unfinished run of an unversioned environment off a lock, an
+  // uploaded agent with no ref, and a scenario with no verdict that no evidence
+  // import added.
   it("accepts the fields the server leaves empty", () => {
     const body = {
       source_run: {
@@ -92,6 +93,7 @@ describe("generated launch options contract", () => {
           passed: null,
           failing_sub_goals: [],
           evidence_import_id: null,
+          split: null,
         },
       ],
       suggested: { target_scenario_keys: [], protected_scenario_keys: [] },
@@ -119,6 +121,8 @@ describe("generated launch options contract", () => {
       variations_blocked: null,
       held_back_scenario_keys: null,
       ship: null,
+      held_back_from: "sample",
+      locked_version_label: null,
     };
 
     expect(SimulateApiAgentFixRunsLaunchOptionsResponse.parse(body)).toEqual(

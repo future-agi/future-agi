@@ -7,8 +7,10 @@ dump of it (.ci/e2e-db-control.sh); this file names that dump by what the
 migrate reads and checks a saved record before anything trusts it. The dump
 itself is made, restored and compared by the backend's tool, db_dump.py.
 
-The dump is the database after `manage.py migrate` alone, post_migrate
-included: no cache table, no seed command. It is a public artifact.
+The dump is the database after `manage.py migrate` alone has applied every
+migration and before it sends post_migrate (.ci/e2e_db_migrate.py): no
+receiver's rows, no cache table, no seed command. So the key needs what the
+migrations read and nothing the receivers read. It is a public artifact.
 """
 
 import argparse
@@ -33,8 +35,16 @@ BACKEND = "futureagi/"
 # The backend key's list says what a migrate imports or opens; these entries
 # of it are read by pytest only.
 PYTEST_ONLY = frozenset({"pytest.ini", "conftest.py", ".ci/migrated_db.py"})
-# The image the migrate runs in, and this file.
-IMAGE_FILES = frozenset({"Dockerfile.oss", ".ci/e2e_db.py"})
+# The image the migrate runs in, this file, and the scripts that run the
+# migrate.
+IMAGE_FILES = frozenset(
+    {
+        "Dockerfile.oss",
+        ".ci/e2e_db.py",
+        ".ci/e2e-db-control.sh",
+        ".ci/e2e_db_migrate.py",
+    }
+)
 # What names the stack's Postgres image and the settings the migrate runs
 # under. Whole files: any edit misses, which costs one slow run.
 STACK_FILES = frozenset(

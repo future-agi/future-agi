@@ -1123,15 +1123,15 @@ def publish_investigation(
         ):
             raise InvestigationConflict("report does not match its claimed attempt")
         if simulation:
-            from simulate.models.test_execution import CallExecution, TestExecution
+            from simulate.models.test_execution import CallExecution
+            from tracer.services.simulation_investigation import (
+                FINISHED_RUN_STATUSES,
+            )
 
             execution = job.test_execution
-            if (
-                execution is None
-                or execution.status != TestExecution.ExecutionStatus.COMPLETED
-            ):
+            if execution is None or execution.status not in FINISHED_RUN_STATUSES:
                 raise InvestigationConflict(
-                    "simulation execution is no longer complete"
+                    "simulation execution is no longer finished"
                 )
             if result["coverage"]["read_complete"]:
                 # A simulation job investigates exactly its own call.

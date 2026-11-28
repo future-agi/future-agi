@@ -64,6 +64,7 @@ from simulate.temporal.types.agent_fix import VariationsStep
 from simulate.tests.harness_validation import prove_pair
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     KEYS,
+    _locked_version,
     _move_default_suite,
     _receipts,
     _run,
@@ -666,6 +667,68 @@ class TestSettle:
         assert {one.key for one in brief.inventory} == {*KEYS, *names}
         assert {one.scenario_key for one in brief.source_failures} == {PARENT, *names}
         assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+    @staticmethod
+    def _launched_on(fix_run, locked_version):
+        """``fix_run``'s request as a launch on ``locked_version`` records it: the
+        locked version, and its failing test-split case held back."""
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={
+                **fix_run.request,
+                "locked_version_id": str(locked_version.id),
+                "held_back_scenario_keys": [PARENT],
+            }
+        )
+
+    def test_on_a_locked_version_a_test_split_case_s_variations_are_held_back_with_it(
+        self, environment, source_run, fix_run, storage
+    ):
+        self._launched_on(
+            fix_run, _locked_version(source_run, test=[PARENT], train=[KEYS[1]])
+        )
+        _land(fix_run, storage, _builder_save(environment))
+        names = [_named(fix_run, n) for n in (1, 2, 3)]
+        _finish(_base_run(fix_run), failed=names)
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+        fix_run.refresh_from_db()
+        request = FixRequest.model_validate(fix_run.request)
+        # A sample holds none back below twelve cases; the test split holds them all.
+        assert request.held_back_scenario_keys == [PARENT, *names]
+
+    def test_an_unlock_after_the_launch_keeps_the_test_split_held_back(
+        self, environment, source_run, fix_run, storage
+    ):
+        locked = _locked_version(source_run, test=[PARENT], train=[KEYS[1]])
+        self._launched_on(fix_run, locked)
+        locked.unlocked_at = timezone.now()
+        locked.save(update_fields=["unlocked_at"])
+        _land(fix_run, storage, _builder_save(environment))
+        names = [_named(fix_run, n) for n in (1, 2, 3)]
+        _finish(_base_run(fix_run), failed=names)
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+        fix_run.refresh_from_db()
+        request = FixRequest.model_validate(fix_run.request)
+        # The launch picked the locked version: its unlock changes nothing.
+        assert request.held_back_scenario_keys == [PARENT, *names]
+
+    def test_a_lock_after_the_launch_keeps_the_launch_s_sample(
+        self, environment, source_run, fix_run, storage
+    ):
+        _locked_version(source_run, test=[PARENT], train=[KEYS[1]])
+        _land(fix_run, storage, _builder_save(environment))
+        names = [_named(fix_run, n) for n in (1, 2, 3)]
+        _finish(_base_run(fix_run), failed=names)
+
+        assert variations.advance(str(fix_run.id)) == VariationsStep.DONE
+
+        fix_run.refresh_from_db()
+        request = FixRequest.model_validate(fix_run.request)
+        # Launched off any locked version: a sample, which holds none back below twelve.
+        assert request.held_back_scenario_keys == []
 
     def test_too_few_failing_even_so_ends_with_its_reason_and_keeps_what_it_found(
         self, environment, fix_run, storage

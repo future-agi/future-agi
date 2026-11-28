@@ -510,6 +510,80 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
     return payload
 
 
+_SESSION_CONTEXT_TRACE_LIMIT = 100
+
+
+def _created_sort_key(value) -> tuple[bool, datetime]:
+    """Order traces by creation time, undated last, naive values read as UTC."""
+    if value is None:
+        return (True, datetime.min.replace(tzinfo=UTC))
+    if value.tzinfo is None:
+        return (False, value.replace(tzinfo=UTC))
+    return (False, value.astimezone(UTC))
+
+
+class _SpanDerivedTrace:
+    """A session trace with no Postgres ``Trace`` row, described by its spans.
+
+    Traces ingested through the collector exist only in ClickHouse. The
+    session context still lists them: the name of the root span (else the
+    earliest span), the earliest span start as the creation time.
+    """
+
+    error = None
+
+    def __init__(self, trace_id: str):
+        self.id = trace_id
+        self.created_at: datetime | None = None
+        self._root_name: str | None = None
+        self._earliest_name: str | None = None
+
+    @property
+    def name(self):
+        return self._root_name or self._earliest_name
+
+    def observe(self, span) -> None:
+        start = getattr(span, "start_time", None)
+        if not getattr(span, "parent_span_id", None) and self._root_name is None:
+            self._root_name = getattr(span, "name", None)
+        if start is not None and (
+            self.created_at is None
+            or _created_sort_key(start) < _created_sort_key(self.created_at)
+        ):
+            self.created_at = start
+            self._earliest_name = getattr(span, "name", None)
+
+
+def _session_trace_page(trace_qs, session_trace_ids, ch_spans):
+    """The session's live traces, oldest first, capped for the prompt.
+
+    Returns ``(page, trace_count)``. A trace with a live Postgres row keeps
+    that row; one without (collector ingestion writes ClickHouse only) is
+    described by its spans. ``session_trace_ids`` already holds only traces
+    with live spans.
+    """
+    pg_page = list(trace_qs.order_by("created_at")[:_SESSION_CONTEXT_TRACE_LIMIT])
+    pg_count = trace_qs.count()
+    if pg_count > len(pg_page):
+        pg_ids = {str(tid) for tid in trace_qs.values_list("id", flat=True)}
+    else:
+        pg_ids = {str(t.id) for t in pg_page}
+    span_derived = {
+        tid: _SpanDerivedTrace(tid)
+        for tid in dict.fromkeys(str(t) for t in session_trace_ids)
+        if tid not in pg_ids
+    }
+    for span in ch_spans:
+        derived = span_derived.get(str(span.trace_id))
+        if derived is not None:
+            derived.observe(span)
+    page = sorted(
+        [*pg_page, *span_derived.values()],
+        key=lambda t: _created_sort_key(getattr(t, "created_at", None)),
+    )
+    return page[:_SESSION_CONTEXT_TRACE_LIMIT], pg_count + len(span_derived)
+
+
 def _context_cost_coverage(subtotal: float, known: int, unknown: int) -> "CostCoverage":
     return {
         "status": "complete" if not unknown else "partial" if known else "unknown",
@@ -562,13 +636,6 @@ def build_session_context(session) -> dict | None:
             id__in=_session_trace_ids,
             deleted=False,
         )
-        # Cap at 100 traces for the in-prompt summary; the agent uses
-        # explore_trace for deeper drill-down.
-        traces_page = list(trace_qs.order_by("created_at")[:100])
-        trace_ids = [t.id for t in traces_page]
-        # Stringified, as a set, so the per-trace bucket lookups below stay
-        # O(1) and match the str trace_id CH returns on each span row.
-        _page_trace_id_strs = {str(tid) for tid in trace_ids}
 
         # Read from CH 25.3 (was three separate ObservationSpan.objects
         # queries: session-wide aggregate, per-trace aggregate, per-trace
@@ -599,6 +666,17 @@ def build_session_context(session) -> dict | None:
                     str(session_id),
                     project_id=(str(project_id) if project_id is not None else None),
                 )
+
+        # Cap at 100 traces for the in-prompt summary; the agent uses
+        # explore_trace for deeper drill-down. A trace with no Postgres row
+        # (collector ingestion writes ClickHouse only) is listed from its
+        # spans instead of being dropped (TH-11001).
+        traces_page, _trace_count = _session_trace_page(
+            trace_qs, _session_trace_ids, _ch_spans
+        )
+        # Stringified, as a set, so the per-trace bucket lookups below stay
+        # O(1) and match the str trace_id CH returns on each span row.
+        _page_trace_id_strs = {str(t.id) for t in traces_page}
 
         # Scope the proof to each trace, including descendant LLMs under
         # tokenless event-loop spans. Reuse the already-selected live rows.
@@ -760,7 +838,7 @@ def build_session_context(session) -> dict | None:
             "created_at": (
                 session.created_at.isoformat() if session.created_at else None
             ),
-            "trace_count": trace_qs.count(),
+            "trace_count": _trace_count,
             "total_spans": sess_agg["total_spans"] or 0,
             "error_count": sess_agg["error_count"] or 0,
             "total_tokens": sess_agg["total_tokens"] or 0,
