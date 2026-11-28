@@ -240,6 +240,11 @@ def test_claim_pins_context_and_reserves_project_capacity(observe_project):
         {"max_model_calls": True},
         {"max_tool_result_bytes": 256},
         {"max_children": 1, "max_parallel_children": 0},
+        {"max_reader_calls": 10},
+        {"max_reader_calls": 21, "max_check_calls": 2},
+        {"max_check_calls": 5},
+        {"min_check_score": 0},
+        {"min_check_score": 6},
     ],
 )
 @override_settings(
@@ -253,9 +258,70 @@ def test_claim_rejects_limits_the_worker_cannot_execute(observe_project, limits)
 
     with pytest.raises(
         InvestigationConflict,
-        match="project Omega limit|max_parallel_children",
+        match="project Omega limit|max_parallel_children|max_reader_calls",
     ):
         claim_due_investigations(worker_id="node-1", engine_version="omega-v1", limit=1)
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_claim_leaves_the_reader_pipeline_off_by_default(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    assert claim["limits"]["deadline_seconds"] == 300
+    assert claim["limits"]["max_reader_calls"] == 0
+    assert claim["limits"]["max_check_calls"] == 0
+    assert claim["limits"]["min_check_score"] == 5
+
+
+@override_settings(
+    ERROR_FEED_OMEGA_DELAY_SECONDS=0,
+    ERROR_FEED_READER_PIPELINE=True,
+    ERROR_FEED_READER_MIN_CHECK_SCORE=4,
+)
+def test_reader_pipeline_setting_budgets_readers_and_check_beside_the_loop(
+    observe_project,
+):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    # The loop keeps the project's own call budget.
+    assert claim["limits"]["max_model_calls"] == 4
+    assert claim["limits"]["deadline_seconds"] == 420
+    assert claim["limits"]["max_reader_calls"] == 10
+    assert claim["limits"]["max_check_calls"] == 2
+    assert claim["limits"]["min_check_score"] == 4
+    attempt = TraceInvestigationAttempt.no_workspace_objects.get(id=claim["attempt_id"])
+    assert attempt.limits["max_check_calls"] == 2
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_project_limits_can_turn_the_reader_pipeline_on(observe_project):
+    config = _configure(observe_project)
+    config.omega_limits = {
+        "max_model_calls": 12,
+        "max_reader_calls": 10,
+        "max_check_calls": 2,
+        "min_check_score": 5,
+    }
+    config.save(update_fields=["omega_limits", "updated_at"])
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    assert claim["limits"]["max_reader_calls"] == 10
+    assert claim["limits"]["max_check_calls"] == 2
+    assert claim["limits"]["min_check_score"] == 5
 
 
 @override_settings(
