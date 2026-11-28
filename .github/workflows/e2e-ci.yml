@@ -299,8 +299,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           STACKS: ${{ steps.stacks.outputs.stacks }}
           TOTALS: ${{ steps.shards.outputs.totals }}
-          E2E_DB_REUSE: ${{ vars.E2E_DB_REUSE }}
-          DEV_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+          E2E_DB_REUSE: distributed,standalone
+          DEV_PUSH: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-restore-proof' }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
@@ -945,14 +945,14 @@ jobs:
       # (e2e/stack/e2e.env, or standalone-e2e.env on Standalone).
       - name: Compare the saved database dump with a fresh migrate, and save one
         id: db-control
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' && matrix.shard == 3 && (github.event_name == 'push' && github.ref == 'refs/heads/dev' || fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true) }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && matrix.shard == 3 && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-restore-proof' || fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true) }}
         # Two migrates from zero when there is no saved dump yet (about 6
         # minutes each), one when there is.
         timeout-minutes: 30
         env:
           KEY: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].key }}
           FOUND: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].found == true }}
-          PRODUCE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+          PRODUCE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-restore-proof' }}
           RECORD: ${{ runner.temp }}/e2e-db-record/${{ matrix.stack }}
           OUT: ${{ runner.temp }}/e2e-db-out
         # Exit 3 (the saved dump differs from a fresh migrate) fails every
@@ -964,7 +964,7 @@ jobs:
           if [[ $status == 0 || $status == 3 || $PRODUCE == true ]]; then exit "$status"; fi
           echo "::warning title=E2E database dump::The check of the saved dump could not run (exit $status). This run's legs restored a dump that was not compared."
       - name: Save the database dump for later dev runs
-        if: ${{ !cancelled() && steps.db-control.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.shard == 3 }}
+        if: ${{ !cancelled() && steps.db-control.outcome == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-restore-proof' && matrix.shard == 3 }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           # Named by its migrate inputs. Public: the E2E image holds no
@@ -989,7 +989,7 @@ jobs:
         # After the suite and the uploads: the leg's tests ran on a database
         # migrated from zero. A pull request or queue entry is never failed
         # for this; a dev push shows it.
-        if: ${{ always() && steps.db-restore.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+        if: ${{ always() && steps.db-restore.outcome == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-restore-proof' }}
         run: |
           result=$(cat "$RUNNER_TEMP/e2e-db-result")
           if [[ $result == "fell back:"* ]]; then
