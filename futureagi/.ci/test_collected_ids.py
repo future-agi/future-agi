@@ -361,6 +361,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             runs=runs,
         )
 
+    def historical_rules(self):
+        # Replay the rule as it existed on the measured date; it is NOT a
+        # current allowance. The original receipt and 268 assertion stay put.
+        return self.rules() + self.rules(CI / "fixtures/retired-exact-ch25-rule.json")
+
     def measured_files(self):
         return {pair["file"] for pair in self.MEASURED["pairs"]}
 
@@ -369,7 +374,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         # exact, ticketed, owned and expiring rule.
         self.assertEqual(self.MEASURED["total"], 268)
         error, report, _ = self.report(
-            self.measured_rows(), files=self.measured_files()
+            self.measured_rows(), self.historical_rules(), files=self.measured_files()
         )
         self.assertIsNone(error)
         self.assertEqual(report["tests"], [])
@@ -400,6 +405,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertEqual(dropped, 1542 + 2)
         error, report, _ = self.report(
             self.measured_rows(kept, runs="oss"),
+            self.historical_rules(),
             files={pair["file"] for pair in kept["pairs"]},
             runs=("oss",),
         )
@@ -411,7 +417,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_retired_suites_have_no_rule(self):
         # A skip in a file whose suite now runs is unexpected again.
         rules = self.rules()
-        for path in [*self.RETIRED["files"], self.HOURLY]:
+        for path in [
+            *self.RETIRED["files"],
+            self.HOURLY,
+            "tracer/tests/test_exact_attribute_detail.py",
+        ]:
             with self.subTest(path=path):
                 self.assertFalse(any(path in rule["files"] for rule in rules))
 

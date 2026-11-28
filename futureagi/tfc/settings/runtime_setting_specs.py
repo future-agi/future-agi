@@ -362,6 +362,16 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", 6_000, 100, 60_000),
             ("MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS", 1_000, 100, 10_000),
             ("GRAPH_BACKGROUND_WALL_MS", 180_000, 1_000, 180_000),
+            # Exact attribute detail statement level: 0 = the original
+            # statement, settings and 30 s deadline; 1 = identity semi-join;
+            # 2 = semi-join with grouped quantiles. A level above the build's
+            # highest runs the highest.
+            ("EXACT_ATTRIBUTE_DETAIL_SQL_LEVEL", 0, 0, 2),
+            # Deadline for exact attribute detail levels 1-2 only, capped at
+            # max(30 s, GRAPH_BACKGROUND_WALL_MS); level 0 always keeps 30 s.
+            # Above 30000, the worker's TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT must
+            # be at least max(this, GRAPH_BACKGROUND_WALL_MS) / 1000 + 15 s.
+            ("EXACT_ATTRIBUTE_DETAIL_RESHAPED_TIMEOUT_MS", 30_000, 1_000, 180_000),
             # Age after which a revisited Observe chart whose exact snapshot
             # ran while its window was open refreshes that snapshot in the
             # background (0 = off; values 1-59 are raised to 60 in code). The

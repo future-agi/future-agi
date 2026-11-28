@@ -1090,6 +1090,13 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "passes in"
             ),
         ),
+        "_SEMI_JOIN_LATEST_SPANS_SQL": filed(
+            PROJECT_SET,
+            why=(
+                "attribute catalog detail statement, run for the project ids its view "
+                "passes in"
+            ),
+        ),
     },
     "tracer.services.clickhouse.exact_graph_reads": {
         "_eval_partition_trace_ids_sql": filed(

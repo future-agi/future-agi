@@ -5,6 +5,13 @@ The spans table is direct-write ReplacingMergeTree data.  Mutable predicates
 latest version of every immutable physical span identity.  In particular, a
 later key removal or tombstone must win over an older key-bearing row.
 
+``EXACT_ATTRIBUTE_DETAIL_SQL_LEVEL`` selects the statement; every level is one
+statement and one snapshot.  Level 0 is the original statement with its
+settings and its 30 s deadline.  Level 1 seeds the key's identities as an IN
+set and replays their versions filtered by immutable identity columns only.
+An executor whose client does not show that query settings reach the server
+(the server-enforced read-only lane, test doubles) always runs level 0.
+
 This reader is intended for the existing exact-aggregation background worker;
 HTTP requests serve/poll the last atomically published snapshot and never wait
 for a full tenant scan.
@@ -15,7 +22,9 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from time import monotonic
-from typing import Any
+from typing import Any, NamedTuple
+
+from django.conf import settings as django_settings
 
 from tracer.services.clickhouse.attribute_reads import (
     V2AttributeQueryExecutor,
@@ -43,6 +52,20 @@ EXACT_ATTRIBUTE_DETAIL_READ_SETTINGS: dict[str, Any] = {
     "max_result_bytes": 64 * _MIB,
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
+}
+
+# Levels 1-2: the original settings with the in-order seed read off, the IN
+# set's limits pinned so that no profile can truncate it, and a finite memory
+# guard on the set (a read over it fails and publishes nothing).
+EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_READ_SETTINGS: dict[str, Any] = {
+    **EXACT_ATTRIBUTE_DETAIL_READ_SETTINGS,
+    "optimize_aggregation_in_order": 0,
+    "use_index_for_in_with_subqueries_max_values": 100_000,
+    "set_overflow_mode": "throw",
+    "max_rows_in_set": 0,
+    "max_bytes_in_set": 512 * _MIB,
+    "group_by_two_level_threshold_bytes": 128 * _MIB,
+    "group_by_two_level_threshold": 32_768,
 }
 
 _TYPE_PRIORITY: dict[str, int] = {
@@ -291,6 +314,151 @@ ORDER BY
     ranked_values.value_rank ASC
 """
 
+# Levels 1-2 reuse the original text from ``exploded_values AS`` on, byte for
+# byte; slicing keeps the original literal (and its reader filing) untouched.
+_TAIL_SQL = EXACT_ATTRIBUTE_DETAIL_SQL[
+    EXACT_ATTRIBUTE_DETAIL_SQL.index("exploded_values AS") :
+]
+
+_SEMI_JOIN_LATEST_SPANS_SQL = r"""
+WITH
+%(attribute_key)s AS _attribute_key,
+latest_spans AS
+(
+    /*
+     * Identity seed as an IN set.  The key predicate runs only inside the
+     * subquery; the replay filters versions by immutable identity columns
+     * only, so a later key removal or tombstone still wins in argMax.
+     * Binding attribute_key once keeps max-length escaped keys well
+     * below ClickHouse's query-size ceiling.
+     */
+    SELECT
+        attribute_source.trace_id AS trace_id,
+        attribute_source.id AS id,
+        attribute_source.start_time AS start_time,
+        argMax(
+            tuple(
+                attribute_source.is_deleted,
+                mapContains(attribute_source.attrs_string, _attribute_key),
+                attribute_source.attrs_string[_attribute_key],
+                mapContains(attribute_source.attrs_number, _attribute_key),
+                attribute_source.attrs_number[_attribute_key],
+                mapContains(attribute_source.attrs_bool, _attribute_key),
+                attribute_source.attrs_bool[_attribute_key],
+                JSONHas(attribute_source.attributes_extra, _attribute_key),
+                JSONExtractRaw(
+                    attribute_source.attributes_extra,
+                    _attribute_key
+                )
+            ),
+            attribute_source._version
+        ) AS latest_state
+    FROM spans AS attribute_source
+    PREWHERE attribute_source.project_id = toUUID(%(project_id)s)
+      AND attribute_source.start_time >= %(window_start)s
+      AND attribute_source.start_time < %(window_end)s
+      AND (
+          attribute_source.trace_id,
+          attribute_source.id,
+          attribute_source.start_time
+      ) IN
+      (
+          SELECT
+              candidate_source.trace_id,
+              candidate_source.id,
+              candidate_source.start_time
+          FROM spans AS candidate_source
+          PREWHERE candidate_source.project_id = toUUID(%(project_id)s)
+            AND candidate_source.start_time >= %(window_start)s
+            AND candidate_source.start_time < %(window_end)s
+          WHERE
+        (
+            indexHint(has(mapKeys(candidate_source.attrs_string), _attribute_key))
+            AND mapContains(candidate_source.attrs_string, _attribute_key)
+        )
+        OR (
+            indexHint(has(mapKeys(candidate_source.attrs_number), _attribute_key))
+            AND mapContains(candidate_source.attrs_number, _attribute_key)
+        )
+        OR (
+            indexHint(has(mapKeys(candidate_source.attrs_bool), _attribute_key))
+            AND mapContains(candidate_source.attrs_bool, _attribute_key)
+        )
+        OR (
+            candidate_source.attributes_extra NOT IN ('', '{}', 'null')
+            AND JSONHas(candidate_source.attributes_extra, _attribute_key)
+        )
+      )
+    GROUP BY
+        attribute_source.trace_id,
+        attribute_source.id,
+        attribute_source.start_time
+),
+"""
+
+EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_SQL = _SEMI_JOIN_LATEST_SPANS_SQL + _TAIL_SQL
+
+
+class _ExactDetailStatement(NamedTuple):
+    level: int
+    sql: str
+    settings: dict[str, Any]
+    timeout_ms: int
+
+
+# The highest statement level this build contains.
+_HIGHEST_BUILT_LEVEL = 1
+
+
+def _runtime_int(name: str) -> int:
+    """One numeric runtime setting (``tfc/settings/runtime_setting_specs.py``)."""
+
+    return int(getattr(django_settings, name))
+
+
+def _query_settings_reach_server(query_executor: object) -> bool:
+    """True only when the executor positively identifies the settings lane."""
+
+    client = getattr(query_executor, "client", None)
+    readonly = getattr(client, "server_enforced_readonly", None)
+    allowed = getattr(client, "allow_query_settings_with_server_readonly", None)
+    if not isinstance(readonly, bool) or not isinstance(allowed, bool):
+        return False
+    return (not readonly) or allowed
+
+
+def _exact_detail_statement(query_executor: object) -> _ExactDetailStatement:
+    """Statement, settings and deadline for the effective level, decided together.
+
+    Level 0 is the original statement, settings and 30 s deadline.  The level
+    is clamped to the highest level this build contains, and an executor that
+    does not identify the settings lane gets level 0.  The statements, the
+    settings dicts and the 30 s constant are read as module globals at call
+    time, never captured at import.
+    """
+
+    level = min(_runtime_int("EXACT_ATTRIBUTE_DETAIL_SQL_LEVEL"), _HIGHEST_BUILT_LEVEL)
+    if level <= 0 or not _query_settings_reach_server(query_executor):
+        return _ExactDetailStatement(
+            0,
+            EXACT_ATTRIBUTE_DETAIL_SQL,
+            EXACT_ATTRIBUTE_DETAIL_READ_SETTINGS,
+            EXACT_ATTRIBUTE_DETAIL_QUERY_TIMEOUT_MS,
+        )
+    timeout_ms = min(
+        _runtime_int("EXACT_ATTRIBUTE_DETAIL_RESHAPED_TIMEOUT_MS"),
+        max(
+            EXACT_ATTRIBUTE_DETAIL_QUERY_TIMEOUT_MS,
+            _runtime_int("GRAPH_BACKGROUND_WALL_MS"),
+        ),
+    )
+    return _ExactDetailStatement(
+        1,
+        EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_SQL,
+        EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_READ_SETTINGS,
+        timeout_ms,
+    )
+
 
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -318,15 +486,20 @@ def read_exact_attribute_detail(
     window_end: datetime | None = None,
     horizon_days: int = EXACT_ATTRIBUTE_DETAIL_HORIZON_DAYS,
 ) -> dict[str, Any]:
-    """Compute one complete exact detail payload in one ClickHouse statement."""
+    """Compute one complete exact detail payload in one ClickHouse statement.
+
+    The statement, its settings and its deadline come together from
+    ``_exact_detail_statement`` for the constructed executor.
+    """
 
     started = monotonic()
     key = validate_attribute_key(attribute_key)
     end = _utc(window_end or datetime.now(UTC))
     start = end - timedelta(days=max(1, min(int(horizon_days), 365)))
     query_executor = executor or V2AttributeQueryExecutor()
+    statement = _exact_detail_statement(query_executor)
     page = query_executor.execute(
-        EXACT_ATTRIBUTE_DETAIL_SQL,
+        statement.sql,
         {
             "project_id": str(project_id),
             "attribute_key": key,
@@ -334,8 +507,8 @@ def read_exact_attribute_detail(
             "window_end": end,
             "top_values_limit": EXACT_ATTRIBUTE_DETAIL_TOP_VALUES,
         },
-        timeout_ms=EXACT_ATTRIBUTE_DETAIL_QUERY_TIMEOUT_MS,
-        settings=EXACT_ATTRIBUTE_DETAIL_READ_SETTINGS,
+        timeout_ms=statement.timeout_ms,
+        settings=statement.settings,
     )
     rows = list(page.data or [])
     by_type: dict[str, list[dict[str, Any]]] = {}
@@ -431,6 +604,8 @@ __all__ = [
     "EXACT_ATTRIBUTE_DETAIL_HORIZON_DAYS",
     "EXACT_ATTRIBUTE_DETAIL_QUERY_TIMEOUT_MS",
     "EXACT_ATTRIBUTE_DETAIL_READ_SETTINGS",
+    "EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_READ_SETTINGS",
+    "EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_SQL",
     "EXACT_ATTRIBUTE_DETAIL_SQL",
     "read_exact_attribute_detail",
 ]
