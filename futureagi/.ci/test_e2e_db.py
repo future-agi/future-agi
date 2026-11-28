@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 import e2e_db
@@ -826,6 +827,11 @@ class ControlTest(Workspace):
             r"Differs in: public\.some_seed\.",
         )
         self.assertIn("futureagi/.ci/e2e_db.py", result.stdout)
+        # What to do now: the switch off, then the whole run again.
+        self.assertIn(
+            "take this stack out of the E2E_DB_REUSE repository variable", result.stdout
+        )
+        self.assertIn("then re-run all jobs of this run", result.stdout)
         self.assertNotIn("-old", result.stdout + result.stderr)
         self.assertEqual(self.saved_files(), [])
 
@@ -921,73 +927,268 @@ class WorkflowTest(unittest.TestCase):
         end = job.find("\n      - ", start + 1)
         return job[start : end + 1 if end != -1 else len(job)]
 
-    def test_the_fetch_runs_on_dev_pushes_only_and_cannot_fail_the_plan(self):
+    MINE = "fromJSON(needs.changes.outputs.db || '{}')[matrix.stack]"
+
+    def run_block(self, step):
+        """The shell of a step's `run: |`, as the runner gets it."""
+        body = step.split("        run: |\n", 1)[1]
+        return textwrap.dedent(
+            "".join(
+                line
+                for line in body.splitlines(True)
+                if line.startswith("          ") or not line.strip()
+            )
+        )
+
+    def run_step(self, step, scripts, env):
+        """Runs a step's shell in a checkout whose scripts are stubs."""
+        work = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+        # `timeout` as on the runner: the command, run to its end here.
+        stubs = {
+            "bin/e2e": 'echo "$*" >> "$CALLS"\n',
+            "stubs/timeout": 'shift\nexec "$@"\n',
+        }
+        for path, text in {**scripts, **stubs}.items():
+            target = work / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("#!/usr/bin/env bash\n" + text)
+            target.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": f"{work / 'stubs'}:{os.environ['PATH']}",
+            "CALLS": str(work / "calls"),
+            "RUNNER_TEMP": str(work),
+            **env,
+        }
+        run = subprocess.run(
+            ["bash", "-e", "-c", self.run_block(step)],
+            cwd=work,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        calls = (work / "calls").read_text() if (work / "calls").exists() else ""
+        return run, calls
+
+    def test_the_plan_finds_dumps_on_every_event_and_cannot_fail_the_plan(self):
         changes = self.job("changes")
         step = self.step(
             changes, "Find each stack's saved database dump for this commit"
         )
-        self.assertIn(f"if: {self.DEV_PUSH}", step)
+        self.assertNotIn("\n        if:", step)
         self.assertIn("continue-on-error: true\n", step)
         self.assertIn("timeout-minutes: 2\n", step)
         hand = self.step(
-            changes, "Hand the saved database dumps to the legs that compare them"
+            changes, "Hand the saved database dumps to the legs that use them"
         )
         self.assertIn("continue-on-error: true\n", hand)
         self.assertIn("if: steps.db.outputs.artifact != ''\n", hand)
         # After the plan: its outputs exist whatever happens here.
         self.assertLess(changes.index("      - id: shards\n"), changes.index(step))
-        # The job's own rule: scripts come out of Git at the policy commit,
-        # never from a checked-out candidate file.
-        self.assertIn('git show "$GITHUB_SHA:futureagi/.ci/$tool"', step)
+        # The scripts come out of Git at the policy commit: the pushed commit,
+        # a queue entry's base, or the base tip a pull request's test merge
+        # was built on. Never a candidate file, with this job's token.
+        self.assertIn("BASE_SHA: ${{ github.event.merge_group.base_sha }}\n", step)
+        self.assertIn("policy=${BASE_SHA:-$GITHUB_SHA}\n", step)
+        self.assertIn("policy=$(git rev-parse --verify 'HEAD^1^{commit}')\n", step)
+        self.assertIn('git show "$policy:futureagi/.ci/$tool"', step)
+        self.assertNotIn("$GITHUB_SHA:", step)
         self.assertEqual(
             re.findall(r"python3 .*", step),
             [
+                'python3 -I "$tools/e2e_db.py" named "$E2E_DB_REUSE") "',
                 'python3 -I "$tools/e2e_db.py" key "$stack" --root "$GITHUB_WORKSPACE")',
                 'python3 -I "$tools/fetch_migrated_db.py" "$records/$stack"'
                 ' --workflow .github/workflows/e2e-ci.yml --name "$key" &&',
                 'python3 -I "$tools/e2e_db.py" verify "$records/$stack" "$key"; then',
+                'python3 -I "$tools/e2e_db.py" plan "$E2E_DB_REUSE" "$TOTALS" "$db"'
+                ' "$RUNNER_TEMP/e2e-db-plan.json"',
             ],
         )
-        # Every stack the run plans, each into its own folder.
+        # A dev push fetches for every stack; any other run only for a named one.
+        self.assertIn('if [[ $DEV_PUSH == true || $named == *" $stack "* ]] &&\n', step)
+        self.assertIn(f"DEV_PUSH: ${{{{ {self.DEV_PUSH} }}}}\n", step)
+        self.assertIn("E2E_DB_REUSE: ${{ vars.E2E_DB_REUSE }}\n", step)
+        self.assertIn("TOTALS: ${{ steps.shards.outputs.totals }}\n", step)
         self.assertIn("STACKS: ${{ steps.stacks.outputs.stacks }}\n", step)
         self.assertIn("for stack in $(jq -r '.[]' <<< \"$STACKS\"); do\n", step)
+        # The plan's answer is the last `db` written: the one the legs read.
+        self.assertTrue(
+            step.rstrip().endswith(
+                'echo "db=$(cat "$RUNNER_TEMP/e2e-db-plan.json")" >> "$GITHUB_OUTPUT"'
+            )
+        )
 
-    def test_the_control_runs_on_one_leg_per_stack_of_a_dev_push(self):
+    def test_a_leg_restores_before_its_boot_and_shard_2_never_does(self):
+        e2e = self.job("e2e")
+        order = [
+            "Await the vendor image prefetch",
+            "Download the saved database dump",
+            "Restore the saved database dump",
+            "Boot the e2e stack",
+        ]
+        at = [e2e.index(f"      - name: {name}\n") for name in order]
+        self.assertEqual(at, sorted(at))
+        download = self.step(e2e, order[1])
+        self.assertIn(f"if: ${{{{ {self.MINE}.found == true }}}}\n", download)
+        self.assertIn("continue-on-error: true\n", download)
+        restore = self.step(e2e, order[2])
+        self.assertIn(f"if: ${{{{ {self.MINE}.restore == true }}}}\n", restore)
+        self.assertIn(
+            "ROLE: ${{ matrix.shard == 2 && 'zero' || 'restore' }}\n", restore
+        )
+        self.assertIn(f"KEY: ${{{{ {self.MINE}.key }}}}\n", restore)
+        self.assertIn("timeout 600 bash futureagi/.ci/e2e-db-restore.sh ||", restore)
+        self.assertNotIn("continue-on-error", restore)
+        self.assertNotRegex(restore + download, r"secrets\.|github\.token|TOKEN")
+        # Shards 2 and 3 get fewer tests only when the plan says the stack restores.
+        self.assertIn(
+            f"      E2E_DB_RESTORES: ${{{{ {self.MINE}.restore == true }}}}\n", e2e
+        )
+
+    def test_a_restore_step_that_stops_falls_back_and_never_fails_the_leg(self):
+        restore = self.step(self.job("e2e"), "Restore the saved database dump")
+        for script in ("exit 1\n", "kill -TERM $$\n", 'echo restored > "$RESULT"\n'):
+            with self.subTest(script=script):
+                work = pathlib.Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+                run, calls = self.run_step(
+                    restore,
+                    {"futureagi/.ci/e2e-db-restore.sh": script},
+                    {"RESULT": str(work / "result")},
+                )
+                self.assertEqual(run.returncode, 0, run.stderr)
+                result = (work / "result").read_text().strip()
+                if script.startswith("echo"):
+                    self.assertEqual(result, "restored")
+                    self.assertEqual(calls, "")
+                else:
+                    self.assertEqual(result, "fell back: the restore step stopped")
+                    self.assertEqual(calls, "compose down -v\n")
+
+    def test_the_control_fails_every_run_on_a_difference_and_a_dev_push_on_any_failure(
+        self,
+    ):
         e2e = self.job("e2e")
         suite = e2e.index("      - name: Run E2E suite\n")
-        names = (
-            "Download the saved database dump",
-            "Compare the saved database dump with a fresh migrate, and save one",
-            "Save the database dump for later dev runs",
+        control = self.step(
+            e2e, "Compare the saved database dump with a fresh migrate, and save one"
         )
-        role = f"{self.DEV_PUSH} && matrix.shard == 3"
-        # Read so that a run without the plan's answer gives nothing, not an
-        # expression error.
-        mine = "fromJSON(needs.changes.outputs.db || '{}')[matrix.stack]"
-        for name in names:
-            step = self.step(e2e, name)
-            self.assertLess(suite, e2e.index(step), name)
-            self.assertIn(role, step, name)
-            # The dump is public: nothing of a secret may be near the migrate.
-            self.assertNotRegex(step, r"secrets\.|github\.token|TOKEN", name)
-        control = self.step(e2e, names[1])
-        self.assertIn("steps.boot.outcome == 'success'", control)
-        self.assertIn("run: bash futureagi/.ci/e2e-db-control.sh\n", control)
-        self.assertIn(f"KEY: ${{{{ {mine}.key }}}}\n", control)
-        self.assertIn(f"FOUND: ${{{{ {mine}.found == true }}}}\n", control)
+        self.assertLess(suite, e2e.index(control))
+        self.assertIn(
+            f"if: ${{{{ !cancelled() && steps.boot.outcome == 'success' && matrix.shard == 3"
+            f" && ({self.DEV_PUSH} || {self.MINE}.restore == true) }}}}\n",
+            control,
+        )
+        # On a hit it compares even when this leg's own restore fell back:
+        # nothing in its condition reads the leg's result.
+        self.assertNotIn("db-restore", control)
+        self.assertIn(f"FOUND: ${{{{ {self.MINE}.found == true }}}}\n", control)
+        self.assertIn(f"PRODUCE: ${{{{ {self.DEV_PUSH} }}}}\n", control)
         self.assertIn(
             "RECORD: ${{ runner.temp }}/e2e-db-record/${{ matrix.stack }}\n", control
         )
-        self.assertIn('PRODUCE: "true"\n', control)
-        self.assertIn(f"&& {mine}.found }}}}\n", self.step(e2e, names[0]))
-        save = self.step(e2e, names[2])
-        self.assertIn(f"name: ${{{{ {mine}.key }}}}\n", save)
+        self.assertNotRegex(control, r"secrets\.|github\.token|TOKEN")
+        for produce, status, fails in (
+            ("true", 0, False),
+            ("true", 1, True),
+            ("true", 3, True),
+            ("false", 0, False),
+            ("false", 1, False),
+            ("false", 3, True),
+        ):
+            with self.subTest(produce=produce, status=status):
+                run, _calls = self.run_step(
+                    control,
+                    {"futureagi/.ci/e2e-db-control.sh": f"exit {status}\n"},
+                    {"PRODUCE": produce},
+                )
+                self.assertEqual(run.returncode != 0, fails, run.stdout)
+                if status == 1 and produce == "false":
+                    self.assertIn("::warning", run.stdout)
+
+    def test_a_dev_push_fails_a_fallen_back_leg_after_its_suite_and_uploads(self):
+        e2e = self.job("e2e")
+        late = self.step(
+            e2e, "Fail a dev push whose leg could not restore the saved dump"
+        )
+        upload = self.step(e2e, "Upload this leg's database result")
+        for earlier in (
+            "Run E2E suite",
+            "Upload report",
+            "Save the database dump for later dev runs",
+        ):
+            self.assertLess(
+                e2e.index(f"      - name: {earlier}\n"), e2e.index(late), earlier
+            )
+        self.assertLess(e2e.index(upload), e2e.index(late))
+        self.assertIn(
+            f"if: ${{{{ always() && steps.db-restore.outcome == 'success' && {self.DEV_PUSH} }}}}\n",
+            late,
+        )
+        self.assertIn(
+            "if: ${{ always() && steps.db-restore.outcome == 'success' }}\n", upload
+        )
+        self.assertIn(
+            "name: db-reuse-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}\n",
+            upload,
+        )
+        for result, fails in (
+            ("restored", False),
+            ("zero", False),
+            ("miss: Postgres version", False),
+            ("fell back: x", True),
+        ):
+            with self.subTest(result=result):
+                work = pathlib.Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+                (work / "e2e-db-result").write_text(result + "\n")
+                run = subprocess.run(
+                    ["bash", "-e", "-c", self.run_block(late)],
+                    env={**os.environ, "RUNNER_TEMP": str(work)},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(run.returncode != 0, fails, run.stdout)
+
+    def test_the_dev_push_producer_still_saves_by_key(self):
+        e2e = self.job("e2e")
+        save = self.step(e2e, "Save the database dump for later dev runs")
+        self.assertIn(f"{self.DEV_PUSH} && matrix.shard == 3", save)
+        self.assertIn(f"name: ${{{{ {self.MINE}.key }}}}\n", save)
         self.assertIn("if-no-files-found: ignore\n", save)
         self.assertIn("retention-days: 7\n", save)
         self.assertIn("overwrite: true\n", save)
-        # Nothing else in the job reads or restores the dump yet.
+        self.assertNotRegex(save, r"secrets\.|github\.token|TOKEN")
         self.assertEqual(e2e.count("db_artifact"), 1)
-        self.assertEqual(e2e.count("needs.changes.outputs.db "), 4)
+        # Every read of the plan's answer survives a run without one.
+        for job in ("e2e", "db-reuse"):
+            reads = re.findall(
+                r"needs\.changes\.outputs\.db\b(?!_).{0,8}", self.job(job)
+            )
+            self.assertTrue(reads, job)
+            for read in reads:
+                self.assertEqual(read, "needs.changes.outputs.db || '{}'", job)
+
+    def test_a_job_nothing_waits_for_counts_each_restoring_runs_legs(self):
+        job = self.job("db-reuse")
+        self.assertIn("    needs: [changes, e2e]\n", job)
+        self.assertIn(
+            f"    if: ${{{{ !cancelled() && {self.MINE}.restore == true }}}}\n", job
+        )
+        # The workflow's own read-only permissions; no token is used.
+        self.assertNotIn("permissions:", job)
+        self.assertNotRegex(job, r"secrets\.|github\.token|TOKEN")
+        self.assertIn("permissions:\n  contents: read\n\n", self.text)
+        self.assertIn("pattern: db-reuse-${{ matrix.stack }}-*\n", job)
+        self.assertIn(
+            'e2e_db.py summary "$RUNNER_TEMP/db-reuse" "$STACK" "$SHARD_TOTAL"'
+            ' | tee -a "$GITHUB_STEP_SUMMARY"',
+            job,
+        )
+        # No gate reads it.
+        self.assertNotRegex(self.text, r"needs: \[[^]]*db-reuse")
 
     def test_no_job_gained_a_permission_or_a_dependency(self):
         self.assertIn("    needs: [changes, lock-wheels]\n", self.job("e2e"))

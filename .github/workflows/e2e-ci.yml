@@ -279,34 +279,47 @@ jobs:
           echo "today=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
       - name: Find each stack's saved database dump for this commit
         id: db
-        # One leg per stack of a dev push migrates a scratch database with
-        # that stack's own image and saves a dump of it, named by what that
-        # migrate reads (futureagi/.ci/e2e_db.py). The next dev push with the
-        # same inputs compares that dump with its own fresh migrate. Nothing
-        # restores it yet: these runs show whether a migrate here can be
-        # reproduced. Each stack has its own dump.
+        # A stack's legs restore a saved dump of their migrated database
+        # (futureagi/.ci/e2e-db-restore.sh) when the repository variable
+        # E2E_DB_REUSE names the stack, a dump for this commit's migrate
+        # inputs exists, and the stack has a leg that boots from zero and a
+        # leg that checks the dump (futureagi/.ci/e2e_db.py plan). One leg
+        # per stack of a dev push saves the dumps and checks them
+        # (futureagi/.ci/e2e-db-control.sh). Each stack has its own dump.
         #
         # Only a dump saved by a successful dev push of this workflow is
-        # fetched. No dump, or any failure here, means there is nothing to
-        # compare; it never fails the plan.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        # fetched: on a dev push for every stack, on any other run only for
+        # the stacks the switch names. No dump, or any failure here, means
+        # every leg migrates from zero; it never fails the plan. The scripts
+        # come out of Git at the policy commit, as the migration check's do:
+        # nothing of a pull request's own runs with this job's token.
         continue-on-error: true
         timeout-minutes: 2
         env:
           GH_TOKEN: ${{ github.token }}
           STACKS: ${{ steps.stacks.outputs.stacks }}
+          TOTALS: ${{ steps.shards.outputs.totals }}
+          E2E_DB_REUSE: ${{ vars.E2E_DB_REUSE }}
+          DEV_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
+          policy=${BASE_SHA:-$GITHUB_SHA}
+          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+            policy=$(git rev-parse --verify 'HEAD^1^{commit}')
+          fi
           tools="$RUNNER_TEMP/e2e-db-tools" records="$RUNNER_TEMP/e2e-db-record"
           mkdir "$tools" "$records"
           for tool in e2e_db.py db_dump.py fetch_migrated_db.py; do
-            git show "$GITHUB_SHA:futureagi/.ci/$tool" > "$tools/$tool"
+            git show "$policy:futureagi/.ci/$tool" > "$tools/$tool"
           done
+          named=" $(python3 -I "$tools/e2e_db.py" named "$E2E_DB_REUSE") "
           db='{}'
           for stack in $(jq -r '.[]' <<< "$STACKS"); do
             key=$(python3 -I "$tools/e2e_db.py" key "$stack" --root "$GITHUB_WORKSPACE")
             found=false
-            if python3 -I "$tools/fetch_migrated_db.py" "$records/$stack" --workflow .github/workflows/e2e-ci.yml --name "$key" &&
+            if [[ $DEV_PUSH == true || $named == *" $stack "* ]] &&
+              python3 -I "$tools/fetch_migrated_db.py" "$records/$stack" --workflow .github/workflows/e2e-ci.yml --name "$key" &&
               python3 -I "$tools/e2e_db.py" verify "$records/$stack" "$key"; then
               found=true
               echo "artifact=e2e-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
@@ -316,9 +329,13 @@ jobs:
             db=$(jq -c --arg stack "$stack" --arg key "$key" --argjson found "$found" \
               '.[$stack] = {key: $key, found: $found}' <<< "$db")
             # Written after each stack: a failure on the next keeps this one.
+            # Without the plan's answer below, no stack restores.
             echo "db=$db" >> "$GITHUB_OUTPUT"
           done
-      - name: Hand the saved database dumps to the legs that compare them
+          # Prints the switch as read and each stack's decision.
+          python3 -I "$tools/e2e_db.py" plan "$E2E_DB_REUSE" "$TOTALS" "$db" "$RUNNER_TEMP/e2e-db-plan.json"
+          echo "db=$(cat "$RUNNER_TEMP/e2e-db-plan.json")" >> "$GITHUB_OUTPUT"
+      - name: Hand the saved database dumps to the legs that use them
         if: steps.db.outputs.artifact != ''
         # The plan must not fail for this either. The leg then finds no
         # artifact to download and fails on the dev push, where it is seen.
@@ -425,6 +442,11 @@ jobs:
       BUILD_GATEWAY: "true"
       E2E_LAST_SHARD: ${{ matrix.shard == matrix.total }}
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
+      # In a run that restores this stack's saved database, shard 2 boots
+      # from zero and shard 3 checks the dump after its suite: both get fewer
+      # tests (e2e/lib/shard.ts startingLoads). Every leg of a run, re-runs
+      # included, reads the same answer from the plan job.
+      E2E_DB_RESTORES: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -639,6 +661,38 @@ jobs:
           cat /tmp/e2e-pull.log
           [ -s /tmp/e2e-pull.status ] || { echo "::error::The vendor image prefetch did not finish."; exit 1; }
           exit "$(cat /tmp/e2e-pull.status)"
+
+      # The saved database (futureagi/.ci/e2e_db.py): fetched by the plan job,
+      # restored here before the boot when this run restores the stack, and
+      # checked against a fresh migrate on shard 3 after the suite.
+      - name: Download the saved database dump
+        if: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].found == true }}
+        # A missing copy makes the restore fall back; it never fails the leg.
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.changes.outputs.db_artifact }}
+          path: ${{ runner.temp }}/e2e-db-record
+      - name: Restore the saved database dump
+        id: db-restore
+        # Only Postgres is up: the stack's own database gets the saved dump,
+        # and the boot's migrate below has nothing to apply. Shard 2 always
+        # boots from zero, so every run still shows that path. Never fails
+        # the leg: on any failure, or after ten minutes, the stack is taken
+        # down with its volumes and the boot migrates from zero.
+        if: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
+        env:
+          KEY: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].key }}
+          RESTORE: "true"
+          ROLE: ${{ matrix.shard == 2 && 'zero' || 'restore' }}
+          RECORD: ${{ runner.temp }}/e2e-db-record/${{ matrix.stack }}
+          RESULT: ${{ runner.temp }}/e2e-db-result
+        run: |
+          timeout 600 bash futureagi/.ci/e2e-db-restore.sh || {
+            bin/e2e compose down -v > /dev/null 2>&1 || true
+            echo "fell back: the restore step stopped" > "$RESULT"
+            echo "::warning title=E2E database reuse::The restore step stopped. This leg migrates from zero."
+          }
 
       - name: Boot the e2e stack
         id: boot
@@ -880,33 +934,35 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      # The scratch control (futureagi/.ci/e2e-db-control.sh), on one leg per
-      # stack of a dev push and after its suite, so no pull request or queue
-      # run waits for it. Not shard 1, which always gets the longest spec
-      # file, and not the last, which runs the once-per-stack steps.
-      # It runs when the suite failed too: a wrong dump is one reason a suite
-      # fails. The step's environment holds no secret; the migrate runs with
-      # the stack's committed settings (e2e/stack/e2e.env, or
-      # standalone-e2e.env on Standalone).
-      - name: Download the saved database dump
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.shard == 3 && fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].found }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: ${{ needs.changes.outputs.db_artifact }}
-          path: ${{ runner.temp }}/e2e-db-record
+      # The scratch control (futureagi/.ci/e2e-db-control.sh), on shard 3 of
+      # each stack, after its suite: on a dev push it saves or checks the
+      # dump; in any other run that restores the stack it checks the dump
+      # the legs restored. Not shard 1, which always gets the longest spec
+      # file, and not the last, which runs the once-per-stack steps. It runs
+      # when the suite failed too, and when this leg's own restore fell back:
+      # a wrong dump is one reason a suite fails. The step's environment
+      # holds no secret; the migrate runs with the stack's committed settings
+      # (e2e/stack/e2e.env, or standalone-e2e.env on Standalone).
       - name: Compare the saved database dump with a fresh migrate, and save one
         id: db-control
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.shard == 3 }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && matrix.shard == 3 && (github.event_name == 'push' && github.ref == 'refs/heads/dev' || fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true) }}
         # Two migrates from zero when there is no saved dump yet (about 6
         # minutes each), one when there is.
         timeout-minutes: 30
         env:
           KEY: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].key }}
           FOUND: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].found == true }}
-          PRODUCE: "true"
+          PRODUCE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
           RECORD: ${{ runner.temp }}/e2e-db-record/${{ matrix.stack }}
           OUT: ${{ runner.temp }}/e2e-db-out
-        run: bash futureagi/.ci/e2e-db-control.sh
+        # Exit 3 (the saved dump differs from a fresh migrate) fails every
+        # run. Any other failure means the control could not run: red on a
+        # dev push, a warning on a pull request or queue entry.
+        run: |
+          status=0
+          timeout 1500 bash futureagi/.ci/e2e-db-control.sh || status=$?
+          if [[ $status == 0 || $status == 3 || $PRODUCE == true ]]; then exit "$status"; fi
+          echo "::warning title=E2E database dump::The check of the saved dump could not run (exit $status). This run's legs restored a dump that was not compared."
       - name: Save the database dump for later dev runs
         if: ${{ !cancelled() && steps.db-control.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.shard == 3 }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -918,6 +974,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           overwrite: true
+      - name: Upload this leg's database result
+        # For the report job's count of restored, fell-back, missed and
+        # zero legs.
+        if: ${{ always() && steps.db-restore.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: db-reuse-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-db-result
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Fail a dev push whose leg could not restore the saved dump
+        # After the suite and the uploads: the leg's tests ran on a database
+        # migrated from zero. A pull request or queue entry is never failed
+        # for this; a dev push shows it.
+        if: ${{ always() && steps.db-restore.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+        run: |
+          result=$(cat "$RUNNER_TEMP/e2e-db-result")
+          if [[ $result == "fell back:"* ]]; then
+            echo "::error title=E2E database reuse::This leg could not restore the saved dump ($result). Its suite ran on a database migrated from zero."
+            exit 1
+          fi
       - name: Capture backend lifecycle on failure
         if: failure() && steps.boot.outcome == 'success'
         run: |
@@ -1048,6 +1126,36 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: warn
+
+  db-reuse:
+    # In a run that restores a stack's saved database: what each of its legs
+    # did with it (restored, fell back and why, missed, booted from zero),
+    # in the run's summary. Nothing waits for this job.
+    name: e2e saved database (${{ matrix.stack }})
+    needs: [changes, e2e]
+    if: ${{ !cancelled() && fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The workflow's own permissions (contents: read): nothing more.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: futureagi/.ci
+      - name: Download each leg's database result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: db-reuse-${{ matrix.stack }}-*
+          path: ${{ runner.temp }}/db-reuse
+      - name: Count what each leg did with the saved database
+        env:
+          STACK: ${{ matrix.stack }}
+          SHARD_TOTAL: ${{ fromJSON(needs.changes.outputs.shard_totals)[matrix.stack] }}
+        run: python3 -I futureagi/.ci/e2e_db.py summary "$RUNNER_TEMP/db-reuse" "$STACK" "$SHARD_TOTAL" | tee -a "$GITHUB_STEP_SUMMARY"
 
   e2e-tests:
     name: E2E Tests Pass

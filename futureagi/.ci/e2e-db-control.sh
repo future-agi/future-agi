@@ -122,7 +122,7 @@ if [[ $FOUND == true ]]; then
   status=0
   differ "$work/saved.sql.gz" "$work/control.sql.gz" || status=$?
   if [[ $status == 3 ]]; then
-    echo "::error title=Saved E2E database dump differs from a fresh migrate::Differs in: $where. A file outside the key's inputs changed what migrate writes, or a migration writes a value that changes from run to run. Add the file to the key in futureagi/.ci/e2e_db.py, or raise VERSION there."
+    echo "::error title=Saved E2E database dump differs from a fresh migrate::Differs in: $where. A file outside the key's inputs changed what migrate writes, or a migration writes a value that changes from run to run. Add the file to the key in futureagi/.ci/e2e_db.py, or raise VERSION there. Until that lands, take this stack out of the E2E_DB_REUSE repository variable (or clear it), then re-run all jobs of this run: legs that restored this dump may have passed or failed because of it."
   fi
   [[ $status == 0 ]] || exit "$status"
   echo "The saved E2E dump ($saved) equals a fresh migrate: same schema, same rows up to generated ids and times."
