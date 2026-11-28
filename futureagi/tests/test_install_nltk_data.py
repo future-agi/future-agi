@@ -5,7 +5,12 @@ import importlib.util
 import io
 import re
 import zipfile
+from contextlib import closing, nullcontext
+from email.message import Message
+from http.client import IncompleteRead
 from pathlib import Path
+from unittest.mock import Mock, call
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -46,6 +51,31 @@ def test_slim_image_installs_the_minimal_profile() -> None:
     assert 'ARG NLTK_DATA_PROFILE=""' in contents
     # Run-time downloads are off in the image: the data is baked.
     assert "NLTK_DOWNLOAD_MISSING=false" in contents
+
+
+@pytest.mark.parametrize(
+    ("failures", "outcome", "delays"),
+    [
+        ([HTTPError("", 503, "busy", Message(), None)], nullcontext(), [5]),
+        ([URLError("offline")], nullcontext(), [5]),
+        ([ConnectionResetError()], nullcontext(), [5]),
+        (
+            [closing(Mock(read=Mock(side_effect=IncompleteRead(b"partial"))))],
+            nullcontext(),
+            [5],
+        ),
+        ([TimeoutError] * 4, pytest.raises(RuntimeError, match="wordnet"), [5, 15, 45]),
+        ([HTTPError("", 404, "absent", Message(), None)], pytest.raises(HTTPError), []),
+    ],
+)
+def test_download_retries(monkeypatch, failures, outcome, delays) -> None:
+    opener = Mock(side_effect=[*failures, io.BytesIO(b"ok")])
+    monkeypatch.setattr("urllib.request.urlopen", opener)
+    sleep = Mock()
+    with outcome:
+        assert install_nltk_data._download("corpora/wordnet.zip", sleep=sleep) == b"ok"
+    assert opener.call_count == len(delays) + 1
+    assert sleep.call_args_list == [call(delay) for delay in delays]
 
 
 def test_nltk_archives_are_revision_and_checksum_pinned() -> None:
