@@ -5,6 +5,7 @@ from uuid import UUID
 
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.db import DatabaseError
 
 from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
@@ -284,7 +285,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 access = await template_workspace_access(
                     self.user.id, self.organization_id, template_id
                 )
-            except Exception as exc:
+            except DatabaseError as exc:
                 logger.warning(
                     "socket_template_check_failed", error_type=type(exc).__name__
                 )
