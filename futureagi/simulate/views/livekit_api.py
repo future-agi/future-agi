@@ -892,19 +892,11 @@ async def _handle_egress_ended(event) -> None:
         if f.filename:
             file_urls.append(f.filename)
 
-    config = await CallExecutionRepository.get_call_config(call_id)
-    if not config:
-        return
-
-    provider_data = config.get("provider_call_data", {})
-    lk_data = provider_data.setdefault(ProviderChoices.LIVEKIT, {})
-    lk_data["recording_files"] = file_urls
-    lk_data["egress_id"] = egress.egress_id
-    provider_data[ProviderChoices.LIVEKIT] = lk_data
-
-    await CallExecutionRepository.update_lifecycle(
-        call_id, provider_call_data=provider_data
+    updated = await CallExecutionRepository.update_egress_files(
+        call_id, egress_id=egress.egress_id, recording_files=file_urls
     )
+    if not updated:
+        return
     logger.info(
         "livekit_webhook_egress_ended_ok",
         call_id=call_id,
