@@ -62,8 +62,9 @@ export default function SourceReviewDesign({ requirements, modality, review }) {
         </PlanRow>
         <PlanRow label="Design" count="">
           <PlanLine empty>
-            Records, tools, rules, people and scenarios are proposed here after
-            you approve the sources.
+            After you approve the sources, the builder drafts the records,
+            tools, rules, people and scenarios. Nothing is built until you
+            approve the design.
           </PlanLine>
         </PlanRow>
       </Stack>
