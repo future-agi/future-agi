@@ -861,24 +861,44 @@ class TestErrorResponseEnvelope:
 @pytest.mark.unit
 @pytest.mark.usefixtures("non_oss_mode")
 class TestMiddlewareCacheOutage:
-    """An unreachable cache skips the IP throttle instead of raising a 500."""
+    """Only login and token delegate to the view when the IP limit is unavailable."""
 
     def _call(self, path, error):
         from accounts.authentication import AuthMonitoringMiddleware
 
         request = RequestFactory().post(path, content_type="application/json")
-        middleware = AuthMonitoringMiddleware(lambda r: HttpResponse("OK", status=200))
+        view = MagicMock(return_value=HttpResponse("OK", status=200))
         with patch("accounts.authentication.cache.get", side_effect=error):
-            return middleware(request)
+            return AuthMonitoringMiddleware(view)(request), view
 
-    @pytest.mark.parametrize(
-        "path", ["/api/accounts/token/", "/api/accounts/password-reset-initiate/"]
-    )
+    @pytest.mark.parametrize("path", ["/api/accounts/token/", "/api/accounts/login/"])
     def test_unreachable_cache_lets_the_request_through(self, path):
         # django-redis raises ConnectionInterrupted from the redis-py error.
         error = ConnectionInterrupted(connection=None)
         error.__cause__ = RedisConnectionError("Error 111 connecting to redis:6379")
-        assert self._call(path, error).status_code == 200
+        response, view = self._call(path, error)
+        assert response is view.return_value
+        view.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "path", ["/api/accounts/signup/", "/api/accounts/password-reset-initiate/"]
+    )
+    def test_unreachable_cache_returns_service_unavailable(self, path):
+        from tfc.utils.general_methods import GeneralMethods
+
+        response, view = self._call(path, RedisConnectionError())
+        assert response.status_code == 503
+        assert response["Content-Type"] == "application/json"
+        view.assert_not_called()
+        expected = GeneralMethods().custom_error_response(
+            503,
+            {
+                "error": "Login temporarily unavailable",
+                "error_code": "LOGIN_SERVICE_UNAVAILABLE",
+                "message": LOGIN_ERROR_CODES["LOGIN_SERVICE_UNAVAILABLE"][0],
+            },
+        )
+        assert json.loads(response.content) == expected.data
 
     def test_other_cache_errors_still_raise(self):
         with pytest.raises(ConnectionInterrupted):

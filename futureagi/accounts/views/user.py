@@ -20,6 +20,7 @@ from accounts.authentication import (
     decrypt_message,
     generate_encrypted_message,
     get_client_ip,
+    login_service_unavailable_result,
 )
 from accounts.models import User
 from accounts.models.auth_token import (
@@ -449,11 +450,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                {
-                    "error": "Login temporarily unavailable",
-                    "error_code": "LOGIN_SERVICE_UNAVAILABLE",
-                    "message": get_error_message("LOGIN_SERVICE_UNAVAILABLE"),
-                },
+                login_service_unavailable_result(),
             )
 
         except Exception:
