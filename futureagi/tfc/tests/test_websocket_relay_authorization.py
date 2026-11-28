@@ -190,7 +190,7 @@ def subscriber(server, org, owner, target):
     ) as ws:
         ping(ws)
         if target:
-            assert subscribe(ws, target) == f"uuid_org_{org.pk}_{target}"
+            assert subscribe(ws, target) == f"ws2.{org.pk}.{target}"
         yield ws
 
 

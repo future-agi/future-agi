@@ -225,7 +225,7 @@ async def send_to_target(org, target, message):
     from channels.layers import get_channel_layer
 
     await get_channel_layer().group_send(
-        f"uuid_org_{org.pk}_{target}", {"type": "send_data", "data": message}
+        f"ws2.{org.pk}.{target}", {"type": "send_data", "data": message}
     )
 
 
@@ -258,7 +258,7 @@ def test_subscription_sent_during_a_pending_check_is_answered_after_it(answered_
             assert confirmed == {
                 "type": "subscription_confirmed",
                 "uuid": target,
-                "current_subscription": f"uuid_org_{org.pk}_{target}",
+                "current_subscription": f"ws2.{org.pk}.{target}",
             }
             assert then == follow_up
 
@@ -305,7 +305,7 @@ def test_subscriptions_kept_during_a_pending_check_are_bounded():
             {
                 "type": "subscription_confirmed",
                 "uuid": targets[-1],
-                "current_subscription": f"uuid_org_{org.pk}_{targets[-1]}",
+                "current_subscription": f"ws2.{org.pk}.{targets[-1]}",
             },
             {"type": "pong"},
         ]
@@ -512,7 +512,7 @@ def test_kept_frames_never_lose_a_still_wanted_subscription():
 
     consumer = DataConsumer()
     consumer.scope = {}
-    consumer.room_group_name = "org_synthetic"
+    consumer.organization_id = "synthetic"
     wanted = str(uuid4())
     others = [str(uuid4()) for _ in range(MAX_PENDING_SUBSCRIPTION_FRAMES + 4)]
 
@@ -609,7 +609,7 @@ def test_window_check_recovery_answers_kept_subscriptions(settings):
                 {
                     "type": "subscription_confirmed",
                     "uuid": target,
-                    "current_subscription": f"uuid_org_{org.pk}_{target}",
+                    "current_subscription": f"ws2.{org.pk}.{target}",
                 },
                 chunk,
             ]
@@ -640,7 +640,7 @@ def _queue_consumer():
 
     consumer = DataConsumer()
     consumer.scope = {}
-    consumer.room_group_name = "org_synthetic"
+    consumer.organization_id = "synthetic"
     return consumer
 
 
@@ -812,7 +812,7 @@ def test_window_recovery_stops_answering_when_a_new_check_is_pending(settings):
     credential = Credential()
     database, membership = membership_outage()
     first, second = str(uuid4()), str(uuid4())
-    blocked = _BlockedGroupAdd(f"uuid_org_{org.pk}_{first}")
+    blocked = _BlockedGroupAdd(f"ws2.{org.pk}.{first}")
 
     async def run():
         socket = await open_direct_socket(member, org, saml=True)
@@ -840,7 +840,7 @@ def test_window_recovery_stops_answering_when_a_new_check_is_pending(settings):
                 {
                     "type": "subscription_confirmed",
                     "uuid": first,
-                    "current_subscription": f"uuid_org_{org.pk}_{first}",
+                    "current_subscription": f"ws2.{org.pk}.{first}",
                 }
             ]
 
@@ -850,7 +850,7 @@ def test_window_recovery_stops_answering_when_a_new_check_is_pending(settings):
                 {
                     "type": "subscription_confirmed",
                     "uuid": second,
-                    "current_subscription": f"uuid_org_{org.pk}_{second}",
+                    "current_subscription": f"ws2.{org.pk}.{second}",
                 },
                 {"type": "pong"},
             ]
@@ -874,7 +874,7 @@ def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(setti
     member = create_member(org, workspace)
     credential = Credential()
     first, second = str(uuid4()), str(uuid4())
-    blocked = _BlockedGroupAdd(f"uuid_org_{org.pk}_{first}")
+    blocked = _BlockedGroupAdd(f"ws2.{org.pk}.{first}")
     forced_check = _Finished(
         MembershipSocketGuard,
         "ensure_member",
@@ -903,7 +903,7 @@ def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(setti
                 {
                     "type": "subscription_confirmed",
                     "uuid": first,
-                    "current_subscription": f"uuid_org_{org.pk}_{first}",
+                    "current_subscription": f"ws2.{org.pk}.{first}",
                 },
                 {"type": "info", "message": f"Not subscribed to {second}"},
             ]
@@ -923,7 +923,7 @@ def test_window_recovery_joins_no_group_after_disconnect(settings):
     member = create_member(org, workspace)
     credential = Credential()
     target = str(uuid4())
-    group = f"uuid_org_{org.pk}_{target}"
+    group = f"ws2.{org.pk}.{target}"
     blocked = _BlockedGroupAdd(group)
     recovered = _recovery_finished()
 

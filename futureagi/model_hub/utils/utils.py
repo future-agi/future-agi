@@ -24,6 +24,7 @@ from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
 from model_hub.services.custom_endpoint import post_custom_endpoint
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
+from sockets.targets import relay_group
 from tfc.settings.settings import (
     HUGGINGFACE_API_TOKEN,
     HUGGINGFACE_API_TOKEN_1,
@@ -471,7 +472,7 @@ async def send_message_to_channel_async(organization_id, message):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
         return
-    channel_name = f"org_{organization_id}"
+    channel_name = relay_group(organization_id)
     channel_layer = get_channel_layer()
     try:
         await channel_layer.group_send(
@@ -488,13 +489,15 @@ async def send_message_to_uuid_async(uuid, message, organization_id=None):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
         return
-    channel_name = f"uuid_{uuid}"
+    channel_name = (
+        relay_group(organization_id, uuid)
+        if organization_id is not None
+        else f"uuid_{uuid}"
+    )
     channel_layer = get_channel_layer()
     try:
         event = {"type": "send_data", "data": message}
         await channel_layer.group_send(channel_name, event)
-        if organization_id is not None:
-            await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
     except Exception as e:
         logger.exception(
             f"websocket: Error sending message to channel {channel_name}: {str(e)}"
@@ -512,9 +515,12 @@ async def broadcast_to_uuid_async(uuid, data, organization_id=None):
             "type": "send_data",
             "data": {"type": "message_type", "data": data, "uuid": uuid},
         }
-        await channel_layer.group_send(f"uuid_{uuid}", event)
-        if organization_id is not None:
-            await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
+        channel_name = (
+            relay_group(organization_id, uuid)
+            if organization_id is not None
+            else f"uuid_{uuid}"
+        )
+        await channel_layer.group_send(channel_name, event)
     except Exception as e:
         logger.exception(
             f"websocket: Error sending message to channel uuid {uuid}: {str(e)}"
@@ -537,27 +543,10 @@ def send_message_to_channel(organization_id, message):
         # Create a new event loop
         new_loop = asyncio.new_event_loop()
 
-        # Create a fresh channel layer within this new loop context
-        async def run_with_new_channel_layer():
-            if not isinstance(message, dict):
-                logger.exception(f"Message is not a dictionary: {message}")
-                return
-            channel_name = f"org_{organization_id}"
-            # Get a fresh channel layer in this loop's context
-            channel_layer = get_channel_layer()
-            try:
-                await channel_layer.group_send(
-                    channel_name, {"type": "send_data", "data": message}
-                )
-            except Exception as e:
-                logger.exception(
-                    f"websocket: Error sending message to channel {channel_name}: {str(e)}"
-                )
-                # raise e
-
         try:
-            # Run the coroutine in the new loop
-            new_loop.run_until_complete(run_with_new_channel_layer())
+            new_loop.run_until_complete(
+                send_message_to_channel_async(organization_id, message)
+            )
         finally:
             # Clean up
             new_loop.close()
@@ -622,30 +611,10 @@ def send_message_to_uuid(uuid, message, organization_id=None):
         # Create a new event loop
         new_loop = asyncio.new_event_loop()
 
-        # Create a fresh channel layer within this new loop context
-        async def run_with_new_channel_layer():
-            if not isinstance(message, dict):
-                logger.exception(f"Message is not a dictionary: {message}")
-                return
-            channel_name = f"uuid_{uuid}"
-            # Get a fresh channel layer in this loop's context
-            channel_layer = get_channel_layer()
-            try:
-                event = {"type": "send_data", "data": message}
-                await channel_layer.group_send(channel_name, event)
-                if organization_id is not None:
-                    await channel_layer.group_send(
-                        f"uuid_org_{organization_id}_{uuid}", event
-                    )
-            except Exception as e:
-                logger.exception(
-                    f"websocket: Error sending message to channel {channel_name}: {str(e)}"
-                )
-                # raise e
-
         try:
-            # Run the coroutine in the new loop
-            new_loop.run_until_complete(run_with_new_channel_layer())
+            new_loop.run_until_complete(
+                send_message_to_uuid_async(uuid, message, organization_id)
+            )
         finally:
             # Clean up
             new_loop.close()
@@ -666,32 +635,10 @@ def broadcast_to_uuid(uuid, data, organization_id=None):
         # Create a new event loop
         new_loop = asyncio.new_event_loop()
 
-        # Create a fresh channel layer within this new loop context
-        async def run_with_new_channel_layer():
-            if not isinstance(data, dict):
-                logger.exception(f"Message is not a dictionary: {data}")
-                return
-            # Get a fresh channel layer in this loop's context
-            channel_layer = get_channel_layer()
-            try:
-                event = {
-                    "type": "send_data",
-                    "data": {"type": "message_type", "data": data, "uuid": uuid},
-                }
-                await channel_layer.group_send(f"uuid_{uuid}", event)
-                if organization_id is not None:
-                    await channel_layer.group_send(
-                        f"uuid_org_{organization_id}_{uuid}", event
-                    )
-            except Exception as e:
-                logger.exception(
-                    f"websocket: Error sending message to channel uuid {uuid}: {str(e)}"
-                )
-                # raise e
-
         try:
-            # Run the coroutine in the new loop
-            new_loop.run_until_complete(run_with_new_channel_layer())
+            new_loop.run_until_complete(
+                broadcast_to_uuid_async(uuid, data, organization_id)
+            )
         finally:
             # Clean up
             new_loop.close()

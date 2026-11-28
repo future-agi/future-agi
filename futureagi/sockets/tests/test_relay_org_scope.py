@@ -35,7 +35,7 @@ def test_socket_uses_authorized_selected_membership_not_first(user, organization
     consumer.user = user
     consumer.room_group_name = async_to_sync(consumer.get_room_group_name)()
     target = uuid4()
-    assert consumer._uuid_group_name(target) == f"uuid_org_{selected.id}_{target}"
+    assert consumer._uuid_group_name(target) == f"ws2.{selected.id}.{target}"
     assert async_to_sync(resolve_socket_organization)({}, user) == first.organization_id
 
 
@@ -82,10 +82,10 @@ def test_uuid_group_normalizes_subscription_and_message_identifiers(scoped):
     org_id = uuid4()
     consumer = DataConsumer()
     consumer.scope = {"auth_scope": SimpleNamespace(org_id=org_id)} if scoped else {}
-    consumer.room_group_name = f"org_{org_id}"
+    consumer.organization_id = str(org_id)
     target = uuid4()
     for form in (str(target), str(target).upper(), target.hex):
-        assert consumer._uuid_group_name(form) == f"uuid_org_{org_id}_{target}"
+        assert consumer._uuid_group_name(form) == f"ws2.{org_id}.{target}"
 
 
 IN_MEMORY_CHANNEL_LAYERS = {

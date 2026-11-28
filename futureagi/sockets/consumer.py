@@ -9,7 +9,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
-from sockets.targets import normalize_socket_target
+from sockets.targets import relay_group
 from sockets.template_scope import template_workspace_access
 
 logger = structlog.get_logger(__name__)
@@ -439,20 +439,11 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self._answer_pending_subscription_frames()
 
     def _uuid_group_name(self, uuid):
-        try:
-            uuid = normalize_socket_target(uuid)
-        except ValueError:
-            # Preserve non-UUID subscriptions used by older socket clients.
-            pass
-        auth_scope = self.scope.get("auth_scope")
-        if auth_scope is not None:
-            return f"uuid_org_{auth_scope.org_id}_{uuid}"
-        # Non-SAML sessions use the same resolved tenant as their broadcast room.
-        return f"uuid_{self.room_group_name}_{uuid}"
+        return relay_group(self.organization_id, uuid)
 
     async def get_room_group_name(self):
         org_id = await resolve_socket_organization(self.scope, self.user)
         if org_id is None:
             return None
         self.organization_id = str(org_id)
-        return f"org_{org_id}"
+        return relay_group(org_id)

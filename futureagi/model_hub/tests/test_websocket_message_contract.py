@@ -245,7 +245,7 @@ def test_broadcast_accepts_missing_and_legacy_null_uuid(extra):
     async def run():
         layer = get_channel_layer()
         channel = await layer.new_channel()
-        await layer.group_add(f"org_{ORG}", channel)
+        await layer.group_add(f"ws2.{ORG}", channel)
         message = {
             "alert_title": "Limit reached",
             "nested": {"items": [1, None, False]},
@@ -276,6 +276,22 @@ def test_targeted_delivery_requires_uuid(extra):
         response = post_relay({"message": {}, "send_to_uuid": True, **extra})
     assert response.status_code == 400
     layer.assert_not_called()
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["room", "subscription"])
+def test_new_relay_publishes_only_to_versioned_groups(targeted):
+    group = f"ws2.{ORG}.{TARGET}" if targeted else f"ws2.{ORG}"
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        publish = layer.return_value.group_send = AsyncMock()
+        response = post_relay(
+            {
+                "send_to_uuid": targeted,
+                "uuid": TARGET,
+                "message": {"session_uuid": TARGET},
+            }
+        )
+    assert response.status_code == 200
+    publish.assert_awaited_once_with(group, ANY)
 
 
 def test_relay_requires_authentication():

@@ -182,7 +182,7 @@ async def open_socket(user, org, target=None):
     if target:
         await socket.send_json_to({"type": "subscribe", "uuid": target})
         confirmed = await socket.receive_json_from(timeout=10)
-        assert confirmed["current_subscription"] == f"uuid_org_{org.pk}_{target}"
+        assert confirmed["current_subscription"] == f"ws2.{org.pk}.{target}"
     return socket
 
 
@@ -463,7 +463,7 @@ async def broadcast(org, message):
     from channels.layers import get_channel_layer
 
     await get_channel_layer().group_send(
-        f"org_{org.pk}", {"type": "send_data", "data": message}
+        f"ws2.{org.pk}", {"type": "send_data", "data": message}
     )
 
 

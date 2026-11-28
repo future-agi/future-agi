@@ -5,6 +5,7 @@ from django.http.request import RawPostDataException
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.views import APIView
 
+from sockets.targets import relay_group
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     CallWebsocketErrorResponseSerializer,
@@ -79,10 +80,8 @@ class CallWebsocketView(APIView):
             message = data["message"]
             org_id = organization.id
             # Never publish the authenticated relay to the legacy unscoped group.
-            group = (
-                f"uuid_org_{org_id}_{data['uuid']}"
-                if data.get("send_to_uuid")
-                else f"org_{org_id}"
+            group = relay_group(
+                org_id, data["uuid"] if data.get("send_to_uuid") else None
             )
             # Let enqueue failures reach the caller, rather than using the
             # best-effort helpers that swallow channel-layer exceptions.
