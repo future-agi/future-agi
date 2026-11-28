@@ -2106,6 +2106,8 @@ def _sql(migration):
     return out.getvalue()
 
 
+# Outside the test's transaction: a concurrent index refuses to plan inside one.
+@pytest.mark.django_db(transaction=True)
 class TestSplitRunMigration:
     """The hosted-jobs table is read and written by every run: no step that adds the
     run's locked version holds its lock for a scan or an index build."""
