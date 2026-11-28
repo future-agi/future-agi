@@ -1901,6 +1901,33 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             table="trace_sessions",
         ),
     },
+    "tracer.services.clickhouse.v2.trajectory_lifecycle": {
+        "_LOCAL_COUNT_SQL": filed(
+            NOT_A_USER_READ,
+            why=(
+                "trajectory erasure counts a deleted project's span rows to order "
+                "item erasure after span deletion; Temporal job and operator command"
+            ),
+        ),
+        "_audit_bucket": filed(
+            NOT_A_USER_READ,
+            why=(
+                "daily trajectory GC latch and the trajectory_audit command sample "
+                "recent span pointers across all projects; counts only, no view"
+            ),
+        ),
+        "_gc_bucket": filed(
+            NOT_A_USER_READ,
+            why=(
+                "daily trajectory GC reads the oldest span created_at per project "
+                "to derive its delete cut; no view"
+            ),
+        ),
+        "_recent_items_v1_spans": filed(
+            NOT_A_USER_READ,
+            why="daily trajectory GC checks whether any span uses item pointers",
+        ),
+    },
     "tracer.services.clickhouse.v2.validate": {
         "_DEFAULT_QUERIES": _MIGRATION_PARITY_CHECK,
         "layer_a_counts": _MIGRATION_PARITY_CHECK,
