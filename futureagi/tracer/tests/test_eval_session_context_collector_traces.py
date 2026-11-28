@@ -107,7 +107,8 @@ def test_collector_only_session_lists_every_trace_in_order(monkeypatch):
 def test_postgres_rows_are_kept_and_merged_by_time(monkeypatch):
     """A trace with a Postgres row keeps that row's name and time; a
     collector-only trace of the same session is listed beside it, oldest
-    first, even when ClickHouse times come back without a timezone."""
+    first, even when ClickHouse span times come back without a timezone
+    while Postgres times carry one."""
     pg_trace = SimpleNamespace(
         id="trace-pg",
         name="pg name",
@@ -120,12 +121,15 @@ def test_postgres_rows_are_kept_and_merged_by_time(monkeypatch):
         trace_id="trace-collector",
         name="collector root",
         start_time=naive_start,
+        end_time=naive_start + timedelta(seconds=1),
     )
+    # ClickHouse returns every span the same way: both naive here.
     pg_span = _span(
         id="span-pg",
         trace_id="trace-pg",
         name="span name",
-        start_time=START + timedelta(minutes=3),
+        start_time=naive_start + timedelta(minutes=3),
+        end_time=naive_start + timedelta(minutes=3, seconds=1),
     )
     context = _context(
         monkeypatch,
