@@ -2921,7 +2921,13 @@ def delete_environment(job: HostedHarnessJob) -> None:
         ):
             evidence_import.delete()
             if evidence_import.drafting_job_id is not None:
-                transaction.on_commit(partial(forget_later, str(evidence_import.id)))
+                transaction.on_commit(
+                    partial(
+                        forget_later,
+                        str(evidence_import.id),
+                        str(evidence_import.drafting_job_id),
+                    )
+                )
         active_children = list(
             HostedHarnessJob.no_workspace_objects.select_for_update()
             .filter(environment=locked)

@@ -37,12 +37,14 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     issue_conversation_capability,
+    recover_stalled_conversations,
 )
 from simulate.services.hosted_harness_gateway import rewrite_conversation_scenarios
 from simulate.services.hosted_sandbox import (
     SandboxNotFoundError,
     SandboxProviderConfigurationError,
 )
+from simulate.tasks.evidence_drafts import forget_evidence_drafting
 from simulate.tests.test_evidence_datasets import EXPECTED
 from simulate.tests.test_evidence_datasets import columns as columns
 from simulate.tests.test_evidence_datasets import dataset as dataset
@@ -85,7 +87,7 @@ def scheduled():
         patch(
             "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime"
         ) as runtime,
-        patch("simulate.tasks.evidence_drafts.schedule_forget") as forget_task,
+        patch.object(forget_evidence_drafting, "apply_async") as forget_task,
     ):
         yield SimpleNamespace(runtime=runtime, forget=forget_task)
 
@@ -97,6 +99,13 @@ def _start(cases, user):
         endpoint_base_url=BASE_URL,
         user=user,
     )
+
+
+def _cleanup_args(scheduled, case, conversation):
+    scheduled.forget.assert_called_once()
+    args = scheduled.forget.call_args.kwargs["args"]
+    assert args == [str(case.evidence_import_id), str(conversation.job_id)]
+    return args
 
 
 def _command(conversation):
@@ -408,11 +417,10 @@ class TestSettleAndForget:
 
         with django_capture_on_commit_callbacks(execute=True):
             _promote(conversation, command, key, digest, 71)
-        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
         with patch(
             "simulate.services.hosted_harness_gateway.HostedHarnessGateway"
         ) as gateway:
-            evidence_drafts.forget(str(cases[0].evidence_import_id))
+            evidence_drafts.forget(*_cleanup_args(scheduled, cases[0], conversation))
 
         gateway.return_value._delete_chat_sandbox.assert_called_once()
         assert not any(_gone(conversation).values())
@@ -447,7 +455,7 @@ class TestSettleAndForget:
             (c.status, c.reason.split(" Builder's reply")[0])
             for c in EvidenceImportCase.objects.filter(id__in=[c.id for c in cases])
         } == {("blocked", evidence_drafts.TURN_FAILED)}
-        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+        _cleanup_args(scheduled, cases[0], conversation)
         lease.refresh_from_db()
         assert lease.state == "expired"
 
@@ -531,20 +539,25 @@ class TestSettleAndForget:
         assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 0}
         assert _gone(conversation)["job"]
 
+    @patch("simulate.tasks.evidence_drafts.close_old_connections", new=lambda: None)
     @patch("simulate.services.hosted_harness_gateway.get_sandbox_provider")
-    def test_sweep_retries_the_same_sandbox_until_delete_succeeds(
-        self, get_provider, cases, user, scheduled
+    def test_sweep_and_delayed_activity_retry_only_target_the_settled_job(
+        self, get_provider, cases, user, scheduled, django_capture_on_commit_callbacks
     ):
-        conversation = _start(cases, user)
-        lease = _lease(conversation, state="expired")
+        conversation = _start(cases[:1], user)
+        lease = _lease(conversation)
         ref = lease.provider_ref
         evidence_import = cases[0].evidence_import
-        evidence_import.cases.update(status=EvidenceImportCase.Status.BLOCKED)
+        with django_capture_on_commit_callbacks(execute=True):
+            evidence_drafts.turn_ended(
+                str(conversation.id), str(_command(conversation).id), "failed"
+            )
+        args = scheduled.forget.call_args.kwargs["args"]
         provider = get_provider.return_value
         provider.delete.side_effect = [TimeoutError("provider timed out"), False, True]
 
         with pytest.raises(HostedHarnessError, match="did not confirm"):
-            evidence_drafts.forget(str(evidence_import.id))
+            forget_evidence_drafting._original_func(*args)
         lease.refresh_from_db()
         evidence_import.refresh_from_db()
         assert lease.provider_ref == ref
@@ -552,8 +565,18 @@ class TestSettleAndForget:
 
         assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 0}
         assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 1}
-        assert [call.args[0] for call in provider.get.call_args_list] == [ref] * 3
         assert not any(_gone(conversation).values())
+
+        next_chat = _start(cases[1:], user)
+        next_lease = _lease(next_chat)
+        forget_evidence_drafting._original_func(*args)
+        # Import-only activities queued before the change defer to the sweep.
+        forget_evidence_drafting._original_func(str(evidence_import.id))
+        evidence_import.refresh_from_db()
+        next_lease.refresh_from_db()
+        assert evidence_import.drafting_job_id == next_chat.job_id
+        assert next_lease.state == "active"
+        assert [call.args[0] for call in provider.get.call_args_list] == [ref] * 3
 
     @patch("simulate.services.hosted_harness_gateway.get_sandbox_provider")
     def test_unavailable_provider_keeps_job_until_it_confirms_sandbox_is_absent(
@@ -849,24 +872,58 @@ class TestDeletedWhileDrafting:
     """The environment's imports go with it. One still drafting keeps its drafting
     chat, sandbox and job until they are deleted too, though the import is gone."""
 
-    def test_deleting_the_environment_deletes_the_drafting_chat(
-        self, environment, cases, user, scheduled, django_capture_on_commit_callbacks
+    @patch("simulate.services.hosted_harness_gateway.get_sandbox_provider")
+    def test_failed_delete_retires_the_chat_but_keeps_its_ref_for_the_sweep(
+        self,
+        get_provider,
+        environment,
+        cases,
+        user,
+        scheduled,
+        django_capture_on_commit_callbacks,
     ):
         conversation = _start(cases, user)
-        _lease(conversation)
+        ref = f"sandbox-{conversation.id}"
+        capability = issue_conversation_capability(
+            conversation,
+            endpoint_base_url=BASE_URL,
+            provider_ref=ref,
+            attempt=None,
+            ttl_seconds=600,
+        )
+        client = APIClient()
+        client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {capability.token}",
+            HTTP_X_HARNESS_CONVERSATION_FENCE=capability.fence,
+        )
+        commands = f"/simulate/api/harness/conversations/{conversation.id}/commands/"
+        assert client.get(commands).status_code == 200
         with (
             patch("simulate.temporal.client.cancel_hosted_harness_gateway_workflow"),
             django_capture_on_commit_callbacks(execute=True),
         ):
             delete_environment(environment)
-        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+        args = _cleanup_args(scheduled, cases[0], conversation)
 
-        with patch(
-            "simulate.services.hosted_harness_gateway.HostedHarnessGateway"
-        ) as gateway:
-            evidence_drafts.forget(str(cases[0].evidence_import_id))
+        provider = get_provider.return_value
+        provider.delete.side_effect = [False, True]
+        with pytest.raises(HostedHarnessError, match="did not confirm"):
+            evidence_drafts.forget(*args)
 
-        gateway.return_value._delete_chat_sandbox.assert_called_once()
+        response = client.get(commands)
+        assert (response.status_code, response.data["error"]) == (
+            409,
+            "conversation_lease_inactive",
+        )
+        conversation.refresh_from_db()
+        assert conversation.state == "retired"
+        # Even past the recovery backoff the outstanding command is not restarted.
+        HostedHarnessConversation._base_manager.filter(id=conversation.id).update(
+            updated_at=timezone.now() - timedelta(minutes=5)
+        )
+        assert recover_stalled_conversations(scheduled.runtime)["candidates"] == 0
+        assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 1}
+        assert [call.args[0] for call in provider.get.call_args_list] == [ref, ref]
         assert not any(_gone(conversation).values())
 
     def test_the_sweep_deletes_a_deleted_imports_drafting_chat(
