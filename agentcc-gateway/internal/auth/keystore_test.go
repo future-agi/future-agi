@@ -997,3 +997,16 @@ func TestAPIKey_IsManaged(t *testing.T) {
 		t.Error("expected byok key to return false for IsManaged()")
 	}
 }
+
+func TestAPIKey_ZeroValueUsageReadsAsZero(t *testing.T) {
+	var k APIKey
+	if got := k.BalanceMicros(); got != 0 {
+		t.Errorf("BalanceMicros() = %d, want 0", got)
+	}
+	if got := k.BalanceUSD(); got != 0 {
+		t.Errorf("BalanceUSD() = %v, want 0", got)
+	}
+	if got := k.GetLastUsedAt(); got != nil {
+		t.Errorf("GetLastUsedAt() = %v, want nil", got)
+	}
+}
