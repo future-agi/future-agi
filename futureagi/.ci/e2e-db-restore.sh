@@ -18,7 +18,7 @@
 #   miss: <reason>       the dump is not for this leg; nothing was written
 #   fell back: <reason>  a restore was tried and undone
 set -uo pipefail
-: "${KEY?}" "${RESTORE:?}" "${ROLE:?}" "${RECORD:?}" "${RESULT:?}"
+: "${KEY?}" "${STACK?}" "${RESTORE:?}" "${ROLE:?}" "${RECORD:?}" "${RESULT:?}"
 
 here=$(cd "$(dirname "$0")" && pwd)
 pg=(bin/e2e compose exec -T postgres)
@@ -60,4 +60,29 @@ rows=$("${dump_tool[@]}" seed-digest "$user" "$database" "${pg[@]}") ||
   fall_back "could not read the restored rows"
 [[ $rows == "$(cat "$RECORD/preseed")" ]] ||
   fall_back "the restored rows are not the ones the dump was made from"
+
+# A migration that writes outside Postgres is in the dump only as applied, so
+# the boot's migrate does not run it again. Each such effect is made here,
+# before anything that needs it starts. The list, and why the others need
+# nothing: OutsideTest in futureagi/.ci/test_e2e_db.py.
+case $STACK in
+  distributed)
+    # tracer 0093 registers the eval-task search attributes in Temporal.
+    # Without them every eval-task workflow hangs. The stack's own command;
+    # `compose run` starts Temporal (and Redis) on the restored Postgres, as
+    # the boot does. Temporal adds its namespace a little after it starts.
+    registered=false
+    for try in {1..12}; do
+      if bin/e2e compose run --rm -T --entrypoint python postgres-schema-bootstrap \
+        manage.py register_eval_task_search_attributes > /dev/null 2>&1; then
+        registered=true
+        break
+      fi
+      [[ $try == 12 ]] || sleep 10
+    done
+    $registered || fall_back "the Temporal search attributes were not registered"
+    ;;
+  standalone) ;; # its bootstrap registers them on every start
+  *) fall_back "no stack was named" ;;
+esac
 say restored
