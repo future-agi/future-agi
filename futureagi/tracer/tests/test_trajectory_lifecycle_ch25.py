@@ -701,15 +701,27 @@ def test_gc_refuses_a_distributed_facade():
 def test_reuse_cap_matches_collector_constant():
     """GC's margin rests on the collector's reuse cap.
 
-    Once the bounded seen store defines MaxReuseAgeCap, it must equal the
-    Python constant. Until then no collector writes the contract key, so GC
-    can never delete: that is what this test pins in the meantime.
+    Once the bounded seen store defines its cap (SeenMaxReuseAge in
+    fi-collector/pkg/trajectory), it must equal the Python constant, and the
+    collector must use the same epoch and contract keys. Until then no
+    collector writes the contract key, so GC can never delete: that is what
+    this test pins in the meantime.
     """
     assert GC_MARGIN == MAX_REUSE_AGE_CAP + IN_FLIGHT_MARGIN == timedelta(hours=72)
-    config = (REPO_ROOT / "fi-collector/pkg/trajectory/config.go").read_text()
-    match = re.search(r"MaxReuseAgeCap\s*=\s*(\d+)\s*\*\s*time\.Hour", config)
+    package = REPO_ROOT / "fi-collector/pkg/trajectory"
+    source = "\n".join(
+        p.read_text()
+        for p in sorted(package.glob("*.go"))
+        if not p.name.endswith("_test.go")
+    )
+    match = re.search(
+        r"\b(?:SeenMaxReuseAge|MaxReuseAgeCap)\s*=\s*(\d+)\s*\*\s*time\.Hour", source
+    )
     if match:
         assert timedelta(hours=int(match.group(1))) == MAX_REUSE_AGE_CAP
+        assert f'"{CONTRACT_KEY}"' in source
+        assert f'"{EPOCH_KEY}"' in source
+        assert '"traj:seen:v2:"' in source
         return
     go_sources = (REPO_ROOT / "fi-collector").rglob("*.go")
     assert not any(CONTRACT_KEY in p.read_text(errors="ignore") for p in go_sources)

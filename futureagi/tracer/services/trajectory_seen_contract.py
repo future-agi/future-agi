@@ -28,7 +28,7 @@ import uuid
 from collections.abc import Iterable
 from datetime import timedelta
 
-# Largest reuse age the collector accepts (Go: trajectory.MaxReuseAgeCap).
+# Largest reuse age the collector accepts (Go: trajectory.SeenMaxReuseAge).
 MAX_REUSE_AGE_CAP = timedelta(hours=48)
 # Allowance for a request that read the seen store and wrote its span later.
 IN_FLIGHT_MARGIN = timedelta(hours=24)
