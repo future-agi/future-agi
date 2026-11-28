@@ -377,6 +377,21 @@ def test_client_frames_are_not_relayed_to_subscribers():
     asyncio.run(run())
 
 
+def test_deleted_sole_membership_disables_legacy_fk_on_connect_and_revalidation(user):
+    from sockets.org_scope import membership_organization
+
+    assert membership_organization(user) == user.organization
+    assert organization_membership_is_active(user.pk, user.organization_id)
+    rows = OrganizationMembership.no_workspace_objects.filter(user=user)
+    assert rows.update(deleted=True) == 1
+    # Retaining both the user FK and the membership's active flag does not
+    # make this account legacy: a deleted membership records removal.
+    assert (
+        membership_organization(user),
+        organization_membership_is_active(user.pk, user.organization_id),
+    ) == (None, False)
+
+
 def _membership_state(state):
     org, _, workspace, _ = create_organization()
     member = create_member(org, workspace)
