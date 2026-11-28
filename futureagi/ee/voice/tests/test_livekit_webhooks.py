@@ -1,18 +1,23 @@
 """
-Unit tests for LiveKit webhook handler (LiveKitWebhookView).
+Tests for the LiveKit webhook handler (LiveKitWebhookView).
 
 Tests the webhook endpoint at POST /simulate/api/livekit/webhook/
 which processes lifecycle events from the LiveKit server.
 
-Run with: pytest simulate/tests/test_livekit_webhooks.py -v
+Run with: pytest ee/voice/tests/test_livekit_webhooks.py -v
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 import pytest
+from asgiref.sync import async_to_sync
+from django.db import connection
 
+from accounts.models import Organization
+from simulate.models import CallExecution, RunTest, Scenarios
+from simulate.models import TestExecution as SimulationExecution
 from simulate.views.livekit_api import (
     _extract_call_id,
     _handle_egress_ended,
@@ -213,28 +218,38 @@ class TestHandleRoomFinished:
 # ============================================================================
 
 
+def _make_recording_call(organization, provider_data):
+    run = RunTest.objects.create(name="Recording", organization=organization)
+    scenario = Scenarios.objects.create(
+        name="Recording", source="webhook", organization=organization
+    )
+    return CallExecution.objects.create(
+        test_execution=SimulationExecution.objects.create(run_test=run),
+        scenario=scenario,
+        provider_call_data=provider_data,
+    )
+
+
 class TestHandleEgressEnded:
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_stores_recording_files(self):
-        call_id = str(uuid4())
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("initial", [None, {"vapi": {"id": "existing"}}])
+    def test_stores_recording_files(self, organization, initial):
+        target = _make_recording_call(organization, initial)
         event = _make_egress_event(
-            f"call_{call_id}",
+            f"call_{target.pk}",
             egress_id="eg-456",
-            filenames=["stereo.mp3", "agent.mp3"],
+            filenames=["stereo.mp3", "", "agent.mp3"],
         )
+        async_to_sync(_handle_egress_ended)(event)
 
-        config = {"provider_call_data": {"livekit": {"room_name": f"call_{call_id}"}}}
-        with patch("simulate.views.livekit_api.CallExecutionRepository") as mock_repo:
-            mock_repo.get_call_config = AsyncMock(return_value=config)
-            mock_repo.update_lifecycle = AsyncMock(return_value=True)
-            await _handle_egress_ended(event)
-
-        mock_repo.update_lifecycle.assert_awaited_once()
-        kwargs = mock_repo.update_lifecycle.call_args[1]
-        pcd = kwargs["provider_call_data"]
-        assert pcd["livekit"]["recording_files"] == ["stereo.mp3", "agent.mp3"]
-        assert pcd["livekit"]["egress_id"] == "eg-456"
+        target.refresh_from_db()
+        assert target.provider_call_data == {
+            **(initial or {}),
+            "livekit": {
+                "egress_id": "eg-456",
+                "recording_files": ["stereo.mp3", "agent.mp3"],
+            },
+        }
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -243,10 +258,9 @@ class TestHandleEgressEnded:
         event.egress_info = None
 
         with patch("simulate.views.livekit_api.CallExecutionRepository") as mock_repo:
-            mock_repo.get_call_config = AsyncMock()
             await _handle_egress_ended(event)
 
-        mock_repo.get_call_config.assert_not_awaited()
+        assert not mock_repo.mock_calls
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -254,48 +268,74 @@ class TestHandleEgressEnded:
         event = _make_egress_event("random_room")
 
         with patch("simulate.views.livekit_api.CallExecutionRepository") as mock_repo:
-            mock_repo.get_call_config = AsyncMock()
             mock_repo.get_call_id_by_room_name = AsyncMock(return_value=None)
             await _handle_egress_ended(event)
 
-        mock_repo.get_call_config.assert_not_awaited()
+        assert mock_repo.mock_calls == [call.get_call_id_by_room_name("random_room")]
 
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_skips_when_call_not_found(self):
-        call_id = str(uuid4())
+    @pytest.mark.django_db
+    def test_skips_when_call_not_found(self):
+        call_id = uuid4()
         event = _make_egress_event(f"call_{call_id}")
+        with patch("simulate.views.livekit_api.logger") as logger:
+            async_to_sync(_handle_egress_ended)(event)
 
-        with patch("simulate.views.livekit_api.CallExecutionRepository") as mock_repo:
-            mock_repo.get_call_config = AsyncMock(return_value=None)
-            mock_repo.update_lifecycle = AsyncMock()
-            await _handle_egress_ended(event)
+        assert not CallExecution.objects.filter(pk=call_id).exists()
+        logger.info.assert_not_called()
 
-        mock_repo.update_lifecycle.assert_not_awaited()
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_preserves_existing_provider_data(self):
-        """Egress data should merge into existing provider_call_data, not overwrite."""
-        call_id = str(uuid4())
-        event = _make_egress_event(f"call_{call_id}", filenames=["new.mp3"])
-
-        config = {
-            "provider_call_data": {
-                "livekit": {
-                    "room_name": f"call_{call_id}",
-                    "dispatch_id": "d-existing",
-                }
-            }
+    @pytest.mark.django_db(transaction=True)
+    def test_completed_split_survives_egress_write(self, organization):
+        initial = {
+            "livekit": {
+                "egress_id": "eg-123",
+                "recording_files": ["prior.ogg"],
+                "recording": {"stereo": "partial.mp3"},
+                "recording_error": {"tracks": ["assistant"]},
+            },
+            "vapi": {"id": "before"},
         }
-        with patch("simulate.views.livekit_api.CallExecutionRepository") as mock_repo:
-            mock_repo.get_call_config = AsyncMock(return_value=config)
-            mock_repo.update_lifecycle = AsyncMock(return_value=True)
-            await _handle_egress_ended(event)
+        target = _make_recording_call(organization, initial)
+        other = _make_recording_call(Organization.objects.create(name="Other"), initial)
+        source = {"call_id": str(target.pk), "egress_id": "eg-123"}
+        tracks = {
+            k: f"call-recordings/{target.pk}/{k}.mp3"
+            for k in ("stereo", "assistant", "customer", "combined")
+        }
+        completed = {
+            "livekit": {
+                "egress_id": source["egress_id"],
+                "recording_files": ["prior.ogg"],
+                "recording": tracks,
+                "recording_source": source,
+                "recording_cleanup_success": {**source, "recording": tracks},
+            },
+            "vapi": {"id": "after"},
+        }
+        event = _make_egress_event(f"call_{target.pk}", filenames=["raw.ogg"])
+        update_call = f'UPDATE "{CallExecution._meta.db_table}"'
+        split_committed = False
 
-        kwargs = mock_repo.update_lifecycle.call_args[1]
-        lk = kwargs["provider_call_data"]["livekit"]
-        # Old key preserved
-        assert lk["dispatch_id"] == "d-existing"
-        # New keys added
-        assert lk["recording_files"] == ["new.mp3"]
+        def finish_split_before_write(execute, sql, params, many, context):
+            nonlocal split_committed
+            if not split_committed and sql.startswith(update_call):
+                # Commit the split/cleanup result after any webhook reads but before
+                # its UPDATE executes. Neither writer nor its ORM result is mocked.
+                split_committed = True
+                CallExecution.objects.filter(pk=target.pk).update(
+                    provider_call_data=completed,
+                    status=CallExecution.CallStatus.COMPLETED,
+                )
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(finish_split_before_write):
+            async_to_sync(_handle_egress_ended)(event)
+
+        target.refresh_from_db()
+        other.refresh_from_db()
+        assert split_committed
+        assert target.provider_call_data == {
+            **completed,
+            "livekit": {**completed["livekit"], "recording_files": ["raw.ogg"]},
+        }
+        assert target.status == CallExecution.CallStatus.COMPLETED
+        assert other.provider_call_data == initial
