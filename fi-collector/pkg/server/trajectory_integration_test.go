@@ -312,7 +312,7 @@ func TestLiveTrajectoryStopButton(t *testing.T) {
 	body, input := liveTurn(t, pid, 2)
 	postTrajOTLP(t, srv, trajTestOID, pid, body)
 	srv.drainNow(context.Background())
-	got := observedLocalSQL(t, e.origin, db, "SELECT payload_encoding, input = "+sqlString(input)+" FROM spans WHERE project_id = '"+pid+"' ORDER BY span_id")
+	got := observedLocalSQL(t, e.origin, db, "SELECT payload_encoding, input = "+sqlString(input)+" FROM spans WHERE project_id = '"+pid+"' ORDER BY id")
 	if got != "items_v1\t0\ninline\t1" {
 		t.Fatalf("before/after the stop button: %q", got)
 	}
@@ -436,7 +436,7 @@ func runLiveTrajectoryCIStage(t *testing.T) {
 	}
 	for turn, input := range inputs {
 		spanID := fmt.Sprintf("%02x000000000000%02x", byte(turn), 0x22)
-		if got := observedLocalSQL(t, e.origin, baseDB, "SELECT input = "+sqlString(input)+" FROM spans WHERE span_id = '"+spanID+"'"); got != "1" {
+		if got := observedLocalSQL(t, e.origin, baseDB, "SELECT input = "+sqlString(input)+" FROM spans WHERE id = '"+spanID+"'"); got != "1" {
 			t.Fatalf("twin span %s lost its input: %q", spanID, got)
 		}
 	}
