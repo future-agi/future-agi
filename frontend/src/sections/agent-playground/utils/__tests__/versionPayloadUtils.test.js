@@ -119,6 +119,51 @@ describe("buildVersionPayload", () => {
     const result = buildVersionPayload(nodes, []);
     expect(result.nodes[0].config).toEqual({});
   });
+
+  it("sends the imported prompt's template_format (#2075)", () => {
+    const nodes = [
+      {
+        id: "p1",
+        type: "llm_prompt",
+        position: { x: 0, y: 0 },
+        data: {
+          label: "imported_prompt",
+          node_template_id: "tpl-prompt",
+          config: { prompt_template_id: "pt-1", prompt_version_id: null },
+          _initialConfig: {
+            prompt_template_id: "pt-1",
+            templateFormat: "jinja",
+            modelConfig: { model: "gpt-4", modelDetail: {} },
+            messages: [],
+          },
+        },
+      },
+    ];
+    const result = buildVersionPayload(nodes, []);
+    expect(result.nodes[0].prompt_template.template_format).toBe("jinja");
+  });
+
+  it("sends template_format from a saved node's prompt configuration", () => {
+    const nodes = [
+      {
+        id: "p1",
+        type: "llm_prompt",
+        position: { x: 0, y: 0 },
+        data: {
+          label: "saved_prompt",
+          config: {
+            modelConfig: { model: "gpt-4", modelDetail: {} },
+            messages: [],
+            payload: {
+              promptConfig: [{ configuration: { template_format: "jinja" } }],
+            },
+          },
+        },
+      },
+    ];
+    const result = buildVersionPayload(nodes, []);
+    expect(result.nodes[0].prompt_template.template_format).toBe("jinja");
+  });
 });
 
 // ---------------------------------------------------------------------------
