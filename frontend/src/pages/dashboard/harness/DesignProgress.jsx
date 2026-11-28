@@ -19,8 +19,7 @@ import {
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
 
-import { DesignDialog } from "./DesignForm";
-import { HostedAgentDialog, UseReleaseDialog } from "./ReleaseGallery";
+import { UseReleaseDialog } from "./ReleaseGallery";
 import {
   CONTINUABLE_DESIGN_CODES,
   DESIGN_STEPS,
@@ -36,8 +35,8 @@ const GLYPHS = {
   pending: { icon: "solar:record-circle-linear", color: "text.secondary" },
 };
 
-// A design job (environment-releases.md §7.9): the builder's steps, then what the sealed
-// environment offers, or Continue for a design that stopped waiting for an answer.
+// A design job (environment-releases.md §7.9): the builder's steps, what was sealed and
+// using it with your agent, or Continue for a design that stopped waiting for an answer.
 export default function DesignProgress({ job, conversation, stage, failure }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -57,7 +56,7 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
   const sealed = releases.find(
     (one) => one.digest === result?.environment?.digest,
   );
-  const [dialog, setDialog] = useState("");
+  const [using, setUsing] = useState(false);
   const [continuing, setContinuing] = useState(false);
   const [error, setError] = useState("");
   const [idempotencyKey] = useState(harnessIdempotencyKey);
@@ -138,37 +137,18 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
             {result.suite.scenarios} scenarios ·{" "}
             {shortDigest(result.environment.digest)}
           </Typography>
-          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+          {/* The one way to test your own agent on a sealed design from here. */}
+          <Box>
             <Button
               size="small"
               variant="contained"
               disabled={!sealed}
-              onClick={() => setDialog("use")}
+              onClick={() => setUsing(true)}
               startIcon={<Iconify icon="solar:link-circle-linear" width={16} />}
             >
               Use with my agent
             </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={!sealed}
-              onClick={() => setDialog("hosted")}
-              startIcon={<Iconify icon="solar:cpu-bolt-linear" width={16} />}
-            >
-              Run our agent
-            </Button>
-            <Button
-              size="small"
-              color="inherit"
-              disabled={!sealed}
-              onClick={() => setDialog("customize")}
-              startIcon={
-                <Iconify icon="solar:pen-new-square-linear" width={16} />
-              }
-            >
-              Customize again
-            </Button>
-          </Stack>
+          </Box>
         </Stack>
       )}
       {continuable && (
@@ -197,23 +177,17 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
           </Box>
         </Stack>
       )}
+      {sealed && using && (
+        <UseReleaseDialog
+          open
+          release={sealed}
+          onClose={() => setUsing(false)}
+        />
+      )}
       {error && (
         <Alert severity="error" variant="outlined" sx={{ mt: 1 }}>
           {error}
         </Alert>
-      )}
-      {sealed && dialog === "use" && (
-        <UseReleaseDialog open release={sealed} onClose={() => setDialog("")} />
-      )}
-      {sealed && dialog === "hosted" && (
-        <HostedAgentDialog
-          open
-          release={sealed}
-          onClose={() => setDialog("")}
-        />
-      )}
-      {sealed && dialog === "customize" && (
-        <DesignDialog open template={sealed} onClose={() => setDialog("")} />
       )}
     </Box>
   );
