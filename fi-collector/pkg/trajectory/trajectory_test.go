@@ -310,43 +310,52 @@ func TestSeenStoreTwoPodsSharedRedis(t *testing.T) {
 	podA := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
 	podB := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
 	ctx := context.Background()
+	tok1, tok2 := SeenCommitterToken("trace-turn-1"), SeenCommitterToken("trace-turn-2")
 
 	pid := "11111111-1111-4111-8111-111111111111"
 	turn1In := `{"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Step 1"}]}`
 	turn2In := `{"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Step 1"},{"role":"assistant","content":"Done 1"},{"role":"user","content":"Step 2"}]}`
 
 	ext1 := ExtractSpan(pid, "sess-shared", "trace-shared", turn1In, "", 128)
-	newA, reusedA, _ := podA.FilterNew(ctx, ext1.Items)
-	if len(newA) != 2 || reusedA != 0 {
-		t.Fatalf("podA turn1: got new=%d reused=%d, want 2/0", len(newA), reusedA)
+	resA := podA.Check(ctx, ext1.Items, tok1)
+	if resA.Count(SeenNew) != 2 || len(resA.Write()) != 2 {
+		t.Fatalf("podA turn1: got new=%d write=%d, want 2/2", resA.Count(SeenNew), len(resA.Write()))
 	}
+	podA.CommitChecked(ctx, resA, SeenStamp{Committer: tok1})
+	newA := resA.Write()
 
 	// Turn 2 lands on Pod B (completely cold local LRU!). Redis must prevent double-writing & double-billing.
 	ext2 := ExtractSpan(pid, "sess-shared", "trace-shared", turn2In, "", 128)
-	newB, reusedB, reusedBytesB := podB.FilterNew(ctx, ext2.Items)
-	if len(newB) != 2 || reusedB != 2 || reusedBytesB == 0 {
-		t.Fatalf("podB turn2: got new=%d reused=%d reusedBytes=%d, want 2/2/>0", len(newB), reusedB, reusedBytesB)
+	resB := podB.Check(ctx, ext2.Items, tok2)
+	if resB.Count(SeenNew) != 2 || resB.Count(SeenReuseOther) != 2 || resB.CreditedItemBytes() == 0 || len(resB.Write()) != 2 {
+		t.Fatalf("podB turn2: got new=%d reuse_other=%d credited=%d write=%d, want 2/2/>0/2",
+			resB.Count(SeenNew), resB.Count(SeenReuseOther), resB.CreditedItemBytes(), len(resB.Write()))
 	}
+	podB.CommitChecked(ctx, resB, SeenStamp{Committer: tok2})
 
 	// Verify Forget evicts from BOTH local LRU and shared Redis (for ClickHouse fallback).
 	podA.Forget(ctx, newA)
-	// Re-checking on Pod B should treat forgotten items as new again (after Pod B's own LRU cleared or fresh Pod C).
+	// A fresh Pod C treats the forgotten items as new again.
 	podC := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
-	newC, reusedC, _ := podC.FilterNew(ctx, ext1.Items)
-	if len(newC) != 2 || reusedC != 0 {
-		t.Fatalf("after Forget, podC got new=%d reused=%d, want 2/0", len(newC), reusedC)
+	if resC := podC.Check(ctx, ext1.Items, tok2); resC.Count(SeenNew) != 2 {
+		t.Fatalf("after Forget, podC got classes new=%d of %d, want 2", resC.Count(SeenNew), len(resC.Decisions))
 	}
 
-	// Verify fail-open when Redis is unavailable.
+	// Fail open when Redis is unavailable: every item is written again and,
+	// because the store epoch cannot be read, nothing is reused, not even what
+	// this pod committed itself while Redis was down.
 	mr.Close()
 	podD := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
-	newD1, reusedD1, _ := podD.FilterNew(ctx, ext1.Items)
-	if len(newD1) != 2 || reusedD1 != 0 {
-		t.Fatalf("redis down first call: got new=%d reused=%d, want 2/0", len(newD1), reusedD1)
+	resD1 := podD.Check(ctx, ext1.Items, tok1)
+	if resD1.Count(SeenNew) != 2 || !resD1.RedisFailed || !resD1.EpochUnknown {
+		t.Fatalf("redis down first call: new=%d redisFailed=%v epochUnknown=%v, want 2/true/true",
+			resD1.Count(SeenNew), resD1.RedisFailed, resD1.EpochUnknown)
 	}
-	newD2, reusedD2, _ := podD.FilterNew(ctx, ext1.Items)
-	if len(newD2) != 0 || reusedD2 != 2 {
-		t.Fatalf("redis down second call (local LRU): got new=%d reused=%d, want 0/2", len(newD2), reusedD2)
+	podD.CommitChecked(ctx, resD1, SeenStamp{Committer: tok1})
+	podD.nowFn = func() time.Time { return time.Now().Add(2 * time.Second) } // past the epoch retry
+	if resD2 := podD.Check(ctx, ext1.Items, tok2); resD2.Count(SeenNew) != 2 || len(resD2.Write()) != 2 {
+		t.Fatalf("redis down second call: new=%d write=%d, want 2/2 (no reuse without the epoch)",
+			resD2.Count(SeenNew), len(resD2.Write()))
 	}
 }
 
@@ -479,6 +488,37 @@ func TestSeenStoreTTLExpiryAndProjectInvalidation(t *testing.T) {
 	if len(newItems) != 1 || newItems[0].ProjectID != "p1" || reused != 1 {
 		t.Fatalf("after InvalidateProject: new=%+v reused=%d", newItems, reused)
 	}
+
+	// v2 classes (generation R = reuse age / 2 = 30m for sessions): a copy two
+	// generations old is a Refresh (written again, credited); four or more
+	// generations old it is New (billed).
+	ctx := context.Background()
+	turn := Item{ProjectID: "p3", ScopeID: "sess-9", ItemHash: "dddddddddddddddddddddddddddddddd", Content: "turn"}
+	store.Commit(ctx, []Item{turn}, SeenStamp{Committer: SeenCommitterToken("trace-1")})
+	if res := store.Check(ctx, []Item{turn}, SeenCommitterToken("trace-2")); res.Decisions[0].Class != SeenReuseOther {
+		t.Fatalf("same generation: class=%s, want reuse_other", res.Decisions[0].Class)
+	}
+	now = now.Add(time.Hour)
+	res := store.Check(ctx, []Item{turn}, SeenCommitterToken("trace-2"))
+	if res.Decisions[0].Class != SeenRefresh || !res.Decisions[0].Write || res.CreditedItemBytes() != int64(len(turn.Content)) || res.BilledItemBytes() != 0 {
+		t.Fatalf("two generations: class=%s write=%v credited=%d billed=%d, want refresh/true/%d/0",
+			res.Decisions[0].Class, res.Decisions[0].Write, res.CreditedItemBytes(), res.BilledItemBytes(), len(turn.Content))
+	}
+	now = now.Add(time.Hour)
+	res = store.Check(ctx, []Item{turn}, SeenCommitterToken("trace-2"))
+	if res.Decisions[0].Class != SeenNew || res.BilledItemBytes() != int64(len(turn.Content)) {
+		t.Fatalf("four generations: class=%s billed=%d, want new/%d", res.Decisions[0].Class, res.BilledItemBytes(), len(turn.Content))
+	}
+
+	// Invalidation is per project and repeatable: p3 keeps its entries when p1
+	// is invalidated again, and a recommitted p1 item is counted afresh.
+	store.Commit(ctx, []Item{turn, projItem}, SeenStamp{Committer: SeenCommitterToken("trace-1")})
+	if n := store.InvalidateProject("p1"); n != 1 {
+		t.Fatalf("second InvalidateProject(p1)=%d, want 1 (the recommitted item)", n)
+	}
+	if res := store.Check(ctx, []Item{turn, projItem}, SeenCommitterToken("trace-2")); res.Decisions[0].Class != SeenReuseOther || res.Decisions[1].Class != SeenNew {
+		t.Fatalf("after second invalidation: classes=%s,%s, want reuse_other,new", res.Decisions[0].Class, res.Decisions[1].Class)
+	}
 }
 
 func TestSeenStoreCheckNewIsReadOnlyUntilMarkCommitted(t *testing.T) {
@@ -489,31 +529,51 @@ func TestSeenStoreCheckNewIsReadOnlyUntilMarkCommitted(t *testing.T) {
 	podA := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
 	podB := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
 	ctx := context.Background()
+	tokA, tokB := SeenCommitterToken("trace-A"), SeenCommitterToken("trace-B")
 
 	items := []Item{
 		{ProjectID: "p1", ScopeID: "sess-1", ItemHash: "11111111111111111111111111111111", Content: "m1"},
 		{ProjectID: "p1", ScopeID: ProjectScopeID, ItemHash: "22222222222222222222222222222222", Content: "sys"},
 	}
-
-	// CheckNew on Pod A must NOT mark items seen locally or in Redis.
-	newA, reusedA, _ := podA.CheckNew(ctx, items)
-	if len(newA) != 2 || reusedA != 0 {
-		t.Fatalf("podA CheckNew: new=%d reused=%d, want 2/0", len(newA), reusedA)
+	seenKeys := func() []string {
+		var out []string
+		for _, k := range mr.Keys() {
+			if strings.HasPrefix(k, "traj:seen:") {
+				out = append(out, k)
+			}
+		}
+		return out
 	}
-	// Concurrent CheckNew on BOTH Pod A and Pod B still sees both items as new.
-	newA2, reusedA2, _ := podA.CheckNew(ctx, items)
+
+	// Check on Pod A must NOT mark items seen locally or in Redis.
+	resA := podA.Check(ctx, items, tokA)
+	if resA.Count(SeenNew) != 2 || len(resA.Write()) != 2 {
+		t.Fatalf("podA Check: new=%d write=%d, want 2/2", resA.Count(SeenNew), len(resA.Write()))
+	}
+	if keys := seenKeys(); len(keys) != 0 {
+		t.Fatalf("Check wrote seen keys: %v", keys)
+	}
+	// Concurrent checks on BOTH Pod A and Pod B (both APIs) still see both items as new.
+	resA2 := podA.Check(ctx, items, tokA)
+	resB := podB.Check(ctx, items, tokB)
 	newB, reusedB, _ := podB.CheckNew(ctx, items)
-	if len(newA2) != 2 || reusedA2 != 0 || len(newB) != 2 || reusedB != 0 {
-		t.Fatalf("before MarkCommitted: podA=(%d,%d) podB=(%d,%d), want (2,0) each",
-			len(newA2), reusedA2, len(newB), reusedB)
+	if resA2.Count(SeenNew) != 2 || resB.Count(SeenNew) != 2 || len(newB) != 2 || reusedB != 0 {
+		t.Fatalf("before commit: podA new=%d podB new=%d podB CheckNew=(%d,%d), want 2 each and (2,0)",
+			resA2.Count(SeenNew), resB.Count(SeenNew), len(newB), reusedB)
 	}
 
-	// Only AFTER MarkCommitted on Pod A do Pod A and Pod B see the items as reused.
-	podA.MarkCommitted(ctx, newA)
-	newA3, reusedA3, _ := podA.CheckNew(ctx, items)
-	newB2, reusedB2, _ := podB.CheckNew(ctx, items)
-	if len(newA3) != 0 || reusedA3 != 2 || len(newB2) != 0 || reusedB2 != 2 {
-		t.Fatalf("after MarkCommitted: podA=(%d,%d) podB=(%d,%d), want (0,2) each",
-			len(newA3), reusedA3, len(newB2), reusedB2)
+	// Only AFTER Pod A commits do Pod A and Pod B see the items as reused:
+	// credited to another billing key, billed again to Pod A's own.
+	podA.CommitChecked(ctx, resA, SeenStamp{Committer: tokA})
+	for name, pod := range map[string]*SeenStore{"podA": podA, "podB": podB} {
+		if other := pod.Check(ctx, items, tokB); other.Count(SeenReuseOther) != 2 || len(other.Write()) != 0 {
+			t.Fatalf("after commit, %s as B: reuse_other=%d write=%d, want 2/0", name, other.Count(SeenReuseOther), len(other.Write()))
+		}
+		if self := pod.Check(ctx, items, tokA); self.Count(SeenReuseSelf) != 2 || self.BilledItemBytes() != resA.BilledItemBytes() {
+			t.Fatalf("after commit, %s as A: reuse_self=%d billed=%d, want 2/%d", name, self.Count(SeenReuseSelf), self.BilledItemBytes(), resA.BilledItemBytes())
+		}
+		if newItems, reused, _ := pod.CheckNew(ctx, items); len(newItems) != 0 || reused != 2 {
+			t.Fatalf("after commit, %s CheckNew=(%d,%d), want (0,2)", name, len(newItems), reused)
+		}
 	}
 }

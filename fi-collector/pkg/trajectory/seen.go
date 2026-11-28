@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,27 @@ type Item struct {
 	ItemType  string // message | tool_call | tool_result | reasoning | tool_def | raw
 	Role      string
 	Content   string // verbatim original JSON
+	// Commit is how the seen store records the item once its trajectory_items
+	// insert has committed (MarkCommitted, MarkCommittedAt). It is not written
+	// to ClickHouse. Batch keeps the first occurrence of an item, and with it
+	// that occurrence's Commit. The zero value is a plain commit by
+	// SeenAnyCommitter.
+	Commit ItemCommit
+}
+
+// ItemCommit is the seen-store commit record an Item carries from the check
+// that classified it to the commit after its trajectory_items insert.
+// SeenCheck.CommitItems fills it in.
+type ItemCommit struct {
+	// Committer is SeenCommitterToken(billing key); "" means SeenAnyCommitter.
+	Committer string
+	// Refresh marks an item classed SeenRefresh: it is stored with "|r" so a
+	// re-poll by the same committer is classed SeenRefresh again.
+	Refresh bool
+	// Unbilled marks an item whose request's usage event is known to be a
+	// duplicate (its bytes are never billed). Such a commit records nothing,
+	// so the next request that sends the item is billed for it.
+	Unbilled bool
 }
 
 // Key uniquely identifies an item inside trajectory_items.
@@ -62,33 +84,36 @@ func (it Item) ToRow(now time.Time) map[string]any {
 // gen = floor(unix(persisted_at) / R) with R = max_reuse_age / 2, so a key
 // holds the items committed during one R-long generation. value is the
 // committer token (first 16 hex of sha1(billing key), or "*" for requests
-// without a single billing key), plus "|r" when the commit was a refresh and
-// "|u" when the committing request's usage event is known to be a duplicate
-// (its bytes were never billed). Each key expires at (gen+4)*R + 1h and no
-// read ever touches a TTL, so every entry has a hard age bound.
+// without a single billing key), plus "|r" when the commit was a refresh.
+// Every field is written with HSETNX, so the first committer of a generation
+// always wins. HSETNX and EXPIREAT run in one MULTI/EXEC, so each key expires
+// at (gen+4)*R + 1h and no read ever touches a TTL: every entry has a hard age
+// bound. A commit whose usage event is a known duplicate (unbilled) records
+// nothing.
 //
 // Classification of an item against the generations g (now) .. g-3:
 //
-//	ReuseOther  billed hit in g or g-1 by another committer or by "*": credited, not written
-//	ReuseSelf   billed hit in g or g-1 by the same committer: billed as new, not written
+//	ReuseOther  hit in g or g-1 by another committer or by "*": credited, not written
+//	ReuseSelf   hit in g or g-1 by the same committer: billed as new, not written
 //	            (so a re-poll of the same trace bills the same amount in either order)
-//	Refresh     billed hit only in g-2 or g-3: a fresh copy is written and credited;
+//	Refresh     hit only in g-2 or g-3: a fresh copy is written and credited;
 //	            a same-committer hit whose value carries "|r" is classed Refresh again
 //	            (credited, not rewritten), so a re-poll of a refresh bills the same
-//	New         no billed hit (missing, expired, or only "|u" hits); a Redis error is New
+//	New         no hit (missing or expired); a Redis error is New
 //
-// Every pointer-only span emitted at time t therefore references a copy whose
-// persisted_at is newer than t - max_reuse_age. The store epoch (Redis key
-// traj:epoch) lets an operator invalidate every pod's seen state at once after
-// a ClickHouse restore; legacy traj:seen:<project>:<scope> SETs are ignored.
+// A copy reused at time t was recorded in generation g-1 or later, so its
+// recorded commit time is newer than t - max_reuse_age. Callers pass the
+// persisted_at stamp of the copy (MarkCommittedAt) so the recorded time is the
+// stored one. The store epoch (Redis key traj:epoch) lets an operator
+// invalidate every pod's seen state at once after a ClickHouse restore; while
+// the epoch cannot be read nothing is reused. Legacy traj:seen:<project>:<scope>
+// SETs are ignored.
 
 const (
 	// SeenAnyCommitter is the committer token for requests without a single
 	// billing key (multi-trace requests) and for requests that are not billed
-	// on stored bytes (events-mode, unknown-mode or no usage emitter). Such
-	// requests commit their items right after the trajectory_items insert
-	// succeeds, independent of any usage XADD. A hit committed by "*" is always
-	// credited to the next request, and a "*" caller never gets ReuseSelf.
+	// on stored bytes. A hit committed by "*" is always credited to the next
+	// request, and a "*" caller never gets ReuseSelf.
 	SeenAnyCommitter = "*"
 
 	// SeenDefaultReuseAge is the default bound on how old a reused item copy may be.
@@ -102,26 +127,30 @@ const (
 	// pod-local and Redis seen state within seenEpochCacheTTL.
 	SeenEpochKey = "traj:epoch"
 
-	// SeenContractKey is written by collectors that run with dedup on. It tells
-	// the lifecycle GC that the v2 bounded-reuse contract is in force and what
-	// the reuse age is. It is written only by an explicit call, never as a side
-	// effect of a check or a commit.
+	// SeenContractKey is a HASH written by every collector that runs with the
+	// store active (SeenStore.Run): field = writer id, value = SeenContract
+	// JSON with the store's reuse age and the write time. Its presence tells
+	// the lifecycle GC that the v2 bounded-reuse contract is in force. The key
+	// expires SeenContractTTL after the last write; each writer refreshes its
+	// field every SeenContractRefresh, removes fields whose written_at is older
+	// than SeenContractTTL, and removes its own field on shutdown. It is never
+	// written as a side effect of a check or a commit.
 	SeenContractKey     = "traj:contract:v2"
 	SeenContractTTL     = 24 * time.Hour
 	SeenContractRefresh = time.Hour
 
-	// SeenDefaultRedisMaxBytes and SeenDefaultRedisMaxFraction cap the Redis
-	// memory the seen store may grow into. The seen store shares Redis with the
-	// billing usage stream and quota counters, so once Redis used_memory is above
-	// either limit the store stops writing (reads continue; the cost is only
-	// lost cross-pod dedup, never correctness).
-	SeenDefaultRedisMaxBytes    int64 = 256 << 20
-	SeenDefaultRedisMaxFraction       = 0.7
+	// SeenDefaultRedisMaxFraction caps the Redis memory the seen store may grow
+	// into, as a fraction of Redis maxmemory. The seen store shares Redis with
+	// the billing usage stream and quota counters, so once used_memory is above
+	// the limit the store stops writing (reads continue; the cost is only lost
+	// cross-pod dedup, never correctness). An absolute cap
+	// (SeenOptions.RedisMaxBytes) applies only when it is set explicitly,
+	// because used_memory counts the whole instance, not the seen keys.
+	SeenDefaultRedisMaxFraction = 0.7
 
 	seenKeyPrefix      = "traj:seen:v2:"
 	seenLegacyPrefix   = "traj:seen:"
 	seenFlagRefresh    = "r"
-	seenFlagUnbilled   = "u"
 	seenEpochCacheTTL  = 5 * time.Second
 	seenEpochRetry     = time.Second
 	seenMemProbeTTL    = 10 * time.Second
@@ -131,6 +160,7 @@ const (
 	seenScanCount      = 1000
 	seenLocalEpoch     = "local"
 	seenProbeProjectID = "__probe__"
+	seenContractVer    = 2
 )
 
 // SeenClass is the classification of one item by SeenStore.Check.
@@ -168,9 +198,6 @@ type SeenDecision struct {
 	Class SeenClass
 	// Write reports whether the item must be written to trajectory_items.
 	Write bool
-	// supersede marks a New item whose only recent hit was an unbilled ("|u")
-	// commit; committing it replaces that value.
-	supersede bool
 }
 
 // SeenCheck is the result of SeenStore.Check, one decision per input item in
@@ -180,18 +207,42 @@ type SeenCheck struct {
 	// RedisFailed reports that at least one Redis read failed and its items
 	// were classed New (fail open).
 	RedisFailed bool
-	// EpochUnknown reports that the store epoch could not be read after it had
-	// been known, so nothing was reused in this check.
+	// EpochUnknown reports that the store epoch could not be read, so nothing
+	// was reused in this check.
 	EpochUnknown bool
+	// committer is the normalized committer token the check classified for.
+	committer string
 }
 
 // Write returns the items that must be written to trajectory_items (New and
-// Refresh decisions that need a fresh copy), each once.
+// Refresh decisions that need a fresh copy), each once, as they were passed
+// to Check.
 func (c SeenCheck) Write() []Item {
 	out := make([]Item, 0, len(c.Decisions))
 	for _, d := range c.Decisions {
 		if d.Write {
 			out = append(out, d.Item)
+		}
+	}
+	return out
+}
+
+// CommitItems returns Write() with each item's Commit filled in for the
+// committer the check classified for (Refresh decisions carry Refresh). The
+// items can travel in a Batch and be committed with MarkCommittedAt once the
+// trajectory_items insert has committed. Set Commit.Unbilled on them before
+// that commit if the request's usage event turns out to be a duplicate.
+func (c SeenCheck) CommitItems() []Item {
+	committer := c.committer
+	if committer == "" {
+		committer = SeenAnyCommitter
+	}
+	out := make([]Item, 0, len(c.Decisions))
+	for _, d := range c.Decisions {
+		if d.Write {
+			it := d.Item
+			it.Commit = ItemCommit{Committer: committer, Refresh: d.Class == SeenRefresh}
+			out = append(out, it)
 		}
 	}
 	return out
@@ -238,7 +289,7 @@ type SeenStamp struct {
 	// items; it decides the generation. Zero means now.
 	At time.Time
 	// Unbilled marks a commit whose usage event is known to be a duplicate
-	// event_id (its bytes will not be billed). Later checks class such hits New.
+	// event_id (its bytes will not be billed). Nothing is recorded for it.
 	Unbilled bool
 }
 
@@ -262,25 +313,31 @@ type SeenOptions struct {
 	// ProjectMaxReuseAge overrides MaxReuseAge for the __project__ scope
 	// (0 -> MaxReuseAge; same clamp).
 	ProjectMaxReuseAge time.Duration
-	// RedisMaxBytes stops Redis writes while used_memory is above it
-	// (0 -> SeenDefaultRedisMaxBytes, negative disables).
+	// RedisMaxBytes, when positive, stops Redis writes while Redis used_memory
+	// (the whole instance) is above it. 0 or negative: no absolute cap.
 	RedisMaxBytes int64
 	// RedisMaxFraction stops Redis writes while used_memory is above this
-	// fraction of maxmemory (0 -> SeenDefaultRedisMaxFraction, negative disables).
+	// fraction of maxmemory (0 -> SeenDefaultRedisMaxFraction, negative
+	// disables). It has no effect while Redis has no maxmemory.
 	RedisMaxFraction float64
 	// MemoryProbe reports Redis used_memory and maxmemory. nil -> INFO memory.
 	// A probe error does not stop writes; it is counted and logged.
 	MemoryProbe func(ctx context.Context) (used, maxBytes int64, err error)
 	// Logger receives rate-limited trajectory_seen_* events (nil -> slog.Default()).
 	Logger *slog.Logger
+	// Now is the store clock (nil -> time.Now). It decides generations.
+	Now func() time.Time
+	// WriterID names this collector in SeenContractKey (empty -> host name).
+	WriterID string
 }
 
 // SeenStats are cumulative counters for health reporting.
 type SeenStats struct {
-	RedisErrors      uint64
-	BudgetSkips      uint64
-	MemProbeErrors   uint64
-	EpochUnavailable uint64
+	RedisErrors       uint64
+	BudgetSkips       uint64
+	MemProbeErrors    uint64
+	EpochUnavailable  uint64
+	InvalidCommitters uint64
 }
 
 type lruEntry struct {
@@ -300,6 +357,7 @@ type SeenStore struct {
 	rProject time.Duration // generation length for __project__
 	nowFn    func() time.Time
 	log      *slog.Logger
+	writerID string
 
 	memProbe func(ctx context.Context) (used, maxBytes int64, err error)
 	maxBytes int64
@@ -331,6 +389,7 @@ type SeenStore struct {
 	budgetSkips atomic.Uint64
 	probeErrs   atomic.Uint64
 	epochUnav   atomic.Uint64
+	badCommit   atomic.Uint64
 }
 
 // NewSeenStore keeps the original constructor. sessionTTL and projectTTL are
@@ -363,8 +422,8 @@ func NewSeenStoreWithOptions(rdb *redis.Client, opts SeenOptions) *SeenStore {
 		projAge = clampSeenReuseAge(opts.ProjectMaxReuseAge)
 	}
 	maxBytes := opts.RedisMaxBytes
-	if maxBytes == 0 {
-		maxBytes = SeenDefaultRedisMaxBytes
+	if maxBytes < 0 {
+		maxBytes = 0
 	}
 	maxFrac := opts.RedisMaxFraction
 	if maxFrac == 0 {
@@ -374,12 +433,21 @@ func NewSeenStoreWithOptions(rdb *redis.Client, opts SeenOptions) *SeenStore {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	nowFn := opts.Now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	writerID := strings.TrimSpace(opts.WriterID)
+	if writerID == "" {
+		writerID = defaultSeenWriterID()
+	}
 	s := &SeenStore{
 		rdb:       rdb,
 		rSession:  seenGenLength(sessAge),
 		rProject:  seenGenLength(projAge),
-		nowFn:     time.Now,
+		nowFn:     nowFn,
 		log:       logger,
+		writerID:  writerID,
 		memProbe:  opts.MemoryProbe,
 		maxBytes:  maxBytes,
 		maxFrac:   maxFrac,
@@ -394,6 +462,17 @@ func NewSeenStoreWithOptions(rdb *redis.Client, opts SeenOptions) *SeenStore {
 		s.memProbe = func(ctx context.Context) (int64, int64, error) { return redisInfoMemory(ctx, rdb) }
 	}
 	return s
+}
+
+func defaultSeenWriterID() string {
+	if h, err := os.Hostname(); err == nil && strings.TrimSpace(h) != "" {
+		return strings.TrimSpace(h)
+	}
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "collector-" + strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return "collector-" + hex.EncodeToString(b[:])
 }
 
 func clampSeenReuseAge(d time.Duration) time.Duration {
@@ -446,34 +525,38 @@ func seenExpireAt(gen int64, r time.Duration) time.Time {
 	return time.Unix((gen+4)*int64(r/time.Second), 0).Add(seenKeySlack)
 }
 
-func seenValue(committer string, refresh, unbilled bool) string {
-	v := committer
+func seenValue(committer string, refresh bool) string {
 	if refresh {
-		v += "|" + seenFlagRefresh
+		return committer + "|" + seenFlagRefresh
 	}
-	if unbilled {
-		v += "|" + seenFlagUnbilled
-	}
-	return v
+	return committer
 }
 
-func parseSeenValue(v string) (committer string, refresh, unbilled bool) {
+func parseSeenValue(v string) (committer string, refresh bool) {
 	parts := strings.Split(v, "|")
 	committer = parts[0]
 	for _, f := range parts[1:] {
-		switch f {
-		case seenFlagRefresh:
+		if f == seenFlagRefresh {
 			refresh = true
-		case seenFlagUnbilled:
-			unbilled = true
 		}
 	}
-	return committer, refresh, unbilled
+	return committer, refresh
 }
 
-func normalizeCommitter(c string) string {
+// normalizeCommitter maps "" to SeenAnyCommitter. A token that is not a
+// valid committer (it contains "|") is also treated as SeenAnyCommitter, so
+// that caller is always credited and never ReuseSelf; that is counted and
+// logged because it means the caller passed something other than
+// SeenCommitterToken output.
+func (s *SeenStore) normalizeCommitter(c string) string {
 	c = strings.TrimSpace(c)
-	if c == "" || strings.Contains(c, "|") {
+	if c == "" {
+		return SeenAnyCommitter
+	}
+	if strings.Contains(c, "|") {
+		s.badCommit.Add(1)
+		s.logRateLimited("committer", slog.LevelWarn, "trajectory_seen_invalid_committer",
+			"reason", "token contains '|'", "len", len(c))
 		return SeenAnyCommitter
 	}
 	return c
@@ -481,65 +564,53 @@ func normalizeCommitter(c string) string {
 
 // classifySeen classifies one item from its hits in the reuse window
 // (generations g, g-1) and the refresh window (g-2, g-3).
-func classifySeen(caller string, recent, older []string) (cl SeenClass, write, supersede bool) {
-	billedRecent := false
-	unbilledRecent := false
-	selfRefresh, selfPlain := false, false
-	for _, v := range recent {
-		c, refresh, unbilled := parseSeenValue(v)
-		if unbilled {
-			unbilledRecent = true
-			continue
-		}
-		billedRecent = true
-		if caller != SeenAnyCommitter && c == caller {
-			if refresh {
-				selfRefresh = true
-			} else {
-				selfPlain = true
+func classifySeen(caller string, recent, older []string) (cl SeenClass, write bool) {
+	if len(recent) > 0 {
+		selfRefresh, selfPlain := false, false
+		for _, v := range recent {
+			c, refresh := parseSeenValue(v)
+			if caller != SeenAnyCommitter && c == caller {
+				if refresh {
+					selfRefresh = true
+				} else {
+					selfPlain = true
+				}
 			}
 		}
-	}
-	if billedRecent {
 		switch {
 		case selfPlain:
-			return SeenReuseSelf, false, false
+			return SeenReuseSelf, false
 		case selfRefresh:
-			return SeenRefresh, false, false
+			return SeenRefresh, false
 		default:
-			return SeenReuseOther, false, false
+			return SeenReuseOther, false
 		}
 	}
-	if unbilledRecent {
-		return SeenNew, true, true
+	if len(older) > 0 {
+		return SeenRefresh, true
 	}
-	for _, v := range older {
-		if _, _, unbilled := parseSeenValue(v); !unbilled {
-			return SeenRefresh, true, false
-		}
-	}
-	return SeenNew, true, false
+	return SeenNew, true
 }
 
-// epochState returns the store epoch and whether Redis and the pod-local LRU
-// may be used for reuse right now.
-//   - rdb == nil: ("local", false, true).
-//   - epoch read (or cached for 5 s): (epoch, true, true).
-//   - never read and Redis unreachable: ("", false, true). The store behaves as
-//     LRU-only for items this pod committed while Redis was unreachable.
-//   - read before but unreadable now: ("", false, false). Nothing is reused.
-func (s *SeenStore) epochState(ctx context.Context) (epoch string, redisOK, lruOK bool) {
+// epochState returns the store epoch and whether seen state may be used for
+// reuse right now.
+//   - rdb == nil: ("local", true).
+//   - epoch read (or cached for 5 s): (epoch, true).
+//   - unreadable (never read since start, or not now): ("", false). Nothing is
+//     reused and nothing is recorded, as SS-1 requires: a pod that has not
+//     seen the current epoch cannot know whether its LRU is still valid.
+func (s *SeenStore) epochState(ctx context.Context) (epoch string, ok bool) {
 	if s.rdb == nil {
-		return seenLocalEpoch, false, true
+		return seenLocalEpoch, true
 	}
 	now := s.now()
 	s.epochMu.Lock()
 	defer s.epochMu.Unlock()
 	if s.epochKnown && !s.epochFailed && now.Sub(s.epochAt) < seenEpochCacheTTL && !now.Before(s.epochAt) {
-		return s.epoch, true, true
+		return s.epoch, true
 	}
 	if s.epochFailed && now.Sub(s.epochFailAt) < seenEpochRetry && !now.Before(s.epochFailAt) {
-		return "", false, !s.epochKnown
+		return "", false
 	}
 	rctx, cancel := context.WithTimeout(ctx, seenRedisTimeout)
 	defer cancel()
@@ -561,13 +632,13 @@ func (s *SeenStore) epochState(ctx context.Context) (epoch string, redisOK, lruO
 		s.redisErr.Add(1)
 		s.logRateLimited("epoch", slog.LevelWarn, "trajectory_seen_redis_error",
 			"op", "epoch", "err", err.Error(), "epoch_known", s.epochKnown)
-		return "", false, !s.epochKnown
+		return "", false
 	}
 	s.epoch = v
 	s.epochKnown = true
 	s.epochAt = now
 	s.epochFailed = false
-	return v, true, true
+	return v, true
 }
 
 func newSeenEpoch() string {
@@ -597,22 +668,25 @@ func (s *SeenStore) liveEntryLocked(k ItemKey, epoch string) (*list.Element, *lr
 
 // Check classifies items for a request whose committer token is committer.
 // It is read-only against the seen state: it never writes an item and never
-// touches a TTL (it may create the store epoch key once). Callers commit with
-// CommitChecked only after trajectory_items has durably committed.
+// touches a TTL (it may create the store epoch key once). Callers commit
+// (CommitChecked, or CommitItems + MarkCommittedAt) only after
+// trajectory_items has durably committed.
 func (s *SeenStore) Check(ctx context.Context, items []Item, committer string) SeenCheck {
-	res := SeenCheck{Decisions: make([]SeenDecision, len(items))}
+	res := SeenCheck{Decisions: make([]SeenDecision, len(items)), committer: SeenAnyCommitter}
 	if s == nil || len(items) == 0 {
 		for i, it := range items {
 			res.Decisions[i] = SeenDecision{Item: it, Class: SeenNew, Write: true}
 		}
 		return res
 	}
-	caller := normalizeCommitter(committer)
-	epoch, redisOK, lruOK := s.epochState(ctx)
-	if !lruOK {
+	caller := s.normalizeCommitter(committer)
+	res.committer = caller
+	epoch, ok := s.epochState(ctx)
+	if !ok {
 		res.EpochUnknown = true
+		res.RedisFailed = true
 	}
-	lruAuthoritative := s.rdb == nil || !redisOK
+	lruAuthoritative := s.rdb == nil
 	now := s.now()
 
 	inSlice := make(map[ItemKey]struct{}, len(items))
@@ -627,7 +701,7 @@ func (s *SeenStore) Check(ctx context.Context, items []Item, committer string) S
 			continue
 		}
 		inSlice[k] = struct{}{}
-		if !lruOK {
+		if !ok {
 			d.Class, d.Write = SeenNew, true
 			continue
 		}
@@ -635,15 +709,12 @@ func (s *SeenStore) Check(ctx context.Context, items []Item, committer string) S
 			g := seenGen(now, s.genLen(k.ScopeID))
 			switch {
 			case ent.gen >= g-1:
-				_, _, unbilled := parseSeenValue(ent.value)
-				if !unbilled || lruAuthoritative {
-					s.ll.MoveToFront(elem)
-					d.Class, d.Write, d.supersede = classifySeen(caller, []string{ent.value}, nil)
-					continue
-				}
+				s.ll.MoveToFront(elem)
+				d.Class, d.Write = classifySeen(caller, []string{ent.value}, nil)
+				continue
 			case ent.gen >= g-3 && lruAuthoritative:
 				s.ll.MoveToFront(elem)
-				d.Class, d.Write, d.supersede = classifySeen(caller, nil, []string{ent.value})
+				d.Class, d.Write = classifySeen(caller, nil, []string{ent.value})
 				continue
 			}
 		}
@@ -654,9 +725,6 @@ func (s *SeenStore) Check(ctx context.Context, items []Item, committer string) S
 		misses = append(misses, i)
 	}
 	s.mu.Unlock()
-	if s.rdb != nil && !redisOK && lruOK && len(items) > 0 {
-		res.RedisFailed = true
-	}
 	if len(misses) == 0 {
 		return res
 	}
@@ -739,7 +807,7 @@ func (s *SeenStore) Check(ctx context.Context, items []Item, committer string) S
 				}
 			}
 			d := &res.Decisions[i]
-			d.Class, d.Write, d.supersede = classifySeen(caller, recent, older)
+			d.Class, d.Write = classifySeen(caller, recent, older)
 			if hit {
 				// Warm the LRU with the generation the hit was committed in, never now.
 				s.mergeLocked(items[i].Key(), newestGen, newestVal, epoch, true)
@@ -751,54 +819,56 @@ func (s *SeenStore) Check(ctx context.Context, items []Item, committer string) S
 
 // CommitChecked records the Write decisions of check as committed by stamp.
 // Call it only after those items' trajectory_items insert has committed.
-// Refresh decisions are stored with the "|r" mark; New decisions that replace
-// an unbilled commit overwrite it.
+// Refresh decisions are stored with the "|r" mark.
 func (s *SeenStore) CommitChecked(ctx context.Context, check SeenCheck, stamp SeenStamp) {
 	if s == nil {
 		return
 	}
+	committer := s.normalizeCommitter(stamp.Committer)
 	cs := make([]seenCommit, 0, len(check.Decisions))
 	for _, d := range check.Decisions {
 		if d.Write {
-			cs = append(cs, seenCommit{item: d.Item, refresh: d.Class == SeenRefresh, supersede: d.supersede})
+			cs = append(cs, seenCommit{item: d.Item, committer: committer, refresh: d.Class == SeenRefresh, unbilled: stamp.Unbilled})
 		}
 	}
-	s.commit(ctx, cs, stamp)
+	s.commit(ctx, cs, stamp.At)
 }
 
-// Commit records items as committed by stamp (first committer wins). Use it
-// for items that were not classified by Check.
+// Commit records items as committed by stamp (first committer wins), ignoring
+// their Commit field. Use it for items that were not classified by Check.
 func (s *SeenStore) Commit(ctx context.Context, items []Item, stamp SeenStamp) {
 	if s == nil {
 		return
 	}
+	committer := s.normalizeCommitter(stamp.Committer)
 	cs := make([]seenCommit, len(items))
 	for i, it := range items {
-		cs[i] = seenCommit{item: it}
+		cs[i] = seenCommit{item: it, committer: committer, unbilled: stamp.Unbilled}
 	}
-	s.commit(ctx, cs, stamp)
+	s.commit(ctx, cs, stamp.At)
 }
 
 type seenCommit struct {
 	item      Item
+	committer string
 	refresh   bool
-	supersede bool
+	unbilled  bool
 }
 
-func (s *SeenStore) commit(ctx context.Context, cs []seenCommit, stamp SeenStamp) {
+func (s *SeenStore) commit(ctx context.Context, cs []seenCommit, at time.Time) {
 	if len(cs) == 0 {
 		return
 	}
-	committer := normalizeCommitter(stamp.Committer)
-	at := stamp.At
 	if at.IsZero() {
 		at = s.now()
 	}
-	epoch, redisOK, _ := s.epochState(ctx)
-
 	seenInCall := make(map[ItemKey]struct{}, len(cs))
 	uniq := cs[:0:0]
 	for _, c := range cs {
+		if c.unbilled {
+			// Never credited to a later request: record nothing.
+			continue
+		}
 		k := c.item.Key()
 		if _, dup := seenInCall[k]; dup {
 			continue
@@ -806,28 +876,33 @@ func (s *SeenStore) commit(ctx context.Context, cs []seenCommit, stamp SeenStamp
 		seenInCall[k] = struct{}{}
 		uniq = append(uniq, c)
 	}
+	if len(uniq) == 0 {
+		return
+	}
+	epoch, ok := s.epochState(ctx)
+	if !ok {
+		// Without the epoch nothing recorded now could be trusted later.
+		return
+	}
 	values := make([]string, len(uniq))
 	gens := make([]int64, len(uniq))
 	for i, c := range uniq {
-		values[i] = seenValue(committer, c.refresh, stamp.Unbilled)
+		values[i] = seenValue(c.committer, c.refresh)
 		gens[i] = seenGen(at, s.genLen(c.item.ScopeID))
 	}
 	winners := append([]string(nil), values...)
 	fromRedis := false
 
-	if redisOK && s.redisWritable(ctx) {
+	if s.rdb != nil && s.redisWritable(ctx) {
 		rctx, cancel := context.WithTimeout(ctx, seenRedisTimeout)
 		defer cancel()
-		pipe := s.rdb.Pipeline()
+		// MULTI/EXEC: a key never exists without its EXPIREAT.
+		pipe := s.rdb.TxPipeline()
 		gets := make([]*redis.StringCmd, len(uniq))
 		expired := make(map[string]struct{})
 		for i, c := range uniq {
 			key := SeenKey(c.item.ProjectID, epoch, c.item.ScopeID, gens[i])
-			if c.supersede {
-				pipe.HSet(rctx, key, c.item.ItemHash, values[i])
-			} else {
-				pipe.HSetNX(rctx, key, c.item.ItemHash, values[i])
-			}
+			pipe.HSetNX(rctx, key, c.item.ItemHash, values[i])
 			gets[i] = pipe.HGet(rctx, key, c.item.ItemHash)
 			if _, done := expired[key]; !done {
 				expired[key] = struct{}{}
@@ -847,18 +922,16 @@ func (s *SeenStore) commit(ctx context.Context, cs []seenCommit, stamp SeenStamp
 		}
 	}
 
-	lruEpoch := epoch
 	s.mu.Lock()
 	for i, c := range uniq {
-		s.mergeLocked(c.item.Key(), gens[i], winners[i], lruEpoch, fromRedis || c.supersede)
+		s.mergeLocked(c.item.Key(), gens[i], winners[i], epoch, fromRedis)
 	}
 	s.mu.Unlock()
 }
 
 // mergeLocked records a commit of k in generation gen. A newer generation
 // replaces the entry; within the same generation the first committer wins
-// unless authoritative (the value came from Redis, or replaces an unbilled
-// commit) or the existing value is unbilled and the new one is not.
+// unless the value is authoritative (it came from Redis).
 func (s *SeenStore) mergeLocked(k ItemKey, gen int64, value, storeEpoch string, authoritative bool) {
 	pe := s.projEpoch[k.ProjectID]
 	if elem, ok := s.entries[k]; ok {
@@ -874,12 +947,8 @@ func (s *SeenStore) mergeLocked(k ItemKey, gen int64, value, storeEpoch string, 
 		switch {
 		case gen > ent.gen:
 			ent.gen, ent.value = gen, value
-		case gen == ent.gen:
-			_, _, oldUnbilled := parseSeenValue(ent.value)
-			_, _, newUnbilled := parseSeenValue(value)
-			if authoritative || (oldUnbilled && !newUnbilled) {
-				ent.value = value
-			}
+		case gen == ent.gen && authoritative:
+			ent.value = value
 		}
 		s.ll.MoveToFront(elem)
 		return
@@ -909,7 +978,7 @@ func (s *SeenStore) removeLocked(elem *list.Element) {
 // redisWritable reports whether Redis memory is under the seen-store budget.
 // The answer is cached for seenMemProbeTTL. A probe error allows writes.
 func (s *SeenStore) redisWritable(ctx context.Context) bool {
-	if s.memProbe == nil || (s.maxBytes < 0 && s.maxFrac < 0) {
+	if s.memProbe == nil || (s.maxBytes <= 0 && s.maxFrac < 0) {
 		return true
 	}
 	now := s.now()
@@ -998,6 +1067,9 @@ func (s *SeenStore) logRateLimited(kind string, level slog.Level, msg string, ar
 // InvalidateProject drops every pod-local entry of projectID in O(1) by
 // bumping the project's epoch; stale entries are replaced lazily. It returns
 // how many entries were invalidated. Wired to Redis `fi:project:invalidate`.
+// It does not touch Redis: while the project's Redis keys exist, a later
+// check reads them again. Erasure must also remove those keys
+// (EraseProjectSeenKeys).
 func (s *SeenStore) InvalidateProject(projectID string) int {
 	if s == nil || projectID == "" {
 		return 0
@@ -1013,19 +1085,20 @@ func (s *SeenStore) InvalidateProject(projectID string) int {
 // RedisErrors returns the cumulative number of Redis fail-open events.
 func (s *SeenStore) RedisErrors() uint64 { return s.redisErr.Load() }
 
-// Stats returns cumulative counters for health reporting.
+// Stats returns cumulative counters for health reporting. Run logs them.
 func (s *SeenStore) Stats() SeenStats {
 	return SeenStats{
-		RedisErrors:      s.redisErr.Load(),
-		BudgetSkips:      s.budgetSkips.Load(),
-		MemProbeErrors:   s.probeErrs.Load(),
-		EpochUnavailable: s.epochUnav.Load(),
+		RedisErrors:       s.redisErr.Load(),
+		BudgetSkips:       s.budgetSkips.Load(),
+		MemProbeErrors:    s.probeErrs.Load(),
+		EpochUnavailable:  s.epochUnav.Load(),
+		InvalidCommitters: s.badCommit.Load(),
 	}
 }
 
 // CheckNew is the original read-only check, kept for existing callers. It
 // classifies with SeenAnyCommitter: newItems are the items to write (New and
-// Refresh), everything else is reported as reused.
+// Refresh), as passed in, and everything else is reported as reused.
 func (s *SeenStore) CheckNew(ctx context.Context, items []Item) (newItems []Item, reusedCount int, reusedBytes int64) {
 	if len(items) == 0 {
 		return nil, 0, 0
@@ -1042,14 +1115,32 @@ func (s *SeenStore) CheckNew(ctx context.Context, items []Item) (newItems []Item
 	return newItems, reusedCount, reusedBytes
 }
 
-// MarkCommitted is the original commit, kept for existing callers: it commits
-// items as SeenAnyCommitter stamped now. Call it only after the
-// trajectory_items insert has committed.
+// MarkCommitted commits items stamped now, each as its Commit field says
+// (zero Commit: a plain commit by SeenAnyCommitter). Call it only after the
+// trajectory_items insert has committed. Prefer MarkCommittedAt with the
+// persisted_at stamp of the insert.
 func (s *SeenStore) MarkCommitted(ctx context.Context, items []Item) {
+	s.MarkCommittedAt(ctx, items, time.Time{})
+}
+
+// MarkCommittedAt commits items as each one's Commit field says, in the
+// generation of at, the persisted_at stamp the trajectory_items insert wrote
+// (zero: now). Call it only after that insert has committed. Items that come
+// from a Batch keep the Commit of their first occurrence.
+func (s *SeenStore) MarkCommittedAt(ctx context.Context, items []Item, at time.Time) {
 	if s == nil || len(items) == 0 {
 		return
 	}
-	s.Commit(ctx, items, SeenStamp{Committer: SeenAnyCommitter})
+	cs := make([]seenCommit, len(items))
+	for i, it := range items {
+		cs[i] = seenCommit{
+			item:      it,
+			committer: s.normalizeCommitter(it.Commit.Committer),
+			refresh:   it.Commit.Refresh,
+			unbilled:  it.Commit.Unbilled,
+		}
+	}
+	s.commit(ctx, cs, at)
 }
 
 // FilterNew runs CheckNew followed by MarkCommitted for single-step callers
@@ -1065,7 +1156,9 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 
 // Forget removes items from the pod-local LRU and, best effort, from every
 // generation still read in Redis, so that a failed trajectory_items write
-// that fell back to inline makes later turns write the items again.
+// that fell back to inline makes later turns write the items again. Other
+// pods' LRU entries are not reached: they keep reusing until their entry
+// leaves the reuse window, an epoch change or an invalidation.
 func (s *SeenStore) Forget(ctx context.Context, items []Item) {
 	if s == nil || len(items) == 0 {
 		return
@@ -1081,8 +1174,8 @@ func (s *SeenStore) Forget(ctx context.Context, items []Item) {
 	if s.rdb == nil {
 		return
 	}
-	epoch, redisOK, _ := s.epochState(ctx)
-	if !redisOK {
+	epoch, ok := s.epochState(ctx)
+	if !ok {
 		return
 	}
 	now := s.now()
@@ -1112,7 +1205,7 @@ func (s *SeenStore) Forget(ctx context.Context, items []Item) {
 }
 
 // StartupCheck pings Redis and runs one HMGET against the v2 layout, logging
-// a WARN when either fails. It never changes seen state.
+// a WARN when either fails. It never changes seen state. Run calls it.
 func (s *SeenStore) StartupCheck(ctx context.Context) error {
 	if s == nil || s.rdb == nil {
 		return nil
@@ -1124,7 +1217,7 @@ func (s *SeenStore) StartupCheck(ctx context.Context) error {
 		err = s.rdb.HMGet(rctx, SeenKey(seenProbeProjectID, seenLocalEpoch, ProjectScopeID, 0), "probe").Err()
 	}
 	if err != nil {
-		s.log.Warn("trajectory seen store Redis check failed; items will be written again until Redis answers",
+		s.log.Warn("trajectory seen store Redis check failed; nothing is reused until Redis answers",
 			"event", "trajectory_seen_redis_unavailable", "err", err.Error())
 	}
 	return err
@@ -1205,24 +1298,35 @@ func (s *SeenStore) EraseProject(ctx context.Context, projectID string) (int, er
 	return EraseProjectSeenKeys(ctx, s.rdb, projectID)
 }
 
-// SeenContract is the value of SeenContractKey.
+// SeenContract is the value of one writer's field in SeenContractKey.
 type SeenContract struct {
-	Version            int   `json:"v"`
+	Version int `json:"v"`
+	// Writer is the collector that wrote this field (also the field name).
+	Writer string `json:"writer"`
+	// WrittenAt is when the field was last written (unix seconds).
+	WrittenAt int64 `json:"written_at"`
+	// MaxReuseAgeSeconds is the largest reuse age the writer's store enforces
+	// on any scope (SeenStore.MaxReuseAge).
 	MaxReuseAgeSeconds int64 `json:"max_reuse_age_s"`
 	// KeyLifetimeSeconds is the longest a seen entry can stay readable after
 	// its commit: 4 generations plus slack (2 * max_reuse_age + 1h).
 	KeyLifetimeSeconds int64 `json:"key_lifetime_s"`
 }
 
-// WriteSeenContract sets SeenContractKey (EX SeenContractTTL) for a collector
-// running with dedup on and reuse age maxReuseAge.
-func WriteSeenContract(ctx context.Context, rdb *redis.Client, maxReuseAge time.Duration) error {
-	if rdb == nil {
+// WriteContract writes this collector's field of SeenContractKey with the
+// store's own reuse age, refreshes the key's TTL, and removes fields whose
+// written_at is older than SeenContractTTL (collectors that stopped without
+// removing theirs).
+func (s *SeenStore) WriteContract(ctx context.Context) error {
+	if s == nil || s.rdb == nil {
 		return errors.New("trajectory: no Redis client for the seen contract key")
 	}
-	age := clampSeenReuseAge(maxReuseAge)
+	age := s.MaxReuseAge()
+	now := s.now()
 	body, err := json.Marshal(SeenContract{
-		Version:            2,
+		Version:            seenContractVer,
+		Writer:             s.writerID,
+		WrittenAt:          now.Unix(),
 		MaxReuseAgeSeconds: int64(age / time.Second),
 		KeyLifetimeSeconds: int64((2*age + seenKeySlack) / time.Second),
 	})
@@ -1231,19 +1335,44 @@ func WriteSeenContract(ctx context.Context, rdb *redis.Client, maxReuseAge time.
 	}
 	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	return rdb.Set(rctx, SeenContractKey, string(body), SeenContractTTL).Err()
+	pipe := s.rdb.TxPipeline()
+	pipe.HSet(rctx, SeenContractKey, s.writerID, string(body))
+	pipe.Expire(rctx, SeenContractKey, SeenContractTTL)
+	all := pipe.HGetAll(rctx, SeenContractKey)
+	if _, err := pipe.Exec(rctx); err != nil {
+		return err
+	}
+	var stale []string
+	for field, raw := range all.Val() {
+		var c SeenContract
+		if json.Unmarshal([]byte(raw), &c) != nil || now.Sub(time.Unix(c.WrittenAt, 0)) > SeenContractTTL {
+			stale = append(stale, field)
+		}
+	}
+	if len(stale) > 0 {
+		return s.rdb.HDel(rctx, SeenContractKey, stale...).Err()
+	}
+	return nil
 }
 
-// RunSeenContractKeeper writes the contract key now and every interval
-// (0 -> SeenContractRefresh) until ctx ends. Start it only when dedup is on.
-func RunSeenContractKeeper(ctx context.Context, rdb *redis.Client, maxReuseAge, interval time.Duration, log *slog.Logger) {
-	if interval <= 0 {
-		interval = SeenContractRefresh
+// Run does the store's background work until ctx ends: a startup Redis check
+// (a WARN when it fails), this collector's SeenContractKey field written at
+// once and every SeenContractRefresh (with Stats logged), and the field
+// removed on shutdown. It returns at once for an LRU-only store. The server
+// starts it only when the trajectory store is active.
+func (s *SeenStore) Run(ctx context.Context) {
+	s.run(ctx, SeenContractRefresh)
+}
+
+func (s *SeenStore) run(ctx context.Context, interval time.Duration) {
+	if s == nil || s.rdb == nil {
+		return
 	}
+	_ = s.StartupCheck(ctx)
 	write := func() {
-		if err := WriteSeenContract(ctx, rdb, maxReuseAge); err != nil && ctx.Err() == nil && log != nil {
-			log.Warn("trajectory seen contract key write failed",
-				"event", "trajectory_seen_redis_error", "op", "contract", "err", err.Error())
+		if err := s.WriteContract(ctx); err != nil && ctx.Err() == nil {
+			s.redisErr.Add(1)
+			s.logRateLimited("contract", slog.LevelWarn, "trajectory_seen_redis_error", "op", "contract", "err", err.Error())
 		}
 	}
 	write()
@@ -1252,9 +1381,17 @@ func RunSeenContractKeeper(ctx context.Context, rdb *redis.Client, maxReuseAge, 
 	for {
 		select {
 		case <-ctx.Done():
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = s.rdb.HDel(dctx, SeenContractKey, s.writerID).Err()
+			cancel()
 			return
 		case <-t.C:
 			write()
+			st := s.Stats()
+			s.log.Info("trajectory seen store stats", "event", "trajectory_seen_stats",
+				"redis_errors", st.RedisErrors, "budget_skips", st.BudgetSkips,
+				"mem_probe_errors", st.MemProbeErrors, "epoch_unavailable", st.EpochUnavailable,
+				"invalid_committers", st.InvalidCommitters)
 		}
 	}
 }

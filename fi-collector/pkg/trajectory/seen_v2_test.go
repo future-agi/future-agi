@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -416,7 +417,7 @@ func TestSeenEraseProjectClearsV2AndLegacyKeys(t *testing.T) {
 		t.Fatalf("EraseProject: %v", err)
 	}
 	if n != p1Keys+1 {
-		t.Fatalf("removed=%d, want %d v2 + 1 legacy", n, p1Keys)
+		t.Fatalf("removed=%d, want %d (%d v2 + 1 legacy)", n, p1Keys+1, p1Keys)
 	}
 	for _, k := range env.mr.Keys() {
 		if strings.Contains(k, seenV2Pid) {
@@ -440,58 +441,115 @@ func TestSeenEraseProjectClearsV2AndLegacyKeys(t *testing.T) {
 	}
 }
 
-// The contract key is written by an explicit call (EX 1d) with the reuse age,
-// refreshed by the keeper, and never written by a check or commit.
+// The contract key is a HASH with one field per collector: written by
+// Run/WriteContract (key EX 1d) with the store's own largest reuse age and the
+// write time, refreshed by the keeper, pruned of writers silent for over a
+// day, removed by the writer on shutdown, and never written by a check or a
+// commit.
 func TestCollectorWritesContractKey(t *testing.T) {
 	env := newSeenV2Env(t)
 	ctx := context.Background()
-	pod := env.pod()
+	pod := env.store(SeenOptions{WriterID: "collector-a", Logger: slog.New(slog.DiscardHandler)})
 	pod.Commit(ctx, seenV2Items(seenV2Pid), SeenStamp{Committer: seenV2TokA})
 	_ = pod.Check(ctx, seenV2Items(seenV2Pid), seenV2TokB)
 	if env.mr.Exists(SeenContractKey) {
 		t.Fatalf("check/commit must not write %s", SeenContractKey)
 	}
 
-	if err := WriteSeenContract(ctx, env.rdb, pod.MaxReuseAge()); err != nil {
-		t.Fatalf("WriteSeenContract: %v", err)
+	readField := func(field string) (SeenContract, bool) {
+		t.Helper()
+		raw := env.mr.HGet(SeenContractKey, field)
+		if raw == "" {
+			return SeenContract{}, false
+		}
+		var c SeenContract
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			t.Fatalf("contract field %s = %q: %v", field, raw, err)
+		}
+		return c, true
+	}
+
+	if err := pod.WriteContract(ctx); err != nil {
+		t.Fatalf("WriteContract: %v", err)
 	}
 	if ttl := env.mr.TTL(SeenContractKey); ttl != SeenContractTTL {
 		t.Fatalf("contract TTL=%s, want %s", ttl, SeenContractTTL)
 	}
-	raw, _ := env.mr.Get(SeenContractKey)
-	var c SeenContract
-	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		t.Fatalf("contract value %q: %v", raw, err)
+	if typ := env.mr.Type(SeenContractKey); typ != "hash" {
+		t.Fatalf("contract key type=%s, want hash", typ)
 	}
-	if c.Version != 2 || c.MaxReuseAgeSeconds != int64(seenV2Age/time.Second) ||
+	c, ok := readField("collector-a")
+	if !ok || c.Version != 2 || c.Writer != "collector-a" || c.WrittenAt != seenV2T0.Unix() ||
+		c.MaxReuseAgeSeconds != int64(seenV2Age/time.Second) ||
 		c.KeyLifetimeSeconds != int64((2*seenV2Age+time.Hour)/time.Second) {
-		t.Fatalf("contract=%+v", c)
+		t.Fatalf("contract=%+v ok=%v", c, ok)
 	}
 
+	// The published age is the store's own largest one: the legacy
+	// constructor's 24h session / 7d project ages publish the 48h cap.
+	legacy := NewSeenStore(env.rdb, 100, 24*time.Hour, 7*24*time.Hour)
+	legacy.nowFn, legacy.writerID = env.clock.now, "collector-legacy"
+	if err := legacy.WriteContract(ctx); err != nil {
+		t.Fatalf("legacy WriteContract: %v", err)
+	}
+	if c, _ := readField("collector-legacy"); c.MaxReuseAgeSeconds != int64(SeenMaxReuseAge/time.Second) {
+		t.Fatalf("legacy store published max_reuse_age_s=%d, want %d", c.MaxReuseAgeSeconds, int64(SeenMaxReuseAge/time.Second))
+	}
+
+	// A writer silent for more than a day is pruned by the next write.
+	env.advance(SeenContractTTL - time.Hour)
+	if err := legacy.WriteContract(ctx); err != nil {
+		t.Fatal(err)
+	}
+	env.advance(2 * time.Hour)
+	if err := legacy.WriteContract(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readField("collector-a"); ok {
+		t.Fatalf("stale writer collector-a not pruned")
+	}
+	if c, ok := readField("collector-legacy"); !ok || c.WrittenAt != env.clock.now().Unix() {
+		t.Fatalf("collector-legacy field=%+v ok=%v, want written now", c, ok)
+	}
+
+	// The keeper writes at once, rewrites a lost field, and removes its own
+	// field on shutdown.
 	env.mr.Del(SeenContractKey)
 	kctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
-		RunSeenContractKeeper(kctx, env.rdb, seenV2Age, 20*time.Millisecond, nil)
+		pod.run(kctx, 20*time.Millisecond)
 		close(done)
 	}()
-	waitKey := func(label string) {
+	waitField := func(label string) {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)
-		for !env.mr.Exists(SeenContractKey) {
+		for env.mr.HGet(SeenContractKey, "collector-a") == "" {
 			if time.Now().After(deadline) {
 				t.Fatalf("%s: keeper did not write %s", label, SeenContractKey)
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
-	waitKey("initial write")
+	waitField("initial write")
 	env.mr.Del(SeenContractKey)
-	waitKey("refresh after loss")
+	waitField("refresh after loss")
 	cancel()
 	<-done
-	if err := WriteSeenContract(ctx, nil, seenV2Age); err == nil {
-		t.Fatalf("WriteSeenContract(nil) must fail")
+	if env.mr.HGet(SeenContractKey, "collector-a") != "" {
+		t.Fatalf("keeper left its field after shutdown")
+	}
+
+	if err := NewSeenStoreWithOptions(nil, SeenOptions{}).WriteContract(ctx); err == nil {
+		t.Fatalf("WriteContract without Redis must fail")
+	}
+	lruOnly := NewSeenStoreWithOptions(nil, SeenOptions{})
+	finished := make(chan struct{})
+	go func() { lruOnly.Run(ctx); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Run on an LRU-only store must return at once")
 	}
 }
 
@@ -505,18 +563,19 @@ func TestSeenStoreSelfCommittedItemIsBillableNotCredited(t *testing.T) {
 	podA.Commit(ctx, items, SeenStamp{Committer: seenV2TokA})
 	total := seenV2Bytes(items)
 
-	for name, pod := range map[string]*SeenStore{"local": podA, "redis": env.pod()} {
-		self := pod.Check(ctx, items, seenV2TokA)
+	// "redis" uses a cold pod for every check, so each one reads Redis.
+	for name, pod := range map[string]func() *SeenStore{"local": func() *SeenStore { return podA }, "redis": env.pod} {
+		self := pod().Check(ctx, items, seenV2TokA)
 		seenV2WantAll(t, name+" self", self, SeenReuseSelf)
 		if self.BilledItemBytes() != total || self.CreditedItemBytes() != 0 || len(self.Write()) != 0 {
 			t.Fatalf("%s self: billed=%d credited=%d write=%d", name, self.BilledItemBytes(), self.CreditedItemBytes(), len(self.Write()))
 		}
-		other := pod.Check(ctx, items, seenV2TokB)
+		other := pod().Check(ctx, items, seenV2TokB)
 		seenV2WantAll(t, name+" other", other, SeenReuseOther)
 		if other.CreditedItemBytes() != total || other.BilledItemBytes() != 0 {
 			t.Fatalf("%s other: billed=%d credited=%d", name, other.BilledItemBytes(), other.CreditedItemBytes())
 		}
-		seenV2WantAll(t, name+" any", pod.Check(ctx, items, SeenAnyCommitter), SeenReuseOther)
+		seenV2WantAll(t, name+" any", pod().Check(ctx, items, SeenAnyCommitter), SeenReuseOther)
 	}
 }
 
@@ -541,8 +600,9 @@ func TestSeenStoreRepollOfRefreshIsRefreshAgain(t *testing.T) {
 		t.Fatalf("stored value=%q, want %q", v, seenV2TokA+"|r")
 	}
 
-	for name, pod := range map[string]*SeenStore{"local": podA, "redis": env.pod()} {
-		poll2 := pod.Check(ctx, items, seenV2TokA)
+	// "redis" uses a cold pod for every check, so each one reads Redis.
+	for name, pod := range map[string]func() *SeenStore{"local": func() *SeenStore { return podA }, "redis": env.pod} {
+		poll2 := pod().Check(ctx, items, seenV2TokA)
 		seenV2WantAll(t, name+" poll 2", poll2, SeenRefresh)
 		if len(poll2.Write()) != 0 {
 			t.Fatalf("%s poll 2 rewrote %d items", name, len(poll2.Write()))
@@ -551,7 +611,7 @@ func TestSeenStoreRepollOfRefreshIsRefreshAgain(t *testing.T) {
 			t.Fatalf("%s amounts differ: poll1 billed=%d credited=%d, poll2 billed=%d credited=%d", name,
 				poll1.BilledItemBytes(), poll1.CreditedItemBytes(), poll2.BilledItemBytes(), poll2.CreditedItemBytes())
 		}
-		seenV2WantAll(t, name+" other key", pod.Check(ctx, items, seenV2TokC), SeenReuseOther)
+		seenV2WantAll(t, name+" other key", pod().Check(ctx, items, seenV2TokC), SeenReuseOther)
 	}
 }
 
@@ -706,15 +766,25 @@ func TestInvalidateProjectDoesNotScan(t *testing.T) {
 		t.Fatalf("InvalidateProject after recommit=%d, want %d", n, len(mine))
 	}
 
-	// With Redis: after invalidation the pod-local entry is not trusted, Redis is asked again.
+	// With Redis: after invalidation the pod-local entry is not trusted and
+	// Redis is asked again. InvalidateProject alone does not stop reuse while
+	// the project's Redis keys exist; erasure also removes them
+	// (EraseProject), after which nothing is reused.
 	env := newSeenV2Env(t)
 	pod := env.pod()
 	pod.Commit(ctx, mine, SeenStamp{Committer: seenV2TokA})
+	pod.InvalidateProject(seenV2Pid)
+	seenV2WantAll(t, "invalidated, Redis keys still present", pod.Check(ctx, mine, seenV2TokB), SeenReuseOther)
 	pod.InvalidateProject(seenV2Pid)
 	for _, k := range env.seenKeys() {
 		env.mr.Del(k)
 	}
 	seenV2WantAll(t, "redis-backed invalidated", pod.Check(ctx, mine, seenV2TokB), SeenNew)
+	pod.Commit(ctx, mine, SeenStamp{Committer: seenV2TokA})
+	if _, err := pod.EraseProject(ctx, seenV2Pid); err != nil {
+		t.Fatal(err)
+	}
+	seenV2WantAll(t, "erased", pod.Check(ctx, mine, seenV2TokB), SeenNew)
 }
 
 // Above the memory budget the store stops writing Redis (reads continue and
@@ -724,15 +794,29 @@ func TestSeenStoreStopsWritingAboveBudget(t *testing.T) {
 	ctx := context.Background()
 	var used, maxMem atomic.Int64
 	var probeErr atomic.Bool
-	pod := env.store(SeenOptions{MemoryProbe: func(context.Context) (int64, int64, error) {
+	probe := func(context.Context) (int64, int64, error) {
 		if probeErr.Load() {
 			return 0, 0, errors.New("INFO disabled")
 		}
 		return used.Load(), maxMem.Load(), nil
-	}})
+	}
 	items := seenV2Items(seenV2Pid)
 
-	used.Store(SeenDefaultRedisMaxBytes + 1)
+	// By default there is no absolute cap: used_memory counts the whole Redis
+	// instance, so a Redis already holding other data must not stop the store.
+	used.Store(4 << 30)
+	dflt := env.store(SeenOptions{MemoryProbe: probe})
+	dflt.Commit(ctx, seenV2Items(seenV2Pid2), SeenStamp{Committer: seenV2TokA})
+	if keys := env.seenKeys(); len(keys) != 2 || dflt.Stats().BudgetSkips != 0 {
+		t.Fatalf("default store skipped writes on a 4 GiB Redis without maxmemory: keys=%v stats=%+v", keys, dflt.Stats())
+	}
+	for _, k := range env.seenKeys() {
+		env.mr.Del(k)
+	}
+
+	const capBytes = 256 << 20
+	pod := env.store(SeenOptions{MemoryProbe: probe, RedisMaxBytes: capBytes})
+	used.Store(capBytes + 1)
 	pod.Commit(ctx, items, SeenStamp{Committer: seenV2TokA})
 	if keys := env.seenKeys(); len(keys) != 0 {
 		t.Fatalf("wrote %v above the absolute budget", keys)
@@ -768,8 +852,8 @@ func TestSeenStoreStopsWritingAboveBudget(t *testing.T) {
 	}
 }
 
-// The default INFO memory probe parses real output, and its failure (miniredis
-// has no INFO memory) does not stop writes.
+// The default INFO memory probe parses real output, and its failure (INFO
+// rejected, as on a Redis that disables it) does not stop writes.
 func TestSeenDefaultMemoryProbe(t *testing.T) {
 	used, maxMem, err := parseRedisInfoMemory("# Memory\r\nused_memory:1048576\r\nused_memory_human:1.00M\r\nmaxmemory:402653184\r\nmaxmemory_policy:volatile-lru\r\n")
 	if err != nil || used != 1<<20 || maxMem != 384<<20 {
@@ -780,21 +864,26 @@ func TestSeenDefaultMemoryProbe(t *testing.T) {
 	}
 
 	env := newSeenV2Env(t)
-	s := NewSeenStoreWithOptions(env.rdb, SeenOptions{MaxReuseAge: seenV2Age})
-	s.nowFn = env.clock.now
+	hook := &seenV2RejectHook{banned: map[string]bool{"info": true}}
+	env.rdb.AddHook(hook)
+	s := NewSeenStoreWithOptions(env.rdb, SeenOptions{MaxReuseAge: seenV2Age, Now: env.clock.now})
 	s.Commit(context.Background(), seenV2Items(seenV2Pid), SeenStamp{Committer: seenV2TokA})
-	if len(env.seenKeys()) != 2 || s.Stats().MemProbeErrors == 0 {
+	if len(env.seenKeys()) != 2 || s.Stats().MemProbeErrors == 0 || hook.hits.Load() == 0 {
 		t.Fatalf("default probe on miniredis: keys=%v stats=%+v", env.seenKeys(), s.Stats())
 	}
 }
 
-// A commit whose usage event is a known duplicate ("|u") is never credited to
-// a later request; the next billed commit replaces it.
+// A commit whose usage event is a known duplicate (unbilled) records
+// nothing, so it is never credited to a later request; the next billed
+// commit is recorded normally.
 func TestSeenUnbilledCommitClassifiedNew(t *testing.T) {
 	env := newSeenV2Env(t)
 	ctx := context.Background()
 	items := seenV2Items(seenV2Pid)
 	env.pod().Commit(ctx, items, SeenStamp{Committer: seenV2TokA, Unbilled: true})
+	if keys := env.seenKeys(); len(keys) != 0 {
+		t.Fatalf("unbilled commit wrote %v", keys)
+	}
 
 	podB := env.pod()
 	res := podB.Check(ctx, items, seenV2TokB)
@@ -807,11 +896,47 @@ func TestSeenUnbilledCommitClassifiedNew(t *testing.T) {
 	podB.CommitChecked(ctx, res, SeenStamp{Committer: seenV2TokB})
 	g := seenGen(seenV2T0, seenV2Rlen)
 	if v := env.mr.HGet(SeenKey(seenV2Pid, env.epoch(), seenV2Sess, g), seenV2HashA); v != seenV2TokB {
-		t.Fatalf("billed commit did not replace unbilled value: %q", v)
+		t.Fatalf("billed commit after unbilled commit stored %q, want %q", v, seenV2TokB)
 	}
-	podC := env.pod()
-	seenV2WantAll(t, "third key", podC.Check(ctx, items, seenV2TokC), SeenReuseOther)
-	seenV2WantAll(t, "billed committer", podC.Check(ctx, items, seenV2TokB), SeenReuseSelf)
+	seenV2WantAll(t, "third key", env.pod().Check(ctx, items, seenV2TokC), SeenReuseOther)
+	seenV2WantAll(t, "billed committer", env.pod().Check(ctx, items, seenV2TokB), SeenReuseSelf)
+
+	// Per-item: an Item whose Commit says Unbilled records nothing either.
+	unbilled := seenV2Items(seenV2Pid2)
+	for i := range unbilled {
+		unbilled[i].Commit = ItemCommit{Committer: seenV2TokA, Unbilled: true}
+	}
+	env.pod().MarkCommitted(ctx, unbilled)
+	seenV2WantAll(t, "per-item unbilled", env.pod().Check(ctx, seenV2Items(seenV2Pid2), seenV2TokB), SeenNew)
+}
+
+// Two pods that both class an item New after an unbilled commit both commit
+// it; the first committer stays recorded, so its re-poll is ReuseSelf
+// (billed) and the other's is ReuseOther, whichever pod answers.
+func TestSeenStoreFirstBilledCommitterWinsAfterUnbilledCommit(t *testing.T) {
+	env := newSeenV2Env(t)
+	ctx := context.Background()
+	items := seenV2Items(seenV2Pid)
+	env.pod().Commit(ctx, items, SeenStamp{Committer: seenV2TokC, Unbilled: true})
+
+	podA, podB := env.pod(), env.pod()
+	resA := podA.Check(ctx, items, seenV2TokA)
+	resB := podB.Check(ctx, items, seenV2TokB)
+	seenV2WantAll(t, "podA", resA, SeenNew)
+	seenV2WantAll(t, "podB", resB, SeenNew)
+	podA.CommitChecked(ctx, resA, SeenStamp{Committer: seenV2TokA})
+	podB.CommitChecked(ctx, resB, SeenStamp{Committer: seenV2TokB})
+
+	g := seenGen(seenV2T0, seenV2Rlen)
+	for _, it := range items {
+		if v := env.mr.HGet(SeenKey(it.ProjectID, env.epoch(), it.ScopeID, g), it.ItemHash); v != seenV2TokA {
+			t.Fatalf("Redis committer=%q, want first committer %q", v, seenV2TokA)
+		}
+	}
+	for name, pod := range map[string]func() *SeenStore{"podA": func() *SeenStore { return podA }, "podB": func() *SeenStore { return podB }, "cold": env.pod} {
+		seenV2WantAll(t, name+" re-poll by A", pod().Check(ctx, items, seenV2TokA), SeenReuseSelf)
+		seenV2WantAll(t, name+" re-poll by B", pod().Check(ctx, items, seenV2TokB), SeenReuseOther)
+	}
 }
 
 // Requests not billed on stored bytes (events mode, unknown mode, no emitter)
@@ -824,8 +949,12 @@ func TestSeenUnmeteredCommitUsesAnyCommitter(t *testing.T) {
 	if tok := SeenCommitterToken("trace-A"); len(tok) != 16 || strings.Trim(tok, "0123456789abcdef") != "" || tok == seenV2TokB {
 		t.Fatalf("token %q: want 16 lowercase hex, distinct per key", tok)
 	}
-	if normalizeCommitter("a|r") != SeenAnyCommitter || normalizeCommitter(" ") != SeenAnyCommitter {
-		t.Fatalf("committer values must not carry flags")
+	ns := NewSeenStoreWithOptions(nil, SeenOptions{})
+	if ns.normalizeCommitter(" ") != SeenAnyCommitter || ns.Stats().InvalidCommitters != 0 {
+		t.Fatalf("an empty committer is %q without a warning", SeenAnyCommitter)
+	}
+	if ns.normalizeCommitter("a|r") != SeenAnyCommitter || ns.Stats().InvalidCommitters != 1 {
+		t.Fatalf("a committer carrying flags must become %q and be counted: %+v", SeenAnyCommitter, ns.Stats())
 	}
 	env := newSeenV2Env(t)
 	ctx := context.Background()
@@ -894,9 +1023,10 @@ func TestSeenStoreConcurrentUse(t *testing.T) {
 	wg.Wait()
 }
 
-// A store that has never read the epoch (Redis down since start) reuses only
-// what it committed itself; once Redis answers, the new epoch invalidates it.
-func TestSeenRedisDownFromStartIsLRUOnlyUntilEpochRead(t *testing.T) {
+// A store that has never read the epoch (Redis down since start) reuses
+// nothing, not even what it committed itself: it cannot know whether the
+// epoch changed. Once Redis answers it reuses again.
+func TestSeenRedisDownFromStartReusesNothing(t *testing.T) {
 	env := newSeenV2Env(t)
 	ctx := context.Background()
 	items := seenV2Items(seenV2Pid)
@@ -904,15 +1034,173 @@ func TestSeenRedisDownFromStartIsLRUOnlyUntilEpochRead(t *testing.T) {
 	pod := env.pod()
 	res := pod.Check(ctx, items, seenV2TokB)
 	seenV2WantAll(t, "redis down, first check", res, SeenNew)
-	if !res.RedisFailed || res.EpochUnknown {
-		t.Fatalf("RedisFailed=%v EpochUnknown=%v, want true/false", res.RedisFailed, res.EpochUnknown)
+	if !res.RedisFailed || !res.EpochUnknown {
+		t.Fatalf("RedisFailed=%v EpochUnknown=%v, want true/true", res.RedisFailed, res.EpochUnknown)
 	}
 	pod.CommitChecked(ctx, res, SeenStamp{Committer: seenV2TokA})
-	seenV2WantAll(t, "redis down, own commit", pod.Check(ctx, items, seenV2TokB), SeenReuseOther)
+	env.advanceClock(2 * time.Second)
+	again := pod.Check(ctx, items, seenV2TokB)
+	seenV2WantAll(t, "redis down, own commit", again, SeenNew)
+	if len(again.Write()) != len(items) || !again.EpochUnknown {
+		t.Fatalf("write=%d EpochUnknown=%v, want every item written again", len(again.Write()), again.EpochUnknown)
+	}
 
 	if err := env.mr.Restart(); err != nil {
 		t.Fatalf("restart miniredis: %v", err)
 	}
 	env.advance(2 * time.Second)
-	seenV2WantAll(t, "after epoch read", pod.Check(ctx, items, seenV2TokB), SeenNew)
+	res = pod.Check(ctx, items, seenV2TokB)
+	seenV2WantAll(t, "after epoch read", res, SeenNew)
+	pod.CommitChecked(ctx, res, SeenStamp{Committer: seenV2TokA})
+	seenV2WantAll(t, "after recommit", pod.Check(ctx, items, seenV2TokB), SeenReuseOther)
+	seenV2WantAll(t, "cold pod after recommit", env.pod().Check(ctx, items, seenV2TokB), SeenReuseOther)
+}
+
+// Per-item commit records survive Batch.Merge: the drain commits the merged
+// batch in one MarkCommittedAt call, and every item is recorded with the
+// committer and refresh mark of its first occurrence. CheckNew results stay
+// as passed in, and the record never reaches the ClickHouse row.
+func TestSeenCommitItemsCarryCommitThroughBatchMerge(t *testing.T) {
+	env := newSeenV2Env(t)
+	ctx := context.Background()
+	refreshItem := Item{ProjectID: seenV2Pid, ScopeID: ProjectScopeID, ItemHash: seenV2HashB, ItemType: "message", Content: `{"role":"system","content":"rules"}`}
+	newItem := Item{ProjectID: seenV2Pid, ScopeID: seenV2Sess, ItemHash: seenV2HashA, ItemType: "message", Content: `{"role":"user","content":"hello"}`}
+	env.pod().Commit(ctx, []Item{refreshItem}, SeenStamp{Committer: seenV2TokC})
+	env.advance(2 * seenV2Rlen)
+
+	podA, podB := env.pod(), env.pod()
+	resA := podA.Check(ctx, []Item{refreshItem, newItem}, seenV2TokA)
+	if got := seenV2Classes(resA); got[0] != SeenRefresh || got[1] != SeenNew {
+		t.Fatalf("request A classes=%v, want [refresh new]", got)
+	}
+	resB := podB.Check(ctx, []Item{newItem}, seenV2TokB)
+	seenV2WantAll(t, "request B", resB, SeenNew)
+
+	batchA, batchB := NewBatch(), NewBatch()
+	for _, it := range resA.CommitItems() {
+		batchA.AddItem(it)
+	}
+	for _, it := range resB.CommitItems() {
+		batchB.AddItem(it)
+	}
+	drained := NewBatch()
+	drained.Merge(batchA)
+	drained.Merge(batchB)
+	if len(drained.Items()) != 2 {
+		t.Fatalf("merged items=%d, want 2", len(drained.Items()))
+	}
+	for _, row := range drained.ToRows(env.clock.now()) {
+		if len(row) != 7 {
+			t.Fatalf("row carries extra fields: %v", row)
+		}
+	}
+	stamp := env.clock.now()
+	podA.MarkCommittedAt(ctx, drained.Items(), stamp)
+
+	g := seenGen(stamp, seenV2Rlen)
+	if v := env.mr.HGet(SeenKey(seenV2Pid, env.epoch(), ProjectScopeID, g), seenV2HashB); v != seenV2TokA+"|r" {
+		t.Fatalf("refresh item stored %q, want %q", v, seenV2TokA+"|r")
+	}
+	if v := env.mr.HGet(SeenKey(seenV2Pid, env.epoch(), seenV2Sess, g), seenV2HashA); v != seenV2TokA {
+		t.Fatalf("new item stored %q, want first occurrence's committer %q", v, seenV2TokA)
+	}
+
+	repollA := env.pod().Check(ctx, []Item{refreshItem, newItem}, seenV2TokA)
+	if got := seenV2Classes(repollA); got[0] != SeenRefresh || got[1] != SeenReuseSelf || len(repollA.Write()) != 0 {
+		t.Fatalf("re-poll by A classes=%v write=%d, want [refresh reuse_self] and nothing written", got, len(repollA.Write()))
+	}
+	if repollA.BilledItemBytes() != resA.BilledItemBytes() || repollA.CreditedItemBytes() != resA.CreditedItemBytes() {
+		t.Fatalf("re-poll by A bills differently: first billed=%d credited=%d, re-poll billed=%d credited=%d",
+			resA.BilledItemBytes(), resA.CreditedItemBytes(), repollA.BilledItemBytes(), repollA.CreditedItemBytes())
+	}
+	seenV2WantAll(t, "re-poll by B", env.pod().Check(ctx, []Item{newItem}, seenV2TokB), SeenReuseOther)
+
+	legacyNew, _, _ := env.pod().CheckNew(ctx, seenV2Items(seenV2Pid2))
+	for _, it := range legacyNew {
+		if it.Commit != (ItemCommit{}) {
+			t.Fatalf("CheckNew returned a stamped item: %+v", it.Commit)
+		}
+	}
+}
+
+// seenV2RecordHook records the command names of every pipeline.
+type seenV2RecordHook struct {
+	mu        sync.Mutex
+	pipelines [][]string
+}
+
+func (h *seenV2RecordHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *seenV2RecordHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+
+func (h *seenV2RecordHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		names := make([]string, len(cmds))
+		for i, c := range cmds {
+			names[i] = strings.ToLower(c.Name())
+		}
+		h.mu.Lock()
+		h.pipelines = append(h.pipelines, names)
+		h.mu.Unlock()
+		return next(ctx, cmds)
+	}
+}
+
+// A commit's HSETNX and EXPIREAT run in one MULTI/EXEC, so a dropped
+// connection can never leave a generation key without its expiry.
+func TestSeenCommitIsOneTransactionWithExpireAt(t *testing.T) {
+	env := newSeenV2Env(t)
+	hook := &seenV2RecordHook{}
+	env.rdb.AddHook(hook)
+	env.pod().Commit(context.Background(), seenV2Items(seenV2Pid), SeenStamp{Committer: seenV2TokA})
+
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	found := false
+	for _, names := range hook.pipelines {
+		hsetnx, expireat := 0, 0
+		for _, n := range names {
+			switch n {
+			case "hsetnx":
+				hsetnx++
+			case "expireat":
+				expireat++
+			}
+		}
+		if hsetnx == 0 {
+			continue
+		}
+		found = true
+		if names[0] != "multi" || names[len(names)-1] != "exec" || hsetnx != 2 || expireat != 2 {
+			t.Fatalf("commit pipeline %v: want MULTI, 2 HSETNX, 2 EXPIREAT, EXEC", names)
+		}
+	}
+	if !found {
+		t.Fatalf("no commit pipeline recorded: %v", hook.pipelines)
+	}
+	for _, k := range env.seenKeys() {
+		if env.mr.TTL(k) <= 0 {
+			t.Fatalf("key %s has no TTL", k)
+		}
+	}
+}
+
+// MarkCommittedAt records the generation of the persisted_at stamp, not of
+// the time the commit runs, so a slow insert cannot make a copy look newer.
+func TestSeenMarkCommittedAtUsesPersistedAtGeneration(t *testing.T) {
+	env := newSeenV2Env(t)
+	ctx := context.Background()
+	items := seenV2Items(seenV2Pid)
+	persistedAt := env.clock.now().Add(time.Hour)
+	env.advance(seenV2Rlen + time.Minute) // the commit runs one generation later
+	env.pod().MarkCommittedAt(ctx, items, persistedAt)
+
+	g0 := seenGen(persistedAt, seenV2Rlen)
+	for _, it := range items {
+		if v := env.mr.HGet(SeenKey(it.ProjectID, env.epoch(), it.ScopeID, g0), it.ItemHash); v != SeenAnyCommitter {
+			t.Fatalf("%s: generation %d value=%q, want %q", it.ScopeID, g0, v, SeenAnyCommitter)
+		}
+	}
+	env.advance(seenV2Rlen) // now g0+2: the copy is past the reuse window
+	seenV2WantAll(t, "two generations after persisted_at", env.pod().Check(ctx, items, seenV2TokB), SeenRefresh)
 }
