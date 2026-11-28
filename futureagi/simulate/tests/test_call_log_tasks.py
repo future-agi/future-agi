@@ -18,7 +18,13 @@ from rest_framework import status
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from simulate.models import AgentDefinition, CallLogEntry, Scenarios
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    CallLogEntry,
+    ProviderCredentials,
+    Scenarios,
+)
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -307,6 +313,133 @@ def test_ingest_call_logs_task_delegates_to_helper(call_execution):
     call_kwargs = MockVSM.return_value.iter_call_logs.call_args.kwargs
     assert call_kwargs["url"] == "https://example.com/log"
     assert call_kwargs["verify_ssl"] is False
+
+
+def _log_version(agent, provider):
+    return AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=agent.organization,
+        workspace=agent.workspace,
+        configuration_snapshot={"provider": provider, "assistant_id": "log-assistant"},
+    )
+
+
+@pytest.fixture
+def log_version(call_execution, agent_definition):
+    version = _log_version(agent_definition, "vapi")
+    execution = call_execution.test_execution
+    execution.agent_version = version
+    execution.save(update_fields=["agent_version"])
+    return version
+
+
+def _assert_log_download(call_execution, expected_key, *, call_id="call-1", **kwargs):
+    url = "https://example.com/call.log.gz"
+    with patch("ee.voice.tasks.call_log_tasks.VoiceServiceManager") as manager:
+        download = manager.return_value.iter_call_logs
+        download.return_value = iter(())
+        assert ingest_call_logs_task(
+            str(call_execution.pk),
+            url,
+            verify_ssl=True,
+            source=CallLogEntry.LogSource.CUSTOMER,
+            call_id=call_id,
+            **kwargs,
+        )
+        download.assert_called_once_with(
+            url=url, verify_ssl=True, call_id=call_id, api_key=expected_key
+        )
+
+
+@pytest.mark.django_db
+@requires_ee_voice
+class TestCallLogCredentials:
+    def test_keyless_task_reads_execution_pin(self, call_execution, log_version):
+        agent = log_version.agent_definition
+        agent.provider = "retell"
+        agent.save(update_fields=["provider"])
+        ProviderCredentials.objects.create(
+            agent_version=_log_version(agent, "retell"),
+            provider_type="retell",
+            api_key="newer",
+        )
+        ProviderCredentials.objects.create(
+            agent_version=log_version, provider_type="vapi", api_key="pinned"
+        )
+        _assert_log_download(call_execution, "pinned")
+        _assert_log_download(call_execution, None, call_id=None)
+
+    def test_old_payload_keeps_its_explicit_key(self, call_execution, log_version):
+        ProviderCredentials.objects.create(
+            agent_version=log_version, provider_type="vapi", api_key="rotated"
+        )
+        _assert_log_download(call_execution, "queued", api_key="queued")
+
+    def test_no_execution_pin_uses_legacy_url(self, call_execution):
+        _assert_log_download(call_execution, None)
+
+    @pytest.mark.parametrize(
+        "provider, stored_key, expected",
+        [
+            ("vapi", "", "definition"),
+            ("vapi", "enc::not-ciphertext", None),
+            ("retell", "other-provider", None),
+        ],
+    )
+    def test_definition_fallback_only_for_empty_vapi_row(
+        self, call_execution, log_version, provider, stored_key, expected
+    ):
+        agent = log_version.agent_definition
+        agent.provider = "vapi"
+        agent.api_key = "definition"
+        agent.save(update_fields=["provider", "api_key"])
+        ProviderCredentials.objects.create(
+            agent_version=log_version, provider_type=provider, api_key=stored_key
+        )
+        _assert_log_download(call_execution, expected)
+
+    @pytest.mark.parametrize("snapshot_provider", ["bland", ""])
+    def test_storage_label_does_not_prove_provider(
+        self, call_execution, log_version, snapshot_provider
+    ):
+        agent = log_version.agent_definition
+        agent.provider = "vapi"
+        agent.save(update_fields=["provider"])
+        log_version.configuration_snapshot = {"provider": snapshot_provider}
+        log_version.save(update_fields=["configuration_snapshot"])
+        ProviderCredentials.objects.create(
+            agent_version=log_version, provider_type="vapi", api_key="bland-key"
+        )
+        _assert_log_download(call_execution, None)
+
+    @pytest.mark.parametrize(
+        "assistant, expected", [("log-assistant", "legacy"), ("other-assistant", None)]
+    )
+    def test_unversioned_row_must_match_pin(
+        self, call_execution, log_version, assistant, expected
+    ):
+        ProviderCredentials.objects.create(
+            agent_definition=log_version.agent_definition,
+            provider_type="vapi",
+            assistant_id=assistant,
+            api_key="legacy",
+        )
+        _assert_log_download(call_execution, expected)
+
+    @pytest.mark.parametrize(
+        "provider, expected", [("vapi", "migrated"), ("bland", None)]
+    )
+    def test_migrated_row_checks_its_owning_version(
+        self, call_execution, log_version, provider, expected
+    ):
+        agent = log_version.agent_definition
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            agent_version=_log_version(agent, provider),
+            provider_type="vapi",
+            api_key="migrated",
+        )
+        _assert_log_download(call_execution, expected)
 
 
 @requires_ee_voice
