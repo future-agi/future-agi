@@ -163,6 +163,9 @@ def test_unsafe_connections_rejected(key, value):
         {"pg_user": ""},
         {"hosted": "false"},
         {"peerdb_url": "http://secret@flow"},
+        {"trajectory_dedup_mode": "ON"},
+        {"trajectory_dedup_mode": ""},
+        {"trajectory_dedup_mode": "shadow"},
     ],
 )
 def test_direct_config_cannot_bypass_validation(changes):
@@ -455,6 +458,89 @@ def test_native_write_boundary_rejects_cdc_and_source_ddl(harness, monkeypatch):
     assert harness.run(phase="native", apply=True)["created_objects"] == ["traces"]
     harness.raw.command.assert_called_once()
     harness.raw.insert.assert_not_called()
+
+
+def test_native_write_boundary_admits_only_the_packaged_040_upgrade(
+    harness, monkeypatch
+):
+    monkeypatch.setattr(cli.native, "inspect_native", Mock(return_value=()))
+    upgrade = cli.native.native_upgrade_statements("default")
+
+    def bootstrap(client, **kwargs):
+        for sql in (
+            # Another database, one column, or a changed type is not packaged.
+            upgrade["spans"].replace("default.spans", "other.spans", 1),
+            upgrade["spans"].split(",\n")[0] + ";",
+            upgrade["spans"].replace("'inline'", "'items_v1'", 1),
+            upgrade["spans"].replace("ADD COLUMN", "MODIFY COLUMN", 1),
+        ):
+            with pytest.raises(cli.InstallError, match="packaged DDL"):
+                client.command(sql)
+        client.command(upgrade["trajectory_items"])
+        client.command(upgrade["spans"])
+        return ("trajectory_items", cli.native.NATIVE_040_UPGRADE)
+
+    monkeypatch.setattr(cli.native, "bootstrap_native", bootstrap)
+    assert harness.run(phase="native", apply=True) == {
+        "ready": True,
+        "created_objects": ["trajectory_items"],
+        "applied_upgrades": [cli.native.NATIVE_040_UPGRADE],
+        "applied": True,
+    }
+    assert [c.args[0] for c in harness.raw.command.call_args_list] == [
+        upgrade["trajectory_items"],
+        upgrade["spans"],
+    ]
+    harness.raw.insert.assert_not_called()
+
+
+def test_native_inspection_reports_the_named_upgrade_separately(harness, monkeypatch):
+    monkeypatch.setattr(
+        cli.native,
+        "inspect_native",
+        Mock(return_value=("spans_hourly_rollup_mv", cli.native.NATIVE_040_UPGRADE)),
+    )
+    assert harness.run(phase="native") == {
+        "ready": False,
+        "missing_objects": ["spans_hourly_rollup_mv"],
+        "pending_upgrades": [cli.native.NATIVE_040_UPGRADE],
+        "applied": False,
+    }
+    harness.raw.command.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [None, "", "off", " OFF "])
+def test_dedup_mode_off_or_unset_is_the_default(value):
+    env = {} if value is None else {"FI_TRAJECTORY_DEDUP_MODE": value}
+    assert cli.Config.from_env(env).trajectory_dedup_mode == "off"
+
+
+@pytest.mark.parametrize("value", ["canary", "on", " On "])
+@pytest.mark.parametrize("apply", [False, True])
+def test_native_phase_refuses_trajectory_dedup_in_this_release(value, apply):
+    """A downgrade to the previous release is safe only while no span
+    references trajectory items, so this release keeps dedup off on OSS."""
+    config = cli.Config.from_env({"FI_TRAJECTORY_DEDUP_MODE": value})
+    assert config.trajectory_dedup_mode == value.strip().lower()
+    pg_connect, ch_connect, request = Mock(), Mock(), Mock()
+    with pytest.raises(cli.InstallError, match="FI_TRAJECTORY_DEDUP_MODE must be off"):
+        cli.run(
+            config,
+            apply=apply,
+            phase="native",
+            pg_connect=pg_connect,
+            ch_connect=ch_connect,
+            request=request,
+        )
+    pg_connect.assert_not_called()
+    ch_connect.assert_not_called()
+    request.assert_not_called()
+
+
+@pytest.mark.parametrize("value", ["onn", "true", "1"])
+def test_unknown_dedup_mode_is_rejected(value):
+    with pytest.raises(cli.InstallError, match="off, canary or on"):
+        cli.Config.from_env({"FI_TRAJECTORY_DEDUP_MODE": value})
 
 
 def test_unknown_phase_rejected_without_connection():

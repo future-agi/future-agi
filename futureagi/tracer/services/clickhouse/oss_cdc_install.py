@@ -5,7 +5,14 @@ Run after PG migrations, native ClickHouse initialization and PeerDB setup:
     python -m tracer.services.clickhouse.oss_cdc_install --apply
 
 For a fresh native database before starting any writers, use --phase native.
-Its default check is also read-only; --apply creates missing native objects only.
+Its default check is also read-only; --apply creates missing native objects only,
+plus the one named retained-layout upgrade (native:040_trajectory_store, see
+oss_native_bootstrap), reported separately as pending/applied upgrades.
+
+This release keeps trajectory dedup off on OSS: the native phase refuses
+FI_TRAJECTORY_DEDUP_MODE other than off. A downgrade to the previous release is
+safe only while no span references trajectory items, and with dedup refused no
+such span can be written.
 
 Uses the existing PG_*, CH_*, SRC_PG_*, DST_CH_* connection settings. No Django
 startup hooks, source-table migration replay, mirror creation/resync, or operator
@@ -81,6 +88,9 @@ def _origin(value):
     return parsed
 
 
+_DEDUP_MODES = ("off", "canary", "on")
+
+
 @dataclass(frozen=True)
 class Config:
     source: core.PeerTarget
@@ -92,6 +102,9 @@ class Config:
     ch_password: str = field(repr=False)
     peerdb_url: str
     hosted: bool = False
+    # The collector's FI_TRAJECTORY_DEDUP_MODE, normalized as the collector
+    # does (trimmed, lower case, empty means off).
+    trajectory_dedup_mode: str = "off"
     # Match INSTALLED_APPS: usage is presence-gated even without an EE license.
     include_usage_schema: bool = field(
         default_factory=lambda: ee_loader.has_ee("ee.usage")
@@ -122,6 +135,8 @@ class Config:
             raise InstallError("invalid ClickHouse HTTP port")
         if type(self.hosted) is not bool:
             raise InstallError("invalid deployment topology")
+        if self.trajectory_dedup_mode not in _DEDUP_MODES:
+            raise InstallError("FI_TRAJECTORY_DEDUP_MODE must be off, canary or on")
         if any(
             not isinstance(v, str) or not v or "\x00" in v
             for v in (self.pg_user, self.ch_user)
@@ -205,19 +220,25 @@ class Config:
         ]
         if any(not isinstance(p, str) or "\x00" in p for p in passwords):
             raise InstallError("invalid connection password")
+        pg_password, ch_password = passwords
+        dedup_mode = env.get("FI_TRAJECTORY_DEDUP_MODE", "")
+        if not isinstance(dedup_mode, str):
+            raise InstallError("FI_TRAJECTORY_DEDUP_MODE must be off, canary or on")
         return cls(
             source,
             destination,
             http_port,
             setting("SRC_PG_USER", "PG_USER", "futureagi"),
             setting("DST_CH_USER", "CH_USERNAME", "default"),
-            *passwords,
+            pg_password,
+            ch_password,
             url.rstrip("/"),
             is_hosted_production(
                 env.get("ENV_TYPE", ""), env.get("CLOUD_DEPLOYMENT", "")
             )
             or str(env.get("CH_USE_REPLICATED_ENGINES", "false")).lower()
             in ("true", "1", "yes", "on"),
+            trajectory_dedup_mode=dedup_mode.strip().lower() or "off",
         )
 
 
@@ -341,6 +362,18 @@ def run(
         raise InstallError(
             "hosted/replicated apply requires the separately qualified deployment path"
         )
+    if (
+        phase == "native"
+        and not config.hosted
+        and config.trajectory_dedup_mode != "off"
+    ):
+        # Enforces the downgrade contract before any connection: this release
+        # never lets a span reference trajectory items, so the previous release
+        # (which reads every span inline) stays a safe downgrade target.
+        raise InstallError(
+            "FI_TRAJECTORY_DEDUP_MODE must be off in this release: trajectory "
+            "dedup is not available on OSS yet. Set it to off or remove it."
+        )
     # Empty libpq parameters do NOT override environment defaults. Refuse hidden
     # routing before either client connects; TLS settings remain configurable.
     if any(os.environ.get(key) for key in ("PGHOSTADDR", "PGSERVICE")):
@@ -435,8 +468,9 @@ def run(
         )
         if phase == "native":
             definitions = native.native_definitions(config.destination.database)
+            upgrades = native.native_upgrade_statements(config.destination.database)
             allowed = packaged(
-                definitions.values(),
+                (*definitions.values(), *upgrades.values()),
                 (ddl for name, ddl in definitions.items() if name.endswith("_dict")),
             )
 
@@ -518,7 +552,12 @@ def run(
             if not apply:
                 return {
                     "ready": not missing,
-                    "missing_objects": list(missing),
+                    "missing_objects": [
+                        n for n in missing if n not in native.NATIVE_UPGRADES
+                    ],
+                    "pending_upgrades": [
+                        n for n in missing if n in native.NATIVE_UPGRADES
+                    ],
                     "applied": False,
                 }
             created = native.bootstrap_native(
@@ -527,7 +566,14 @@ def run(
                 ch_user=config.ch_user,
                 ch_password=config.ch_password,
             )
-            return {"ready": True, "created_objects": list(created), "applied": True}
+            return {
+                "ready": True,
+                "created_objects": [
+                    n for n in created if n not in native.NATIVE_UPGRADES
+                ],
+                "applied_upgrades": [n for n in created if n in native.NATIVE_UPGRADES],
+                "applied": True,
+            }
         if wait_for_mirrors:
             # Only inspect until initial snapshots settle. Do not wrap apply in
             # a retry loop: a failed/uncertain write must remain terminal.
