@@ -745,10 +745,10 @@ def add_to_suite(
                 "them again",
                 status_code=409,
             )
-        pieces = {"suite", "environment"} if _checks(cases) else {"suite"}
+        archive, pieces = _with_cases(locked, environment_version, cases)
         write = drafts.record_draft(
             locked,
-            _with_cases(locked, environment_version, cases),
+            archive,
             origin="manual",
             user=user,
             expected=seen,
@@ -883,9 +883,8 @@ def _with_cases(
     environment: HostedHarnessJob,
     environment_version,
     cases: list[EvidenceImportCase],
-) -> bytes:
-    """The environment's authoring tree with each case's scenario folder added to
-    its suite (the open draft's, else the default's)."""
+) -> tuple[bytes, set[str]]:
+    """The authoring archive with the cases added, and the pieces it changes."""
     suite = dict(
         drafts.piece_files(
             environment,
@@ -909,21 +908,34 @@ def _with_cases(
     environment_files = dict(
         drafts.piece_files(environment, "environment", environment_version)
     )
-    if added := _checks(cases):
+    pieces = {"suite"}
+    if any(case.new_sub_goals for case in cases):
         catalogue = json.loads(environment_files[CATALOGUE])
-        known = {one.get("name") for one in catalogue.get("sub_goals") or []}
-        catalogue["sub_goals"] = [
-            *(catalogue.get("sub_goals") or []),
-            *(one for one in added if one.get("name") not in known),
-        ]
-        environment_files[CATALOGUE] = json.dumps(catalogue, indent=2).encode()
-    return archives.pack_archive(archives.compose(environment_files, suite))
+        existing = catalogue.get("sub_goals") or []
+        if added := _new_checks(cases, existing):
+            catalogue["sub_goals"] = [*existing, *added]
+            environment_files[CATALOGUE] = json.dumps(catalogue, indent=2).encode()
+            pieces.add("environment")
+    return archives.pack_archive(archives.compose(environment_files, suite)), pieces
 
 
-def _checks(cases: list[EvidenceImportCase]) -> list[dict]:
-    """The checks the cases add, each name once."""
-    found: dict[str, dict] = {}
+def _new_checks(cases: list[EvidenceImportCase], existing: list[dict]) -> list[dict]:
+    """Keep a proposed name once, but only if every definition agrees."""
+    by_name: dict[str | None, list[dict]] = defaultdict(list)
+    for check in existing:
+        by_name[check.get("name")].append(check)
+    added = []
     for case in cases:
-        for one in case.new_sub_goals or []:
-            found.setdefault(one.get("name"), one)
-    return list(found.values())
+        for check in case.new_sub_goals or []:
+            definitions = by_name[check.get("name")]
+            if not definitions:
+                definitions.append(check)
+                added.append(check)
+            elif any(other != check for other in definitions):
+                raise HostedHarnessError(
+                    "evidence_check_conflict",
+                    "A check with the same name has a different definition; "
+                    f"draft case {case.position + 1} again",
+                    status_code=409,
+                )
+    return added
