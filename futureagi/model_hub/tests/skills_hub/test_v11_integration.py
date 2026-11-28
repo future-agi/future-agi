@@ -437,7 +437,8 @@ def test_absolute_deadline_is_applied_to_connection_and_dns():
         safe_fetch(
             "https://api.github.com/file", method="GET", deadline=10, total_timeout=5
         )
-    resolve.assert_called_once_with("api.github.com", 6)
+    # The Skills GitHub fetch never opts into private addresses (allow_private=False).
+    resolve.assert_called_once_with("api.github.com", 6, False)
     assert pool.ConnectionCls is _DeadlineHTTPSConnection
     assert pool.conn_kw["deadline"] == 6
     pool.request.return_value.close.assert_called_once()
