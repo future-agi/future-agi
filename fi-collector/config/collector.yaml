@@ -101,23 +101,43 @@ observed_catalog:
 # Content-addressed Trajectory Store (Phase 0 intra-span compaction + Phase 1
 # cross-span message/tool deduplication + dedup-aware storage billing).
 # Safe defaults keep all features OFF until schema 040_trajectory_items.sql and
-# hydrating Django readers are deployed.
+# hydrating Django readers are deployed. Even with dedup_mode on, a project is
+# deduplicated only while the dedup gate is open: the 040 columns and table are
+# present (the ingest user needs SELECT on system.columns and system.tables),
+# the tables are local (not Distributed) and the Redis key
+# fi:trajectory:dedup_allowed exists (manage.py trajectory_store_gate --open;
+# deleting the key is the stop button, effective within 60 s).
 trajectory:
-  # Phase 0: strip duplicate promoted input/output copies from attributes_extra
-  # (FI_COMPACT_SPAN_ATTRS).
-  compact_span_attrs: false
-  # Phase 1: "off" (default), "canary" (projects listed in canary_projects /
-  # FI_TRAJECTORY_DEDUP_PROJECTS), or "on" (all projects).
+  # "off" (default), "canary" (projects listed in canary_projects), or "on"
+  # (all projects) (FI_TRAJECTORY_DEDUP_MODE). FI_TRAJECTORY_DEDUP_PROJECTS
+  # replaces canary_projects.
   dedup_mode: off
   canary_projects: []
-  # Per-pod LRU seen-item cache size (FI_TRAJECTORY_LRU_SIZE).
+  # Per-pod LRU seen-item cache size (FI_TRAJECTORY_LRU_SIZE); about 120 MB of
+  # RAM at 500000 entries.
   lru_size: 500000
   # Inline preview bytes kept in spans.input/output for list endpoints.
   preview_max_bytes: 512
-  # Dedup-aware storage billing (FI_BILL_DEDUPED_BYTES). False emits raw_bytes
-  # as observe_add.amount with stored_bytes / dedup_saved_bytes in properties
-  # ("raw_shadow"); true bills stored_bytes ("deduped_storage").
-  bill_deduped_bytes: false
+  # Dedup-aware storage billing (FI_BILL_DEDUPED_BYTES). Leave unset: with
+  # dedup_mode canary or on, deduplicated requests then bill stored bytes
+  # ("deduped_storage"). false is the kill switch: raw bytes are billed
+  # ("raw_shadow") while dedup keeps storing. Ignored with dedup_mode off.
+  # bill_deduped_bytes: false
+  # trajectory_items insert: retries after the first attempt and the deadline
+  # of each attempt (FI_TRAJECTORY_ITEMS_MAX_RETRIES,
+  # FI_TRAJECTORY_ITEMS_INSERT_TIMEOUT). A failed insert writes the drain's
+  # spans inline and pauses dedup for 30 s.
+  items_max_retries: 1
+  items_insert_timeout: 5s
+  # How long after an item copy was persisted a span may still point at it
+  # (FI_TRAJECTORY_MAX_REUSE_AGE, 1h..48h).
+  max_reuse_age: 24h
+  # Share the seen store across collector pods through Redis ("on"), or keep
+  # it in the pod-local LRU ("off", single-collector installs)
+  # (FI_TRAJECTORY_SEEN_REDIS), with a Redis memory budget
+  # (FI_TRAJECTORY_SEEN_REDIS_MAX_MB).
+  seen_redis: "on"
+  seen_redis_max_mb: 64
 
 admin:
   # The Docker image checks http://127.0.0.1:9464/healthz. If you move the

@@ -408,7 +408,6 @@ func TestBatchRestoreInlineAndUsageReport(t *testing.T) {
 
 func TestConfigFromEnv(t *testing.T) {
 	env := map[string]string{
-		"FI_COMPACT_SPAN_ATTRS":        "true",
 		"FI_TRAJECTORY_DEDUP_MODE":     "canary",
 		"FI_TRAJECTORY_DEDUP_PROJECTS": " AAAA-1111 , bbbb-2222 ",
 		"FI_TRAJECTORY_LRU_SIZE":       "25000",
@@ -418,7 +417,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfigFromEnv: %v", err)
 	}
-	if !cfg.CompactSpanAttrs || cfg.Mode != ModeCanary || cfg.LRUSize != 25000 || !cfg.BillDedupedBytes {
+	if cfg.Mode != ModeCanary || cfg.LRUSize != 25000 || !cfg.BillsDedupedBytes() {
 		t.Fatalf("unexpected cfg: %+v", cfg)
 	}
 	if !cfg.Active() || !cfg.EnabledForProject("aaaa-1111") || !cfg.EnabledForProject("BBBB-2222") || cfg.EnabledForProject("cccc-3333") {

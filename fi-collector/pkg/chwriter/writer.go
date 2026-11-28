@@ -96,12 +96,15 @@ type Stats struct {
 type Writer struct {
 	cfg    Config
 	client *http.Client
-	url    string     // pre-built insert URL incl. query string
-	dlMu   sync.Mutex // serialise dead-letter writes
-	dlFile *os.File   // lazily opened
-	stats  Stats
-	rng    *rand.Rand
-	rngMu  sync.Mutex // rng isn't safe for concurrent use
+	url    string // pre-built insert URL incl. query string
+	// strictURL is url plus input_format_skip_unknown_fields=0, for batches
+	// whose rows carry trajectory pointer columns (InsertOptions.StrictColumns).
+	strictURL string
+	dlMu      sync.Mutex // serialise dead-letter writes
+	dlFile    *os.File   // lazily opened
+	stats     Stats
+	rng       *rand.Rand
+	rngMu     sync.Mutex // rng isn't safe for concurrent use
 	// maxInsertBytes, when positive, splits a span batch into inserts of
 	// about this many bytes (SetMaxInsertBytes).
 	maxInsertBytes int
@@ -180,10 +183,11 @@ func New(cfg Config) (*Writer, error) {
 	}
 
 	return &Writer{
-		cfg:    cfg,
-		client: &http.Client{Timeout: cfg.RequestTimeout},
-		url:    cfg.URL + q,
-		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		cfg:       cfg,
+		client:    &http.Client{Timeout: cfg.RequestTimeout},
+		url:       cfg.URL + q,
+		strictURL: cfg.URL + q + "&input_format_skip_unknown_fields=0",
+		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -210,8 +214,27 @@ func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
 // is complete only on return, after all started inserts have finished; callers
 // must retain their row leases through any sidecar handoff that follows.
 func (w *Writer) InsertConfirmed(ctx context.Context, rows []map[string]any) ([]bool, error) {
+	return w.InsertConfirmedWith(ctx, rows, InsertOptions{})
+}
+
+// InsertOptions changes how InsertConfirmedWith sends a span batch. The zero
+// value is InsertConfirmed: the pre-built URL, byte for byte.
+type InsertOptions struct {
+	// StrictColumns adds input_format_skip_unknown_fields=0, so ClickHouse
+	// refuses a row whose keys name a column the table does not have instead
+	// of dropping the key. Used for batches holding trajectory pointer rows:
+	// a dropped pointer column would store a preview as the whole payload.
+	StrictColumns bool
+}
+
+// InsertConfirmedWith is InsertConfirmed with options.
+func (w *Writer) InsertConfirmedWith(ctx context.Context, rows []map[string]any, opts InsertOptions) ([]bool, error) {
 	confirmed := make([]bool, len(rows))
-	err := w.insert(ctx, w.url, rows, confirmed)
+	target := w.url
+	if opts.StrictColumns {
+		target = w.strictURL
+	}
+	err := w.insert(ctx, target, rows, confirmed)
 	return confirmed, err
 }
 
@@ -276,6 +299,24 @@ func (w *Writer) InsertBestEffort(ctx context.Context, table string, rows []map[
 // writing the dependent spans inline (`payload_encoding = 'inline'`) with zero
 // data loss.
 func (w *Writer) InsertTable(ctx context.Context, table string, rows []map[string]any) error {
+	return w.InsertTableWith(ctx, table, rows, TableInsertOptions{})
+}
+
+// TableInsertOptions changes InsertTableWith's request settings and retry
+// budget. The zero value is InsertTable.
+type TableInsertOptions struct {
+	// Settings are extra ClickHouse settings added to the insert URL (for
+	// trajectory_items: insert_quorum, insert_quorum_timeout,
+	// distributed_foreground_insert).
+	Settings url.Values
+	// MaxAttempts caps the attempts of each chunk (0: MaxRetries + 1).
+	MaxAttempts int
+	// AttemptTimeout bounds each attempt (0: the writer's request timeout).
+	AttemptTimeout time.Duration
+}
+
+// InsertTableWith is InsertTable with options.
+func (w *Writer) InsertTableWith(ctx context.Context, table string, rows []map[string]any, opts TableInsertOptions) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -283,6 +324,9 @@ func (w *Writer) InsertTable(ctx context.Context, table string, rows []map[strin
 	// before dependent spans reference their hashes, even if AsyncInsert is enabled
 	// on the hot spans writer.
 	insertURL := w.insertSyncURL(table)
+	if len(opts.Settings) > 0 {
+		insertURL += "&" + opts.Settings.Encode()
+	}
 	limit := w.maxInsertBytes
 	size := len(rows) * 512
 	if limit > 0 {
@@ -300,7 +344,7 @@ func (w *Writer) InsertTable(ctx context.Context, table string, rows []map[strin
 		}
 		if i == len(rows)-1 || (limit > 0 && buf.Len() >= limit) {
 			chunkLen := i - start + 1
-			if err := w.insertTableChunk(ctx, table, insertURL, buf.Bytes(), chunkLen); err != nil {
+			if err := w.insertTableChunk(ctx, table, insertURL, buf.Bytes(), chunkLen, opts); err != nil {
 				return err
 			}
 			buf = bytes.Buffer{}
@@ -313,16 +357,25 @@ func (w *Writer) InsertTable(ctx context.Context, table string, rows []map[strin
 	return nil
 }
 
-func (w *Writer) insertTableChunk(ctx context.Context, table, insertURL string, body []byte, rowCount int) error {
+func (w *Writer) insertTableChunk(ctx context.Context, table, insertURL string, body []byte, rowCount int, opts TableInsertOptions) error {
+	attempts := opts.MaxAttempts
+	if attempts <= 0 {
+		attempts = w.cfg.MaxRetries + 1
+	}
 	var lastErr error
-	for attempt := 0; attempt <= w.cfg.MaxRetries; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			if err := w.sleepBackoff(ctx, attempt); err != nil {
 				lastErr = err
 				break
 			}
 		}
-		status, err := w.doRequest(ctx, insertURL, body)
+		attemptCtx, cancel := ctx, context.CancelFunc(func() {})
+		if opts.AttemptTimeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(ctx, opts.AttemptTimeout)
+		}
+		status, err := w.doRequest(attemptCtx, insertURL, body)
+		cancel()
 		if err == nil && status == http.StatusOK {
 			atomic.AddUint64(&w.stats.TrajectoryBatchesInserted, 1)
 			atomic.AddUint64(&w.stats.TrajectoryItemsInserted, uint64(rowCount))
@@ -611,8 +664,8 @@ func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, e
 	// Include the response body in the error message — CH's HTTP responses
 	// for failed inserts always include the structured DB::Exception line
 	// which is exactly what an operator wants to grep.
-	b, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, fmt.Errorf("CH HTTP %d: %s", resp.StatusCode, truncate(string(b), 800))
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	return resp.StatusCode, newStatusError(resp, b)
 }
 
 // sleepBackoff implements exponential backoff with full jitter

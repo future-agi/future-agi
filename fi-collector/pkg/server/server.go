@@ -95,6 +95,7 @@ type Server struct {
 	pricer          chexp.Pricer
 	trajCfg         trajectory.Config
 	trajSeen        *trajectory.SeenStore
+	trajGate        trajectory.WriteGate // nil: closed, no span is extracted
 	grpc            *grpc.Server
 	httpd           *http.Server
 
@@ -185,6 +186,7 @@ type Option struct {
 	router          auth.SimulationRouter
 	trajCfg         *trajectory.Config
 	trajSeen        *trajectory.SeenStore
+	trajGate        trajectory.WriteGate
 }
 
 // TraceNotifier receives ended roots only after their canonical batch is stored.
@@ -212,12 +214,18 @@ func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
 // sandbox keys, so they are never stored under the project name they carry.
 func WithSimulationRouter(r auth.SimulationRouter) Option { return Option{router: r} }
 
-// WithTrajectory configures Phase 0 intra-span compaction, Phase 1
-// content-addressed trajectory deduplication, and dedup-aware storage billing.
+// WithTrajectory configures content-addressed trajectory deduplication and
+// dedup-aware storage billing. The config is normalized here, once, and then
+// shared read-only by every request. Spans are extracted only while the gate
+// given with WithTrajectoryGate is open.
 func WithTrajectory(cfg trajectory.Config, seen *trajectory.SeenStore) Option {
 	normalized := cfg.Normalize()
 	return Option{trajCfg: &normalized, trajSeen: seen}
 }
+
+// WithTrajectoryGate installs the gate that must be open for dedup to write
+// pointer rows (trajectory.Gate). Without one, dedup never runs.
+func WithTrajectoryGate(g trajectory.WriteGate) Option { return Option{trajGate: g} }
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -255,6 +263,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	var router auth.SimulationRouter
 	var trajCfg trajectory.Config
 	var trajSeen *trajectory.SeenStore
+	var trajGate trajectory.WriteGate
 	if authenticator != nil {
 		router = authenticator
 	}
@@ -280,6 +289,9 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		if o.trajSeen != nil {
 			trajSeen = o.trajSeen
 		}
+		if o.trajGate != nil {
+			trajGate = o.trajGate
+		}
 	}
 
 	s := &Server{
@@ -294,6 +306,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		pricer:          pricer,
 		trajCfg:         trajCfg,
 		trajSeen:        trajSeen,
+		trajGate:        trajGate,
 		propertyCatalog: propertyCatalogWriter,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
@@ -581,10 +594,7 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		return partialSuccessResponse(prepared.routed), false, nil
 	}
-	res, err := chexp.ConvertWithOptions(ctx, req.Traces(), h.s.pricer, chexp.ConvertOptions{
-		Trajectory: h.s.trajCfg,
-		Seen:       h.s.trajSeen,
-	})
+	res, err := chexp.ConvertWithOptions(ctx, req.Traces(), h.s.pricer, h.s.convertOptions())
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), false, err
 	}
@@ -714,10 +724,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
 		return
 	}
-	res, err := chexp.ConvertWithOptions(ctx, req.Traces(), s.pricer, chexp.ConvertOptions{
-		Trajectory: s.trajCfg,
-		Seen:       s.trajSeen,
-	})
+	res, err := chexp.ConvertWithOptions(ctx, req.Traces(), s.pricer, s.convertOptions())
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
 		s.rejectHTTP(w, ct, &rejection{reason: "convert", msg: "convert: " + err.Error()})
@@ -1160,25 +1167,22 @@ func (s *Server) drainNow(ctx context.Context) {
 	// Observation only: retain the count through canonical and sidecar ownership.
 	defer func() { s.pendMu.Lock(); s.bufferedRows -= len(batch); s.pendMu.Unlock() }()
 
-	// Phase 1 Trajectory Store invariant: durably commit unique trajectory_items
+	// Trajectory Store invariant: durably commit unique trajectory_items
 	// BEFORE inserting spans that point to them, and mark items seen in the
-	// 2-tier SeenStore ONLY AFTER the ClickHouse insert commits. If
-	// trajectory_items fails after retries, atomically restore every compacted
-	// span in this drain to inline encoding and emit raw-byte usage so neither
-	// dangling pointers nor billing under-counts can ever occur.
-	trajFallback := false
-	if traj != nil && len(traj.Items()) > 0 {
-		if err := s.writer.InsertTable(ctx, "trajectory_items", traj.ToRows(stamp)); err != nil {
-			s.log.Warn("trajectory_items insert failed; falling back to inline spans",
-				"items", len(traj.Items()), "spans", len(traj.Fallbacks()), "err", err)
-			traj.RestoreInline()
-			trajFallback = true
-		} else if s.trajSeen != nil {
-			s.trajSeen.MarkCommitted(ctx, traj.Items())
-		}
-	}
+	// 2-tier SeenStore ONLY AFTER the ClickHouse insert commits. If the gate
+	// closed since conversion, or trajectory_items fails, restore every
+	// extracted span in this drain to inline encoding and emit raw-byte usage
+	// so neither dangling pointers nor billing under-counts can occur.
+	trajFallback, pointerRows := s.commitTrajectory(ctx, traj, stamp)
 
-	confirmed, _ := s.writer.InsertConfirmed(ctx, batch)
+	confirmed, err := s.writer.InsertConfirmedWith(ctx, batch, chwriter.InsertOptions{StrictColumns: pointerRows})
+	if pointerRows && chwriter.IsSchemaMismatch(err) {
+		// ClickHouse refused a pointer column (strict columns): the rows were
+		// dead-lettered, not stored as previews. Close the gate so later
+		// requests are written inline, and bill these requests raw.
+		s.trajGate.ReportSpansSchemaError(err)
+		trajFallback = true
+	}
 	for _, u := range usages {
 		s.emitPendingUsage(u, trajFallback)
 	}
@@ -1215,6 +1219,52 @@ func (s *Server) drainNow(ctx context.Context) {
 	if curated != nil && !curated.Empty() {
 		_ = s.curated.Write(ctx, curated, stamp)
 	}
+}
+
+// convertOptions is the converter's view of the trajectory configuration.
+// The gate is passed only when one is installed, so a nil gate stays a nil
+// interface (closed).
+func (s *Server) convertOptions() chexp.ConvertOptions {
+	opts := chexp.ConvertOptions{Trajectory: s.trajCfg, Seen: s.trajSeen}
+	if s.trajGate != nil {
+		opts.Gate = s.trajGate
+	}
+	return opts
+}
+
+// commitTrajectory writes the drain's new trajectory_items before the spans
+// that point at them. It reports fallback when the drain's extracted spans
+// were restored inline (gate closed since conversion, or the items insert
+// failed), and pointerRows when the span batch still carries pointer rows.
+func (s *Server) commitTrajectory(ctx context.Context, traj *trajectory.Batch, stamp time.Time) (fallback, pointerRows bool) {
+	if traj == nil || len(traj.Fallbacks()) == 0 {
+		return false, false
+	}
+	if s.trajGate == nil || !s.trajGate.Open() {
+		s.log.Warn("trajectory dedup gate closed since conversion; writing this drain's spans inline",
+			"event", "trajectory_dedup_inline_due_to_gate", "spans", len(traj.Fallbacks()), "items", len(traj.Items()))
+		traj.RestoreInline()
+		return true, false
+	}
+	if len(traj.Items()) == 0 {
+		return false, true
+	}
+	opts := chwriter.TableInsertOptions{
+		Settings:       s.trajGate.ItemsInsertSettings(),
+		MaxAttempts:    s.trajCfg.ItemsMaxRetries + 1,
+		AttemptTimeout: s.trajCfg.ItemsInsertTimeout,
+	}
+	if err := s.writer.InsertTableWith(ctx, trajectory.ItemsTable, traj.ToRows(stamp), opts); err != nil {
+		s.log.Warn("trajectory_items insert failed; falling back to inline spans",
+			"event", "trajectory_items_fallback_inline", "items", len(traj.Items()), "spans", len(traj.Fallbacks()), "err", err)
+		s.trajGate.ReportItemsFailure(err)
+		traj.RestoreInline()
+		return true, false
+	}
+	if s.trajSeen != nil {
+		s.trajSeen.MarkCommitted(ctx, traj.Items())
+	}
+	return false, true
 }
 
 // confirmedSidecars filters in place, preserving enqueue order and exact row

@@ -101,7 +101,11 @@ func main() {
 
 	var rdb *redis.Client
 	if cfg.Auth.RedisAddr != "" {
-		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr, Password: cfg.Auth.RedisPass})
+		rdb, err = newRedisClient(cfg.Auth.RedisAddr, cfg.Auth.RedisPass, os.Getenv)
+		if err != nil {
+			log.Error("invalid Redis configuration", "err", err)
+			os.Exit(1)
+		}
 		defer rdb.Close()
 	} else {
 		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
@@ -152,18 +156,7 @@ func main() {
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
 	}
-	if cfg.Trajectory.Active() || cfg.Trajectory.CompactSpanAttrs || cfg.Trajectory.BillDedupedBytes {
-		var trajSeen *trajectory.SeenStore
-		if cfg.Trajectory.Active() {
-			trajSeen = trajectory.NewSeenStore(rdb, cfg.Trajectory.LRUSize, cfg.Trajectory.SessionTTL, cfg.Trajectory.ProjectTTL)
-			if authenticator != nil {
-				authenticator.OnProjectInvalidate(func(projectID string) {
-					trajSeen.InvalidateProject(projectID)
-				})
-			}
-		}
-		opts = append(opts, server.WithTrajectory(cfg.Trajectory, trajSeen))
-	}
+	opts = append(opts, trajectoryOptions(ctx, log, cfg.Trajectory, writer, rdb, authenticator)...)
 	var replayDone chan struct{}
 	var finalReplay func(context.Context) (int, error)
 	if cfg.Observed.Mode != "disabled" {
@@ -332,8 +325,7 @@ func logStarting(log *slog.Logger, cfg rootConfig) {
 		"admin_addr", resolveAdminAddr(cfg),
 		"ch_url", chURL,
 		"trajectory_mode", cfg.Trajectory.Mode,
-		"compact_span_attrs", cfg.Trajectory.CompactSpanAttrs,
-		"bill_deduped_bytes", cfg.Trajectory.BillDedupedBytes,
+		"bill_deduped_bytes", cfg.Trajectory.BillsDedupedBytes(),
 	)
 }
 
@@ -475,6 +467,14 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if err != nil {
 		return err
 	}
+	if c.Trajectory.Mode != trajectory.ModeOff && c.Writer.AsyncInsert {
+		// Pointer rows must be confirmed (and refused synchronously when a
+		// column is missing); async_insert without wait gives neither.
+		return fmt.Errorf("trajectory dedup requires synchronous ClickHouse inserts; async_insert is unsupported with FI_TRAJECTORY_DEDUP_MODE=%s", c.Trajectory.Mode)
+	}
+	// The store ships dormant: every enable setting stops the collector. The
+	// gate and the rest of the enable path stay wired (trajectoryOptions) for
+	// the release that lifts this.
 	return c.Trajectory.RequireDormant()
 }
 

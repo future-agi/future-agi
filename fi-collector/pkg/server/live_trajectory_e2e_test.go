@@ -490,15 +490,14 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 
 		usage := auth.NewUsageEmitter(rdb, nil, log, 100_000)
 		dedupCfg := trajectory.Config{
-			CompactSpanAttrs: true,
 			Mode:             trajectory.ModeOn,
-			BillDedupedBytes: true,
+			BillDedupedBytes: liveBoolPtr(true),
 		}.Normalize()
 
 		podA := New(Config{BatchMaxRows: 500, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{},
-			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 200_000, time.Hour, 24*time.Hour)))
+			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 200_000, time.Hour, 24*time.Hour)), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
 		podB := New(Config{BatchMaxRows: 500, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{},
-			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 200_000, time.Hour, 24*time.Hour)))
+			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 200_000, time.Hour, 24*time.Hour)), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
 		baseSrv := New(Config{BatchMaxRows: 500, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wBase, nil, NoopUsageEmitter{}, NoopMetering{},
 			WithLogger(log))
 		startFlushers(t, podA)
@@ -744,7 +743,7 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 		defer wFallback.Close()
 		fbSeen := trajectory.NewSeenStore(rdb, 10_000, time.Hour, time.Hour)
 		fbSrv := New(Config{BatchMaxRows: 100, BatchMaxAge: time.Minute}, wFallback, nil, NoopUsageEmitter{}, NoopMetering{},
-			WithLogger(log), WithTrajectory(dedupCfg, fbSeen))
+			WithLogger(log), WithTrajectory(dedupCfg, fbSeen), WithTrajectoryGate(newLiveTrajectoryGate(t, wFallback, rdb)))
 		fbTid := makeUUIDBytes(0x4006)
 		fbSid := makeSpanIDBytes(0x400601)
 		fbInBytes, _ := json.Marshal(map[string]any{
@@ -977,15 +976,14 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 
 		usage := auth.NewUsageEmitter(rdb, nil, log, 200_000)
 		dedupCfg := trajectory.Config{
-			CompactSpanAttrs: true,
 			Mode:             trajectory.ModeOn,
-			BillDedupedBytes: true,
+			BillDedupedBytes: liveBoolPtr(true),
 		}.Normalize()
 
 		podA := New(Config{BatchMaxRows: 1000, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 512, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{},
-			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 300_000, time.Hour, 24*time.Hour)))
+			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 300_000, time.Hour, 24*time.Hour)), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
 		podB := New(Config{BatchMaxRows: 1000, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 512, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{},
-			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 300_000, time.Hour, 24*time.Hour)))
+			WithLogger(log), WithTrajectory(dedupCfg, trajectory.NewSeenStore(rdb, 300_000, time.Hour, 24*time.Hour)), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
 		startFlushers(t, podA)
 		startFlushers(t, podB)
 
@@ -1473,8 +1471,7 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 
 		tCfg := trajectory.Config{
 			Mode:             trajectory.ModeOn,
-			CompactSpanAttrs: true,
-			BillDedupedBytes: true,
+			BillDedupedBytes: liveBoolPtr(true),
 			LRUSize:          250_000,
 			SessionTTL:       2 * time.Hour,
 			ProjectTTL:       24 * time.Hour,
@@ -1483,9 +1480,9 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 		usage := auth.NewUsageEmitter(rdb, nil, log, 500_000)
 		seenA := trajectory.NewSeenStore(rdb, tCfg.LRUSize, tCfg.SessionTTL, tCfg.ProjectTTL)
 		seenB := trajectory.NewSeenStore(rdb, tCfg.LRUSize, tCfg.SessionTTL, tCfg.ProjectTTL)
-		podA := New(Config{BatchMaxRows: 1000, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{}, WithLogger(log), WithTrajectory(tCfg, seenA))
-		podB := New(Config{BatchMaxRows: 1000, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{}, WithLogger(log), WithTrajectory(tCfg, seenB))
-		podAsync := New(Config{BatchMaxRows: 200, BatchMaxAge: 50 * time.Millisecond, IngestBudgetMiB: 64}, wAsync, nil, NoopUsageEmitter{}, NoopMetering{}, WithLogger(log), WithTrajectory(tCfg, seenA))
+		podA := New(Config{BatchMaxRows: 1000, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{}, WithLogger(log), WithTrajectory(tCfg, seenA), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
+		podB := New(Config{BatchMaxRows: 1000, BatchMaxAge: 100 * time.Millisecond, IngestBudgetMiB: 256, InsertConcurrency: 4}, wDedup, nil, usage, NoopMetering{}, WithLogger(log), WithTrajectory(tCfg, seenB), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
+		podAsync := New(Config{BatchMaxRows: 200, BatchMaxAge: 50 * time.Millisecond, IngestBudgetMiB: 64}, wAsync, nil, NoopUsageEmitter{}, NoopMetering{}, WithLogger(log), WithTrajectory(tCfg, seenA), WithTrajectoryGate(newLiveTrajectoryGate(t, wDedup, rdb)))
 		startFlushers(t, podA)
 		startFlushers(t, podB)
 		startFlushers(t, podAsync)
@@ -1899,6 +1896,10 @@ func TestLiveTrajectoryE2EAndStress(t *testing.T) {
 			m.MegaPipelineSPS, m.MegaPipelineP50MS, m.MegaPipelineP95MS, m.MegaPipelineP99MS,
 			totRaw, totStored, totSaved, float64(totSaved)*100.0/float64(max(totRaw, 1)), totNew, totReused)
 
+	case "ci":
+		// Self-contained stage for fi-collector-ci: owned databases, keyed
+		// Redis cleanup, no external migration signals.
+		runLiveTrajectoryCIStage(t)
 	default:
 		t.Fatalf("unknown FI_LIVE_STAGE %q", stage)
 	}
