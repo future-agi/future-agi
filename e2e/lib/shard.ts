@@ -52,8 +52,12 @@ export function readDurations(file: string = DURATIONS_FILE): Record<string, num
  * splits evenly.
  */
 export const DB_REUSE_LOADS: Record<string, Record<number, number>> = {
-  // 440 s of boot not saved, and 374 s of compare (runs 46044766031, 46050579899).
-  distributed: { 2: 920, 3: 790 },
+  // From two restore runs (46132309560, 46143864945), at 2.066 units per
+  // second (planned units over suite wall time, restoring legs of the second):
+  // shard 2's boot from zero took 305 s and 219 s more than a restoring leg's
+  // restore and boot, mean 262 s, so 540; shard 3's compare took 461 s and
+  // 394 s, mean 428 s, so 880.
+  distributed: { 2: 540, 3: 880 },
 };
 
 /** The load each shard starts with: all zero unless this run restores. */

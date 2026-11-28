@@ -92,7 +92,7 @@ test("the split balances time, not test or file count", () => {
 test("only a run that restores starts shards 2 and 3 with load", () => {
   // Shard 2 still boots from zero; shard 3 compares the dump after its suite.
   assert.deepEqual(startingLoads(8, "distributed", "true"), [
-    0, 920, 790, 0, 0, 0, 0, 0,
+    0, 540, 880, 0, 0, 0, 0, 0,
   ]);
   for (const restores of [undefined, "", "false", "TRUE"])
     assert.deepEqual(startingLoads(8, "distributed", restores), new Array(8).fill(0));
