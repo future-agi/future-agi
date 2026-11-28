@@ -524,6 +524,7 @@ const LAUNCH_SCENARIOS = [
   name,
   passed,
   failing_sub_goals: failing,
+  split: null,
 }));
 
 export function fixtureLaunchOptions(sourceRunId) {
@@ -590,6 +591,8 @@ export function fixtureLaunchOptions(sourceRunId) {
         ? null
         : failing.slice(0, Math.floor(failing.length / 3)).map((s) => s.key),
     ship: { path: "pull_request", blocked: null },
+    held_back_from: "sample",
+    locked_version_label: null,
   };
 }
 

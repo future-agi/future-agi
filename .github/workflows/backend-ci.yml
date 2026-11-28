@@ -341,6 +341,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: One latest migration per app
+        # Django refuses to migrate an app that has two latest migrations, so
+        # every shard would set itself up and then fail at its migrate step
+        # (8 to 16 minutes on 48 runners, four queue runs on 27 Nov 2026).
+        # Every heavy job needs this job, so a "no" here starts none of them.
+        # It reads the migration files as text: no Django, about a second.
+        # "Models must have migrations" (update-safety) stays the authority.
+        run: python3 -I futureagi/.ci/migration_leaves.py futureagi
       - name: Restore newest timing cache over the committed floor
         id: timing-cache
         uses: actions/cache/restore@v4
