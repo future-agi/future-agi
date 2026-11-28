@@ -108,6 +108,27 @@ def safe_detail(message):
     return TOKENISH.sub("[redacted]", first)[:200]
 
 
+OBSERVATION_TYPE = "skills-observation"
+# e2e/lib/skill-cohort-request.ts cohortObservationLine(): status, error code and elapsed time only.
+OBSERVATION = re.compile(r"^cohort status=\d{3} code=[a-z0-9_.\-]{1,64} elapsed_ms=\d{1,7}$")
+
+
+def observations(report):
+    """The allowlisted observation lines a Skills test recorded (runtime annotations), pass or fail."""
+    lines = []
+    for spec in specs(report.get("suites", [])):
+        for test in spec.get("tests", []):
+            notes = list(test.get("annotations") or [])
+            for result in test.get("results", []):
+                notes += result.get("annotations") or []
+            for note in notes:
+                text = note.get("description") if isinstance(note, dict) else None
+                if (note.get("type") == OBSERVATION_TYPE and isinstance(text, str) and OBSERVATION.match(text)
+                        and f"{identity(spec)} | {text}" not in lines):
+                    lines.append(f"{identity(spec)} | {text}")
+    return lines
+
+
 def failure_summary(report):
     """Allowlisted outcome of every Skills test: identity, status, error type and location.
 
@@ -253,8 +274,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("ordinary")
-    p = sub.add_parser("summary")
-    p.add_argument("report", type=Path)
+    for cmd in ["summary", "observations"]:
+        p = sub.add_parser(cmd)
+        p.add_argument("report", type=Path)
     for cmd in ["pattern", "receipt"]:
         p = sub.add_parser(cmd)
         p.add_argument("report", type=Path)
@@ -278,6 +300,8 @@ if __name__ == "__main__":
     try:
         if args.cmd == "summary":
             print("\n".join(failure_summary(json.loads(args.report.read_text()))))
+        elif args.cmd == "observations":
+            print("\n".join(observations(json.loads(args.report.read_text()))))
         elif args.cmd == "ordinary":
             print(pattern(None, "ordinary"))
         elif args.cmd == "pattern":

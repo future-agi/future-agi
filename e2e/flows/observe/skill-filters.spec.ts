@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../../lib/skill-trace-scenario';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { isSkillCohortRequest } from '../../lib/skill-cohort-request';
+import { OBSERVATION_TYPE, cohortObservationLine, isSkillCohortRequest } from '../../lib/skill-cohort-request';
 
 const item = (field:string, value:string, group = 0) => ({ column_id:`skill.${field}`, group,
   filter_config:{ col_type:'SKILL', filter_type:'text', filter_op:'equals', filter_value:value } });
@@ -66,7 +66,7 @@ test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@f
   const rows = (await res.json()).result.table as {span_id:string;trace_id:string}[];
   expect(rows.map(row=>row.span_id).sort()).toEqual((await read()).map(row=>row.id));
   expect(rows.some(row=>row.trace_id===other)).toBe(false);
-  type CohortObservation = | { observed: false } | { observed: true; status: number; complete: boolean; traces: number | null };
+  type CohortObservation = | { observed: false } | { observed: true; status: number; complete: boolean; traces: number | null; code?: unknown; elapsedMs: number | null };
   const cohortObservation = page.waitForResponse((response) => {
     let pathname: string;
     let body: unknown;
@@ -80,16 +80,21 @@ test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@f
       {projectId: project.id, versionId: s.refund.version.id});
   }, {timeout: 0}).then(async (response): Promise<CohortObservation> => {
     const status = response.status();
-    if (status !== 200) return {observed: true, status, complete: false, traces: null};
+    const timing = response.request().timing();
+    const elapsedMs = timing.responseEnd > 0 ? timing.responseEnd : timing.responseStart > 0 ? timing.responseStart : null;
+    if (status !== 200) {
+      const code = await response.json().then((body: {code?: unknown}) => body?.code, () => undefined);
+      return {observed: true, status, complete: false, traces: null, code, elapsedMs};
+    }
     const completionError = await response.finished().catch(() => new Error('incomplete'));
-    if (completionError) return {observed: true, status, complete: false, traces: null};
+    if (completionError) return {observed: true, status, complete: false, traces: null, elapsedMs};
     try {
       const payload = await response.json() as {result?: {summary?: {traces?: unknown}}};
       const value = payload?.result?.summary?.traces;
       const traces = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
-      return {observed: true, status, complete: true, traces};
+      return {observed: true, status, complete: true, traces, elapsedMs};
     } catch {
-      return {observed: true, status, complete: false, traces: null};
+      return {observed: true, status, complete: false, traces: null, elapsedMs};
     }
   }).catch((): CohortObservation => ({observed: false}));
 
@@ -109,6 +114,9 @@ test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@f
       expect(tracesMetric).toHaveText('Traces1',{timeout:remainingMs()})]);
     if (apiResult.status === 'rejected') throw new Error('OBS-E2E-070 cohort response observation failed');
     const api = apiResult.value;
+    // Recorded before any assertion, so CI shows what the projection answered, pass or fail.
+    test.info().annotations.push({type: OBSERVATION_TYPE, description: api?.observed
+      ? cohortObservationLine(api.status, api.code, api.elapsedMs) : cohortObservationLine(null, 'not_observed', null)});
     expect(api?.observed, 'OBS-E2E-070 matching cohort POST was observed').toBe(true);
     if (!api?.observed) throw new Error('OBS-E2E-070 matching cohort POST was not observed');
     expect(api.status, 'OBS-E2E-070 cohort response status').toBe(200);

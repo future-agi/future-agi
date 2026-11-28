@@ -33,3 +33,16 @@ export function isSkillCohortRequest(method: string, pathname: string, body: unk
   if (!(Number.isFinite(from) && Number.isFinite(to) && from < to)) return false;
   return Array.isArray(body.filters) && body.filters.some((entry) => filtersTheVersion(entry, target.versionId));
 }
+
+// One non-secret line about the observed cohort response, for CI summaries: the HTTP status, the
+// error envelope's `code` (or `none`), and the request's own elapsed time. No body, headers or ids.
+// e2e/scripts/skills-coverage.py prints only lines that match this exact shape.
+export const OBSERVATION_TYPE = 'skills-observation';
+
+export function cohortObservationLine(status: number | null, code: unknown, elapsedMs: number | null): string {
+  const safeStatus = typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? String(status) : '000';
+  const safeCode = typeof code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code.toLowerCase()
+    : code === undefined || code === null ? 'none' : 'other';
+  const ms = typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0 ? Math.min(Math.round(elapsedMs), 9_999_999) : 0;
+  return `cohort status=${safeStatus} code=${safeCode} elapsed_ms=${ms}`;
+}

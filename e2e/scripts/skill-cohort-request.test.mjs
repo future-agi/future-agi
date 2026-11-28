@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isSkillCohortRequest } from '../lib/skill-cohort-request.ts';
+import { cohortObservationLine, isSkillCohortRequest } from '../lib/skill-cohort-request.ts';
 
 const target = { projectId: 'project-1', versionId: 'version-1' };
 const versionFilter = { column_id: 'skill.version_id', filter_config: {
@@ -30,4 +30,14 @@ test('only the cohort projection for this project, window and version matches', 
   ];
   for (const [method, path, body] of cases) assert.equal(isSkillCohortRequest(method, path, body, target), false);
   assert.equal(isSkillCohortRequest('POST', `/api${COHORT}`, { ...cohort, filters: [{}, versionFilter] }, target), true);
+});
+
+test('the observation line carries only status, error code and elapsed time', () => {
+  assert.equal(cohortObservationLine(200, undefined, 841.6), 'cohort status=200 code=none elapsed_ms=842');
+  assert.equal(cohortObservationLine(503, 'SKILLS_UNAVAILABLE', 12), 'cohort status=503 code=skills_unavailable elapsed_ms=12');
+  // Anything that is not a short token is not echoed.
+  assert.equal(cohortObservationLine(500, 'Bearer abc def', 1), 'cohort status=500 code=other elapsed_ms=1');
+  assert.equal(cohortObservationLine(400, { nested: 'x' }, 1), 'cohort status=400 code=other elapsed_ms=1');
+  assert.equal(cohortObservationLine(null, null, null), 'cohort status=000 code=none elapsed_ms=0');
+  assert.equal(cohortObservationLine(99, 'x', -5), 'cohort status=000 code=x elapsed_ms=0');
 });

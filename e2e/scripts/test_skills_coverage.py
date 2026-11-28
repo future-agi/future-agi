@@ -184,5 +184,19 @@ class FailureSummaryTests(unittest.TestCase):
                          'Error: locator.fill: token [redacted]')
         self.assertEqual(coverage['safe_detail']('Error: request to https://x?key=abc failed'), '')
 
+    def test_observations_print_only_allowlisted_status_lines_pass_or_fail(self):
+        note = lambda text: {'type': 'skills-observation', 'description': text}
+        report = {'suites': [{'specs': [
+            {'title': 'OBS-E2E-070: reconcile', 'file': 'f.ts', 'tests': [{'status': 'expected', 'annotations': [],
+             'results': [{'status': 'passed', 'annotations': [note('cohort status=200 code=none elapsed_ms=842')]}]}]},
+            {'title': 'OBS-E2E-069: correlate', 'file': 'f.ts', 'tests': [{'status': 'unexpected', 'annotations': [
+                note('cohort status=503 code=skills_unavailable elapsed_ms=30001'),
+                note('cohort status=503 code=Bearer sk-live-x elapsed_ms=1'),
+                {'type': 'other', 'description': 'cohort status=200 code=none elapsed_ms=1'},
+                note('token AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')], 'results': [{'status': 'failed'}]}]}]}]}
+        self.assertEqual(coverage['observations'](report), [
+            'OBS-E2E-070 | cohort status=200 code=none elapsed_ms=842',
+            'OBS-E2E-069 | cohort status=503 code=skills_unavailable elapsed_ms=30001'])
+
 if __name__ == '__main__':
     unittest.main()

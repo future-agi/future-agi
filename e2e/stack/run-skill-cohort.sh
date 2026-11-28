@@ -25,6 +25,16 @@ else
   if [[ $cohort == host || $cohort == campaign-* ]]; then export SKILLS_CAMPAIGN_PREFLIGHT=1; fi
   bin/e2e test --grep "$pattern" --reporter=json --trace off >"$tmp/browser.log" 2>&1 || rc=$?
 fi
+# Allowlisted observation lines (status, error code, elapsed ms; no bodies or ids), pass or fail.
+if [[ -s $tmp/results.json ]]; then
+  observed=$(python3 -I "$coverage" observations "$tmp/results.json" || true)
+  if [[ -n $observed ]]; then
+    printf 'Skills %s observations:\n%s\n' "$cohort" "$observed" >&2
+    if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
+      printf '#### Skills %s observations\n```\n%s\n```\n' "$cohort" "$observed" >> "$GITHUB_STEP_SUMMARY"
+    fi
+  fi
+fi
 if (( rc != 0 )); then
   echo "Skills $cohort failed at suite (exit $rc)" >&2
   # The native runner's own stage messages (fixed strings it prints) are safe to show.
