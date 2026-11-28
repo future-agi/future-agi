@@ -11,6 +11,7 @@ import {
   setIsRefreshing,
   setSession,
 } from "src/auth/context/jwt/utils";
+import { isTransientRefreshError } from "src/auth/context/jwt/refresh-error";
 import { HOST_API } from "src/config-global";
 import { apiPath } from "src/api/contracts/api-surface";
 import {
@@ -165,6 +166,7 @@ axiosInstance.interceptors.response.use(
     // Handle 401 and try refresh
     if (
       status === RESPONSE_CODES.UNAUTHORIZED &&
+      url !== endpoints.auth.refreshToken &&
       !originalRequest?._retry &&
       !signedOutOnSharedLink
     ) {
@@ -235,7 +237,9 @@ axiosInstance.interceptors.response.use(
         if (err?.message === "session replaced") {
           return Promise.reject(err);
         }
-        processQueue(err, null); // ❌ Fail queued requests too
+        processQueue(err, null);
+        // A failed refresh request is not necessarily a refused credential.
+        if (isTransientRefreshError(err)) return Promise.reject(err);
         setSession(null);
         resetUser();
         clearTokens();

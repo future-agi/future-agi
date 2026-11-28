@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from simulate.serializers.harness_job import SUBFOLDER_PATTERN, check_credential_values
+from simulate.serializers.harness_job import (
+    BLANK_OR_SUBFOLDER_PATTERN,
+    check_credential_values,
+)
 from tfc.utils.api_serializers import StrictInputSerializer
 
 GITHUB_ONLY_FIELDS = (
@@ -66,10 +69,10 @@ class AgentConnectRequestSerializer(AgentSourceRequestSerializer):
     name = serializers.CharField(max_length=255)
     commit_sha = serializers.RegexField(r"^[0-9a-fA-F]{40}$", required=False)
     subfolder = serializers.RegexField(
-        SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
+        BLANK_OR_SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
     )
     entry = serializers.RegexField(
-        SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
+        BLANK_OR_SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
     )
     env_values = serializers.DictField(
         child=serializers.CharField(max_length=65_536, trim_whitespace=False),

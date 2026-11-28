@@ -284,7 +284,7 @@ def test_poll_failed_evaluation_preserves_metadata_shapes(
         ),
     ],
 )
-def test_direct_evaluator_never_bypasses_denial(denial):
+def test_direct_evaluator_keeps_the_denial(denial):
     from ee.tests.test_direct_evaluator_scoring import (
         _direct_evaluator,
         _eval_template,

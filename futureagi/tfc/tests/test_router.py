@@ -55,7 +55,12 @@ User = get_user_model()
 # -- db_for_read ---------------------------------------------------------
 
 
-def test_read_routes_to_default_when_no_replica():
+def test_read_routes_to_default_when_no_replica(settings):
+    settings.DATABASES = {
+        alias: config
+        for alias, config in settings.DATABASES.items()
+        if alias != "replica"
+    }
     router = ReadReplicaRouter(opt_in=["User"])
     assert router.db_for_read(User) == "default"
 

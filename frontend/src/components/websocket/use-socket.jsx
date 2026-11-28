@@ -24,23 +24,37 @@ const MAX_RECONNECT_DELAY = 30000; // 30 seconds max delay
 const MAX_RECONNECT_ATTEMPTS = 10; // Give up after this many consecutive failures
 const HEARTBEAT_INTERVAL = 10000;
 
+// Close codes the server sends when this credential or organization no longer
+// authorizes the socket (sockets/consumer.py, sockets/membership.py,
+// tfc/middleware/jwt_auth.py). The same credential would be refused again, so
+// these never reconnect; a new token or organization opens a fresh socket.
+// Any other code, including 1011 when the server could not complete
+// authentication (database or cache unavailable), reconnects with backoff.
+const AUTHORIZATION_CLOSE_CODES = new Set([4001, 4002]);
+// The server accepts the handshake before closing with this code, so the
+// open does not count as a successful connection for the retry backoff.
+const AUTHENTICATION_UNAVAILABLE_CLOSE_CODE = 1011;
+// Once the retry budget is spent during such an outage, keep retrying at this
+// slow, fixed interval: the credential was never refused.
+const AUTHENTICATION_UNAVAILABLE_RETRY_DELAY = 60000;
+
 export const WebSocketProvider = ({ children }) => {
   const { user, authenticated } = useSafeAuthContext();
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const reconnectAttempts = useRef(0);
+  const authenticationUnavailableRef = useRef(false);
 
   const socketRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const accessToken = useRef(null);
-  const socketTokenRef = useRef(null);
+  const organizationId = user?.organization?.id;
+  const requiresOrgSetup = Boolean(user?.requires_org_setup);
+  const refusedCredentialRef = useRef(null);
   const authFailuresRef = useRef(0);
-  // Each socket gets an id; a token refresh only acts for the socket whose
-  // rejection started it, and only while no newer socket has been opened.
   const socketIdRef = useRef(0);
   const refreshingRef = useRef(null);
-  const authenticatedRef = useRef(false);
   const createWebSocketConnectionRef = useRef(null);
   const messageListenersRef = useRef(new Set());
 
@@ -108,8 +122,12 @@ export const WebSocketProvider = ({ children }) => {
   }, [authenticated, closeConnection]);
 
   const attemptReconnect = useCallback(() => {
-    // The server keeps rejecting the token; only a new token reconnects.
-    if (authFailuresRef.current >= MAX_AUTH_FAILURES) {
+    if (
+      !accessToken.current ||
+      authFailuresRef.current >= MAX_AUTH_FAILURES ||
+      refusedCredentialRef.current?.token ===
+        getCurrentAccessToken(accessToken.current)
+    ) {
       return;
     }
 
@@ -123,10 +141,13 @@ export const WebSocketProvider = ({ children }) => {
       return;
     }
 
+    const exhausted = reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS;
+
     // Reconnection permanently exhausted — stop retrying. The single actionable
     // exception is emitted from errorHandler once this cap is reached; here we
-    // just stop the loop so transient drops don't retry forever.
-    if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+    // just stop the loop so transient drops don't retry forever. While the
+    // server cannot authenticate the socket (1011) it keeps retrying slowly.
+    if (exhausted && !authenticationUnavailableRef.current) {
       logger.addBreadcrumb({
         category: "websocket",
         level: "warning",
@@ -136,17 +157,22 @@ export const WebSocketProvider = ({ children }) => {
     }
 
     // Use exponential backoff with a maximum delay
-    const backoffTime = Math.min(
-      RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts.current),
-      MAX_RECONNECT_DELAY,
-    );
+    const backoffTime = exhausted
+      ? AUTHENTICATION_UNAVAILABLE_RETRY_DELAY
+      : Math.min(
+          RECONNECT_INTERVAL * Math.pow(2, reconnectAttempts.current),
+          MAX_RECONNECT_DELAY,
+        );
 
     logger.debug(
       `Attempting WebSocket reconnect in ${backoffTime}ms (attempt ${reconnectAttempts.current + 1})...`,
     );
 
     reconnectTimeoutRef.current = setTimeout(() => {
-      reconnectAttempts.current++;
+      reconnectAttempts.current = Math.min(
+        reconnectAttempts.current + 1,
+        MAX_RECONNECT_ATTEMPTS,
+      );
       // Use ref to avoid circular dependency
       if (createWebSocketConnectionRef.current) {
         createWebSocketConnectionRef.current();
@@ -168,6 +194,8 @@ export const WebSocketProvider = ({ children }) => {
         canRetry = await refreshRejectedSocketToken(
           rejectedToken,
           accessToken.current,
+          () => socketIdRef.current === socketId,
+          reconnectTimeoutRef,
         );
       } finally {
         if (refreshingRef.current === socketId) refreshingRef.current = null;
@@ -183,14 +211,22 @@ export const WebSocketProvider = ({ children }) => {
         return;
       }
 
-      if (!authenticatedRef.current) return;
       attemptReconnect();
     },
     [attemptReconnect],
   );
 
   const createWebSocketConnection = useCallback(() => {
+    if (!accessToken.current) return;
     const token = getCurrentAccessToken(accessToken.current);
+    const refused = refusedCredentialRef.current;
+    if (
+      refused &&
+      refused.token === token &&
+      refused.organizationId === organizationId
+    )
+      return;
+    refusedCredentialRef.current = null;
     if (!token) {
       logger.debug("No access token found, skipping WebSocket connection.");
       return;
@@ -203,27 +239,26 @@ export const WebSocketProvider = ({ children }) => {
     const wsHost = HOST_API.replace(/^https?:\/\//, "").replace(/\/+$/, "");
     const protocol = isSecure ? "wss" : "ws";
     const query = new URLSearchParams({ token });
+    if (organizationId) query.set("organization_id", organizationId);
     const wsUrl = `${protocol}://${wsHost}/ws/connect/?${query}`;
 
     const socket = new WebSocket(wsUrl);
     socketIdRef.current += 1;
     const socketId = socketIdRef.current;
     socketRef.current = socket;
-    socketTokenRef.current = token;
 
     // Create and store event handlers
     const openHandler = () => {
       setIsConnected(true);
       setError(null);
-      // Retry counters reset on the first server frame, not here: the server
-      // accepts the handshake before it validates the token.
+      // The handshake is accepted before the server validates the token.
       logger.debug("WebSocket connected");
       startHeartbeat();
     };
 
     const messageHandler = (event) => {
-      // Any server frame (including the heartbeat pong) means the token was
-      // accepted.
+      // A server frame confirms authentication and restores both retry budgets.
+      authenticationUnavailableRef.current = false;
       reconnectAttempts.current = 0;
       authFailuresRef.current = 0;
       let message = event.data;
@@ -282,6 +317,9 @@ export const WebSocketProvider = ({ children }) => {
       }
       setError("WebSocket connection error");
       setIsConnected(false);
+      // A failure other than 1011 ends the slow retries for unavailable
+      // authentication; the normal retry limit applies again.
+      authenticationUnavailableRef.current = false;
 
       if (
         socketRef.current?.readyState !== WebSocket.OPEN &&
@@ -292,17 +330,39 @@ export const WebSocketProvider = ({ children }) => {
     };
 
     const closeHandler = (event) => {
+      if (socketRef.current !== socket) return;
       setIsConnected(false);
-      socketRef.current?.close?.();
       socketRef.current = null;
       stopHeartbeat();
 
-      if (event.code === 1006) {
-        logger.debug("WebSocket closed with 1006 - skipping reconnect");
+      if (
+        AUTHORIZATION_CLOSE_CODES.has(event.code) ||
+        event.code === AUTH_REJECTED_CLOSE_CODE
+      ) {
+        refusedCredentialRef.current = { token, organizationId };
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+      }
+
+      if (AUTHORIZATION_CLOSE_CODES.has(event.code)) {
+        logger.addBreadcrumb({
+          category: "websocket",
+          level: "info",
+          message: `WebSocket closed by the server (${event.code}); not reconnecting`,
+        });
         return;
       }
 
-      logger.debug("WebSocket closed:", event);
+      if (event.code === AUTHENTICATION_UNAVAILABLE_CLOSE_CODE) {
+        // Keep backing off while the server cannot authenticate the socket.
+        authenticationUnavailableRef.current = true;
+      } else {
+        authenticationUnavailableRef.current = false;
+      }
+
+      logger.debug("WebSocket closed:", event.code);
 
       if (event.code === AUTH_REJECTED_CLOSE_CODE) {
         authFailuresRef.current += 1;
@@ -315,7 +375,8 @@ export const WebSocketProvider = ({ children }) => {
           return;
         }
         if (authenticated) {
-          refreshTokenThenReconnect(socketTokenRef.current, socketId);
+          reconnectAttempts.current = authFailuresRef.current - 1;
+          refreshTokenThenReconnect(token, socketId);
         }
         return;
       }
@@ -340,6 +401,7 @@ export const WebSocketProvider = ({ children }) => {
     socket.addEventListener("close", closeHandler);
   }, [
     authenticated,
+    organizationId,
     closeConnection,
     startHeartbeat,
     stopHeartbeat,
@@ -375,34 +437,28 @@ export const WebSocketProvider = ({ children }) => {
 
   // Consolidated authentication state handling
   useEffect(() => {
-    authenticatedRef.current = Boolean(authenticated && user?.accessToken);
-    if (authenticated && user?.accessToken) {
-      if (accessToken.current !== user?.accessToken) {
-        // A new sign-in gets a fresh budget of token rejections.
-        authFailuresRef.current = 0;
-      }
-      accessToken.current = user?.accessToken;
-
-      // A scheduled retry, a refresh in flight or a token the server keeps
-      // rejecting owns the next connection; re-renders must not bypass it.
-      const retryPending =
-        reconnectTimeoutRef.current ||
-        refreshingRef.current ||
-        authFailuresRef.current >= MAX_AUTH_FAILURES;
-
-      if (
-        !retryPending &&
-        (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN)
-      ) {
-        createWebSocketConnection();
-      }
-    } else {
-      accessToken.current = null;
-      closeConnection();
+    if (authenticated && user?.accessToken && !requiresOrgSetup) {
+      accessToken.current = user.accessToken;
+      createWebSocketConnection();
     }
+
+    // A retry or refresh belongs only to this credential and organization.
+    return () => {
+      accessToken.current = null;
+      socketIdRef.current += 1;
+      refreshingRef.current = null;
+      authFailuresRef.current = 0;
+      reconnectAttempts.current = 0;
+      authenticationUnavailableRef.current = false;
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+      closeConnection();
+    };
   }, [
     authenticated,
     user?.accessToken,
+    organizationId,
+    requiresOrgSetup,
     createWebSocketConnection,
     closeConnection,
   ]);
@@ -442,14 +498,6 @@ export const WebSocketProvider = ({ children }) => {
   useEffect(() => {
     createWebSocketConnectionRef.current = createWebSocketConnection;
   }, [createWebSocketConnection]);
-
-  // A token refresh still in flight at unmount must not open a socket.
-  useEffect(
-    () => () => {
-      authenticatedRef.current = false;
-    },
-    [],
-  );
 
   const contextValue = useMemo(
     () => ({

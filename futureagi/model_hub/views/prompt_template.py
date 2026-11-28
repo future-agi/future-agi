@@ -10,6 +10,7 @@ from uuid import UUID
 import litellm
 import structlog
 
+from sockets.prompt_jobs import create_prompt_job
 from tfc.ee_stub import _ee_stub
 from tfc.utils.ssrf_guard import safe_fetch
 
@@ -3543,15 +3544,13 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             prompt_generator = PromptGenerator()
 
+            org = getattr(request, "organization", None) or request.user.organization
             generation_payload = {
                 "description": statement,
-                "organization_id": str(
-                    (
-                        getattr(request, "organization", None)
-                        or request.user.organization
-                    ).id
+                "organization_id": str(org.id),
+                "generation_id": create_prompt_job(
+                    "generate", request.workspace, org.id
                 ),
-                "generation_id": f"generate_{uuid.uuid4()}",
                 "mixpanel_uid": uid,
                 "user_id": str(request.user.id),
             }
@@ -3683,13 +3682,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             payload = {
                 "original_prompt": existing_prompt,
                 "improvement_suggestions": improvement_requirements,
-                "improve_id": f"improve_{uuid.uuid4()}",
-                "organization_id": str(
-                    (
-                        getattr(request, "organization", None)
-                        or request.user.organization
-                    ).id
-                ),
+                "improve_id": create_prompt_job("improve", request.workspace, org.id),
+                "organization_id": str(org.id),
                 "user_id": str(request.user.id),
                 "mixpanel_uid": uid,
             }
