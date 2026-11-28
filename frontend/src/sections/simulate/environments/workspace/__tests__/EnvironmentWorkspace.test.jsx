@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { flushSync } from "react-dom";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   queryScenarioFixture,
   SAMPLE_ROWS,
@@ -815,6 +822,64 @@ describe("EnvironmentWorkspace route shell", () => {
       screen.getByRole("button", { name: "Rename environment" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Design progress")).not.toBeInTheDocument();
+  });
+
+  it("shows the design being drafted, not a build, until the person approves it", async () => {
+    const proposal = {
+      message_id: "q1",
+      role: "assistant",
+      kind: "question",
+      payload: {
+        prompt: "Approve this design for refund_desk?",
+        options: [
+          "Build this: Approve the design and start building",
+          "Change something: Say what to change first",
+        ],
+        design_proposal: { one_liner: "Refund desk", records: ["orders"] },
+      },
+    };
+    const job = (conversation) => ({
+      ...BUILDING_JOB,
+      job: {
+        ...BUILDING_JOB.job,
+        metadata: {
+          name: "Refund desk",
+          design: { requirements: "Handle disputed refunds." },
+          source_review: { id: "review-1", state: "accepted", revision: 3 },
+        },
+      },
+      status: { stage: "acquiring_source", created_at: NOW },
+      conversation,
+    });
+    getHarnessJob.mockResolvedValue(
+      job({
+        events: [{ kind: "tool_result", payload: { tool: "read_source" } }],
+        messages: [],
+      }),
+    );
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+    expect(await screen.findByText("Review the design")).toBeInTheDocument();
+    expect(screen.getByText("Designing")).toBeInTheDocument();
+    expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Approve and build" }),
+    ).toBeDisabled();
+    cleanup();
+
+    getHarnessJob.mockResolvedValue(
+      job({
+        events: [],
+        messages: [
+          proposal,
+          { role: "user", reply_to: "q1", content: "Build this" },
+        ],
+      }),
+    );
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+    expect(
+      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Review the design")).toBeNull();
   });
 
   it.each(["design", "build_job"])(

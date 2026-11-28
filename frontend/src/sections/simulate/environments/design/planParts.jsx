@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
-import { Children, isValidElement } from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import { Children, isValidElement, useEffect, useRef } from "react";
+import { Box, Fade, Stack, Typography, useMediaQuery } from "@mui/material";
 import ReadingLine from "./ReadingLine";
 
 const hairline = { borderBottom: "1px solid", borderColor: "divider" };
@@ -9,6 +9,12 @@ const hairline = { borderBottom: "1px solid", borderColor: "divider" };
    hairlines (a Collapse's lines too). While the files are read it shows a
    reading line instead. */
 export function PlanRow({ label, count, reading, children }) {
+  const reduce = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // Fades only a swap between reading and read, not the first paint.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+  }, []);
   const n = reading
     ? ""
     : count ??
@@ -31,17 +37,24 @@ export function PlanRow({ label, count, reading, children }) {
           {n}
         </Box>
       </Typography>
-      <Box
-        sx={{
-          borderTop: "1px solid",
-          borderColor: "divider",
-          "& > *, & > .MuiCollapse-root .MuiCollapse-wrapperInner > *":
-            hairline,
-          "& > .MuiCollapse-root": { borderBottom: 0 },
-        }}
+      <Fade
+        key={reading ? "reading" : "read"}
+        in
+        appear={mounted.current}
+        timeout={reduce ? 0 : undefined}
       >
-        {reading ? <ReadingLine text={`Reading ${reading}…`} /> : children}
-      </Box>
+        <Box
+          sx={{
+            borderTop: "1px solid",
+            borderColor: "divider",
+            "& > *, & > .MuiCollapse-root .MuiCollapse-wrapperInner > *":
+              hairline,
+            "& > .MuiCollapse-root": { borderBottom: 0 },
+          }}
+        >
+          {reading ? <ReadingLine text={`Reading ${reading}…`} /> : children}
+        </Box>
+      </Fade>
     </Box>
   );
 }

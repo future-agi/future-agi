@@ -272,7 +272,8 @@ export default function DesignReview({
         title="Review the design"
         description={
           reading
-            ? `Reading ${readingNames}. The design fills in as it's read.`
+            ? summary.readingLine ||
+              `Reading ${readingNames}. The design fills in as it's read.`
             : BUILD_LINE[build?.status] ||
               "Nothing is built until you approve. Then you review the build and save it as v1."
         }

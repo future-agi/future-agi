@@ -17,7 +17,8 @@ function ProposedPlan({
   modality,
   sourceReviewId,
 }) {
-  const proposal = question.design_proposal;
+  // No question yet: the builder is still drafting, so every part is read.
+  const proposal = question?.design_proposal;
   const names = (items = []) => items.map((name) => ({ name }));
   const texts = (items = []) => items.map((text) => ({ text }));
   const review = useEnvironmentSourceReview(sourceReviewId);
@@ -55,12 +56,14 @@ function ProposedPlan({
         .join(", "),
     };
   });
+  const readingNames =
+    sources.map((source) => source.name).join(", ") || "your brief";
   const summary = {
-    structured: Boolean(proposal),
+    structured: !question || Boolean(proposal),
     brief: {
       description: proposal
         ? [proposal.one_liner, proposal.summary].filter(Boolean).join("\n\n")
-        : question.prompt,
+        : question?.prompt || requirements,
       channel: modality,
       sourcesLine: sourceReviewId
         ? "Reviewed source material"
@@ -75,7 +78,11 @@ function ProposedPlan({
       id: request,
       request,
     })),
-    readingParts: [],
+    readingParts: question
+      ? []
+      : ["records", "tools", "rules", "people", "scenarios"],
+    readingNames,
+    readingLine: `The builder is drafting the design from ${readingNames}. Nothing is built until you approve it.`,
     sources,
     unusable: [],
     approveBlocked: Boolean(proposal?.dependencies?.length),
@@ -100,7 +107,7 @@ function ProposedPlan({
   );
 }
 ProposedPlan.propTypes = {
-  question: PropTypes.object.isRequired,
+  question: PropTypes.object,
   canEdit: PropTypes.bool,
   send: PropTypes.func.isRequired,
   busy: PropTypes.bool,
@@ -113,6 +120,7 @@ export default function DesignWorkspace({
   chat,
   canEdit,
   question,
+  drafting,
   review,
   progress,
   requirements,
@@ -157,9 +165,9 @@ export default function DesignWorkspace({
               modality={modality}
               review={review}
             />
-          ) : question ? (
+          ) : question || drafting ? (
+            // One page from drafting to the proposal, so the parts fade in as they arrive.
             <ProposedPlan
-              key={question.message_id}
               question={question}
               requirements={requirements}
               modality={modality}
@@ -188,6 +196,7 @@ DesignWorkspace.propTypes = {
   chat: PropTypes.object.isRequired,
   canEdit: PropTypes.bool,
   question: PropTypes.object,
+  drafting: PropTypes.bool,
   review: PropTypes.node,
   progress: PropTypes.node,
   requirements: PropTypes.string,

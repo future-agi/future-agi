@@ -3,7 +3,10 @@ import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, Stack } from "@mui/material";
 import { useNavigate, useParams, useMatch, Outlet } from "react-router-dom";
 
-import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import {
+  designProgress,
+  errorMessage,
+} from "src/pages/dashboard/harness/harnessShared";
 import { paths } from "src/routes/paths";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -55,7 +58,7 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import DesignWorkspace from "../design/DesignWorkspace";
-import { designQuestion } from "../design/designQuestion";
+import { designApproved, designQuestion } from "../design/designQuestion";
 import SourceBuilderConsole from "./sources/SourceBuilderConsole";
 import SourceReviewPanel from "./sources/SourceReviewPanel";
 
@@ -405,6 +408,18 @@ export default function EnvironmentWorkspace() {
     const question = metadata.design && designQuestion(designJob?.conversation);
     const awaiting =
       jobQuery.data?.status?.stage === "awaiting_source_review" || question;
+    // The builder drafts the design before it asks for approval; nothing is
+    // built until the person approves it, so this is not a build yet. A resumed
+    // design may already be approved in its checkpoint, so it keeps the build view.
+    const conversation = designJob?.conversation;
+    const drafting =
+      Boolean(metadata.design) &&
+      !metadata.design.resume_from &&
+      building &&
+      !reviewStage &&
+      !question &&
+      !designApproved(conversation) &&
+      !designProgress(conversation).has("approved");
     return (
       <Box
         sx={{
@@ -423,7 +438,14 @@ export default function EnvironmentWorkspace() {
                   buildingTooltip: "Review and approve to continue.",
                   awaitingApproval: true,
                 }
-              : buildingEnv
+              : drafting
+                ? {
+                    ...buildingEnv,
+                    buildingLabel: "Designing",
+                    buildingTooltip:
+                      "The builder is drafting the design. You approve it before anything is built.",
+                  }
+                : buildingEnv
           }
           envState={envState}
           canRun={false}
@@ -439,12 +461,14 @@ export default function EnvironmentWorkspace() {
         {creditBanner}
         {refusalLine}
         {question ||
+        drafting ||
         (reviewId && reviewStage) ||
         (metadata.design && buildFailed) ? (
           <DesignWorkspace
             chat={chat}
             canEdit={canEdit}
             question={question}
+            drafting={drafting}
             progress={designPanel}
             requirements={metadata.design?.requirements}
             modality={metadata.design?.modality}
