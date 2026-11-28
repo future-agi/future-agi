@@ -58,13 +58,14 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	quotaCmd := pipe.Get(ctx, quotaKey)
 	usageCmd := pipe.Get(ctx, usageKey)
 	pauseCmd := pipe.Get(ctx, pauseKey)
+	totalSpendPauseCmd := pipe.Get(ctx, fmt.Sprintf("pause:%s:total_spend", orgID))
 	_, err := pipe.Exec(ctx)
 	if err != nil && err != redis.Nil {
 		slog.Debug("quota redis pipeline error, allowing request", "error", err, "org_id", orgID)
 		return pipeline.ResultContinue()
 	}
 
-	if pauseVal, _ := pauseCmd.Result(); pauseVal != "" {
+	if pauseCmd.Val() != "" || totalSpendPauseCmd.Val() != "" {
 		return pipeline.ResultError(&models.APIError{
 			Status:  http.StatusTooManyRequests,
 			Type:    models.ErrTypeRateLimit,
