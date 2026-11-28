@@ -4,9 +4,12 @@ import argparse
 import json
 import re
 import subprocess
+import sys
+import time
 
 
 REPOSITORIES = {"sdk": "futureagi-sdk", "traceai": "traceAI"}
+RETRY_DELAYS = (5, 15, 45)  # seconds between attempts at listing one repository
 
 
 def choose(repository, candidates, listing):
@@ -21,16 +24,27 @@ def choose(repository, candidates, listing):
     raise ValueError(f"No matching branch in {repository}: {', '.join(candidates)}")
 
 
+def advertised_heads(repository):
+    """`git ls-remote --heads`, retried with backoff. A transport error or timeout is never read
+    as an absent branch: after the last attempt it fails the job, naming the cause."""
+    url = f"https://github.com/future-agi/{repository}.git"
+    for attempt, delay in enumerate((*RETRY_DELAYS, None), 1):
+        try:
+            return subprocess.check_output(["git", "ls-remote", "--heads", url], text=True, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            if delay is None:
+                raise RuntimeError(f"Could not list {repository} branches after {attempt} attempts "
+                                   f"(transport error, not an absent branch): {error}") from error
+            print(f"git ls-remote {repository} failed (attempt {attempt}); retrying in {delay}s", file=sys.stderr)
+            time.sleep(delay)
+
+
 def resolve(head, base):
     candidates = list(dict.fromkeys(branch for branch in (head, base, "dev", "main") if branch))
     result = {}
     for component, repository in REPOSITORIES.items():
         # One advertisement per repository. A transport error is not an absent branch.
-        listing = subprocess.check_output(
-            ["git", "ls-remote", "--heads", f"https://github.com/future-agi/{repository}.git"],
-            text=True, timeout=60,
-        )
-        result[component] = choose(repository, candidates, listing)
+        result[component] = choose(repository, candidates, advertised_heads(repository))
     return result
 
 

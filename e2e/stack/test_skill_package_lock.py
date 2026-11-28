@@ -109,7 +109,7 @@ class PairLockTests(unittest.TestCase):
             with self.subTest(scope=scope, key=key), patch.dict(source[scope], {key: value}):
                 with self.assertRaisesRegex(ValueError, "contract provenance"):
                     verify(self.dist, self.lock(), self.sources)
-        for owned in [[], ["nope"], ["skills", "skills"], "skills"]:
+        for owned in [[], ["nope"], ["skills", "skills"], "skills", ["epoch"], ["sql", "epoch"], ["skills", "epoch"]]:
             with self.subTest(owned=owned), patch.dict(self.contract, owned_scopes=owned):
                 with self.assertRaisesRegex(ValueError, "contract provenance"):
                     verify(self.dist, self.lock(), self.sources)

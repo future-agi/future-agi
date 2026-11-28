@@ -51,8 +51,21 @@ class BranchTests(unittest.TestCase):
         with patch('subprocess.check_output', return_value=listing('other')), self.assertRaisesRegex(ValueError, 'No matching'):
             resolve('unpaired', '')
         error = subprocess.CalledProcessError(128, ['git', 'ls-remote'])
-        with patch('subprocess.check_output', side_effect=error), self.assertRaises(subprocess.CalledProcessError):
+        with patch('subprocess.check_output', side_effect=error), patch('time.sleep') as sleep, \
+                self.assertRaisesRegex(RuntimeError, 'transport error, not an absent branch'):
             resolve('feature/x', 'dev')
+        self.assertEqual([c.args for c in sleep.call_args_list], [(5,), (15,), (45,)])
+
+    def test_transient_listing_failures_are_retried_not_read_as_absent(self):
+        timeout = subprocess.TimeoutExpired(['git', 'ls-remote'], 60)
+        error = subprocess.CalledProcessError(128, ['git', 'ls-remote'])
+        sdk, trace = listing('dev', 'feature/x'), listing('dev')
+        with patch('subprocess.check_output', side_effect=[timeout, error, sdk, trace]) as run, \
+                patch('time.sleep') as sleep:
+            refs = resolve('feature/x', 'dev')
+        self.assertEqual(refs['sdk']['branch'], 'feature/x')  # not a fallback to dev
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual([c.args for c in sleep.call_args_list], [(5,), (15,)])
 
 
 class ContractTests(unittest.TestCase):
@@ -208,6 +221,42 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(calls[1:], [('sdkgen/generate.py', '--only', 'python', 'typescript'),
                                          ('sdkgen/generate.py', '--check', '--only', 'python', 'typescript')])
 
+    def test_a_legacy_layout_sdk_is_guarded_against_breaking_skills_changes_too(self):
+        regenerate = checker['regenerate']
+        legacy = {'name': 'legacy', 'in': 'query', 'required': True, 'type': 'string'}
+        with tempfile.TemporaryDirectory() as tmp:
+            product, sdk = Path(tmp) / 'product', Path(tmp) / 'sdk'
+            api_bytes = json.dumps(self.api).encode()
+            api_sha = hashlib.sha256(api_bytes).hexdigest()
+            tools_bytes = json.dumps({**self.catalog, 'source_contract_sha256': api_sha}).encode()
+            tools_sha = hashlib.sha256(tools_bytes).hexdigest()
+            revision = commit(product, {checker['OPENAPI']: api_bytes, checker['MCP']: tools_bytes})
+
+            def fixture_run(repo, script, *args):
+                if script == 'sdkgen/sync_contract.py':
+                    source = {'backend_commit': revision, 'openapi_sha256': api_sha, 'mcp_sha256': tools_sha}
+                    snapshots = {'SOURCE.json': source, 'swagger.json': {**self.swagger, 'x-source-sha256': api_sha},
+                                 'mcp-tools.json': {'tools': [{'name': 'list_skills'}], 'x-source-sha256': tools_sha}}
+                    for name, value in snapshots.items():
+                        (sdk / 'sdkgen/contracts' / name).write_text(json.dumps(value))
+
+            for paths, breaks in [(self.swagger['paths'], False),
+                                  ({self.path: {'get': {'parameters': [legacy]}}}, True)]:
+                with self.subTest(breaks=breaks):
+                    for name in ('SOURCE.json', 'mcp-tools.json'):
+                        (sdk / 'sdkgen/contracts' / name).unlink(missing_ok=True)
+                    commit(sdk, {'sdkgen/catalog/operations.yaml': json.dumps({'operations': [self.entry]}).encode(),
+                                 'sdkgen/contracts/swagger.json': json.dumps(
+                                     {'x-source-sha256': 'f' * 64, 'paths': paths}).encode(),
+                                 'sdkgen/contracts/BACKEND_VERSION': b'v1.0.0'})
+                    with patch.dict(regenerate.__globals__, run_sdk=fixture_run,
+                                    check_catalog_provenance=lambda *_: None):
+                        if breaks:
+                            with self.assertRaisesRegex(ValueError, "Breaking change.*required query input 'legacy' was removed"):
+                                regenerate(product, sdk, revision)
+                        else:
+                            self.assertEqual(regenerate(product, sdk, revision)['sync_mode'], 'full')
+
     def test_scoped_sync_uses_committed_inputs_and_the_recorded_sdk_baseline(self):
         regenerate = checker['regenerate']
 
@@ -332,6 +381,7 @@ class ContractTests(unittest.TestCase):
             },
             'definitions': {'Push': {'type': 'object', 'required': ['name'],
                                      'properties': {'name': {'type': 'string'}, 'note': {'type': 'string'},
+                                                    'metadata': {'type': 'object', 'additionalProperties': True},
                                                     'files': {'type': 'array', 'items': {'$ref': '#/definitions/File'}}}},
                             'File': {'type': 'object', 'required': ['path', 'content'],
                                      'properties': {'path': {'type': 'string'}, 'content': {'type': 'string'},
@@ -378,7 +428,38 @@ class ContractTests(unittest.TestCase):
             # A required field of an object the shipped client never sends is not a break.
             (lambda d: d['definitions']['Push']['properties'].update(
                 meta={'type': 'object', 'required': ['owner'], 'properties': {'owner': {'type': 'string'}}}), []),
+            # Shipped callers send optional inputs too: removing or renaming one breaks them.
+            (lambda d: d['paths'][resolve]['get']['parameters'].pop(1),
+             ["GET /model-hub/skills/resolve/: optional query input 'label' was removed or renamed"]),
+            (lambda d: d['definitions']['File']['properties'].pop('mode'),
+             ["POST /model-hub/skills/publish/: optional body input 'files.[].mode' was removed or renamed"]),
+            # Reported once, at the outermost input that is gone.
+            (lambda d: d['definitions']['Push']['properties'].pop('files'),
+             ["POST /model-hub/skills/publish/: optional body input 'files' was removed or renamed"]),
+            # Required fields behind allOf branches and $ref aliases, at any depth, count.
+            (lambda d: d['definitions'].update(
+                File={'allOf': [{'$ref': '#/definitions/FileAlias'}]},
+                FileAlias={'$ref': '#/definitions/FileBase'},
+                FileBase={'allOf': [{'type': 'object', 'required': ['path'], 'properties': {'path': {'type': 'string'}}},
+                                    {'required': ['content', 'encoding'], 'properties': {
+                                        'content': {'type': 'string'}, 'encoding': {'type': 'string'},
+                                        'mode': {'type': 'string', 'enum': ['r', 'w'], 'x-nullable': True}}}]}),
+             ["POST /model-hub/skills/publish/: body input 'files.[].encoding' is newly required"]),
+            # A free-form map that stops accepting arbitrary keys.
+            (lambda d: d['definitions']['Push']['properties']['metadata'].update(additionalProperties={'type': 'string'}),
+             ["POST /model-hub/skills/publish/: body input 'metadata' accepts fewer keys"]),
+            (lambda d: d['definitions']['Push']['properties']['metadata'].update(additionalProperties=False),
+             ["POST /model-hub/skills/publish/: body input 'metadata' accepts fewer keys"]),
+            # A field whose definition is readOnly is response-only, not an input.
+            (lambda d: d['definitions']['Push']['properties'].update(owner={'$ref': '#/definitions/Owner'})
+             or d['definitions'].update(Owner={'type': 'string', 'readOnly': True})
+             or d['definitions']['Push']['required'].append('owner'), []),
         ]
+        # Only operations the SDK exposes are guarded.
+        product = copy.deepcopy(shipped)
+        product['paths'].pop(publish)
+        self.assertEqual(breaking(shipped, product, {('get', resolve)}), [])
+        self.assertEqual(breaking(shipped, product, {('post', publish)}), ['POST /model-hub/skills/publish/ is no longer served'])
         for index, (change, expected) in enumerate(cases):
             product = copy.deepcopy(shipped)
             change(product)

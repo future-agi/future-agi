@@ -87,49 +87,64 @@ def effective_operation(doc, method, path):
     return {**inline_reusable(doc, op), 'parameters': parameters}
 
 
-def schema_inputs(doc, schema, prefix, required, inputs, visiting=()):
-    """Record each input a request can send under `prefix`: (required, type, format, enum, nullable).
-    Walks definitions, allOf, object properties, array items and map values; readOnly fields are
-    not inputs."""
-    schema = schema or {}
+def schema_parts(doc, schema, visiting=()):
+    """A schema as the list of objects that together define it: $ref aliases followed and every
+    allOf branch composed, at any depth. Returns (parts, refs visited)."""
+    schema = schema if isinstance(schema, dict) else {}
     ref = schema.get('$ref')
     if ref:
         if ref in visiting:
-            return
-        schema, visiting = inline_reusable(doc, referenced(doc, ref)), (*visiting, ref)
-    parts = [schema, *(inline_reusable(doc, part) for part in schema.get('allOf', ()))]
-    for i, part in enumerate(parts[1:], 1):
-        if '$ref' in part:
-            if part['$ref'] in visiting:
-                parts[i] = {}
-                continue
-            parts[i] = inline_reusable(doc, referenced(doc, part['$ref']))
-            visiting = (*visiting, part['$ref'])
+            return [], visiting
+        return schema_parts(doc, inline_reusable(doc, referenced(doc, ref)), (*visiting, ref))
+    parts = [schema]
+    for branch in schema.get('allOf') or ():
+        more, visiting = schema_parts(doc, inline_reusable(doc, branch), visiting)
+        parts += more
+    return parts, visiting
+
+
+def extra_keys(value):
+    """How an object treats keys it does not declare (additionalProperties)."""
+    if value is None:
+        return None              # unspecified
+    if value is True or value == {}:
+        return 'any'
+    if value is False:
+        return 'none'
+    return 'typed'
+
+
+def schema_inputs(doc, schema, prefix, required, inputs, visiting=()):
+    """Record each input a request can send under `prefix`:
+    (required, type, format, enum, nullable, additionalProperties kind).
+    Walks definitions, allOf, object properties, array items and map values; readOnly fields
+    (declared inline or on the referenced definition) are not inputs."""
+    parts, visiting = schema_parts(doc, schema, visiting)
     first = lambda key: next((part[key] for part in parts if key in part), None)
     enum = first('enum')
+    extra = first('additionalProperties')
     inputs[prefix] = (required, first('type'), first('format'),
                       None if enum is None else tuple(sorted(map(json.dumps, enum))),
-                      bool(first('x-nullable')))
+                      bool(first('x-nullable')), extra_keys(extra))
     needed = {field for part in parts for field in part.get('required') or ()}
     fields = {}
     for part in parts:
         fields.update(part.get('properties') or {})
     for field in sorted({*fields, *needed}):
         child = fields.get(field) or {}
-        if child.get('readOnly'):
+        if any(part.get('readOnly') for part in schema_parts(doc, child, visiting)[0]):
             continue
         schema_inputs(doc, child, (*prefix, field), field in needed, inputs, visiting)
     items = first('items')
     if isinstance(items, dict):
         schema_inputs(doc, items, (*prefix, '[]'), False, inputs, visiting)
-    extra = first('additionalProperties')
-    if isinstance(extra, dict):
+    if isinstance(extra, dict) and extra:
         schema_inputs(doc, extra, (*prefix, '{}'), False, inputs, visiting)
 
 
 def skills_inputs(doc, method, path):
-    """Input path -> (required, type, format, enum, nullable) for one operation, request body
-    fields included at any depth, e.g. ('body', 'files', '[]', 'path')."""
+    """Input path -> (required, type, format, enum, nullable, extra keys) for one operation,
+    request body fields included at any depth, e.g. ('body', 'files', '[]', 'path')."""
     op = effective_operation(doc, method, path)
     if op is None:
         return None
@@ -141,17 +156,26 @@ def skills_inputs(doc, method, path):
     return inputs
 
 
-def breaking_skills_changes(shipped, product):
+def parent_of(key):
+    top = 1 if key[0] == 'body' else 2
+    return key[:-1] if len(key) > top else ()
+
+
+def breaking_skills_changes(shipped, product, exposed=None):
     """What a client of the shipped Skills contract would break on: a route the product no longer
-    serves, a required input it removed or renamed, an input it newly requires (a field of an
-    object the client already sends included), or an input whose type, format, values or
-    nullability it narrowed. The regenerated SDK follows the product, so this compares the paired
-    SDK's committed slice with the product."""
+    serves; an input it removed or renamed (optional ones too: shipped callers send them); an
+    input it newly requires (a field of an object the client already sends included); or an
+    input whose type, format, values, nullability or free-form keys it narrowed. New optional
+    inputs and required -> optional are compatible. `exposed` limits the check to the (method,
+    path) operations the SDK exposes. The regenerated SDK follows the product, so this compares
+    the paired SDK's committed slice with the product."""
     problems = []
     for path, item in sorted(shipped.get('paths', {}).items()):
         if not path.startswith(SKILLS):
             continue
         for method in sorted(m for m in item if m in HTTP_METHODS):
+            if exposed is not None and (method, path) not in exposed:
+                continue
             where = f'{method.upper()} {path}'
             before = skills_inputs(shipped, method, path)
             after = skills_inputs(product, method, path)
@@ -161,10 +185,11 @@ def breaking_skills_changes(shipped, product):
             name = lambda key: f'{key[0]} input ' + repr('.'.join(key[1:]) or key[0])
             for key, (required, *kind) in sorted(before.items()):
                 if key not in after:
-                    if required:
-                        problems.append(f'{where}: required {name(key)} was removed or renamed')
+                    if parent_of(key) not in after and parent_of(key):
+                        continue  # reported once, at the outermost input that is gone
+                    problems.append(f'{where}: {"required" if required else "optional"} {name(key)} was removed or renamed')
                     continue
-                _, kind_type, kind_format, values, nullable = after[key]
+                _, kind_type, kind_format, values, nullable, extra = after[key]
                 if kind_type is not None and kind_type != kind[0]:
                     problems.append(f'{where}: {name(key)} changed type')
                 elif kind_format is not None and kind_format != kind[1]:
@@ -173,13 +198,19 @@ def breaking_skills_changes(shipped, product):
                     problems.append(f'{where}: {name(key)} accepts fewer values')
                 elif kind[3] and not nullable:
                     problems.append(f'{where}: {name(key)} no longer accepts null')
+                elif (kind[4] == 'any' and extra in ('none', 'typed')) or (kind[4] == 'typed' and extra == 'none'):
+                    problems.append(f'{where}: {name(key)} accepts fewer keys')
             for key, (required, *_) in sorted(after.items()):
                 # A new required field matters when the client already sends its parent object.
-                top = 1 if key[0] == 'body' else 2
-                parent = key[:-1] if len(key) > top else ()
+                parent = parent_of(key)
                 if required and not (before.get(key) or (False,))[0] and (not parent or parent in before):
                     problems.append(f'{where}: {name(key)} is newly required')
     return problems
+
+
+def sdk_exposed(sdk_catalog):
+    return {(entry['operation']['method'].lower(), entry['operation']['path'])
+            for entry in sdk_catalog.get('operations', []) if entry.get('surfaces', {}).get('sdk') is not False}
 
 
 def reached_models(doc, operation):
@@ -360,6 +391,10 @@ def regenerate_scoped(root, sdk, sdk_commit, snapshot, inputs, catalog, sdk_cata
             or any((contracts / name).exists() for name in ('SOURCE.json', 'mcp-tools.json'))):
         raise ValueError('Mixed legacy and scoped contract provenance')
     recorded = snapshot['x-contract-sources']
+    # The committed slice is always a full sync: the SDK commits every scope from one product
+    # commit (its test_the_committed_slice_records_every_scope_from_one_product_commit). So it is
+    # validated as one product's inputs for all scopes; only the record this pairing regenerates
+    # splits into the owned Skills scope and the pinned rest, and is validated that way below.
     verifier['verify_scoped_source'](recorded)
     baseline = recorded['other']['sdk_commit']
     baseline_raw = blob(sdk, baseline, SDK_SWAGGER)
@@ -392,10 +427,6 @@ def regenerate_scoped(root, sdk, sdk_commit, snapshot, inputs, catalog, sdk_cata
     source = swagger.get('x-contract-sources')
     if source != expected or {'x-source-sha256', 'x-skills-only-baseline-sha256'} & swagger.keys():
         raise ValueError('Regenerated scoped snapshot does not match the committed contract inputs')
-    breaking = breaking_skills_changes(snapshot, swagger)
-    if breaking:
-        raise ValueError('Breaking change to the Skills contract the paired SDK ships (pair a same-named '
-                         'SDK branch that ships it): ' + '; '.join(breaking[:10]))
     return swagger, {'sync_mode': 'scoped', 'owned_scopes': list(OWNED_SCOPES), 'source': source,
                      'sha256': {'swagger.json': sha(raw)}}
 
@@ -465,6 +496,12 @@ def regenerate(root, sdk, product):
         swagger, receipt = regenerate_scoped(root, sdk, sdk_commit, snapshot, inputs, catalog, sdk_catalog)
     else:
         swagger, receipt = regenerate_legacy(sdk, snapshot, inputs, raw_api, raw_tools, catalog)
+    # Either layout: the committed slice (read from the paired commit before regenerating) is
+    # what shipped SDK clients call.
+    breaking = breaking_skills_changes(snapshot, swagger, sdk_exposed(sdk_catalog))
+    if breaking:
+        raise ValueError('Breaking change to the Skills contract the paired SDK ships (pair a same-named '
+                         'SDK branch that ships it): ' + '; '.join(breaking[:10]))
     return {**receipt, 'coverage': check_slice(json.loads(raw_api), swagger, catalog, sdk_catalog)}
 
 

@@ -77,7 +77,9 @@ def verify_provenance(document, product):
         raise ValueError("Invalid regenerated contract provenance")
     if source.keys() & {*PRODUCT_SCOPES, "other"}:
         owned = contract.get("owned_scopes")
-        if owned is not None and (not isinstance(owned, list) or not all(isinstance(s, str) for s in owned)):
+        # Receipts without owned_scopes synced every scope from the product. Product pairing now
+        # re-syncs Skills only, and nothing else may name itself product-owned.
+        if owned is not None and owned != ["skills"]:
             raise ValueError("Invalid scoped contract provenance: owned scopes")
         verify_scoped_source(source, product, owned=owned)
         if mode != "scoped" or set(hashes) != {"swagger.json"} or not hex_digest(hashes["swagger.json"], 64):

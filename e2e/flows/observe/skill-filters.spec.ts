@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../../lib/skill-trace-scenario';
 import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { isSkillCohortRequest } from '../../lib/skill-cohort-request';
 
 const item = (field:string, value:string, group = 0) => ({ column_id:`skill.${field}`, group,
   filter_config:{ col_type:'SKILL', filter_type:'text', filter_op:'equals', filter_value:value } });
@@ -65,37 +66,18 @@ test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@f
   const rows = (await res.json()).result.table as {span_id:string;trace_id:string}[];
   expect(rows.map(row=>row.span_id).sort()).toEqual((await read()).map(row=>row.id));
   expect(rows.some(row=>row.trace_id===other)).toBe(false);
-  type CohortRequestBody = { projection?: unknown; project_id?: unknown; from?: unknown; to?: unknown;
-    filters?: Array<{ column_id?: unknown; group?: unknown; filter_config?: { col_type?: unknown; filter_type?: unknown; filter_op?: unknown; filter_value?: unknown; }; }>; };
   type CohortObservation = | { observed: false } | { observed: true; status: number; complete: boolean; traces: number | null };
   const cohortObservation = page.waitForResponse((response) => {
-    if (response.request().method() !== 'POST') return false;
     let pathname: string;
-    let body: CohortRequestBody;
+    let body: unknown;
     try {
       pathname = new URL(response.url()).pathname;
-      body = response.request().postDataJSON() as CohortRequestBody;
+      body = response.request().postDataJSON();
     } catch {
       return false;
     }
-    const hasVersion = body.filters?.some((entry) =>
-      entry.column_id === 'skill.version_id'
-      && entry.filter_config?.col_type === 'SKILL'
-      && entry.filter_config?.filter_type === 'text'
-      && entry.filter_config?.filter_op === 'equals'
-      && entry.filter_config?.filter_value === s.refund.version.id
-      && (entry.group ?? 0) === 0,
-    ) ?? false;
-    if (
-      !pathname.endsWith('/tracer/trace/skill-projection/')
-      || body.projection !== 'cohort'
-      || body.project_id !== project.id
-      || typeof body.from !== 'string'
-      || typeof body.to !== 'string'
-    ) return false;
-    const from = Date.parse(body.from);
-    const to = Date.parse(body.to);
-    return Number.isFinite(from) && Number.isFinite(to) && from < to && hasVersion;
+    return isSkillCohortRequest(response.request().method(), pathname, body,
+      {projectId: project.id, versionId: s.refund.version.id});
   }, {timeout: 0}).then(async (response): Promise<CohortObservation> => {
     const status = response.status();
     if (status !== 200) return {observed: true, status, complete: false, traces: null};
