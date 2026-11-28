@@ -1,5 +1,7 @@
 """Unified alert API; each alert kind retains its own persistence and evaluator."""
 
+from typing import Any
+
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -289,7 +291,7 @@ class AlertView(APIView):
         try:
             organization, workspace = _scope(request)
             kind = request.validated_query_data.get("kind")
-            alerts = []
+            alerts: list[dict[str, Any]] = []
             if kind in (None, "metric"):
                 alerts.extend(
                     _metric_data(item)
