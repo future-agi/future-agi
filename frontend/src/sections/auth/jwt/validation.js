@@ -15,7 +15,7 @@ export const ResetPasswordSchema = z
       .max(128, "Password must not exceed 128 characters")
       .regex(/[a-zA-Z]/, "Password must contain at least one letter")
       .regex(
-        /[\d!@#$%^&*()_+=[\]{}|;:,.<>?-]/,
+        /[\d\p{P}\p{S}]/u,
         "Password must contain at least one number or special character",
       ),
     repeatPassword: z.string().min(8, "Password should be 8 characters long"),
