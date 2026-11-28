@@ -1,7 +1,7 @@
 /* eslint-env node */
 /* eslint-disable no-console */
-// Runs the design-system lint (.eslintrc.ds.cjs) on the lines this branch adds,
-// so older screens don't fail CI but new code has to follow the system.
+// Reports new restricted imports in changed files and other design-system
+// diagnostics on added lines, so existing screens don't have to migrate at once.
 //
 //   node scripts/lint-ds-changed.mjs                  # base: nearest of origin/dev, origin/main
 //   node scripts/lint-ds-changed.mjs --base up/dev    # explicit base ref
@@ -44,40 +44,56 @@ const resolveMergeBase = () => {
   for (const ref of candidates) {
     const mergeBase = tryGit("merge-base", "HEAD", ref);
     if (!mergeBase) continue;
-    const distance = Number(tryGit("rev-list", "--count", `${mergeBase}..HEAD`));
+    const distance = Number(
+      tryGit("rev-list", "--count", `${mergeBase}..HEAD`),
+    );
     if (!best || distance < best.distance) best = { ref, mergeBase, distance };
   }
   if (!best) {
-    console.error(`lint:ds:changed: no merge-base with ${candidates.join(" or ")}`);
+    console.error(
+      `lint:ds:changed: no merge-base with ${candidates.join(" or ")}`,
+    );
     process.exit(2);
   }
   return best;
 };
+
+const repoRoot = git("rev-parse", "--show-toplevel");
 
 // Added line numbers per file, from a zero-context diff.
 const addedLines = (mergeBase) => {
   const diff = git(
     "diff",
     "-U0",
-    "--diff-filter=AM",
+    "--diff-filter=AMR",
     "--no-color",
     mergeBase,
     "--",
     // A plain pathspec `*` crosses directories, so this covers all of src.
     "src/*.js",
     "src/*.jsx",
+    "src/*.ts",
+    "src/*.tsx",
   );
-  const repoRoot = git("rev-parse", "--show-toplevel");
   const byFile = new Map();
+  let basePath = null;
   let current = null;
   for (const line of diff.split("\n")) {
-    if (line.startsWith("+++ b/")) {
-      current = path.resolve(repoRoot, line.slice(6));
-      byFile.set(current, new Set());
+    // Exact renames have no ---/+++ headers or added lines.
+    if (line.startsWith("rename from ")) {
+      basePath = line.slice("rename from ".length);
+    } else if (line.startsWith("--- ")) {
+      basePath = line.startsWith("--- a/") ? line.slice(6) : null;
+    } else if (line.startsWith("+++ b/") || line.startsWith("rename to ")) {
+      const file = line.startsWith("+++ b/")
+        ? line.slice(6)
+        : line.slice("rename to ".length);
+      current = { basePath, lines: new Set() };
+      byFile.set(path.resolve(repoRoot, file), current);
     } else if (current && line.startsWith("@@")) {
       const [, start, count = "1"] = line.match(/\+(\d+)(?:,(\d+))?/);
       for (let n = 0; n < Number(count); n += 1) {
-        byFile.get(current).add(Number(start) + n);
+        current.lines.add(Number(start) + n);
       }
     }
   }
@@ -86,7 +102,7 @@ const addedLines = (mergeBase) => {
 
 const { ref, mergeBase } = resolveMergeBase();
 const changed = addedLines(mergeBase);
-const files = [...changed.keys()].filter((f) => changed.get(f).size > 0);
+const files = [...changed.keys()];
 
 const eslint = new ESLint({
   cwd: frontendRoot,
@@ -95,32 +111,46 @@ const eslint = new ESLint({
 });
 const results = files.length ? await eslint.lintFiles(files) : [];
 
-// An import rule fires on the whole import line, so reformatting or extending an
-// existing import would look new. Count it only if the base file didn't have it.
-const baseImportMessages = async (filePath) => {
-  const rel = path.relative(git("rev-parse", "--show-toplevel"), filePath);
-  const base = tryGit("show", `${mergeBase}:${rel}`);
-  if (base === null) return new Set();
-  const [result] = await eslint.lintText(base, { filePath });
-  return new Set(
-    result.messages
-      .filter((m) => m.ruleId === "no-restricted-imports")
-      .map((m) => m.message),
-  );
+// Editing the module path of a multiline import can flag an unchanged specifier
+// line. Compare imports file-wide; keep styling checks scoped to added lines.
+const isImportMessage = ({ ruleId, nodeType }) =>
+  ruleId === "no-restricted-imports" ||
+  (ruleId === "no-restricted-syntax" && /^(Import|Export)/.test(nodeType));
+
+const baseImportCounts = async (basePath) => {
+  const counts = new Map();
+  const base = tryGit("show", `${mergeBase}:${basePath}`);
+  if (base === null) return counts;
+  const [result] = await eslint.lintText(base, {
+    filePath: path.resolve(repoRoot, basePath),
+  });
+  // An ignored original path has no baseline diagnostics.
+  for (const m of result?.messages ?? []) {
+    if (isImportMessage(m)) {
+      counts.set(m.message, (counts.get(m.message) ?? 0) + 1);
+    }
+  }
+  return counts;
 };
 
 let count = 0;
 let warnings = 0;
 for (const result of results) {
-  const lines = changed.get(result.filePath);
+  const { basePath, lines } = changed.get(result.filePath);
   let hits = result.messages.filter(
-    (m) => m.message.includes("[DS]") && lines?.has(m.line),
+    (m) =>
+      m.message.includes("[DS]") && (isImportMessage(m) || lines.has(m.line)),
   );
-  if (hits.some((m) => m.ruleId === "no-restricted-imports")) {
-    const before = await baseImportMessages(result.filePath);
-    hits = hits.filter(
-      (m) => m.ruleId !== "no-restricted-imports" || !before.has(m.message),
-    );
+  if (basePath && hits.some(isImportMessage)) {
+    const before = await baseImportCounts(basePath);
+    // Match unchanged lines first so a new alias is reported on its own line.
+    hits.sort((a, b) => Number(lines.has(a.line)) - Number(lines.has(b.line)));
+    hits = hits.filter((m) => {
+      const remaining = before.get(m.message);
+      if (!isImportMessage(m) || !remaining) return true;
+      before.set(m.message, remaining - 1);
+      return false;
+    });
   }
   for (const m of hits) {
     const isError = m.severity === 2;
@@ -133,6 +163,6 @@ for (const result of results) {
 }
 
 console.log(
-  `\nlint:ds:changed: ${count} design-system error(s) and ${warnings} warning(s) on lines added since ${ref} (${mergeBase.slice(0, 9)}), ${files.length} file(s) checked.`,
+  `\nlint:ds:changed: ${count} design-system error(s) and ${warnings} warning(s) introduced since ${ref} (${mergeBase.slice(0, 9)}), ${files.length} file(s) checked.`,
 );
 process.exit(count ? 1 : 0);
