@@ -77,21 +77,44 @@ rows=$("${dump_tool[@]}" seed-digest "$user" "$database" "${pg[@]}") ||
 case $STACK in
   distributed)
     # tracer 0093 registers the eval-task search attributes in Temporal.
-    # Without them every eval-task workflow hangs. The stack's own command;
-    # `compose run` starts Temporal (and Redis) on the restored Postgres, as
-    # the boot does. Temporal adds its namespace a little after it starts.
-    registered=false start=$SECONDS
+    # Without them every eval-task workflow hangs. The stack refuses that
+    # migration's own command outside migrate (model_hub/apps.py allows only
+    # listed commands), so Temporal's CLI adds them, as Standalone's Temporal
+    # gets them at its start. The names come from the product's own list.
+    names=$(python3 -I - "$here/../tfc/temporal/eval_tasks/search_attributes.py" <<'EOF'
+import re, sys
+keys = re.findall(r"SearchAttributeKey\.for_(\w+)\(\s*\"(\w+)\"\s*\)", open(sys.argv[1]).read())
+if not keys or any(kind != "keyword" for kind, _ in keys):
+    sys.exit(f"expected keyword attributes only, found {keys}")
+print(" ".join(name for _, name in keys))
+EOF
+    ) || fall_back "could not read the eval-task search attributes"
     try_log=$(mktemp)
+    start=$SECONDS
+    # Temporal on the restored Postgres, as the boot starts it.
+    bin/e2e compose up -d --wait temporal > "$try_log" 2>&1 ||
+      fall_back "Temporal did not start" "$try_log"
+    cli=(bin/e2e compose exec -T temporal temporal operator search-attribute)
+    at=(--address temporal:7233 --namespace default)
+    # Temporal adds its namespace a little after it starts. Only missing
+    # names are created, so a try after a partial one still ends.
+    registered=false
     for try in {1..12}; do
-      if bin/e2e compose run --rm -T --entrypoint python postgres-schema-bootstrap \
-        manage.py register_eval_task_search_attributes > "$try_log" 2>&1; then
-        registered=true
-        break
+      if listed=$("${cli[@]}" list "${at[@]}" 2> "$try_log"); then
+        missing=()
+        for name in $names; do
+          grep -qw -- "$name" <<< "$listed" || missing+=(--name "$name" --type Keyword)
+        done
+        if ((${#missing[@]} == 0)); then
+          registered=true
+          break
+        fi
+        "${cli[@]}" create "${at[@]}" "${missing[@]}" > "$try_log" 2>&1 && continue
       fi
       [[ $try == 12 ]] || sleep 10
     done
     $registered || fall_back "the Temporal search attributes were not registered" "$try_log"
-    echo "Registered the Temporal search attributes in $((SECONDS - start)) s (try $try of 12)."
+    echo "Registered the Temporal search attributes ($names) in $((SECONDS - start)) s (try $try of 12)."
     ;;
   standalone) ;; # its bootstrap registers them on every start
   *) fall_back "no stack was named" ;;

@@ -35,20 +35,34 @@ with (state / "calls").open("a") as log:
     log.write(" ".join("<wrapper>" if "\n" in a else a for a in args) + "\n")
 def db(name):
     return state / f"db-{name}"
-if args[:2] == ["compose", "run"] and args[-1] == "register_eval_task_search_attributes":
-    # Distributed's replay of tracer 0093: the stack's own command.
-    assert args[2:] == [
-        "--rm", "-T", "--entrypoint", "python", "postgres-schema-bootstrap",
-        "manage.py", "register_eval_task_search_attributes",
-    ], args
-    tries = state / "register-tries"
-    count = int(tries.read_text()) + 1 if tries.exists() else 1
-    tries.write_text(str(count))
-    if count <= int(os.environ.get("FAKE_REGISTER_FAILS", "0")):
-        print(f"try {count}: Temporal is not serving yet")
-        print("RuntimeError: 100% not ready")
-        sys.exit(1)
-    print("Registered search attributes: EvalTaskOrgId")
+if args == ["compose", "up", "-d", "--wait", "temporal"]:
+    sys.exit(1 if os.environ.get("FAKE_TEMPORAL_UP_FAILS") else 0)
+if args[:6] == ["compose", "exec", "-T", "temporal", "temporal", "operator"]:
+    # Distributed's replay of tracer 0093: Temporal's own CLI.
+    verb, rest = args[7], args[8:]
+    assert args[6] == "search-attribute", args
+    assert rest[:4] == ["--address", "temporal:7233", "--namespace", "default"], args
+    known = state / "search-attributes"
+    names = known.read_text().split() if known.exists() else []
+    if verb == "list":
+        tries = state / "list-tries"
+        count = int(tries.read_text()) + 1 if tries.exists() else 1
+        tries.write_text(str(count))
+        if count <= int(os.environ.get("FAKE_REGISTER_FAILS", "0")):
+            print(f"try {count}: Error: unable to list search attributes:", file=sys.stderr)
+            print("Namespace default is not found (100% sure).", file=sys.stderr)
+            sys.exit(1)
+        print("  Name  Type")
+        for name in names:
+            print(f"  {name}  Keyword")
+        sys.exit(0)
+    assert verb == "create", args
+    pairs = rest[4:]
+    created = pairs[1::4]
+    assert pairs[0::4] == ["--name"] * len(created) and pairs[2::4] == ["--type"] * len(created), pairs
+    assert pairs[3::4] == ["Keyword"] * len(created), pairs
+    assert not set(created) & set(names), "created a name that exists"
+    known.write_text(" ".join(names + created))
     sys.exit(0)
 if args[:2] == ["compose", "run"]:
     name = next(a for a in args if a.startswith("PG_DB=")).split("=", 1)[1]
@@ -468,8 +482,9 @@ class OutsideTest(unittest.TestCase):
         # Both stacks set FI_SKIP_CH25_MIGRATION=1; their bootstraps apply the
         # ClickHouse schema on every start.
         "tracer/migrations/0078_ch25_apply_schema.py": "skipped",
-        # e2e-db-restore.sh runs the stack's own command on Distributed;
-        # Standalone's bootstrap registers them on every start.
+        # On Distributed, e2e-db-restore.sh adds them with Temporal's CLI (the
+        # stack refuses the migration's own command outside migrate);
+        # Standalone's Temporal starts with them.
         "tracer/migrations/0093_register_eval_task_search_attributes.py": "replayed",
         # Reads ClickHouse only for queue items, and a new database has none.
         "model_hub/migrations/0117_backfill_queueitem_project.py": "nothing",
@@ -536,14 +551,9 @@ class OutsideTest(unittest.TestCase):
         bootstrap = (ROOT / "deploy/standalone/bin/bootstrap.py").read_text()
         self.assertIn('os.environ.setdefault("FI_SKIP_CH25_MIGRATION", "1")', bootstrap)
         self.assertIn("steps.register_search_attributes(log)", bootstrap)
+        self.assertIn("temporal operator search-attribute", RESTORE.read_text())
         self.assertIn(
-            "manage.py register_eval_task_search_attributes", RESTORE.read_text()
-        )
-        self.assertTrue(
-            (
-                ROOT
-                / "futureagi/tfc/management/commands/register_eval_task_search_attributes.py"
-            ).exists()
+            "tfc/temporal/eval_tasks/search_attributes.py", RESTORE.read_text()
         )
 
 
@@ -974,32 +984,71 @@ class RestoreTest(Workspace):
                 self.assertIn("compose down -v", self.calls())
                 self.assertIsNone(self.database())
 
-    REGISTER = "compose run --rm -T --entrypoint python postgres-schema-bootstrap manage.py register_eval_task_search_attributes"
+    UP = "compose up -d --wait temporal"
+    LIST = "compose exec -T temporal temporal operator search-attribute list --address temporal:7233 --namespace default"
+    # The product's own list: what every eval-task workflow upserts.
+    NAMES = re.findall(
+        r'for_keyword\("(\w+)"\)',
+        (ROOT / "futureagi/tfc/temporal/eval_tasks/search_attributes.py").read_text(),
+    )
 
-    def test_distributed_registers_temporals_search_attributes_after_the_restore(self):
+    def registered(self):
+        path = self.state / "search-attributes"
+        return path.read_text().split() if path.exists() else []
+
+    def test_distributed_adds_the_products_search_attributes_after_the_restore(self):
         self.save()
-        result, _out = self.restore()
+        result, out = self.restore()
         self.assertEqual(result, "restored")
+        self.assertEqual(len(self.NAMES), 4)
+        self.assertEqual(self.registered(), self.NAMES)
         calls = self.calls()
-        self.assertEqual(calls.count(self.REGISTER), 1)
-        # After the rows are checked: nothing starts on a database that is not the dump.
-        self.assertEqual(calls[-1], self.REGISTER)
+        # Temporal starts only after the rows are checked.
+        up = calls.index(self.UP)
+        self.assertGreater(up, max(i for i, c in enumerate(calls) if "psql" in c))
+        create = [c for c in calls if " create " in c]
+        self.assertEqual(len(create), 1)
+        self.assertTrue(
+            create[0].endswith(
+                "".join(f" --name {n} --type Keyword" for n in self.NAMES)
+            )
+        )
+        self.assertEqual(calls.count(self.LIST), 2)  # before, and to confirm
+        self.assertRegex(
+            out,
+            r"Registered the Temporal search attributes \(EvalTaskOrgId [^)]*\) "
+            r"in \d+ s \(try 2 of 12\)\.",
+        )
 
-    def test_standalone_registers_nothing_its_bootstrap_does_it(self):
+    def test_a_try_after_a_partial_one_adds_only_what_is_missing(self):
+        self.save()
+        self.state.mkdir(exist_ok=True)
+        (self.state / "search-attributes").write_text(" ".join(self.NAMES[:2]))
+        self.assertEqual(self.restore()[0], "restored")
+        self.assertEqual(sorted(self.registered()), sorted(self.NAMES))
+        create = [c for c in self.calls() if " create " in c]
+        self.assertEqual(len(create), 1)
+        self.assertNotIn(self.NAMES[0], create[0])
+
+    def test_standalone_adds_nothing_its_temporal_starts_with_them(self):
         self.save()
         self.assertEqual(self.restore(STACK="standalone")[0], "restored")
-        self.assertNotIn(self.REGISTER, self.calls())
+        self.assertFalse([c for c in self.calls() if "temporal" in c])
 
     def test_temporal_gets_time_to_add_its_namespace(self):
         self.save()
         result, out = self.restore(FAKE_REGISTER_FAILS="3")
         self.assertEqual(result, "restored")
-        self.assertRegex(
-            out, r"Registered the Temporal search attributes in \d+ s \(try 4 of 12\)\."
-        )
+        self.assertRegex(out, r"in \d+ s \(try 5 of 12\)\.")
         calls = self.calls()
-        self.assertEqual(calls.count(self.REGISTER), 4)
+        self.assertEqual(calls.count(self.LIST), 5)
         self.assertEqual(calls.count("sleep 10"), 3)
+
+    def test_temporal_that_does_not_start_falls_back(self):
+        self.save()
+        result, _out = self.restore(FAKE_TEMPORAL_UP_FAILS="1")
+        self.assertEqual(result, "fell back: Temporal did not start")
+        self.assertIsNone(self.database())
 
     def test_search_attributes_never_registered_fall_back_to_a_clean_stack(self):
         self.save()
@@ -1008,17 +1057,17 @@ class RestoreTest(Workspace):
             result, "fell back: the Temporal search attributes were not registered"
         )
         calls = self.calls()
-        self.assertEqual(calls.count(self.REGISTER), 12)
+        self.assertEqual(calls.count(self.LIST), 12)
         # No wait after the last try.
         self.assertEqual(calls.count("sleep 10"), 11)
         self.assertEqual(calls[-1], "compose down -v")
         self.assertIsNone(self.database())
         # The last try's output, in the log and in the one-line warning.
-        self.assertIn("try 12: Temporal is not serving yet\n", out)
+        self.assertIn("try 12: Error: unable to list search attributes:\n", out)
         warning = next(x for x in out.splitlines() if x.startswith("::warning"))
         self.assertIn(
-            " Its last try printed:%0Atry 12: Temporal is not serving yet%0A"
-            "RuntimeError: 100%25 not ready%0A",
+            " Its last try printed:%0Atry 12: Error: unable to list search "
+            "attributes:%0ANamespace default is not found (100%25 sure).%0A",
             warning,
         )
         self.assertNotIn("try 11:", out)
