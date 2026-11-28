@@ -34365,6 +34365,12 @@ export const simulateAgentDefinitionsVersionsChangeCreateBodySettingsAgentNameMa
 
 export const simulateAgentDefinitionsVersionsChangeCreateBodySecretValuesMaxOne = 65536;
 
+export const simulateAgentDefinitionsVersionsChangeCreateBodyRemoveNamesItemMax = 128;
+
+export const simulateAgentDefinitionsVersionsChangeCreateBodyRemoveNamesItemRegExp =
+  new RegExp("^[A-Za-z_][A-Za-z0-9_]*$");
+export const simulateAgentDefinitionsVersionsChangeCreateBodyRemoveNamesMax = 200;
+
 export const SimulateAgentDefinitionsVersionsChangeCreateBody = zod.object({
   kind: zod.enum(["sync", "upload", "credentials", "manual"]),
   archive_artifact_id: zod.string().uuid().optional(),
@@ -34401,6 +34407,18 @@ export const SimulateAgentDefinitionsVersionsChangeCreateBody = zod.object({
           simulateAgentDefinitionsVersionsChangeCreateBodySecretValuesMaxOne,
         ),
     )
+    .optional(),
+  remove_names: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateAgentDefinitionsVersionsChangeCreateBodyRemoveNamesItemMax)
+        .regex(
+          simulateAgentDefinitionsVersionsChangeCreateBodyRemoveNamesItemRegExp,
+        ),
+    )
+    .max(simulateAgentDefinitionsVersionsChangeCreateBodyRemoveNamesMax)
     .optional(),
 });
 
@@ -34529,6 +34547,7 @@ export const SimulateAgentDefinitionsVersionsChangeCreateResponse = zod.object({
     .optional(),
   created: zod.boolean().optional(),
   up_to_date: zod.boolean().optional(),
+  missing_required_names: zod.array(zod.string().min(1)).optional(),
 });
 
 /**
@@ -35893,6 +35912,29 @@ export const SimulateAgentDefinitionsVersionsRetryCreateParams = zod.object({
 });
 
 export const SimulateAgentDefinitionsVersionsRetryCreateBody = zod.object({});
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/values/: the version's value names.
+ */
+export const SimulateAgentDefinitionsVersionsValuesListParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsValuesListResponse = zod.object({
+  names: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1).optional(),
+        required: zod.boolean().optional(),
+        made_by_environment: zod.boolean().optional(),
+        provider_key: zod.boolean().optional(),
+      }),
+    )
+    .optional(),
+  missing_required_names: zod.array(zod.string().min(1)).optional(),
+  made_by_environment: zod.array(zod.string().min(1)).optional(),
+});
 
 /**
  * POST /agents/connect/: the agent and its first version, read on their own.

@@ -11,6 +11,11 @@ from simulate.serializers.harness_job import (
 )
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 
+# The bounds a variable name has everywhere else it is saved
+# (harness_agent_versions.MAX_VARIABLE_NAME_LENGTH and MAX_REQUIRED_NAMES).
+MAX_VARIABLE_NAME_LENGTH = 128
+MAX_REMOVED_NAMES = 200
+
 
 class AgentVersionCreateRequestSerializer(serializers.Serializer):
     """
@@ -122,6 +127,14 @@ class AgentVersionChangeRequestSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=65_536, trim_whitespace=False),
         required=False,
     )
+    # Names to take out of the agent's values, beside the ones to add or change.
+    remove_names = serializers.ListField(
+        child=serializers.RegexField(
+            r"^[A-Za-z_][A-Za-z0-9_]*$", max_length=MAX_VARIABLE_NAME_LENGTH
+        ),
+        required=False,
+        max_length=MAX_REMOVED_NAMES,
+    )
 
     def validate_secret_values(self, value):
         problems = check_credential_values(value)
@@ -134,21 +147,41 @@ class AgentVersionChangeRequestSerializer(serializers.Serializer):
         needed = {
             "upload": ("archive_artifact_id",),
             "manual": ("prompt", "settings"),
-            "credentials": ("secret_values",),
+            "credentials": ("secret_values", "remove_names"),
         }.get(kind, ())
         if needed and not any(name in attrs for name in needed):
             raise serializers.ValidationError({needed[0]: f"required for kind {kind}"})
         extra = [
             name
-            for name in ("archive_artifact_id", "prompt", "settings", "secret_values")
+            for name in (
+                "archive_artifact_id",
+                "prompt",
+                "settings",
+                "secret_values",
+                "remove_names",
+            )
             if name in attrs and name not in needed
         ]
         if extra:
             raise serializers.ValidationError(
                 {extra[0]: f"not part of a {kind} change"}
             )
-        if kind == "credentials" and not attrs["secret_values"]:
-            raise serializers.ValidationError({"secret_values": "nothing to change"})
+        if kind == "credentials":
+            if not attrs.get("secret_values") and not attrs.get("remove_names"):
+                raise serializers.ValidationError(
+                    {"secret_values": "nothing to change"}
+                )
+            both = sorted(
+                set(attrs.get("secret_values") or {})
+                & set(attrs.get("remove_names") or ())
+            )
+            if both:
+                raise serializers.ValidationError(
+                    {
+                        "remove_names": "a name can't be both set and removed: "
+                        + ", ".join(both)
+                    }
+                )
         if "settings" in attrs and not attrs["settings"]:
             raise serializers.ValidationError({"settings": "nothing to change"})
         return attrs

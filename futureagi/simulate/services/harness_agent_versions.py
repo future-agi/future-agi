@@ -66,6 +66,9 @@ _WAIT_LIMIT = timedelta(hours=1)
 # The environments a version was offered to.
 OFFERED_KEY = "offered_to_environments"
 PRODUCTION_REQUESTS_KEY = "requested_by_production"
+# Set on a version that became production by changing only values: the followers
+# it moves, now or once they are free, get no rebuild card.
+QUIET_PRODUCTION_KEY = "values_only_production"
 _OWN_PAYLOAD_KEYS = (
     "legacy_secret_refs",
     "secret_refs",
@@ -158,6 +161,58 @@ def version_credential_names(runtime: HarnessAgentVersionRuntime) -> list[str]:
     )
 
 
+def missing_required_names(runtime: HarnessAgentVersionRuntime | None) -> list[str]:
+    """Names the reading lists as required that the version has no value for. None
+    known (no reading's list) is none missing: not knowing is not a refusal."""
+    if runtime is None or runtime.required_variable_names is None:
+        return []
+    held = set(version_credential_names(runtime))
+    return sorted({str(name) for name in runtime.required_variable_names or []} - held)
+
+
+def values_gate(
+    runtime: HarnessAgentVersionRuntime | None,
+    *,
+    extra_names: Iterable[str] = (),
+    generated: set[str] | None = None,
+    required: bool = True,
+) -> None:
+    """Before a build, rebuild or run spends anything: refuse a version with a value
+    under a name the test environment makes itself, or (with ``required``) one missing
+    a value the reading lists as required. ``extra_names`` are values the request
+    itself brings; ``generated``, the names the environment makes when the caller read
+    them before taking a lock (else they are read here). A run passes
+    ``required=False``: a missing required value only warns there (``variable_missing``
+    on the preview) until runs refuse it too (TH-10773). The kit's own refusal stays
+    behind this one."""
+    if runtime is None:
+        return
+    extra = {str(name) for name in extra_names}
+    values_made_by_environment(
+        {*version_credential_names(runtime), *extra},
+        generated
+        if generated is not None
+        else generated_value_names(runtime.agent_version_id),
+    )
+    if not required:
+        return
+    if not own_credential_set(runtime):
+        # A legacy row's values are an environment's refs, not its names.
+        return
+    missing = [name for name in missing_required_names(runtime) if name not in extra]
+    if missing:
+        raise HostedHarnessError(
+            "required_values_missing",
+            "The agent needs a value for "
+            + ", ".join(missing)
+            + ". Add "
+            + ("it" if len(missing) == 1 else "them")
+            + " in the agent's values first.",
+            status_code=422,
+            details={"names": missing},
+        )
+
+
 # Whose required names a version holds: True, its parent's copy (the next writer replaces
 # them); False, its own (a later writer adds). Absent on a version no writer has touched
 # since the mark began; see merge_required_names.
@@ -210,6 +265,45 @@ def _names_the_run_supplies(runtime: Mapping[str, Any]) -> set[str]:
         values = _section(resource, "values")
         supplied.update(str(name) for name, value in values.items() if value)
     return supplied
+
+
+def generated_value_names(version_id: Any) -> set[str]:
+    """Names the test environment makes itself for this version's agent: both
+    local-auth names of its stored contract, which the kit refuses a value under
+    (``LocalHttpAuth.reject_collisions``). Empty when no contract is stored or it
+    names none."""
+    from simulate.services.agent_contracts import stored_version_contract
+
+    contract = stored_version_contract(version_id) if version_id else None
+    try:
+        runtime = _section(contract or {}, "runtime")
+        local_auth = _section(_section(runtime, "interface"), "local_auth")
+    except ValueError:
+        return set()
+    return {
+        name
+        for name in (
+            local_auth.get("server_environment"),
+            local_auth.get("template_variable"),
+        )
+        if isinstance(name, str) and name
+    }
+
+
+def values_made_by_environment(names: Iterable[str], generated: set[str]) -> None:
+    """Refuse values under names the test environment makes itself."""
+    clash = sorted({str(name) for name in names} & generated)
+    if clash:
+        raise HostedHarnessError(
+            "value_made_by_environment",
+            "The test environment makes "
+            + ", ".join(clash)
+            + " itself, so a value of yours isn't needed. Remove "
+            + ("it" if len(clash) == 1 else "them")
+            + " from the agent's values.",
+            status_code=422,
+            details={"names": clash},
+        )
 
 
 # The bounds the scan path puts on names it takes from the sandbox
@@ -684,6 +778,27 @@ def _resolve_refs(
     return secret_set, provider_secrets
 
 
+def _remove(
+    secret_set: CredentialSet,
+    provider_secrets: dict[str, str],
+    names: Iterable[str],
+) -> None:
+    """Take names out of a set. A provider key lives in the version's provider row,
+    which is copied whole, so it can be changed here but not removed."""
+    names = {str(name) for name in names}
+    provider = sorted(names & set(hashing.PROVIDER_CREDENTIAL_ALIASES))
+    if provider:
+        raise HostedHarnessError(
+            "provider_key_not_removable",
+            "A provider key can be changed but not removed: " + ", ".join(provider),
+            status_code=422,
+            details={"names": provider},
+        )
+    for name in names:
+        secret_set.env.pop(name, None)
+        secret_set.files.pop(name, None)
+
+
 def _overlay(
     secret_set: CredentialSet,
     provider_secrets: dict[str, str],
@@ -921,6 +1036,7 @@ def create_agent_version(
     agent_payload: Mapping[str, Any] | None = None,
     secret_values: Mapping[str, str] | None = None,
     secret_files: Iterable[CredentialFile] | None = None,
+    remove_names: Iterable[str] = (),
     trigger: str,
     user: Any = None,
     activate: bool = True,
@@ -930,8 +1046,8 @@ def create_agent_version(
     draft whose preflight is queued.
 
     The credential set starts from the parent's (for a legacy parent, from ``env``'s own
-    refs) and takes the given values and files on top; provider keys go to the
-    version's own provider row. A live version with the same identity is returned
+    refs), loses ``remove_names`` and takes the given values and files on top;
+    provider keys go to the version's own provider row. A live version with the same identity is returned
     instead of a new one: made ``env``'s default when its check already passed, else
     its check is queued.
     Without ``env`` the version is the connected agent's own: no environment asked
@@ -1004,6 +1120,7 @@ def create_agent_version(
         for name in _OWN_PAYLOAD_KEYS:
             payload.pop(name, None)
         connector = str(payload.get("connector") or "")
+        _remove(secret_set, provider_secrets, remove_names)
         _overlay(secret_set, provider_secrets, secret_values, secret_files)
         family = _family(
             provider_secrets, connector, getattr(parent_row, "provider_type", None)
@@ -1220,7 +1337,14 @@ def create_agent_version(
             # in the background, it moves only what a background activation would.
             try:
                 if env is None:
-                    activate_agent_version(reused.agent_version)
+                    activate_agent_version(
+                        reused.agent_version,
+                        values_from=(
+                            parent.id
+                            if parent is not None and trigger == Trigger.CREDENTIALS
+                            else None
+                        ),
+                    )
                 else:
                     _activate(
                         reused.agent_version,
@@ -1356,6 +1480,7 @@ def change_credentials(
         raise _agent_versions_unavailable()
     secret_files = list(secret_files)
     names = [*secret_values, *(one.alias for one in secret_files)]
+    values_made_by_environment(names, generated_value_names(parent.id))
     # A rerun's caller checks against the rerun's own pair.
     if activate and not changed_set_runnable(environment, environment, parent, names):
         raise HostedHarnessError(
@@ -1968,13 +2093,15 @@ def _activate_on(
     user: Any = None,
     expected_default_id: Any = None,
     production: bool = False,
+    quiet: bool = False,
 ) -> str:
     """Move one environment that asked for ``version`` to it, unless a newer version
     of the agent is already its default or the default was moved since; an
     ``explicit`` request moves it from any default, or only from
     ``expected_default_id`` when it names one. A ``production`` move needs the
-    environment still following and the version still production. Where the pairing
-    can be validated and is not yet, the move waits for it: ``validating``."""
+    environment still following and the version still production. A ``quiet`` move
+    raises no rebuild card: nothing it changed needs one. Where the pairing can be
+    validated and is not yet, the move waits for it: ``validating``."""
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.validation import (
         drop_waiting_moves,
@@ -2026,7 +2153,12 @@ def _activate_on(
             # Moved by rebuild.retry_deferred_activations once it finishes.
             return "environment_busy"
         pending = gate_agent_move(
-            "activation", locked, version, user=user, explicit=explicit
+            "activation",
+            locked,
+            version,
+            user=user,
+            explicit=explicit,
+            production=production,
         )
         if pending is not None:
             # Moved by the validation once the pairing passes.
@@ -2042,12 +2174,13 @@ def _activate_on(
                 )
         except HostedHarnessError as exc:
             return exc.code
-        schedule_environment_nudge(
-            locked.id,
-            version.id,
-            default_moved=True,
-            outgoing_agent_version_id=outgoing,
-        )
+        if not quiet:
+            schedule_environment_nudge(
+                locked.id,
+                version.id,
+                default_moved=True,
+                outgoing_agent_version_id=outgoing,
+            )
     return "activated"
 
 
@@ -2092,6 +2225,7 @@ def _activate(
     explicit: bool = False,
     user: Any = None,
     by_production: Iterable[Any] = (),
+    quiet: bool = False,
 ) -> list[Any]:
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
 
@@ -2107,6 +2241,7 @@ def _activate(
                 explicit=explicit,
                 user=user,
                 production=str(environment_id) in production,
+                quiet=quiet and str(environment_id) in production,
             )
         except Exception as exc:  # noqa: BLE001 - never blocks the others
             logger.warning(
@@ -2143,17 +2278,40 @@ def _activate(
     return moved
 
 
-def activate_agent_version(version: AgentVersion) -> list[Any]:
+def values_only(
+    runtime: HarnessAgentVersionRuntime, other: HarnessAgentVersionRuntime | None
+) -> bool:
+    """Whether two versions differ in their values alone: the same code, prompt,
+    settings and source access. A version brought back by a values change that
+    matches an earlier one counts too."""
+    from simulate.services.harness_versioning.assembly import runtime_identity
+
+    if other is None or runtime.id == other.id:
+        return False
+    return runtime_identity(runtime)._common() == runtime_identity(
+        other
+    )._common() and (runtime.agent_payload or {}).get("source_access") == (
+        other.agent_payload or {}
+    ).get("source_access")
+
+
+def activate_agent_version(
+    version: AgentVersion, *, values_from: Any = None
+) -> list[Any]:
     """Make a passed version the default of the environments that asked for it.
 
     Any other environment whose default is its parent (one with a credential set of
     its own) is recorded as not having asked and stays where it is. An environment is
     skipped when the version was discarded meanwhile, a newer version is already its
     default, or the version is not one it can pick. A rerun's version, asked for by
-    none, moves no environment. A connected agent's version becomes production only
-    when the agent has none yet; a later one is offered to each environment that
+    none, moves no environment. A connected agent's version becomes production when
+    the agent has none yet, or when it changes only the values of the production
+    version it was made from; then the environments following production move to it
+    with no rebuild card. Any other later one is offered to each environment that
     tests the agent, which moves only when its rebuild lands, and waits to be made
-    production by hand. Returns the environments moved.
+    production by hand. ``values_from`` names the version a values change was made
+    from when it brought back an earlier version with the same content. Returns the
+    environments moved.
     """
     from simulate.services.harness_versioning.assembly import legacy_runtime
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
@@ -2173,12 +2331,26 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
         str(environment_id)
         for environment_id in payload.get("requested_by_environments") or []
     ]
+    # A values change that brought this version back decides production again, even
+    # though its followers' earlier moves to it are still recorded as requests.
     if (
-        not requested
+        (not requested or values_from is not None)
         and not payload.get("created_for_environment")
         and payload.get("definition_owner") == CONNECTED_OWNER
     ):
         moved = _activate_production(version, only_if_none=True)
+        base = _side_row(values_from) if values_from is not None else parent
+        if (
+            moved == "has_production"
+            and base is not None
+            and values_only(runtime, base)
+        ):
+            # Only the values differ from the production version the change was
+            # made from: production moves on, and its followers with it, with
+            # nothing to rebuild. Production moved since: offered as any other.
+            moved = _activate_production(
+                version, only_from=base.agent_version_id, quiet=True
+            )
         if moved == "has_production":
             offered = [
                 str(environment.id)
@@ -2529,24 +2701,23 @@ ProductionOutcome = Literal["promoted", "has_production", "discarded"]
 
 
 def make_production(
-    version: AgentVersion, *, only_if_none: bool = False
+    version: AgentVersion, *, only_if_none: bool = False, only_from: Any = None
 ) -> ProductionOutcome:
     """Make a connected agent's version its production one: the active version the
     Agents page shows and the one following environments move to. With
-    ``only_if_none`` an agent that already has one keeps it; a discarded version
-    never becomes production."""
+    ``only_if_none`` an agent that already has one keeps it; with ``only_from`` only
+    while that version is production (or there is none); a discarded version never
+    becomes production."""
     Statuses = AgentVersion.StatusChoices
     with transaction.atomic():
         lock_agent_production(version.agent_definition_id)
-        if (
-            only_if_none
-            and AgentVersion._base_manager.filter(
-                agent_definition_id=version.agent_definition_id,
-                status=Statuses.ACTIVE,
-            )
-            .exclude(id=version.id)
-            .exists()
-        ):
+        others = AgentVersion._base_manager.filter(
+            agent_definition_id=version.agent_definition_id,
+            status=Statuses.ACTIVE,
+        ).exclude(id=version.id)
+        if only_if_none and others.exists():
+            return "has_production"
+        if only_from is not None and others.exclude(id=only_from).exists():
             return "has_production"
         runtime = _side_row(version.id, lock=True)
         if runtime is not None and runtime.preflight_status == Status.DISCARDED:
@@ -2562,10 +2733,15 @@ def make_production(
 
 
 def _activate_production(
-    version: AgentVersion, *, only_if_none: bool = False
+    version: AgentVersion,
+    *,
+    only_if_none: bool = False,
+    only_from: Any = None,
+    quiet: bool = False,
 ) -> list[Any] | ProductionOutcome:
     """A connected agent's passed version becomes production; environments following
-    production are moved to it as if they had asked, pinned ones are offered it."""
+    production are moved to it as if they had asked, pinned ones are offered it. A
+    ``quiet`` move raises no rebuild card for the environments it moves."""
     from simulate.services.agent_compatibility import (
         CLEAN,
         UNMEASURED,
@@ -2574,7 +2750,7 @@ def _activate_production(
     )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
 
-    outcome = make_production(version, only_if_none=only_if_none)
+    outcome = make_production(version, only_if_none=only_if_none, only_from=only_from)
     if outcome != "promoted":
         return outcome
     document = stored_document(version)
@@ -2614,11 +2790,13 @@ def _activate_production(
             )
             return []
         if following:
-            _request_for(version.id, following, production=True)
+            _request_for(version.id, following, production=True, quiet=quiet)
         _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
-    for environment_id in [*pinned, *offered]:
+    # A pinned environment chose to stay: a values-only change offers it nothing. A
+    # follower that could not be moved is still offered the version.
+    for environment_id in [*([] if quiet else pinned), *offered]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
-    return _activate(version, following, by_production=following)
+    return _activate(version, following, by_production=following, quiet=quiet)
 
 
 def production_requests(version_id: Any) -> set[str]:
@@ -2639,6 +2817,7 @@ def _note_request(
     *,
     waiting: bool,
     production: bool = False,
+    quiet: bool = False,
 ) -> None:
     asked_at = timezone.now().isoformat()
     with transaction.atomic():
@@ -2664,15 +2843,38 @@ def _note_request(
                 **(stored.get(PRODUCTION_REQUESTS_KEY) or {}),
                 **dict.fromkeys(environment_ids, asked_at),
             }
+            # Made production again another way (by hand, across code): cards again.
+            if quiet:
+                payload[QUIET_PRODUCTION_KEY] = True
+            else:
+                payload.pop(QUIET_PRODUCTION_KEY, None)
         runtime.agent_payload = payload
         runtime.save(update_fields=["agent_payload", "updated_at"])
 
 
 def _request_for(
-    version_id: Any, environment_ids: list[str], *, production: bool = False
+    version_id: Any,
+    environment_ids: list[str],
+    *,
+    production: bool = False,
+    quiet: bool = False,
 ) -> None:
     """Add environments to the ones waiting for this version, keeping earlier ones."""
-    _note_request(version_id, environment_ids, waiting=True, production=production)
+    _note_request(
+        version_id,
+        environment_ids,
+        waiting=True,
+        production=production,
+        quiet=quiet,
+    )
+
+
+def quiet_production(version_id: Any) -> bool:
+    """Whether the version became production by changing only values."""
+    runtime = _side_row(version_id)
+    return bool(
+        ((runtime.agent_payload or {}) if runtime else {}).get(QUIET_PRODUCTION_KEY)
+    )
 
 
 def stamp_requested_at(version_id: Any, environment_id: Any) -> None:

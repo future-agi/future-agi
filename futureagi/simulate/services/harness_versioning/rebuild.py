@@ -303,12 +303,15 @@ def answer_rebuild(
     environment: HostedHarnessJob, nudge_id: Any, *, user: Any
 ) -> HarnessNudge:
     """Queue the rebuild a pending (or failed, "Rebuild again") nudge offers."""
-    from simulate.services.harness_agent_versions import _busy
+    from simulate.services.harness_agent_versions import _busy, _side_row, values_gate
     from simulate.services.harness_usage import require_harness_authoring
     from simulate.services.harness_versioning import drafts
 
     nudge = _check_answerable(environment, nudge_id)
     require_harness_authoring(str(environment.organization_id))
+    trigger = _trigger(nudge)
+    if trigger is not None:
+        values_gate(_side_row(trigger.id))
     # Outside any transaction: it may read storage or GitHub.
     facts = _facts(environment, nudge)
     replaced = False
@@ -2094,6 +2097,7 @@ def retry_deferred_activations(version_id: Any) -> dict[str, str]:
         _busy,
         _record_activation,
         production_requests,
+        quiet_production,
     )
     from simulate.services.harness_versioning.versions import UNREADY_STATES
 
@@ -2118,7 +2122,10 @@ def retry_deferred_activations(version_id: Any) -> dict[str, str]:
     moved = {
         str(one)
         for one in _activate(
-            version, ready, by_production=production_requests(version_id)
+            version,
+            ready,
+            by_production=production_requests(version_id),
+            quiet=quiet_production(version_id),
         )
     }
     return {one: "activated" if one in moved else "not_moved" for one in ready}

@@ -5,7 +5,7 @@ version is production; and whether an environment follows it or is pinned."""
 from __future__ import annotations
 
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -32,12 +32,16 @@ from simulate.services.harness_agent_versions import (
     discard_agent_version,
     environment_owned,
     environment_policy,
+    generated_value_names,
     lock_agent_production,
+    missing_required_names,
     next_version_number,
     promote_to_production,
     record_hand_move,
     retry_preflight,
     stamp_requested_at,
+    values_made_by_environment,
+    version_credential_names,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -561,14 +565,23 @@ def _upload_digests(
 
 
 def credentials_version(
-    definition: AgentDefinition, *, secret_values: Mapping[str, str], user: Any = None
+    definition: AgentDefinition,
+    *,
+    secret_values: Mapping[str, str],
+    remove_names: Iterable[str] = (),
+    user: Any = None,
 ) -> AgentVersion:
+    """The agent's values with these set and these removed, as its next version. A
+    value under a name the test environment makes itself is refused; removing one
+    is always allowed."""
     parent = _parent(definition)
+    values_made_by_environment(secret_values, generated_value_names(parent.id))
     version = create_agent_version(
         definition,
         parent=parent,
         env=None,
         secret_values=dict(secret_values),
+        remove_names=list(remove_names),
         trigger=Trigger.CREDENTIALS,
         user=user,
     )
@@ -683,6 +696,7 @@ def change_version(
     user: Any = None,
     archive_artifact_id: UUID | None = None,
     secret_values: Mapping[str, str] | None = None,
+    remove_names: Iterable[str] = (),
     prompt: str | None = None,
     settings: Mapping[str, Any] | None = None,
 ) -> VersionChange:
@@ -702,7 +716,10 @@ def change_version(
         )
     elif kind == KIND_CREDENTIALS:
         version = credentials_version(
-            definition, secret_values=secret_values or {}, user=user
+            definition,
+            secret_values=secret_values or {},
+            remove_names=remove_names,
+            user=user,
         )
     elif kind == KIND_MANUAL:
         version = manual_version(
@@ -713,6 +730,40 @@ def change_version(
             "kind_unknown", f"unknown kind {kind!r}", status_code=400
         )
     return VersionChange(version, version.id not in before)
+
+
+def version_values(version: AgentVersion) -> dict[str, Any]:
+    """The names of a version's values, never a value: each with whether the reading
+    lists it as required, whether the test environment makes it itself and whether
+    it is a voice provider's key, and the required names it has no value for."""
+    runtime = _runtime(version)
+    if runtime is None:
+        return {"names": [], "missing_required_names": [], "made_by_environment": []}
+    from simulate.services.harness_versioning.hashing import (
+        PROVIDER_CREDENTIAL_ALIASES,
+    )
+
+    required = {str(name) for name in runtime.required_variable_names or []}
+    generated = generated_value_names(version.id)
+    names = version_credential_names(runtime)
+    return {
+        "names": [
+            {
+                "name": name,
+                "required": name in required,
+                "made_by_environment": name in generated,
+                "provider_key": name in PROVIDER_CREDENTIAL_ALIASES,
+            }
+            for name in names
+        ],
+        "missing_required_names": missing_required_names(runtime),
+        "made_by_environment": sorted(generated),
+    }
+
+
+def missing_required(version: AgentVersion) -> list[str]:
+    """Names the reading lists as required that ``version`` has no value for."""
+    return missing_required_names(_runtime(version))
 
 
 def set_production(version: AgentVersion) -> list[Any]:

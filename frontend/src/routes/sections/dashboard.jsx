@@ -520,6 +520,9 @@ const AgentDefinitionTab = lazyWithRetry(
   () =>
     import("src/sections/agent-playground/connected/detail/AgentDefinitionTab"),
 );
+const AgentValuesTab = lazyWithRetry(
+  () => import("src/sections/agent-playground/connected/detail/AgentValuesTab"),
+);
 const AgentVersionsTab = lazyWithRetry(
   () =>
     import("src/sections/agent-playground/connected/detail/AgentVersionsTab"),
@@ -1375,6 +1378,7 @@ export const dashboardRoutes = (
             { index: true, element: <AgentDetailIndexRedirect /> },
             { path: "overview", element: <AgentOverviewTab /> },
             { path: "definition", element: <AgentDefinitionTab /> },
+            { path: "values", element: <AgentValuesTab /> },
             { path: "versions", element: <AgentVersionsTab /> },
             { path: "environments", element: <AgentEnvironmentsTab /> },
           ],

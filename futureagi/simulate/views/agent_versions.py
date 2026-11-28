@@ -19,6 +19,7 @@ from simulate.serializers.response.agent_version import (
     AgentVersionChangeResponseSerializer,
     AgentVersionCompatibilityResponseSerializer,
     AgentVersionProductionResponseSerializer,
+    AgentVersionValuesResponseSerializer,
 )
 from simulate.services import agent_versions
 from simulate.services.agent_compatibility import environment_compatibility
@@ -142,6 +143,7 @@ class AgentVersionChangeView(_AgentVersionView):
             "version": change.version,
             "created": change.created,
             "up_to_date": not change.created,
+            "missing_required_names": agent_versions.missing_required(change.version),
         }
         return Response(
             AgentVersionChangeResponseSerializer(
@@ -244,6 +246,25 @@ class AgentVersionCompatibilityView(_AgentVersionView):
         body = {"environment_id": str(environment.id), "version_id": str(version.id)}
         body.update(environment_compatibility(environment, version))
         return Response(AgentVersionCompatibilityResponseSerializer(body).data)
+
+
+class AgentVersionValuesView(_AgentVersionView):
+    """GET /agent-definitions/{id}/versions/{vid}/values/: the version's value names."""
+
+    @validated_request(
+        responses={
+            200: AgentVersionValuesResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+        },
+    )
+    def get(self, request, agent_id, version_id, *args, **kwargs):
+        agent = self._agent(request, agent_id)
+        version = self._version(agent, version_id)
+        return Response(
+            AgentVersionValuesResponseSerializer(
+                agent_versions.version_values(version)
+            ).data
+        )
 
 
 class AgentBuildPreflightView(_AgentVersionView):

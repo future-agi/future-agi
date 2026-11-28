@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1238,
+  endpointCount: 1239,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28291,6 +28291,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/values/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_values_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentVersionValuesResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agents/connect/": {
       post: {
         operationId: "simulate_agents_connect_create",
@@ -56534,6 +56554,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        remove_names: {
+          type: "array",
+          items: {
+            type: "string",
+            pattern: "^[A-Za-z_][A-Za-z0-9_]*$",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 200,
+        },
       },
     },
     AgentVersionChangeResponse: {
@@ -56550,6 +56580,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         up_to_date: {
           title: "Up to date",
           type: "boolean",
+          readOnly: true,
+        },
+        missing_required_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
           readOnly: true,
         },
       },
@@ -57159,6 +57197,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         version: {
           $ref: "#/definitions/AgentVersionResponse",
+        },
+      },
+    },
+    AgentVersionValuesResponse: {
+      type: "object",
+      properties: {
+        names: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentValueName",
+          },
+          readOnly: true,
+        },
+        missing_required_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        made_by_environment: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
         },
       },
     },
@@ -105535,6 +105601,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         process: {
           title: "Process",
           type: "string",
+        },
+      },
+    },
+    AgentValueName: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+          readOnly: true,
+        },
+        made_by_environment: {
+          title: "Made by environment",
+          type: "boolean",
+          readOnly: true,
+        },
+        provider_key: {
+          title: "Provider key",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },

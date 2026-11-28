@@ -437,6 +437,26 @@ def create_selected_harness_run(
             f"selected scenarios × trials must not exceed {max_executions}",
             status_code=400,
         )
+    from simulate.services.harness_agent_versions import (
+        generated_value_names,
+        values_gate,
+    )
+
+    # Read from storage before the environment is locked: the names the test
+    # environment makes for each version this run may resolve to.
+    picked = getattr(picks, "agent_version_id", None)
+    if picked and not agent_version_pickable(environment, picked):
+        # Refused when the pins resolve; nothing of it is read before then.
+        picked = None
+    generated = {
+        str(version_id): generated_value_names(version_id)
+        for version_id in {
+            environment.agent_version_id,
+            getattr(rerun_of, "agent_version_id", None),
+            picked,
+        }
+        if version_id
+    }
     # Before the lock: reading the evidence may download an archive. When it cannot be
     # read, a repeated request is still answered with its run before refusing.
     unreadable: HostedHarnessError | None = None
@@ -527,6 +547,17 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
+            runtime = resolved.runtime
+            values_gate(
+                runtime,
+                generated=(
+                    generated.get(str(runtime.agent_version_id))
+                    if runtime is not None
+                    else None
+                ),
+                # Until TH-10773, a missing required value warns on a run, not refuses.
+                required=False,
+            )
         if unreadable is not None:
             raise unreadable
         if resolved is not None:

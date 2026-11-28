@@ -17479,6 +17479,8 @@ export interface AgentVersionChangeRequestApi {
   prompt?: string;
   settings?: HarnessAgentConfigChangeApi;
   secret_values?: AgentVersionChangeRequestApiSecretValues;
+  /** @maxItems 200 */
+  remove_names?: string[];
 }
 
 /**
@@ -17547,6 +17549,7 @@ export interface AgentVersionChangeResponseApi {
   version?: AgentVersionResponseApi;
   readonly created?: boolean;
   readonly up_to_date?: boolean;
+  readonly missing_required_names?: readonly string[];
 }
 
 export type AgentVersionCreateRequestApiAgentType =
@@ -18323,6 +18326,20 @@ export interface AgentVersionRestoreResponseApi {
   readonly message?: string;
   readonly agent?: AgentVersionRestoreResponseApiAgent;
   version?: AgentVersionResponseApi;
+}
+
+export interface AgentValueNameApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly required?: boolean;
+  readonly made_by_environment?: boolean;
+  readonly provider_key?: boolean;
+}
+
+export interface AgentVersionValuesResponseApi {
+  readonly names?: readonly AgentValueNameApi[];
+  readonly missing_required_names?: readonly string[];
+  readonly made_by_environment?: readonly string[];
 }
 
 export type AgentConnectRequestApiKind =

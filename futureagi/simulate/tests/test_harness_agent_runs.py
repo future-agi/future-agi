@@ -8,6 +8,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from simulate.models import (
+    AgentDefinition,
     AgentVersion,
     CallExecution,
     HarnessAgentVersionRuntime,
@@ -419,6 +420,64 @@ class TestAgentPicks:
             422,
         )
 
+    def _refused_unread(self, environment, version):
+        from simulate.services import agent_contracts
+
+        real = agent_contracts.stored_version_contract
+        read = []
+
+        def reading(version_id, *args, **kwargs):
+            read.append(str(version_id))
+            return real(version_id, *args, **kwargs)
+
+        with patch(
+            "simulate.services.agent_contracts.stored_version_contract",
+            side_effect=reading,
+        ):
+            with pytest.raises(HostedHarnessError) as refused:
+                _run(environment, VersionPicks(agent_version_id=version.id))
+        return refused.value, read
+
+    def test_a_pick_from_another_workspace_is_refused_and_not_read(
+        self, user, workspace, storage, scheduled
+    ):
+        from accounts.models.workspace import Workspace
+
+        environment, a2, _ = self._two(user, workspace, storage, "ar-pick-ws")
+        _ready(environment, a2.id, *_pair(environment))
+        elsewhere = Workspace.objects.create(
+            name="pick-elsewhere",
+            organization=environment.organization,
+            created_by=user,
+        )
+        AgentVersion.no_workspace_objects.filter(id=a2.id).update(workspace=elsewhere)
+
+        refused, read = self._refused_unread(environment, a2)
+
+        assert refused.code == "version_not_pickable"
+        assert str(a2.id) not in read
+
+    def test_another_agents_version_is_refused_and_not_read(
+        self, user, workspace, storage, scheduled
+    ):
+        environment, a2, _ = self._two(user, workspace, storage, "ar-pick-agent")
+        _ready(environment, a2.id, *_pair(environment))
+        other = AgentDefinition.objects.create(
+            agent_name="other",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=environment.organization,
+            workspace=workspace,
+        )
+        AgentVersion.no_workspace_objects.filter(id=a2.id).update(
+            agent_definition=other
+        )
+
+        refused, read = self._refused_unread(environment, a2)
+
+        assert refused.code == "version_not_pickable"
+        assert str(a2.id) not in read
+
     def test_the_run_endpoint_takes_the_pick(
         self, auth_client, user, workspace, storage, scheduled
     ):
@@ -496,6 +555,28 @@ class TestWarnings:
             "message": "This agent version has no value for API_BASE, DB_URL",
             "piece": "agent",
         }
+
+    def test_a_run_missing_a_required_value_is_created_and_the_preview_warns(
+        self, user, workspace, storage, scheduled
+    ):
+        # Until TH-10773 a missing required value warns on a run; builds refuse it.
+        environment = _cached(user, workspace, "ar-w-var-run", storage)
+        a2 = _a2(environment)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a2).update(
+            required_variable_names=["OPENAI_API_KEY", "DB_URL", "API_BASE"]
+        )
+        [warning] = [
+            one
+            for one in self._picked(environment, a2)
+            if one["code"] == "variable_missing"
+        ]
+        assert warning["message"] == (
+            "This agent version has no value for API_BASE, DB_URL"
+        )
+
+        run = _run(environment, VersionPicks(agent_version_id=a2.id), key="w-var")
+
+        assert run.agent_version_id == a2.id
 
     def test_a_missing_provider_key(self, user, workspace, storage, scheduled):
         environment = _cached(user, workspace, "ar-w-provider", storage)
