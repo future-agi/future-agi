@@ -2310,6 +2310,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
+          503: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -2445,6 +2448,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AccountsErrorResponse",
           },
           500: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
           default: {

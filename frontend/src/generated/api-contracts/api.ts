@@ -6944,9 +6944,14 @@ export type accountsPasswordResetInitiateCreateResponse500 = {
   status: 500;
 };
 
+export type accountsPasswordResetInitiateCreateResponse503 = {
+  data: AccountsErrorResponseApi;
+  status: 503;
+};
+
 export type accountsPasswordResetInitiateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500 | 503>;
 };
 
 export type accountsPasswordResetInitiateCreateResponseSuccess =
@@ -6959,6 +6964,7 @@ export type accountsPasswordResetInitiateCreateResponseError = (
   | accountsPasswordResetInitiateCreateResponse403
   | accountsPasswordResetInitiateCreateResponse404
   | accountsPasswordResetInitiateCreateResponse500
+  | accountsPasswordResetInitiateCreateResponse503
   | accountsPasswordResetInitiateCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -7236,9 +7242,14 @@ export type accountsSignupCreateResponse500 = {
   status: 500;
 };
 
+export type accountsSignupCreateResponse503 = {
+  data: AccountsErrorResponseApi;
+  status: 503;
+};
+
 export type accountsSignupCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500 | 503>;
 };
 
 export type accountsSignupCreateResponseSuccess =
@@ -7251,6 +7262,7 @@ export type accountsSignupCreateResponseError = (
   | accountsSignupCreateResponse403
   | accountsSignupCreateResponse404
   | accountsSignupCreateResponse500
+  | accountsSignupCreateResponse503
   | accountsSignupCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
