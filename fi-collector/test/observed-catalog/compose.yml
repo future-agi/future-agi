@@ -61,3 +61,16 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+  redis:
+    init: true
+    image: redis:7-alpine
+    command: [redis-server, --save, "", --appendonly, "no", --maxmemory, 128mb]
+    ports:
+      - "127.0.0.1:${OBS_TEST_REDIS_PORT:-16379}:6379"
+    mem_limit: 256m
+    cpus: 1
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 3s
+      timeout: 3s
+      retries: 20

@@ -1,6 +1,10 @@
 package trajectory
 
-import "time"
+import (
+	"reflect"
+	"time"
+	"unsafe"
+)
 
 // SpanFallback holds a direct reference to a compacted span row and its
 // original inline fields so that if inserting `trajectory_items` into
@@ -142,30 +146,59 @@ func (b *Batch) ToRows(now time.Time) []map[string]any {
 // fallback rows remain compatible even if ClickHouse lacks 040_trajectory_items.sql.
 func (b *Batch) RestoreInline() {
 	for _, fb := range b.fallbacks {
+		fb.restore()
+	}
+}
+
+// RestoreInlineRows is RestoreInline for the compacted rows among rows (the
+// same row maps the batch's fallbacks hold); other rows are left as they are.
+// The spans drain uses it after ClickHouse refused part of a pointer batch,
+// so rows already stored with their pointers keep matching what was stored.
+func (b *Batch) RestoreInlineRows(rows []map[string]any) {
+	if len(rows) == 0 || len(b.fallbacks) == 0 {
+		return
+	}
+	want := make(map[unsafe.Pointer]struct{}, len(rows))
+	for _, r := range rows {
+		if r != nil {
+			want[reflect.ValueOf(r).UnsafePointer()] = struct{}{}
+		}
+	}
+	for _, fb := range b.fallbacks {
 		if fb.Row == nil {
 			continue
 		}
-		fb.Row["input"] = fb.OrigInput
-		fb.Row["output"] = fb.OrigOutput
-		if len(fb.StrippedAttrs) > 0 {
-			if of, ok := fb.Row["attributes_extra"].(map[string]any); ok && of != nil {
-				for k, v := range fb.StrippedAttrs {
-					of[k] = v
-				}
-			}
+		if _, ok := want[reflect.ValueOf(fb.Row).UnsafePointer()]; ok {
+			fb.restore()
 		}
-		if len(fb.StrippedStringAttrs) > 0 {
-			if as, ok := fb.Row["attrs_string"].(map[string]string); ok && as != nil {
-				for k, v := range fb.StrippedStringAttrs {
-					as[k] = v
-				}
-			}
-		}
-		delete(fb.Row, "input_item_hashes")
-		delete(fb.Row, "output_item_hashes")
-		delete(fb.Row, "tool_def_hashes")
-		delete(fb.Row, "item_scope_id")
-		delete(fb.Row, "payload_encoding")
-		delete(fb.Row, "payload_envelope")
 	}
+}
+
+// restore reverts one compacted row to inline.
+func (fb SpanFallback) restore() {
+	if fb.Row == nil {
+		return
+	}
+	fb.Row["input"] = fb.OrigInput
+	fb.Row["output"] = fb.OrigOutput
+	if len(fb.StrippedAttrs) > 0 {
+		if of, ok := fb.Row["attributes_extra"].(map[string]any); ok && of != nil {
+			for k, v := range fb.StrippedAttrs {
+				of[k] = v
+			}
+		}
+	}
+	if len(fb.StrippedStringAttrs) > 0 {
+		if as, ok := fb.Row["attrs_string"].(map[string]string); ok && as != nil {
+			for k, v := range fb.StrippedStringAttrs {
+				as[k] = v
+			}
+		}
+	}
+	delete(fb.Row, "input_item_hashes")
+	delete(fb.Row, "output_item_hashes")
+	delete(fb.Row, "tool_def_hashes")
+	delete(fb.Row, "item_scope_id")
+	delete(fb.Row, "payload_encoding")
+	delete(fb.Row, "payload_envelope")
 }

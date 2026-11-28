@@ -704,11 +704,12 @@ class IntegrationHarnessContractTests(unittest.TestCase):
     def test_fixture_has_only_bounded_loopback_dependencies(self):
         config = compose(base_file="fi-collector/test/observed-catalog/compose.yml")
         services = config["services"]
-        self.assertEqual(set(services), {"clickhouse", "kafka", "postgres"})
+        self.assertEqual(set(services), {"clickhouse", "kafka", "postgres", "redis"})
         for name, published in (
             ("clickhouse", "18143"),
             ("kafka", "19094"),
             ("postgres", "15543"),
+            ("redis", "16379"),
         ):
             service = services[name]
             self.assertGreater(int(service["mem_limit"]), 0)

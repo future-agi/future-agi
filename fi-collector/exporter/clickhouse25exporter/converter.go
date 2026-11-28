@@ -229,12 +229,15 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // distinct end_user_id / trace_session_id); cross-batch duplicates collapse on
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
-// ConvertOptions controls optional Phase 0 intra-span compaction and Phase 1
-// content-addressed trajectory deduplication during conversion. Zero value
-// preserves exact legacy behavior.
+// ConvertOptions controls optional content-addressed trajectory
+// deduplication during conversion. The zero value preserves exact legacy
+// behavior.
 type ConvertOptions struct {
 	Trajectory trajectory.Config
 	Seen       *trajectory.SeenStore
+	// Gate must be open for any span to be extracted. Nil is closed: rows
+	// are byte-identical to dedup off whatever Trajectory says.
+	Gate trajectory.DedupGate
 }
 
 // ConvertResult bundles the converted span rows with their curated dimension
@@ -263,7 +266,15 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 		return ConvertResult{}, fmt.Errorf("%s", reason)
 	}
 	normalization.Prepare(traces)
-	cfg := opts.Trajectory.Normalize()
+	cfg := opts.Trajectory
+	if !cfg.Normalized() {
+		// Normally normalized once at startup (server.WithTrajectory); the
+		// normalized config is shared read-only by every request.
+		cfg = cfg.Normalize()
+	}
+	// One gate read per request: every span of the request sees the same
+	// answer. The drain re-checks before writing pointer rows.
+	dedupOpen := cfg.Active() && opts.Gate != nil && opts.Gate.Open()
 
 	rows := make([]map[string]any, 0, traces.SpanCount())
 	ids := curatedwriter.NewBatch()
@@ -291,8 +302,10 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 		// didn't tag it (legacy SDKs) — see the gating note in spanToRow.
 		projectType := stringAttr(rs.Resource().Attributes(), resAttrProjectTy, "")
 		fromOpenRouter := isOpenRouterResource(rs, serviceName)
-		dedupProject := cfg.EnabledForProject(projectID)
-		compactAttrs := cfg.CompactSpanAttrs || dedupProject
+		dedupProject := dedupOpen && cfg.EnabledForProject(projectID)
+		// Compaction exists only inside dedup: a project that is not deduped
+		// keeps dev's attributes byte for byte.
+		compactAttrs := dedupProject
 
 		sss := rs.ScopeSpans()
 		for j := 0; j < sss.Len(); j++ {
