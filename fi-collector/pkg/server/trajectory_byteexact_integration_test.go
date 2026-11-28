@@ -52,7 +52,8 @@ func TestClickHouseTrajectoryByteExactRoundTrip(t *testing.T) {
 	dedupWriter, devWriter := newWriter(dedupDB), newWriter(devDB)
 	quiet := WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	dedup := New(Config{BatchMaxRows: 1000, BatchMaxAge: time.Minute}, dedupWriter, nil, NoopUsageEmitter{}, NoopMetering{}, quiet,
-		WithTrajectory(trajectory.Config{Mode: trajectory.ModeOn}.Normalize(), trajectory.NewSeenStore(nil, 10_000, time.Hour, time.Hour)))
+		WithTrajectory(trajectory.Config{Mode: trajectory.ModeOn}.Normalize(), trajectory.NewSeenStore(nil, 10_000, time.Hour, time.Hour)),
+		WithTrajectoryGate(byteExactOpenGate{t: t}))
 	dev := New(Config{BatchMaxRows: 1000, BatchMaxAge: time.Minute}, devWriter, nil, NoopUsageEmitter{}, NoopMetering{}, quiet)
 
 	const (
@@ -225,4 +226,20 @@ func truncateForLog(b []byte) string {
 		return string(b[:2048]) + "..."
 	}
 	return string(b)
+}
+
+// byteExactOpenGate is a dedup gate that stays open for the whole test: the
+// test owns its databases (002 plus 040), so there is no operator key or
+// schema probe to wait for. A breaker trip or a pointer-column refusal fails
+// the test instead of closing the gate, because either would send the
+// spans inline and hide what this test checks.
+type byteExactOpenGate struct{ t *testing.T }
+
+func (byteExactOpenGate) Open() bool                      { return true }
+func (byteExactOpenGate) ItemsInsertSettings() url.Values { return nil }
+func (g byteExactOpenGate) ReportItemsFailure(err error) {
+	g.t.Errorf("trajectory_items insert failed: %v", err)
+}
+func (g byteExactOpenGate) ReportSpansSchemaError(err error) {
+	g.t.Errorf("spans insert refused a pointer column: %v", err)
 }

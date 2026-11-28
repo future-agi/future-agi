@@ -288,7 +288,9 @@ type Files map[string][]byte
 // extracted side does not reconstruct to the dedup-off bytes.
 func Generate() (Files, error) {
 	ctx := context.Background()
-	on := chexp.ConvertOptions{Trajectory: trajectory.Config{Mode: trajectory.ModeOn}.Normalize()}
+	// The converter extracts only through an open dedup gate; the generator
+	// has no ClickHouse or Redis, so it uses a fixed open gate.
+	on := chexp.ConvertOptions{Trajectory: trajectory.Config{Mode: trajectory.ModeOn}.Normalize(), Gate: trajectory.FixedGate(true)}
 	var payloads, spans, items bytes.Buffer
 	seenItems := make(map[trajectory.ItemKey]struct{})
 	for i, c := range Corpus() {

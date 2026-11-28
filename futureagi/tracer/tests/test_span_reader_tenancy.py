@@ -31,7 +31,10 @@ from tracer.services.clickhouse.v2.span_reader import (
     UnscopedSpanReadError,
     _active_select_sql,
 )
-from tracer.services.clickhouse.v2.trajectory_hydration import ENCODING_ITEMS_V1
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    ENCODING_ITEMS_V1,
+    payload_checksum,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -40,6 +43,27 @@ OWN = "11111111-1111-4111-8111-111111111111"
 FOREIGN = "99999999-9999-4999-8999-999999999999"
 SCOPE_ID = "22222222-2222-4222-8222-222222222222"
 TRACE = "33333333-3333-4333-8333-333333333333"
+OWN_MESSAGE = '{"role":"user","content":"own question"}'
+
+
+def _one_message_envelope(content: str) -> str:
+    """The v2 envelope of an input that is a one-message array whose message
+    is ``content``, held in ``trajectory_items``."""
+    original = f"[{content}]"
+    return json.dumps(
+        {
+            "v": 2,
+            "in": {
+                "g": ["[", "]"],
+                "r": "m",
+                "il": len(original),
+                "x": payload_checksum(original),
+            },
+        }
+    )
+
+
+OWN_ENVELOPE = _one_message_envelope(OWN_MESSAGE)
 
 
 class _RecordingClient:
@@ -240,7 +264,7 @@ def _items_v1_row(project_id, *, span_id, input_hash):
             "tool_def_hashes": [],
             "item_scope_id": SCOPE_ID,
             "payload_encoding": ENCODING_ITEMS_V1,
-            "payload_envelope": json.dumps({"v": 1, "in": {"f": "msg_array"}}),
+            "payload_envelope": OWN_ENVELOPE,
         }
     )
     return tuple(row[k] for k in span_reader._TRAJECTORY_DATA_KEYS)
@@ -257,7 +281,7 @@ def test_hydration_never_fills_a_row_outside_the_read_scope(settings, caplog):
             _items_v1_row(OWN, span_id="own", input_hash=own_hash),
             _items_v1_row(FOREIGN, span_id="foreign", input_hash=foreign_hash),
         ],
-        items=[(SCOPE_ID, own_hash, '{"role":"user","content":"own question"}')],
+        items=[(SCOPE_ID, own_hash, OWN_MESSAGE)],
     )
     with caplog.at_level(logging.ERROR, logger=span_reader.__name__):
         spans = _reader(client).list_by_trace(TRACE, project_id=OWN)
@@ -290,14 +314,14 @@ def test_child_tree_rows_outside_the_scope_are_not_hydrated(settings, caplog):
                 "tool_def_hashes": [],
                 "item_scope_id": SCOPE_ID,
                 "payload_encoding": ENCODING_ITEMS_V1,
-                "payload_envelope": json.dumps({"v": 1, "in": {"f": "msg_array"}}),
+                "payload_envelope": OWN_ENVELOPE,
             }
         )
         return tuple(values[a] for a in aliases)
 
     client = _RecordingClient(
         rows=[row(OWN, "own", "a" * 32), row(FOREIGN, "foreign", "b" * 32)],
-        items=[(SCOPE_ID, "a" * 32, '{"role":"user","content":"own question"}')],
+        items=[(SCOPE_ID, "a" * 32, OWN_MESSAGE)],
     )
     with caplog.at_level(logging.ERROR, logger=span_reader.__name__):
         tree = _reader(client).child_tree_spans_by_trace_ids([TRACE], project_id=OWN)
@@ -328,12 +352,10 @@ def test_org_scoped_dict_rows_from_another_org_are_not_hydrated(settings, caplog
             "tool_def_hashes": [],
             "item_scope_id": SCOPE_ID,
             "payload_encoding": ENCODING_ITEMS_V1,
-            "payload_envelope": json.dumps({"v": 1, "in": {"f": "msg_array"}}),
+            "payload_envelope": OWN_ENVELOPE,
         }
 
-    client = _RecordingClient(
-        items=[(SCOPE_ID, "a" * 32, '{"role":"user","content":"own question"}')]
-    )
+    client = _RecordingClient(items=[(SCOPE_ID, "a" * 32, OWN_MESSAGE)])
     rows = [row("own", own_org, "a" * 32), row("foreign", foreign_org, "b" * 32)]
     with caplog.at_level(logging.ERROR, logger=span_reader.__name__):
         _reader(client)._hydrate_dict_rows(

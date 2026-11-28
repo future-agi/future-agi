@@ -30,6 +30,7 @@ from tracer.services.clickhouse.v2.span_reader import (
     _ReadScope,
     _row_to_chspan,
 )
+from tracer.services.clickhouse.v2.trajectory_hydration import payload_checksum
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +40,24 @@ FOREIGN = "99999999-9999-4999-8999-999999999999"
 SCOPE_ID = "22222222-2222-4222-8222-222222222222"
 ITEM_HASH = "c" * 32
 START = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
-ENVELOPE = json.dumps({"v": 1, "in": {"f": "msg_array"}})
+
+
+def _one_message_envelope(content):
+    """The v2 envelope of an input that is a one-message array whose message
+    is ``content``: built per row from the content that row's own project
+    stores under the shared item hash."""
+    original = f"[{content}]"
+    return json.dumps(
+        {
+            "v": 2,
+            "in": {
+                "g": ["[", "]"],
+                "r": "m",
+                "il": len(original),
+                "x": payload_checksum(original),
+            },
+        }
+    )
 
 
 class _ScratchClient:
@@ -83,7 +101,9 @@ def tenancy(ch_tables):
     ch_tables.command(f"CREATE TABLE {spans_table} AS spans")
     ch_tables.command(f"CREATE TABLE {items_table} AS trajectory_items")
 
-    def insert_span(project_id, org_id, *, trace_id, span_id, preview, items_v1):
+    def insert_span(
+        project_id, org_id, *, trace_id, span_id, preview, items_v1, item_content=None
+    ):
         row = {
             "project_id": uuid.UUID(project_id),
             "org_id": uuid.UUID(org_id),
@@ -105,7 +125,7 @@ def tenancy(ch_tables):
                     "input_item_hashes": [ITEM_HASH],
                     "item_scope_id": SCOPE_ID,
                     "payload_encoding": "items_v1",
-                    "payload_envelope": ENVELOPE,
+                    "payload_envelope": _one_message_envelope(item_content),
                 }
             )
         ch_tables.insert(spans_table, [list(row.values())], column_names=list(row))
@@ -138,6 +158,7 @@ def _seed_shared_trace(insert_span, insert_item, own_project, trace_id, *, items
         span_id="shared-span",
         preview="own preview" if items_v1 else _message("own inline question"),
         items_v1=items_v1,
+        item_content=_message("own question"),
     )
     insert_span(
         FOREIGN,
@@ -146,6 +167,7 @@ def _seed_shared_trace(insert_span, insert_item, own_project, trace_id, *, items
         span_id="shared-span",
         preview="foreign preview" if items_v1 else _message("foreign secret"),
         items_v1=items_v1,
+        item_content=_message("foreign secret"),
     )
     if items_v1:
         insert_item(own_project, _message("own question"))
@@ -280,6 +302,7 @@ def test_foreign_org_span_with_same_trace_id_not_returned(
         span_id="own-span",
         preview="own preview",
         items_v1=True,
+        item_content=_message("own question"),
     )
     insert_item(str(project.id), _message("own question"))
     insert_span(
@@ -289,6 +312,7 @@ def test_foreign_org_span_with_same_trace_id_not_returned(
         span_id="foreign-span",
         preview="foreign preview",
         items_v1=True,
+        item_content=_message("foreign secret"),
     )
     insert_item(FOREIGN, _message("foreign secret"))
 
