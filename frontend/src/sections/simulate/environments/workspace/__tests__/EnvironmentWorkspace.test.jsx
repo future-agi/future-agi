@@ -911,21 +911,16 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Drafting the design")).toBeInTheDocument();
     expect(screen.getByText("Designing")).toBeInTheDocument();
     cleanup();
-
-    // Awaiting approval before the question shows keeps the design page.
-    getHarnessJob.mockResolvedValue({
-      ...job({ events: [], messages: [] }),
-      status: { stage: "awaiting_approval", created_at: NOW },
-    });
-    renderWorkspace("/dashboard/simulate/environments/job-build");
-    expect(await screen.findByText("Drafting the design")).toBeInTheDocument();
-    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
-    expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
   });
 
-  it.each(["design", "build_job"])(
-    "restores the parked %s source review before showing build progress",
-    async (kind) => {
+  // A design's review now reports awaiting_approval; the old stage stays for build jobs.
+  it.each([
+    ["design", "awaiting_approval"],
+    ["design", "awaiting_source_review"],
+    ["build_job", "awaiting_source_review"],
+  ])(
+    "restores the parked %s source review (%s) before showing build progress",
+    async (kind, stage) => {
       const reviewId = "review-1";
       getHarnessJob.mockResolvedValue({
         ...BUILDING_JOB,
@@ -936,7 +931,7 @@ describe("EnvironmentWorkspace route shell", () => {
             source_review: { id: reviewId, state: "reading", revision: 1 },
           },
         },
-        status: { stage: "awaiting_source_review", created_at: NOW },
+        status: { stage, created_at: NOW },
       });
       const fallback = axios.get.getMockImplementation();
       axios.get.mockImplementation((url) =>

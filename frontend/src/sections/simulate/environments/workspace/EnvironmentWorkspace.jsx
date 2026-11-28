@@ -149,10 +149,17 @@ export default function EnvironmentWorkspace() {
   const jobQuery = useHarnessJob(envId, { enabled: backed });
   const metadata = jobQuery.data?.job?.metadata || {};
   const reviewId = metadata.source_review?.id || metadata.source_review_id;
-  const reviewStage = [
-    "awaiting_source_review",
-    "source_review_dispatch_pending",
-  ].includes(jobQuery.data?.status?.stage);
+  const jobStage = jobQuery.data?.status?.stage;
+  // A design reports awaiting_approval for its source review and for its proposal; the review
+  // is the one while its source review is still open.
+  const reviewOpen =
+    Boolean(reviewId) &&
+    !["accepted", "cancelled", "expired"].includes(metadata.source_review?.state);
+  const reviewStage =
+    ["awaiting_source_review", "source_review_dispatch_pending"].includes(
+      jobStage,
+    ) ||
+    (jobStage === DESIGN_STATE.AWAITING_APPROVAL && reviewOpen);
   const chat = useWorkspaceChat(reviewStage ? undefined : env, { source });
   const { canRun: roleCanRun, canEdit } = useSimulationAccess();
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
@@ -415,9 +422,7 @@ export default function EnvironmentWorkspace() {
       ? stage
       : null;
     const question =
-      metadata.design &&
-      designState !== DESIGN_STATE.DESIGNING &&
-      designQuestion(designJob?.conversation);
+      metadata.design && designQuestion(designJob?.conversation);
     const awaiting = designState
       ? designState === DESIGN_STATE.AWAITING_APPROVAL
       : stage === "awaiting_source_review" || question;
@@ -425,9 +430,9 @@ export default function EnvironmentWorkspace() {
     // built until the person approves it, so this is not a build yet. A resumed
     // design may already be approved in its checkpoint, so it keeps the build view.
     const conversation = designJob?.conversation;
-    // Awaiting approval with no question to show still reads as the design page.
+    // Waiting with no proposal to show yet still reads as the design page.
     const drafting = designState
-      ? building && (designState === DESIGN_STATE.DESIGNING || !question)
+      ? building && !question && !reviewStage
       : Boolean(metadata.design) &&
         !metadata.design.resume_from &&
         building &&
