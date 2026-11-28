@@ -4,7 +4,7 @@ import {
   getRememberMe,
 } from "src/auth/context/jwt/utils";
 import axiosInstance, { endpoints } from "src/utils/axios";
-import logger from "src/utils/logger";
+import { isTransientRefreshError } from "src/auth/context/jwt/refresh-error";
 
 // The server accepts the handshake and then closes with this code when it
 // rejects the token, so "open" alone does not mean the socket is usable.
@@ -26,13 +26,35 @@ export const getCurrentAccessToken = (fallback) => getAccessToken() || fallback;
  * Retry only when storage or the current session supplies a different token.
  * A successful REST request need not rotate the access token.
  */
-export const refreshRejectedSocketToken = async (rejectedToken, fallback) => {
-  if (getCurrentAccessToken(fallback) !== rejectedToken) return true;
-  if (!getRememberMe() || !getRefreshToken()) return false;
-  try {
-    await axiosInstance.get(endpoints.auth.me);
-  } catch (e) {
-    logger.debug("WebSocket token refresh request failed", e);
+export const refreshRejectedSocketToken = async (
+  rejectedToken,
+  fallback,
+  isCurrent,
+  timerRef,
+) => {
+  let delay = 1000;
+  while (isCurrent()) {
+    if (getCurrentAccessToken(fallback) !== rejectedToken) return true;
+    if (!getRememberMe() || !getRefreshToken()) return false;
+    try {
+      await axiosInstance.get(endpoints.auth.me);
+    } catch (error) {
+      if (!isCurrent()) return false;
+      if (getCurrentAccessToken(fallback) !== rejectedToken) return true;
+      if (isTransientRefreshError(error)) {
+        // Retry the refresh, not the socket with its already rejected token.
+        // The owning connection clears this timer on teardown.
+        await new Promise((resolve) => {
+          timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            resolve();
+          }, delay);
+        });
+        delay = Math.min(2 * delay, 30000);
+        continue;
+      }
+    }
+    return getCurrentAccessToken(fallback) !== rejectedToken;
   }
-  return getCurrentAccessToken(fallback) !== rejectedToken;
+  return false;
 };

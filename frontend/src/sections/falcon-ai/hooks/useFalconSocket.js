@@ -14,8 +14,7 @@ const RECONNECT_BASE_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
 // Exponential backoff, capped. Token rejections back off on their own count:
-// the server accepts the handshake before it rejects the token, so the open
-// handler resets the ordinary retry count.
+// only a server frame establishes that the connection was usable.
 const backoffDelay = (attempt) =>
   Math.min(RECONNECT_BASE_DELAY * 2 ** attempt, MAX_RECONNECT_DELAY);
 
@@ -72,6 +71,8 @@ export const useFalconSocket = () => {
         canRetry = await refreshRejectedSocketToken(
           rejectedToken,
           contextTokenRef.current,
+          () => mountedRef.current && socketIdRef.current === socketId,
+          timerRef,
         );
       } finally {
         if (refreshingRef.current === socketId) refreshingRef.current = null;
@@ -133,8 +134,6 @@ export const useFalconSocket = () => {
     socketRef.current = ws;
 
     ws.onopen = () => {
-      retriesRef.current = 0;
-
       // Keep connection alive — proxies/load balancers drop idle WebSockets after ~100s
       clearInterval(pingRef.current);
       pingRef.current = setInterval(() => {
@@ -158,6 +157,7 @@ export const useFalconSocket = () => {
     ws.onmessage = (event) => {
       // Any server frame (including the ping's pong) means the token was
       // accepted; "open" alone does not, as the server accepts first.
+      retriesRef.current = 0;
       authFailuresRef.current = 0;
       try {
         const parsed = JSON.parse(event.data);
