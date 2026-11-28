@@ -25,8 +25,10 @@ def reset_token_cache():
     import ee.licensing.activation_client as mod
 
     mod._cached_token = None
+    mod._last_failure = None
     yield
     mod._cached_token = None
+    mod._last_failure = None
 
 
 class TestServiceToken:
@@ -136,6 +138,133 @@ class TestActivate:
             assert _activate() is None
 
         assert post.call_args.kwargs["json"]["version"] == "1.8.0"
+
+
+@pytest.fixture
+def activation(settings):
+    settings.EE_LICENSE_KEY = "fixture-license"
+    with (
+        patch("tfc.deployment_telemetry.state.get_or_create_telemetry_state"),
+        patch("ee.licensing.activation_client.time", wraps=time) as clock,
+        patch("httpx.post") as post,
+    ):
+        clock.monotonic.return_value = 100.0
+        yield post, clock
+
+
+class TestActivationBackoff:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "reason", "message"),
+        [
+            (401, "invalid_license", "not recognized"),
+            (403, "license_inactive", "inactive"),
+            (403, "license_expired", "expired"),
+            (403, "instance_limit", "instance limit"),
+        ],
+    )
+    async def test_shared_refusal(self, activation, status, reason, message):
+        post, _ = activation
+        post.return_value = httpx.Response(
+            status, json={"error": reason, "detail": "untrusted response text"}
+        )
+        with patch("ee.licensing.activation_client.logger") as log:
+            with pytest.raises(ManagedServiceError) as sync:
+                call_managed_service(json_body={})
+            with pytest.raises(ManagedServiceError) as stream:
+                await anext(stream_managed_service(json_body={}))
+
+        post.assert_called_once()
+        assert sync.value.code == stream.value.code == "ACTIVATION_FAILED"
+        assert sync.value.detail == stream.value.detail
+        assert message in sync.value.detail
+        assert "untrusted response text" not in sync.value.detail
+        log.error.assert_called_once_with(
+            "activation_failed",
+            status_code=status,
+            detail=sync.value.detail,
+            retry_after=60,
+        )
+
+    def test_backoff_doubles_to_one_hour_and_resets_after_success(self, activation):
+        post, clock = activation
+        refusal = httpx.Response(401, json={"error": "invalid_license"})
+        success = httpx.Response(200, json={"access_token": "service-token"})
+        post.return_value = refusal
+        for attempt, delay in enumerate([60, 120, 240, 480, 960, 1920, 3600, 3600], 1):
+            assert get_service_token() is None
+            assert post.call_count == attempt
+            clock.monotonic.return_value += delay - 1
+            assert get_service_token() is None
+            assert post.call_count == attempt
+            clock.monotonic.return_value += 1
+
+        post.return_value = success
+        assert get_service_token() is not None
+        invalidate_token()
+        post.return_value = refusal
+        assert get_service_token() is None
+        clock.monotonic.return_value += 60
+        post.return_value = success
+        assert get_service_token() is not None
+
+    def test_failed_refresh_uses_old_token_only_until_expiry(self, activation):
+        post, clock = activation
+        clock.time.return_value = 1000
+        post.return_value = httpx.Response(
+            200, json={"access_token": "old-token", "expires_in": 10}
+        )
+        token = get_service_token()
+        assert token is not None
+        post.return_value = httpx.Response(503)
+        assert get_service_token() is token
+        clock.time.return_value += 10
+        clock.monotonic.return_value += 10
+        assert get_service_token() is None
+        assert post.call_count == 2
+
+    @pytest.mark.parametrize(("hint", "delay"), [(5, 5), (7200, 7200), ("bad", 60)])
+    def test_rate_limit_defers_until_retry_after(self, activation, hint, delay):
+        post, clock = activation
+        post.side_effect = [
+            httpx.Response(429, headers={"Retry-After": str(hint)}),
+            httpx.Response(200, json={"access_token": "service-token"}),
+        ]
+        assert get_service_token() is None
+        clock.monotonic.return_value += delay - 1
+        assert get_service_token() is None
+        post.assert_called_once()
+        clock.monotonic.return_value += 1
+        token = get_service_token()
+        assert token is not None
+        assert get_service_token() is token
+        assert post.call_count == 2
+
+    @pytest.mark.parametrize("change", ["key", "endpoint", "keyless"])
+    def test_config_change_retries(self, activation, settings, monkeypatch, change):
+        post, _ = activation
+        post.return_value = httpx.Response(401, json={"error": "invalid_license"})
+        assert get_service_token() is None
+        assert get_service_token() is None
+        post.assert_called_once()
+
+        if change == "endpoint":
+            monkeypatch.setenv("FUTURE_AGI_LICENSE_URL", "https://new.example.invalid")
+        else:
+            settings.EE_LICENSE_KEY = "" if change == "keyless" else "corrected-key"
+        if change == "keyless":
+            monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
+            post.return_value = httpx.Response(
+                200, json={"access_token": None, "scope": "oss"}
+            )
+            with pytest.raises(ManagedServiceError) as exc:
+                call_managed_service(json_body={})
+            assert exc.value.detail == "Could not obtain service token"
+            assert "license_key_hash" not in post.call_args.kwargs["json"]
+        else:
+            post.return_value = httpx.Response(200, json={"access_token": "token"})
+            assert get_service_token() is not None
+        assert post.call_count == 2
 
 
 class _StreamResponse:
