@@ -32,6 +32,7 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
   });
 
   const { mutate, isPending } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: (data) =>
       axios.post(endpoints.develop.eval.duplicateEvalsTemplate, data),
     onSuccess: (data) => {
@@ -40,6 +41,13 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
       });
       handleClose();
       onSubmit(data?.data?.result);
+    },
+    onError: (error) => {
+      const message =
+        typeof error?.result === "string"
+          ? error.result
+          : error?.message || "Failed to duplicate evaluation";
+      enqueueSnackbar(message, { variant: "error" });
     },
   });
 
