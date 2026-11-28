@@ -318,6 +318,11 @@ def _latest_recorded_eval_sql(
     has_numeric_score = eval_output_presence_expr(
         f"{config}, 'output', 'output'", "SCORE"
     )
+    # Likewise a pass/fail label needs a recorded verdict: an absent one is
+    # "(not set)", not "Failed".
+    has_verdict = eval_output_presence_expr(
+        f"{config}, 'output', 'output'", "PASS_FAIL"
+    )
     # Preselect immutable row ids with a narrow lookup, not physical versions
     # by their mutable config. Then collapse *all* versions of qualifying ids.
     return f"""
@@ -331,7 +336,8 @@ def _latest_recorded_eval_sql(
                             AS eval_stamped_project_id,
                         JSONExtractString({config}, 'target_type')
                             AS eval_target_type,
-                        {has_numeric_score} AS eval_has_numeric_score
+                        {has_numeric_score} AS eval_has_numeric_score,
+                        {has_verdict} AS eval_has_verdict
                     FROM usage_apicalllog AS {scan_alias}
                     PREWHERE {scope}
                       AND {scan_alias}.source_id = %({template_param})s
@@ -2272,9 +2278,10 @@ class DashboardQueryBuilder:
 
                 if ev_tid == eval_template_id:
                     if bd_output_type == "PASS_FAIL":
-                        bd_expr = eval_pass_fail_label_expr(
+                        label_expr = eval_pass_fail_label_expr(
                             "e.eval_score", "e.eval_output_str"
                         )
+                        bd_expr = f"if(e.eval_has_verdict, {label_expr}, '(not set)')"
                     elif bd_output_type in ("CHOICE", "CHOICES"):
                         bd_expr = (
                             "if(e.eval_output_str = '', '(not set)', e.eval_output_str)"
@@ -2298,7 +2305,10 @@ class DashboardQueryBuilder:
                         label_expr = eval_pass_fail_label_expr(
                             f"{ev_alias}.eval_score", f"{ev_alias}.eval_output_str"
                         )
-                        bd_expr = f"if({not_set}, '(not set)', {label_expr})"
+                        no_verdict = f"NOT {ev_alias}.eval_has_verdict"
+                        bd_expr = (
+                            f"if({not_set} OR {no_verdict}, '(not set)', {label_expr})"
+                        )
                     elif bd_output_type in ("CHOICE", "CHOICES"):
                         bd_expr = (
                             f"if({not_set} OR "
@@ -3651,7 +3661,10 @@ class DashboardQueryBuilder:
                     label_expr = eval_pass_fail_label_expr(
                         f"{alias}.eval_score", f"{alias}.eval_output_str"
                     )
-                    val_expr = f"if({not_set}, '(not set)', {label_expr})"
+                    no_verdict = f"NOT {alias}.eval_has_verdict"
+                    val_expr = (
+                        f"if({not_set} OR {no_verdict}, '(not set)', {label_expr})"
+                    )
                 elif output_type in ("CHOICE", "CHOICES"):
                     # An empty choice is "(not set)" here too, as in the
                     # eval-metric breakdowns (TH-10545).
