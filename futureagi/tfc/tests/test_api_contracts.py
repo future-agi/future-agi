@@ -553,6 +553,53 @@ def test_core_management_endpoints_have_runtime_backed_contracts():
     )
 
 
+def test_optional_source_paths_document_blank_and_relative_values():
+    import re
+
+    definitions = _swagger()["definitions"]
+    for model, name in [
+        ("AgentConnectRequest", "subfolder"),
+        ("AgentConnectRequest", "entry"),
+        ("HarnessSource", "subfolder"),
+    ]:
+        pattern = definitions[model]["properties"][name]["pattern"]
+        assert re.fullmatch(pattern, "")
+        assert re.fullmatch(pattern, "agents/support")
+        assert not re.fullmatch(pattern, "agents//support")
+
+
+def test_websocket_relay_documents_joint_credentials_and_signed_headers():
+    from tfc.utils.websocket_relay_auth import (
+        RELAY_SIGNATURE_HEADER,
+        RELAY_TIMESTAMP_HEADER,
+    )
+
+    operation = _swagger()["paths"]["/call-websocket/"]["post"]
+    assert operation["security"] == [{"X-Api-Key": [], "X-Secret-Key": []}]
+    required_headers = {
+        parameter["name"]
+        for parameter in operation["parameters"]
+        if parameter["in"] == "header" and parameter.get("required")
+    }
+    assert {RELAY_SIGNATURE_HEADER, RELAY_TIMESTAMP_HEADER} <= required_headers
+
+
+def test_websocket_request_schema_matches_object_messages_and_optional_uuid():
+    schema = _swagger()["definitions"]["CallWebsocketRequest"]
+    assert schema["required"] == ["message"]
+    message = schema["properties"]["message"]
+    assert message["type"] == "object"
+    assert message["x-string-or-object"] is True
+    assert message["additionalProperties"]["x-json-value"] is True
+    target = schema["properties"]["uuid"]
+    from sockets.targets import TARGET_PATTERN
+
+    assert target["type"] == "string"
+    assert target["pattern"] == TARGET_PATTERN
+    assert "format" not in target
+    assert target["x-nullable"] is True
+
+
 def test_management_api_auto_schema_adds_default_error_contracts():
     assert (
         _response_ref("/model-hub/annotation-queues/", "get", "default")

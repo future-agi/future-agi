@@ -5326,12 +5326,14 @@ export interface SpanAttributeValuesResponseApi {
   query_window_end: string;
 }
 
-export interface CallWebsocketRequestApi {
-  /** @minLength 1 */
-  message: string;
-  send_to_uuid?: boolean;
-  uuid?: string;
-}
+export type CallWebsocketRequestApiMessage = { [key: string]: JsonValueApi };
+
+export type CallWebsocketRequestApi = {
+  message: string | CallWebsocketRequestApiMessage;
+} & (
+  | { send_to_uuid: true; uuid: string }
+  | { send_to_uuid?: false; uuid?: string | null }
+);
 
 export interface CallWebsocketResponseApi {
   status?: boolean;
@@ -18261,12 +18263,12 @@ export interface AgentConnectRequestApi {
   commit_sha?: string;
   /**
    * @maxLength 512
-   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   * @pattern ^(?:(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$
    */
   subfolder?: string;
   /**
    * @maxLength 512
-   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   * @pattern ^(?:(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$
    */
   entry?: string;
   env_values?: AgentConnectRequestApiEnvValues;
@@ -25952,7 +25954,7 @@ export interface HarnessSourceApi {
   installation_id?: string;
   /**
    * @maxLength 512
-   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   * @pattern ^(?:(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$
    */
   subfolder?: string;
   archive_artifact_id?: string;

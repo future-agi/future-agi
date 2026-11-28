@@ -15505,7 +15505,7 @@
         "/call-websocket/": {
             "post": {
                 "operationId": "call-websocket_create",
-                "description": "",
+                "description": "Internal relay. Requires the organization's system API key pair and a signed request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -15514,6 +15514,20 @@
                         "schema": {
                             "$ref": "#/definitions/CallWebsocketRequest"
                         }
+                    },
+                    {
+                        "name": "X-Relay-Signature",
+                        "in": "header",
+                        "description": "Internal relay signature for the request.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "X-Relay-Timestamp",
+                        "in": "header",
+                        "description": "Unix timestamp in seconds for the signed request.",
+                        "required": true,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -15538,6 +15552,12 @@
                 },
                 "tags": [
                     "call-websocket"
+                ],
+                "security": [
+                    {
+                        "X-Api-Key": [],
+                        "X-Secret-Key": []
+                    }
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
@@ -108448,8 +108468,14 @@
             "properties": {
                 "message": {
                     "title": "Message",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    },
+                    "x-string-or-object": true
                 },
                 "send_to_uuid": {
                     "title": "Send to uuid",
@@ -108458,7 +108484,19 @@
                 },
                 "uuid": {
                     "title": "Uuid",
-                    "type": "string"
+                    "description": "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
+                    "type": "string",
+                    "pattern": "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-required-when": {
+                "send_to_uuid": {
+                    "value": true,
+                    "fields": [
+                        "uuid"
+                    ]
                 }
             }
         },
@@ -140606,13 +140644,13 @@
                 "subfolder": {
                     "title": "Subfolder",
                     "type": "string",
-                    "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+                    "pattern": "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
                     "maxLength": 512
                 },
                 "entry": {
                     "title": "Entry",
                     "type": "string",
-                    "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+                    "pattern": "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
                     "maxLength": 512
                 },
                 "env_values": {
@@ -158975,7 +159013,7 @@
                 "subfolder": {
                     "title": "Subfolder",
                     "type": "string",
-                    "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+                    "pattern": "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
                     "maxLength": 512,
                     "x-nullable": true
                 },

@@ -1400,6 +1400,27 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // The relay carries heterogeneous notification objects, including nulls.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export type CallWebsocketRequestApiMessage =",
+      "{ [key: string]: unknown }",
+      "JsonValueApi",
+      "CallWebsocketRequestApi.message JSON values",
+    );
+    schemas = assertReplaceRegexInNamedBlock(
+      schemas,
+      "export interface CallWebsocketRequestApi {",
+      /export interface CallWebsocketRequestApi \{[\s\S]*?\n\}/,
+      `export type CallWebsocketRequestApi = {
+  message: string | CallWebsocketRequestApiMessage;
+} & (
+  | { send_to_uuid: true; uuid: string }
+  | { send_to_uuid?: false; uuid?: string | null }
+);`,
+      "CallWebsocketRequestApi conditional target UUID",
+    );
+
     // Swagger 2 x-nullable is lost by Orval. Keep the explicit task-details
     // response aligned with legacy nullable fields and absent sampling policies.
     for (const [typeName, fields] of Object.entries({
@@ -1441,6 +1462,30 @@ export type ${jsonAlias} = JsonValueApi;`,
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const CallWebsocketCreateBody =",
+      /zod\.record\(zod\.string\(\), zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)\)/,
+      "zod.union([zod.string(), zod.record(zod.string(), jsonValueSchema)])",
+      "CallWebsocketCreateBody legacy text or object message",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const CallWebsocketCreateBody =",
+      /("uuid": zod\.string\(\)[^\n]*?)\.optional\(\)/,
+      "$1.nullish()",
+      "CallWebsocketCreateBody.uuid nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const CallWebsocketCreateBody =",
+      /\}\)/,
+      `}).refine((value) => !value.send_to_uuid || value.uuid != null, {
+  path: ["uuid"], message: "A UUID is required for targeted delivery."
+})`,
+      "CallWebsocketCreateBody conditional target UUID",
+    );
 
     for (const field of new Set(
       Object.values(interruptionNullableFields).flat(),

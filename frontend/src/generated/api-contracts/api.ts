@@ -19531,6 +19531,9 @@ export const getCallWebsocketCreateUrl = () => {
   return `/call-websocket/`;
 };
 
+/**
+ * Internal relay. Requires the organization's system API key pair and a signed request.
+ */
 export const callWebsocketCreate = async (
   callWebsocketRequestApi: CallWebsocketRequestApi,
   options?: RequestInit,

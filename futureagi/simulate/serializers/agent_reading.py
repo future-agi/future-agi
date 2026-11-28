@@ -2,7 +2,10 @@ from typing import Any
 
 from rest_framework import serializers
 
-from simulate.serializers.harness_job import SUBFOLDER_PATTERN
+from simulate.serializers.harness_job import (
+    BLANK_OR_SUBFOLDER_PATTERN,
+    SUBFOLDER_PATTERN,
+)
 
 AGENT_SCAN_SCHEMA = "futureagi.agent-scan.v1"
 MAX_AGENTS = 50
@@ -44,7 +47,7 @@ class EstimatesSerializer(serializers.Serializer):
 class FoundAgentSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     subfolder = serializers.RegexField(
-        SUBFOLDER_PATTERN, max_length=512, allow_blank=True
+        BLANK_OR_SUBFOLDER_PATTERN, max_length=512, allow_blank=True
     )
     entry = serializers.RegexField(SUBFOLDER_PATTERN, max_length=512)
     framework = FrameworkSerializer()

@@ -51220,14 +51220,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Subfolder",
           type: "string",
           pattern:
-            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
           maxLength: 512,
         },
         entry: {
           title: "Entry",
           type: "string",
           pattern:
-            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
           maxLength: 512,
         },
         env_values: {
@@ -59842,8 +59842,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         message: {
           title: "Message",
-          type: "string",
-          minLength: 1,
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+          "x-string-or-object": true,
         },
         send_to_uuid: {
           title: "Send to uuid",
@@ -59852,7 +59858,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         uuid: {
           title: "Uuid",
+          description:
+            "Target UUID, generate_<UUID> or improve_<UUID>. Required for targeted delivery; omit or use null for broadcasts.",
           type: "string",
+          pattern:
+            "^(?:(?:generate|improve)_)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\\s\\S])",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-required-when": {
+        send_to_uuid: {
+          value: true,
+          fields: ["uuid"],
         },
       },
     },
@@ -116621,7 +116639,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Subfolder",
           type: "string",
           pattern:
-            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
           maxLength: 512,
           "x-nullable": true,
         },
