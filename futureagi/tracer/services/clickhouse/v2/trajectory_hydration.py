@@ -15,7 +15,24 @@ Mirrors the Go write-side contract in ``fi-collector/pkg/trajectory/``:
       (``input_item_hashes``, ``output_item_hashes``, ``tool_def_hashes``),
       ``item_scope_id``, and ``payload_envelope``. A single batched ClickHouse
       read against ``trajectory_items`` keyed by ``(project_id, scope_id)``
-      reconstructs the exact original JSON payloads transparently.
+      fetches the items, and each extracted side is rebuilt by concatenating
+      the envelope's literal gaps with the item contents in slot order. No
+      JSON is parsed or re-serialised, so the result is the exact string the
+      collector received, checked against the envelope's checksum.
+
+      Envelope (version 2, written by ``pkg/trajectory/reconstruct.go``)::
+
+          {"v": 2,
+           "in":  {"g": [gap0, ..., gapN], "r": "smmt...", "sh": "p:<hash>",
+                   "il": <code points>, "x": "<sha256 prefix>"},
+           "out": {"g": [...], "r": "mm...", "il": ..., "x": ...}}
+
+      ``r`` has one character per slot: ``m`` takes the next entry of the
+      side's ``*_item_hashes``, ``t`` the next ``tool_def_hashes`` entry and
+      ``s`` the side's ``sh``. ``g`` has ``len(r) + 1`` literals and the side
+      is ``g0 + c(r0) + g1 + ... + gN``. ``x`` is the hex of the first 16
+      bytes of SHA-256 over the side's UTF-8 bytes, the same digest prefix as
+      ``item_hash``.
 
       Legacy ``payload_encoding == 'inline'`` spans trigger ZERO queries
       against ``trajectory_items``.
@@ -23,6 +40,7 @@ Mirrors the Go write-side contract in ``fi-collector/pkg/trajectory/``:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -43,6 +61,25 @@ SENTINEL_PROMOTED_OUTPUT_KEY = "__fi_promoted_output_key"
 SENTINEL_PROMOTED_OUTPUT_JSON = "__fi_promoted_output_json"
 
 _SENTINEL_MARKER = "__fi_promoted_"
+
+ENVELOPE_VERSION = 2
+SLOT_MESSAGE = "m"
+SLOT_TOOL = "t"
+SLOT_SYSTEM = "s"
+
+
+class TrajectoryContentUnavailable(Exception):
+    """Stored trajectory content does not rebuild into the original payload.
+
+    Raised when the rebuilt text fails the envelope checksum. Hydrators keep
+    the inline preview for that side and log the failure.
+    """
+
+
+def payload_checksum(text: str) -> str:
+    """Hex of the first 16 bytes of SHA-256 over ``text`` (UTF-8)."""
+    return hashlib.sha256(text.encode("utf-8")).digest()[:16].hex()
+
 
 TRAJECTORY_SPAN_COLUMNS: tuple[str, ...] = (
     "input_item_hashes",
@@ -85,6 +122,50 @@ def _resolve_scope_and_hash(prefixed_hash: str, default_scope: str) -> tuple[str
     return default_scope, prefixed_hash
 
 
+def _side_slot_refs(
+    shape: Mapping[str, Any] | None,
+    hashes: Sequence[str] | None,
+    tool_hashes: Sequence[str] | None,
+) -> list[str] | None:
+    """Return the ref of every slot of one side template, in slot order.
+
+    ``None`` when the template is malformed or its slot counts disagree with
+    the hash arrays (``count('m') != len(hashes)``, ``count('t') !=
+    len(tool_hashes)``, or an ``s`` slot without ``sh``).
+    """
+    if not isinstance(shape, Mapping):
+        return None
+    gaps = shape.get("g")
+    slots = shape.get("r")
+    if (
+        not isinstance(gaps, list)
+        or not isinstance(slots, str)
+        or len(gaps) != len(slots) + 1
+        or not all(isinstance(g, str) for g in gaps)
+    ):
+        return None
+    msgs = [str(h) for h in (hashes or ())]
+    tools = [str(h) for h in (tool_hashes or ())]
+    if slots.count(SLOT_MESSAGE) != len(msgs) or slots.count(SLOT_TOOL) != len(tools):
+        return None
+    sh = shape.get("sh")
+    refs: list[str] = []
+    msg_iter = iter(msgs)
+    tool_iter = iter(tools)
+    for slot in slots:
+        if slot == SLOT_MESSAGE:
+            refs.append(next(msg_iter))
+        elif slot == SLOT_TOOL:
+            refs.append(next(tool_iter))
+        elif slot == SLOT_SYSTEM:
+            if not isinstance(sh, str) or not sh:
+                return None
+            refs.append(sh)
+        else:
+            return None
+    return refs
+
+
 def _collect_required_refs(
     *,
     project_id: str,
@@ -94,34 +175,20 @@ def _collect_required_refs(
     tool_hashes: Sequence[str] | None,
     envelope: Mapping[str, Any] | None,
 ) -> list[tuple[str, str, str]]:
-    """Return all ``(project_id, scope_id, raw_hash)`` tuples referenced by one span."""
-    if not project_id:
+    """Return the ``(project_id, scope_id, raw_hash)`` tuples one span's slots reference."""
+    if not project_id or not isinstance(envelope, Mapping):
         return []
+    side_refs = (
+        _side_slot_refs(envelope.get("in"), input_hashes, tool_hashes),
+        _side_slot_refs(envelope.get("out"), output_hashes, None),
+    )
     refs: list[tuple[str, str, str]] = []
-    for h in input_hashes or ():
-        if h:
-            scope, raw = _resolve_scope_and_hash(str(h), item_scope_id)
-            if scope and raw:
-                refs.append((project_id, scope, raw))
-    for h in output_hashes or ():
-        if h:
-            scope, raw = _resolve_scope_and_hash(str(h), item_scope_id)
-            if scope and raw:
-                refs.append((project_id, scope, raw))
-    for h in tool_hashes or ():
-        if h:
-            scope, raw = _resolve_scope_and_hash(str(h), item_scope_id)
-            if scope and raw:
-                refs.append((project_id, scope, raw))
-    if isinstance(envelope, Mapping):
-        for side in ("in", "out"):
-            shape = envelope.get(side)
-            if isinstance(shape, Mapping):
-                sh = shape.get("sh")
-                if isinstance(sh, str) and sh:
-                    scope, raw = _resolve_scope_and_hash(sh, item_scope_id)
-                    if scope and raw:
-                        refs.append((project_id, scope, raw))
+    for slot_refs in side_refs:
+        for ref in slot_refs or ():
+            if ref:
+                scope, raw = _resolve_scope_and_hash(ref, item_scope_id)
+                if scope and raw:
+                    refs.append((project_id, scope, raw))
     return refs
 
 
@@ -138,75 +205,49 @@ def reconstruct_payload(
     tool_hashes: Sequence[str] | None,
     resolve: Callable[[str], str | None],
 ) -> str | None:
-    """Reconstruct a span's original JSON input/output from its envelope shape and hashes.
+    """Rebuild one side's original text from its envelope template.
 
-    Returns ``None`` if any referenced item is missing from ``trajectory_items``
-    so callers safely preserve the inline preview instead of corrupting output.
+    Pure concatenation of the literal gaps and the resolved item contents in
+    slot order. Returns ``None`` when the template does not match the hash
+    arrays or an item is missing, so callers keep the inline preview. Raises
+    ``TrajectoryContentUnavailable`` when the rebuilt text fails the
+    template's checksum.
     """
-    if not isinstance(shape, Mapping):
+    slot_refs = _side_slot_refs(shape, hashes, tool_hashes)
+    if slot_refs is None or not isinstance(shape, Mapping):
         return None
-
-    fmt = shape.get("f")
-    if fmt == "msg_array":
-        if not hashes:
+    gaps: list[str] = shape["g"]
+    parts = [gaps[0]]
+    for ref, gap in zip(slot_refs, gaps[1:], strict=True):
+        content = resolve(ref)
+        if content is None:
             return None
-        items: list[Any] = []
-        for h in hashes:
-            content = resolve(str(h))
-            if content is None:
-                return None
-            items.append(_parse_json_item(content))
-        return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
-
-    if fmt == "obj_messages":
-        wrapper = shape.get("w")
-        obj: dict[str, Any] = dict(wrapper) if isinstance(wrapper, Mapping) else {}
-
-        sk = shape.get("sk")
-        sh = shape.get("sh")
-        if isinstance(sk, str) and sk and isinstance(sh, str) and sh:
-            sys_content = resolve(sh)
-            if sys_content is None:
-                return None
-            obj[sk] = _parse_json_item(sys_content)
-
-        tk = shape.get("tk")
-        if isinstance(tk, str) and tk:
-            tools: list[Any] = []
-            for h in tool_hashes or ():
-                content = resolve(str(h))
-                if content is None:
-                    return None
-                tools.append(_parse_json_item(content))
-            obj[tk] = tools
-
-        mk = shape.get("mk")
-        if isinstance(mk, str) and mk:
-            msgs: list[Any] = []
-            for h in hashes or ():
-                content = resolve(str(h))
-                if content is None:
-                    return None
-                msgs.append(_parse_json_item(content))
-            obj[mk] = msgs
-
-        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-
-    return None
+        parts.append(content)
+        parts.append(gap)
+    result = "".join(parts)
+    if payload_checksum(result) != shape.get("x"):
+        raise TrajectoryContentUnavailable("trajectory payload checksum mismatch")
+    return result
 
 
 def _parse_envelope(raw: Any) -> dict[str, Any] | None:
     if not raw:
         return None
-    if isinstance(raw, dict):
-        return raw
+    parsed: Any = raw
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
+            logger.warning("trajectory_envelope_unparseable")
             return None
-        return parsed if isinstance(parsed, dict) else None
-    return None
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("v") != ENVELOPE_VERSION:
+        logger.warning(
+            "trajectory_envelope_version_rejected version=%r", parsed.get("v")
+        )
+        return None
+    return parsed
 
 
 _MAX_SCOPES_PER_QUERY = 500
@@ -428,13 +469,24 @@ def _hydrate_envelope_fields(
         s, raw = _resolve_scope_and_hash(prefixed_hash, item_scope_id)
         return resolved.get((project_id, s, raw))
 
-    hydrated_in = None
-    if (in_shape := env.get("in")) is not None:
-        hydrated_in = reconstruct_payload(in_shape, input_hashes, tool_hashes, _resolve)
-    hydrated_out = None
-    if (out_shape := env.get("out")) is not None:
-        hydrated_out = reconstruct_payload(out_shape, output_hashes, None, _resolve)
-    return hydrated_in, hydrated_out
+    def _side(
+        side: str, hashes: Sequence[str] | None, tools: Sequence[str] | None
+    ) -> str | None:
+        shape = env.get(side)
+        if shape is None:
+            return None
+        try:
+            return reconstruct_payload(shape, hashes, tools, _resolve)
+        except TrajectoryContentUnavailable:
+            logger.warning(
+                "trajectory_hydration_checksum_mismatch side=%s project_id=%s scope_id=%s",
+                side,
+                project_id,
+                item_scope_id,
+            )
+            return None
+
+    return _side("in", input_hashes, tool_hashes), _side("out", output_hashes, None)
 
 
 def hydrate_span_dicts(

@@ -13,37 +13,24 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestCanonicalJSONAndHashInvariance(t *testing.T) {
-	a := []byte(`{ "content": "Hello, world!", "role": "user", "meta": {"b": 2, "a": [1, {"z": true, "y": null}]} }`)
-	b := []byte(`{"meta":{"a":[1,{"y":null,"z":true}],"b":2},"role":"user","content":"Hello, world!"}`)
-	c := []byte(`{"role":"user","content":"Different!"}`)
-
-	ca, err := CanonicalJSON(a)
-	if err != nil {
-		t.Fatalf("CanonicalJSON(a): %v", err)
+func TestHashItemIsExactBytes(t *testing.T) {
+	a := `{ "content": "Hello, world!", "role": "user" }`
+	b := `{"role":"user","content":"Hello, world!"}`
+	ha, hb := HashItem(a), HashItem(b)
+	if len(ha) != 32 || strings.ToLower(ha) != ha {
+		t.Fatalf("hash %q is not 32 lowercase hex chars (FixedString(32))", ha)
 	}
-	cb, err := CanonicalJSON(b)
-	if err != nil {
-		t.Fatalf("CanonicalJSON(b): %v", err)
+	// Key order and whitespace are part of the item: a reader concatenates
+	// stored bytes, so different serialisations must never share a key.
+	if ha == hb {
+		t.Fatalf("different item bytes produced identical hash %s", ha)
 	}
-	if string(ca) != string(cb) {
-		t.Fatalf("canonical mismatch:\n a=%s\n b=%s", ca, cb)
+	if HashItem(a) != ha {
+		t.Fatalf("hash is not deterministic")
 	}
-	ha := HashCanonical(ca)
-	hb := HashCanonical(cb)
-	if ha != hb {
-		t.Fatalf("hash mismatch: %s != %s", ha, hb)
-	}
-	if len(ha) != 32 {
-		t.Fatalf("hash length = %d, want 32 (FixedString(32) ASCII hex)", len(ha))
-	}
-
-	cc, err := CanonicalJSON(c)
-	if err != nil {
-		t.Fatalf("CanonicalJSON(c): %v", err)
-	}
-	if HashCanonical(cc) == ha {
-		t.Fatalf("distinct payloads produced identical hash %s", ha)
+	// sha256("") prefix: pins the algorithm and the 16-byte truncation.
+	if got := HashItem(""); got != "e3b0c44298fc1c149afbf4c8996fb924" {
+		t.Fatalf("HashItem(\"\") = %s", got)
 	}
 }
 
@@ -112,19 +99,17 @@ func TestExtractSpanFormats(t *testing.T) {
 		if len(ext.InputPreview) > 64 || len(ext.OutputPreview) > 64 {
 			t.Fatalf("previews exceed 64B: in=%d out=%d", len(ext.InputPreview), len(ext.OutputPreview))
 		}
-		var env Envelope
-		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
-			t.Fatalf("unmarshal envelope: %v", err)
+		env := mustParseEnvelope(t, ext)
+		if env.Input == nil || env.Input.Refs != "tmm" || env.Input.SystemHash != "" {
+			t.Fatalf("unexpected input template: %+v", env.Input)
 		}
-		if env.Input == nil || env.Input.Format != "obj_messages" || env.Input.MessagesKey != "messages" || env.Input.ToolsKey != "tools" {
-			t.Fatalf("unexpected input envelope: %+v", env.Input)
+		if !strings.Contains(env.Input.Gaps[0], `"model": "gpt-4o"`) {
+			t.Errorf("first gap lost the wrapper text verbatim: %q", env.Input.Gaps[0])
 		}
-		if string(env.Input.Wrapper["model"]) != `"gpt-4o"` {
-			t.Errorf("wrapper missing model: %+v", env.Input.Wrapper)
+		if env.Output == nil || env.Output.Refs != "m" {
+			t.Fatalf("unexpected output template: %+v", env.Output)
 		}
-		if env.Output == nil || env.Output.Format != "obj_messages" || env.Output.MessagesKey != "choices" {
-			t.Fatalf("unexpected output envelope: %+v", env.Output)
-		}
+		requireRoundTrip(t, ext, input, output)
 	})
 
 	t.Run("AnthropicSystemAndMessages", func(t *testing.T) {
@@ -139,16 +124,14 @@ func TestExtractSpanFormats(t *testing.T) {
 		if len(ext.InputHashes) != 1 {
 			t.Fatalf("expected [user] = 1 message hash, got %v", ext.InputHashes)
 		}
-		var env Envelope
-		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
-			t.Fatalf("unmarshal envelope: %v", err)
-		}
-		if env.Input.SystemKey != "system" || env.Input.MessagesKey != "messages" {
-			t.Fatalf("unexpected Anthropic envelope: %+v", env.Input)
+		env := mustParseEnvelope(t, ext)
+		if env.Input == nil || env.Input.Refs != "sm" {
+			t.Fatalf("unexpected Anthropic template: %+v", env.Input)
 		}
 		if !strings.HasPrefix(env.Input.SystemHash, ProjectHashPrefix) {
 			t.Errorf("top-level system hash %q should be project-scoped", env.Input.SystemHash)
 		}
+		requireRoundTrip(t, ext, input, `{"content":"Hi!"}`)
 	})
 
 	t.Run("OpenAIResponsesAPI", func(t *testing.T) {
@@ -157,13 +140,11 @@ func TestExtractSpanFormats(t *testing.T) {
 		if !ext.Applied {
 			t.Fatalf("expected Applied=true")
 		}
-		var env Envelope
-		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
-			t.Fatalf("unmarshal Responses API envelope: %v", err)
+		env := mustParseEnvelope(t, ext)
+		if env.Input == nil || env.Input.Refs != "sm" || env.Output != nil {
+			t.Fatalf("unexpected Responses API envelope: %+v", env)
 		}
-		if env.Input.SystemKey != "instructions" || env.Input.MessagesKey != "input" {
-			t.Fatalf("unexpected Responses API envelope: %+v", env.Input)
-		}
+		requireRoundTrip(t, ext, input, "")
 	})
 
 	t.Run("TopLevelMessageArray", func(t *testing.T) {
@@ -175,13 +156,11 @@ func TestExtractSpanFormats(t *testing.T) {
 		if !strings.HasPrefix(ext.InputHashes[0], ProjectHashPrefix) {
 			t.Errorf("developer role should be project-scoped, got %q", ext.InputHashes[0])
 		}
-		var env Envelope
-		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
-			t.Fatalf("unmarshal TopLevelMessageArray envelope: %v", err)
+		env := mustParseEnvelope(t, ext)
+		if env.Input == nil || env.Input.Refs != "mm" || env.Input.Gaps[0] != "[" || env.Input.Gaps[1] != "," || env.Input.Gaps[2] != "]" {
+			t.Fatalf("expected [m,m] template, got %+v", env.Input)
 		}
-		if env.Input.Format != "msg_array" {
-			t.Fatalf("expected msg_array, got %+v", env.Input)
-		}
+		requireRoundTrip(t, ext, input, "")
 	})
 
 	t.Run("SmartPreviewSurfacesLatestUserTurnPastLargeToolsAndSystem", func(t *testing.T) {

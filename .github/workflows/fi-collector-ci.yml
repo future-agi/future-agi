@@ -20,6 +20,7 @@ on:
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - "futureagi/tracer/services/clickhouse/v2/schema/**"
+      - "futureagi/tracer/tests/fixtures/trajectory_contract/**"
       - ".github/workflows/fi-collector-ci.yml"
   push:
     branches: [dev, main]
@@ -40,6 +41,7 @@ on:
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - "futureagi/tracer/services/clickhouse/v2/schema/**"
+      - "futureagi/tracer/tests/fixtures/trajectory_contract/**"
       - ".github/workflows/fi-collector-ci.yml"
   merge_group:
   workflow_dispatch:
@@ -150,6 +152,7 @@ jobs:
               "TestRoutingColumnCheckSeesBothColumns",
               "TestRoutingColumnStateIsSharedThroughNew",
               "TestEnsureSimulationProject",
+              "TestClickHouseTrajectoryByteExactRoundTrip",
           }
           evidence = Path(os.environ["RUNNER_TEMP"]) / "observed-integration.jsonl"
           events = [json.loads(line) for line in evidence.read_text().splitlines()]
