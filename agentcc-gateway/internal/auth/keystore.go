@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +50,11 @@ type APIKey struct {
 	UpdatedAt        time.Time         `json:"updated_at"`
 	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
 
+	// Requests using different configuration snapshots still account to the same key.
+	*keyUsage `json:"-"`
+}
+
+type keyUsage struct {
 	// lastUsedAt is updated atomically on every Authenticate call.
 	lastUsedAt atomic.Pointer[time.Time] `json:"-"`
 
@@ -164,6 +171,7 @@ func NewKeyStore(cfg config.AuthConfig) *KeyStore {
 		}
 
 		key := &APIKey{
+			keyUsage:         &keyUsage{},
 			ID:               id,
 			KeyHash:          hash,
 			KeyPrefix:        prefix,
@@ -268,6 +276,7 @@ func (ks *KeyStore) Create(name, owner string, models, providers []string, metad
 	}
 
 	key := &APIKey{
+		keyUsage:         &keyUsage{},
 		ID:               id,
 		KeyHash:          hash,
 		KeyPrefix:        prefix,
@@ -288,6 +297,31 @@ func (ks *KeyStore) Create(name, owner string, models, providers []string, metad
 	return key, rawKey
 }
 
+// clone copies the configuration but shares the live usage counters.
+func (k *APIKey) clone() *APIKey {
+	next := *k
+	next.Metadata = maps.Clone(k.Metadata)
+	next.AllowedModels = slices.Clone(k.AllowedModels)
+	next.AllowedProviders = slices.Clone(k.AllowedProviders)
+	next.AllowedIPs = slices.Clone(k.AllowedIPs)
+	next.AllowedTools = slices.Clone(k.AllowedTools)
+	next.DeniedTools = slices.Clone(k.DeniedTools)
+	if k.ExpiresAt != nil {
+		expires := *k.ExpiresAt
+		next.ExpiresAt = &expires
+	}
+	return &next
+}
+
+// replaceLocked updates both indexes without displacing a different entry
+// if two configured IDs were assigned the same hash.
+func (ks *KeyStore) replaceLocked(old, next *APIKey) {
+	ks.byID[next.ID] = next
+	if ks.byHash[next.KeyHash] == old {
+		ks.byHash[next.KeyHash] = next
+	}
+}
+
 // Revoke marks a key as revoked.
 func (ks *KeyStore) Revoke(id string) bool {
 	ks.mu.Lock()
@@ -298,8 +332,10 @@ func (ks *KeyStore) Revoke(id string) bool {
 		return false
 	}
 
-	key.Status = "revoked"
-	key.UpdatedAt = time.Now()
+	next := key.clone()
+	next.Status = "revoked"
+	next.UpdatedAt = time.Now()
+	ks.replaceLocked(key, next)
 	return true
 }
 
@@ -313,29 +349,28 @@ func (ks *KeyStore) Update(id string, name, owner *string, models, providers []s
 		return nil, false
 	}
 
+	next := key.clone()
 	if name != nil {
-		key.Name = *name
+		next.Name = *name
 	}
 	if owner != nil {
-		key.Owner = *owner
+		next.Owner = *owner
 	}
 	if models != nil {
-		key.AllowedModels = models
+		next.AllowedModels = slices.Clone(models)
 	}
 	if providers != nil {
-		key.AllowedProviders = providers
+		next.AllowedProviders = slices.Clone(providers)
 	}
 	if metadata != nil {
-		if key.Metadata == nil {
-			key.Metadata = make(map[string]string)
+		if next.Metadata == nil {
+			next.Metadata = make(map[string]string)
 		}
-		for k, v := range metadata {
-			key.Metadata[k] = v
-		}
+		maps.Copy(next.Metadata, metadata)
 	}
-	key.UpdatedAt = time.Now()
-
-	return key, true
+	next.UpdatedAt = time.Now()
+	ks.replaceLocked(key, next)
+	return next, true
 }
 
 // AddCredits adds USD credits to a managed key. Returns the new balance and true, or 0 and false if not found.
@@ -420,6 +455,7 @@ func isSHA256Hex(s string) bool {
 // field can't be wired into one and missed in the other.
 func syncedKeyToAPIKey(sk SyncedKey, id string) *APIKey {
 	return &APIKey{
+		keyUsage:         &keyUsage{},
 		ID:               id,
 		KeyHash:          sk.KeyHash,
 		KeyPrefix:        sk.KeyPrefix,
