@@ -535,7 +535,7 @@ class Fixture:
                     "api": f"http://127.0.0.1:{self.api_port}",
                 },
                 "secrets": {"existingSecret": "gitops-app"},
-                "config": {"telemetry": False},
+                **yaml.safe_load((CHART / "ci/telemetry-loopback.yaml").read_text()),
                 "image": {"registry": self.registry_host},
                 "bootstrap": {
                     "admin": {"existingSecret": "gitops-admin"},
