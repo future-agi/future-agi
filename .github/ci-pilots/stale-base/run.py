@@ -1,5 +1,6 @@
 """Bind the actual checkout and grade the same four children on a PR or private worker."""
 
+import hashlib
 import json
 import os
 import signal
@@ -155,18 +156,24 @@ def child(arm, role, binding):
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait(timeout=10)
             rc = proc.returncode
-        stdout.seek(0)
-        payload = stdout.read(LIMIT + 1)
-        stderr.seek(0)
-        diag = stderr.read(LIMIT + 1)
-    raw = {
-        "returncode": rc,
-        "timed_out": timed_out,
-        "stdout_sha256": case.digest(payload),
-        "stderr_sha256": case.digest(diag),
-        "receipt": None,
-    }
-    if payload and len(payload) <= LIMIT:
+        return _child_evidence(stdout, stderr, rc, timed_out)
+
+
+def _child_evidence(stdout, stderr, rc, timed_out):
+    raw = {"returncode": rc, "timed_out": timed_out, "receipt": None}
+    payload = bytearray()
+    for name, stream in (("stdout", stdout), ("stderr", stderr)):
+        stream.seek(0)
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := stream.read(LIMIT):
+            digest.update(chunk)
+            size += len(chunk)
+            if name == "stdout" and size <= LIMIT:
+                payload.extend(chunk)
+        raw[f"{name}_bytes"] = size
+        raw[f"{name}_sha256"] = digest.hexdigest()
+    if 0 < raw["stdout_bytes"] <= LIMIT and raw["stderr_bytes"] <= LIMIT:
         try:
             raw["receipt"] = json.loads(payload)
         except (UnicodeError, json.JSONDecodeError):
@@ -177,11 +184,22 @@ def child(arm, role, binding):
 def grade(arm, role, raw, binding):
     try:
         case.require(raw["timed_out"] is False, "child timeout")
+        # Older records lack counts; their digests still need to match bounded output.
+        for stream in ("stdout", "stderr"):
+            size = raw.get(f"{stream}_bytes", 0)
+            case.require(
+                type(size) is int and 0 <= size <= LIMIT, f"invalid child {stream} size"
+            )
         case.require(
-            raw["stderr_sha256"] == case.digest(b""), "unexpected child diagnostics"
+            raw.get("stderr_bytes", 0) == 0
+            and raw["stderr_sha256"] == case.digest(b""),
+            "unexpected child diagnostics",
         )
+        payload = case.encode(raw["receipt"])
         case.require(
-            raw["stdout_sha256"] == case.digest(case.encode(raw["receipt"])),
+            len(payload) <= LIMIT
+            and raw.get("stdout_bytes", len(payload)) == len(payload)
+            and raw["stdout_sha256"] == case.digest(payload),
             "child receipt digest",
         )
         result = case.check_result(

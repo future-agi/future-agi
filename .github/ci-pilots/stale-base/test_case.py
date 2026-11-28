@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from functools import cache
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -112,6 +113,10 @@ def acceptance(arm="broken"):
         "returncode": int(arm == "broken"),
         "stderr_sha256": case.digest(b""),
     }
+
+
+def captured(stdout, stderr=b""):
+    return run._child_evidence(BytesIO(stdout), BytesIO(stderr), 0, False)
 
 
 class Grading(unittest.TestCase):
@@ -293,7 +298,7 @@ class Grading(unittest.TestCase):
             raw["receipt"]["calls"][0][field] = value
             self.assertEqual(self.grade(raw), "invalid")
 
-    def test_green_process_with_wrong_plan_or_wrong_negative_site(self):
+    def test_green_process_with_wrong_plan(self):
         for field in (
             "policy_base",
             "diff_base",
@@ -306,9 +311,56 @@ class Grading(unittest.TestCase):
             raw = acceptance("reference")
             raw["receipt"]["calls"][0]["plan"][field] = None
             self.assertEqual(self.grade(raw, "reference"), "invalid")
-        raw = acceptance("reference")
-        raw["receipt"]["calls"][3]["stderr_marker"] = [18, 1]
-        self.assertEqual(self.grade(raw, "reference"), "invalid")
+
+    def test_unrelated_base_must_reject_at_line_19(self):
+        receipt = acceptance("reference")["receipt"]
+        unrelated = receipt["calls"][3]
+        unrelated.update(
+            stderr_marker=[18, 1], stderr_sha256=case.digest(b"PILOT_ERR 18 1\n")
+        )
+        case.rejected(unrelated, 18)  # A real rejection, but at the wrong-head check.
+        raw = captured(case.encode(receipt))
+        self.assertEqual(
+            run.grade("reference", "acceptance", raw, BINDING),
+            {"outcome": "invalid", "reason": "wrong rejection site"},
+        )
+
+    def test_complete_child_receipt_at_and_below_limit(self):
+        receipt = acceptance("reference")["receipt"]
+        payload = case.encode(receipt)
+        for limit in (len(payload), run.LIMIT):
+            with self.subTest(limit=limit), patch.object(run, "LIMIT", limit):
+                raw = captured(payload)
+                self.assertEqual(raw["receipt"], receipt)
+                self.assertEqual(raw["stdout_bytes"], len(payload))
+                self.assertEqual(raw["stderr_bytes"], 0)
+                self.assertEqual(raw["stdout_sha256"], case.digest(payload))
+                self.assertEqual(raw["stderr_sha256"], case.digest(b""))
+                self.assertEqual(
+                    run.grade("reference", "acceptance", raw, BINDING),
+                    {"outcome": "pass"},
+                )
+
+    def test_oversized_streams_hash_the_tail_without_parsing_a_prefix(self):
+        prefix = b"{}\n"
+        with patch.object(run, "LIMIT", len(prefix)):
+            for tail in (b" ", b"  ", b" \t"):
+                data = prefix + tail
+                for stream, raw in (
+                    ("stdout", captured(data)),
+                    ("stderr", captured(prefix, data)),
+                ):
+                    with self.subTest(stream=stream, tail=tail):
+                        self.assertIsNone(raw["receipt"])
+                        self.assertEqual(raw[f"{stream}_bytes"], len(data))
+                        self.assertEqual(raw[f"{stream}_sha256"], case.digest(data))
+                        self.assertEqual(
+                            run.grade("reference", "acceptance", raw, BINDING),
+                            {
+                                "outcome": "invalid",
+                                "reason": f"invalid child {stream} size",
+                            },
+                        )
 
     def test_outer_merge_uses_first_parent_not_advertised_base(self):
         outer = {
