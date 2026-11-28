@@ -30,6 +30,7 @@ from simulate.models import (
 from simulate.selectors.runs import user_environment_runs
 from simulate.services import evidence_drafts
 from simulate.services.agent_fix_issue import stop_issue_job
+from simulate.services.harness_provider import HostedHarnessProvider
 from simulate.services.harness_versioning import drafts
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -649,6 +650,39 @@ class TestSettleAndForget:
         for case in cases:
             case.refresh_from_db()
             assert case.status == EvidenceImportCase.Status.PENDING
+
+    @patch("simulate.services.hosted_harness_gateway.get_sandbox_provider")
+    def test_send_message_cannot_reopen_a_retained_chat(
+        self, get_provider, cases, user, scheduled, settings
+    ):
+        settings.HARNESS_PUBLIC_BASE_URL = BASE_URL
+        conversation = _start(cases, user)
+        _lease(conversation)
+        get_provider.return_value.delete.return_value = False
+        with pytest.raises(HostedHarnessError, match="did not confirm"):
+            evidence_drafts.forget(str(cases[0].evidence_import_id))
+
+        job = conversation.job
+        job.payload["metadata"]["authoring_object_key"] = "workspace.tar.gz"
+        provider = HostedHarnessProvider()
+        request = SimpleNamespace(
+            user=user,
+            validated_data={
+                "content": "one more turn",
+                "client_request_id": "after-stop",
+                "kind": "user_message",
+            },
+        )
+        with patch.object(provider, "_job", return_value=job):
+            response = provider.send_message(request, job.id)
+
+        assert (response.status_code, response.data["error"]) == (
+            409,
+            "conversation_closed",
+        )
+        assert HostedHarnessConversation._base_manager.get(job=job).deleted
+        assert not conversation.messages.filter(client_request_id="after-stop").exists()
+        scheduled.runtime.assert_not_called()
 
     def test_a_deletion_that_stopped_part_way_is_finished_by_the_sweep(
         self, cases, user, scheduled, storage
