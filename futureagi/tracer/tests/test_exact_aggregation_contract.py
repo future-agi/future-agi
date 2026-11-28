@@ -2605,7 +2605,7 @@ def test_snapshot_key_changes_when_exact_query_contract_version_changes(monkeypa
     monkeypatch.setattr(cache_module, "_CACHE_VERSION", 1)
     legacy_key = cache_module.snapshot_cache_key("observe-system-graph", identity)
 
-    assert current_key.startswith("exact-aggregation:v6:")
+    assert current_key.startswith("exact-aggregation:v5:")
     assert legacy_key.startswith("exact-aggregation:v1:")
     assert current_key != legacy_key
 

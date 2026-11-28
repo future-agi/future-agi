@@ -1257,9 +1257,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         # _peerdb_is_deleted for every legacy-table alias.
         for alias in _LEGACY_TABLE_RE.findall(sql):
             sql = sql.replace(f"{alias}.is_deleted", f"{alias}._peerdb_is_deleted")
-        # The rewrite can add window predicates of its own; give them the
-        # same exact custom bounds as the base statement (TH-10545).
-        return self._exact_custom_window(sql, params)
+        return sql, params
 
 
 __all__ = ["DashboardQueryBuilderV2"]
