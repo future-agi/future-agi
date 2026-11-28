@@ -15,6 +15,7 @@ import json
 import os
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 # Structured logging configuration
@@ -1696,7 +1697,7 @@ CHANNEL_LAYER_BACKEND, CHANNEL_LAYERS = channel_layer_settings(
 )
 
 
-CACHES: dict[str, dict[str, object]]
+CACHES: dict[str, dict[str, Any]]
 if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
     CACHES = {
         "default": {
