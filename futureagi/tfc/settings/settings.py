@@ -1851,12 +1851,29 @@ FI_TRAJECTORY_GC_DELETES_ENABLED = os.getenv(
 # replica count matches system.replicas); lifecycle jobs refuse if that fails.
 FI_TRAJECTORY_CH_CLUSTER = os.getenv("FI_TRAJECTORY_CH_CLUSTER", "").strip()
 # How long erasure waits after publishing the collector invalidation before it
-# clears seen sets and deletes items. The default covers the collector's
-# auth cache_ttl (5m) plus warm_ttl (1h, a stale entry served while a refresh
-# fails) plus one minute.
-FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS = int(
-    os.getenv("FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS", "3960")
+# clears seen sets and deletes items. The default, which is also the floor,
+# covers the collector's auth cache_ttl (5m) plus warm_ttl (1h, a stale entry
+# served while a refresh fails) plus one minute. A value that is not an integer
+# falls back to the default instead of failing the boot.
+_TRAJECTORY_ERASURE_MIN_INGEST_WAIT_SECONDS = 3960
+
+
+def _trajectory_erasure_ingest_wait_seconds(raw: str | None) -> int:
+    try:
+        value = int(
+            str(raw or "").strip() or _TRAJECTORY_ERASURE_MIN_INGEST_WAIT_SECONDS
+        )
+    except ValueError:
+        value = _TRAJECTORY_ERASURE_MIN_INGEST_WAIT_SECONDS
+    return max(value, _TRAJECTORY_ERASURE_MIN_INGEST_WAIT_SECONDS)
+
+
+FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS = _trajectory_erasure_ingest_wait_seconds(
+    os.getenv("FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS")
 )
+# Redis database of the collectors' trajectory seen store (FI_AUTH_REDIS_ADDR
+# uses database 0). The lifecycle jobs use it whatever database REDIS_URL names.
+FI_TRAJECTORY_SEEN_REDIS_DB = 0
 
 # Operational SQL workbench budgets, not edition/pricing entitlements.
 from .sql_workbench import (  # noqa: E402,F401

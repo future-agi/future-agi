@@ -7,6 +7,7 @@ index on the test Redis and clear it before and after.
 
 from __future__ import annotations
 
+import fnmatch
 import io
 import json
 import os
@@ -31,6 +32,7 @@ from tracer.services.clickhouse.v2 import trajectory_lifecycle as lifecycle
 from tracer.services.trajectory_seen_contract import (
     CONTRACT_KEY,
     EPOCH_KEY,
+    GC_LATCH_KEY,
     GC_MARGIN,
     IN_FLIGHT_MARGIN,
     MAX_REUSE_AGE_CAP,
@@ -52,13 +54,30 @@ GC_ON = override_settings(FI_TRAJECTORY_GC_DELETES_ENABLED=True)
 
 
 class Contract:
-    """Stands in for the collectors' Redis: only the contract key matters."""
+    """Stands in for the collectors' Redis (contract key, latch, seen keys)."""
 
-    def __init__(self, present: bool = True):
-        self.present = present
+    def __init__(self, present: bool = True, keys=()):
+        self.values: dict[str, str] = {CONTRACT_KEY: "1"} if present else {}
+        self.values.update(dict.fromkeys(keys, "h"))
 
-    def exists(self, key):
-        return int(self.present and key == CONTRACT_KEY)
+    def exists(self, *keys):
+        return sum(key in self.values for key in keys)
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def set(self, key, value, **kwargs):
+        self.values[key] = value
+        return True
+
+    def delete(self, *keys):
+        return sum(self.values.pop(key, None) is not None for key in keys)
+
+    def scan_iter(self, match="*", count=None):
+        return iter([k for k in list(self.values) if fnmatch.fnmatchcase(k, match)])
+
+    def close(self):
+        pass
 
 
 class Store:
@@ -188,9 +207,11 @@ def store():
         yield value
 
 
-def _gc(store, *, present=True, **kwargs):
+def _gc(store, *, present=True, redis_client=None, **kwargs):
     return lifecycle.trajectory_items_gc(
-        execute=store.execute, redis_client=Contract(present), **kwargs
+        execute=store.execute,
+        redis_client=redis_client if redis_client is not None else Contract(present),
+        **kwargs,
     )
 
 
@@ -370,6 +391,126 @@ def test_gc_without_contract_key_and_no_dedup_is_inactive_not_alert(store):
     assert len(store.items(pid)) == 1
 
 
+def _stale_reuse(store, now):
+    """A span that reuses a copy persisted 4 days earlier: past the bound."""
+    pid, scope, key = str(uuid.uuid4()), "session-1", _h()
+    store.add_items([(pid, scope, key, now - 4 * DAY_US - 2 * HOUR_US)])
+    store.add_spans(
+        [
+            {
+                "project": pid,
+                "created_us": now - 2 * HOUR_US,
+                "scope": scope,
+                "inputs": [key],
+            }
+        ]
+    )
+    return pid
+
+
+@pytest.mark.integration
+def test_gc_latch_persists_until_operator_clears_it(store, monkeypatch):
+    """A violation keeps GC stopped after its span leaves the audit window."""
+    now = store.now_us()
+    _stale_reuse(store, now)
+    orphan = str(uuid.uuid4())
+    store.add_items([(orphan, "s", _h(), now - 20 * DAY_US)])
+    seen = Contract()
+    with GC_ON:
+        first = _gc(store, redis_client=seen)
+    assert first["status"] == "latched" and first["reason"] == "reference_violation"
+    latch = json.loads(seen.values[GC_LATCH_KEY])
+    assert latch["reason"] == "reference_violation" and latch["stale"] == 1
+
+    monkeypatch.setattr(
+        lifecycle, "open_executor", lambda: (store.execute, lambda: None)
+    )
+    monkeypatch.setattr(lifecycle, "open_seen_redis", lambda: seen)
+    # While the audit still sees the violation, a plain clear is refused.
+    with pytest.raises(CommandError, match="stays set"):
+        call_command("trajectory_audit", "--clear-gc-latch", stdout=io.StringIO())
+    assert GC_LATCH_KEY in seen.values
+
+    # The violating span is no longer in the audit window (here: gone).
+    store.client.execute("TRUNCATE TABLE spans")
+    with GC_ON:
+        second = _gc(store, redis_client=seen)
+    assert second["status"] == "latched" and second["reason"] == "persisted_latch"
+    assert not store.deletes()
+    assert len(store.items(orphan)) == 1
+
+    out = io.StringIO()
+    call_command("trajectory_audit", "--clear-gc-latch", stdout=out)
+    assert '"gc_latch_cleared": true' in out.getvalue()
+    assert GC_LATCH_KEY not in seen.values
+    with GC_ON:
+        third = _gc(store, redis_client=seen)
+    assert third["status"] == "ok"
+    assert store.items(orphan) == set()
+
+
+@pytest.mark.integration
+def test_trajectory_audit_force_clears_latch_despite_violations(store, monkeypatch):
+    now = store.now_us()
+    _stale_reuse(store, now)
+    seen = Contract(keys=[GC_LATCH_KEY])
+    monkeypatch.setattr(
+        lifecycle, "open_executor", lambda: (store.execute, lambda: None)
+    )
+    monkeypatch.setattr(lifecycle, "open_seen_redis", lambda: seen)
+    with pytest.raises(CommandError, match="violation"):
+        call_command(
+            "trajectory_audit", "--clear-gc-latch", "--force", stdout=io.StringIO()
+        )
+    assert GC_LATCH_KEY not in seen.values
+
+
+@pytest.mark.integration
+def test_gc_waits_while_legacy_seen_keys_exist(store):
+    """A legacy-layout collector may reuse for up to 7 days: no deletes."""
+    orphan = str(uuid.uuid4())
+    store.add_items([(orphan, "s", _h(), store.now_us() - 20 * DAY_US)])
+    legacy = f"traj:seen:{uuid.uuid4()}:sess"
+    seen = Contract(keys=[legacy, f"traj:seen:v2:{uuid.uuid4()}:e1:sess:7"])
+    with GC_ON:
+        report = _gc(store, redis_client=seen)
+    assert report["status"] == "latched" and report["reason"] == "legacy_seen_keys"
+    assert not store.deletes()
+    assert GC_LATCH_KEY not in seen.values  # clears itself once the keys expire
+    del seen.values[legacy]
+    with GC_ON:
+        assert _gc(store, redis_client=seen)["status"] == "ok"
+    assert store.items(orphan) == set()
+
+
+@pytest.mark.integration
+def test_legacy_seen_key_scan_matches_only_the_legacy_layout(seen_redis):
+    from tracer.services.trajectory_seen_contract import legacy_seen_keys_present
+
+    pid = str(uuid.uuid4())
+    for key in (
+        f"traj:seen:v2:{pid}:e1:sess:10",
+        f"traj:seen:v2:{{{pid}}}:e1:__project__:10",
+    ):
+        seen_redis.sadd(key, "h")
+    seen_redis.set(CONTRACT_KEY, "1")
+    seen_redis.set(EPOCH_KEY, "e1")
+    assert legacy_seen_keys_present(seen_redis) is False
+    seen_redis.sadd(f"traj:seen:{pid}:sess", "h")
+    assert legacy_seen_keys_present(seen_redis) is True
+
+
+def test_open_seen_redis_uses_the_collector_database():
+    from tracer.services.trajectory_seen_contract import open_seen_redis
+
+    with override_settings(REDIS_URL="redis://localhost:16379/5"):
+        client = open_seen_redis()
+    try:
+        assert client.connection_pool.connection_kwargs["db"] == 0
+    finally:
+        client.close()
+
+
 @pytest.mark.integration
 def test_trajectory_audit_reports_zero_on_clean_fixture(store, monkeypatch):
     now = store.now_us()
@@ -508,6 +649,95 @@ def test_gc_caps_delete_statements_per_run(monkeypatch):
     assert report.delete_statements == 2
     assert report.capped is True
     assert sum(s.lstrip().startswith("DELETE") for s in statements) == 2
+
+
+@pytest.mark.integration
+def test_gc_lookahead_horizon_with_items_older_than_the_lookahead(store):
+    """Items far older than PROBE_LOOKAHEAD, and different horizons in one probe.
+
+    One bucket, so all four projects share a DELETE and one oldest-span probe
+    whose bound is the largest horizon (now, from ``fresh``).
+    """
+    now = store.now_us()
+    bucket = 13
+    deep = store.project_in_bucket(bucket)
+    fresh = store.project_in_bucket(bucket, exclude={deep})
+    spanned = store.project_in_bucket(bucket, exclude={deep, fresh})
+    held = store.project_in_bucket(bucket, exclude={deep, fresh, spanned})
+    k_deep, k_spanned, k_held = _h(), _h(), _h()
+    kept = {
+        # deep: oldest item 100 d, spans only 5 d old. Its horizon is
+        # 100 d - 72 h - 30 d = 67 d ago, below now, so its cut is 70 d ago.
+        (deep, "s", _h(), now - 69 * DAY_US),
+        (deep, "s", k_deep, now - 6 * DAY_US),
+        # spanned: oldest span 50 d, so its cut is 53 d ago.
+        (spanned, "s", k_spanned, now - 52 * DAY_US),
+        # held: a span 2 d after its oldest item; nothing of it can go.
+        (held, "s", k_held, now - 40 * DAY_US),
+    }
+    gone = {
+        (deep, "s", _h(), now - 100 * DAY_US),
+        (fresh, "s", _h(), now - 10 * DAY_US),
+        (spanned, "s", _h(), now - 60 * DAY_US),
+        (spanned, "s", _h(), now - 54 * DAY_US),
+    }
+    store.add_items(list(kept | gone))
+    store.add_spans(
+        [
+            {
+                "project": deep,
+                "created_us": now - 5 * DAY_US,
+                "scope": "s",
+                "inputs": [k_deep],
+            },
+            {
+                "project": spanned,
+                "created_us": now - 50 * DAY_US,
+                "scope": "s",
+                "inputs": [k_spanned],
+            },
+            {
+                "project": held,
+                "created_us": now - 38 * DAY_US,
+                "scope": "s",
+                "inputs": [k_held],
+            },
+        ]
+    )
+    with GC_ON:
+        report = _gc(store)
+    assert report["status"] == "ok", report
+    assert report["projects_held"] == 1
+    assert report["projects_cut"] == 3
+    assert report["delete_statements"] == 1
+    assert store.items() == kept
+    probes = [sql for sql in store.statements if "min(created_at)" in sql]
+    assert len(probes) == 1
+
+
+@pytest.mark.integration
+def test_gc_skips_the_span_probe_when_every_project_is_held(store):
+    """A span within GC_MARGIN of the oldest item: one LIMIT 1 read, no scan."""
+    now = store.now_us()
+    pid, key = str(uuid.uuid4()), _h()
+    store.add_items([(pid, "s", key, now - 10 * DAY_US)])
+    store.add_spans(
+        [
+            {
+                "project": pid,
+                "created_us": now - 9 * DAY_US,
+                "scope": "s",
+                "inputs": [key],
+            }
+        ]
+    )
+    with GC_ON:
+        report = _gc(store)
+    assert report["status"] == "ok"
+    assert report["projects_held"] == 1 and report["projects_cut"] == 0
+    assert not [sql for sql in store.statements if "min(created_at)" in sql]
+    assert not store.deletes()
+    assert len(store.items(pid)) == 1
 
 
 @pytest.mark.integration
@@ -654,68 +884,203 @@ def test_apply_deleted_mask_reclaims_partition(store):
     assert store.items(pid) == set()
 
 
-def _single_shard_cluster(client) -> str | None:
+# Defined by .ci/clickhouse-test-config.xml: one shard, one replica (this server).
+CI_CLUSTER = "traj_ci_single_replica"
+
+
+def _cluster_hosts(client, cluster: str) -> int:
     rows = client.execute(
-        "SELECT cluster FROM system.clusters GROUP BY cluster "
-        "HAVING countIf(is_local) > 0 AND uniqExact(shard_num) = 1 AND count() = 1 "
-        "ORDER BY cluster LIMIT 1"
+        "SELECT count() FROM system.clusters WHERE cluster = %(c)s AND is_local",
+        {"c": cluster},
     )
-    return str(rows[0][0]) if rows else None
+    return int(rows[0][0]) if rows else 0
+
+
+def _create_replicated_tables(client, database: str) -> None:
+    path = f"/clickhouse/tables/{{shard}}/{database}"
+    client.execute(
+        "CREATE TABLE spans (project_id UUID, id String, trace_id String, "
+        "start_time DateTime64(6, 'UTC'), "
+        "created_at DateTime64(6, 'UTC') DEFAULT now64(6, 'UTC'), "
+        "item_scope_id String DEFAULT '', "
+        "input_item_hashes Array(String) DEFAULT [], "
+        "output_item_hashes Array(String) DEFAULT [], "
+        "tool_def_hashes Array(String) DEFAULT [], "
+        "payload_encoding LowCardinality(String) DEFAULT 'inline', "
+        "payload_envelope String DEFAULT '', is_deleted UInt8 DEFAULT 0, "
+        "_version UInt64 DEFAULT 1) "
+        f"ENGINE = ReplicatedReplacingMergeTree('{path}/spans', '{{replica}}', "
+        "_version, is_deleted) ORDER BY (project_id, id)"
+    )
+    client.execute(
+        "CREATE TABLE trajectory_items (project_id UUID, scope_id String, "
+        "item_hash FixedString(32), item_type LowCardinality(String) DEFAULT 'raw', "
+        "role LowCardinality(String) DEFAULT '', content String, "
+        "persisted_at DateTime64(6, 'UTC') DEFAULT now64(6, 'UTC')) "
+        f"ENGINE = ReplicatedReplacingMergeTree('{path}/trajectory_items', "
+        "'{replica}', persisted_at) "
+        "PARTITION BY cityHash64(project_id) % 32 "
+        "ORDER BY (project_id, scope_id, item_hash)"
+    )
 
 
 @pytest.mark.integration
 def test_gc_on_replicated_schema():
     """Replicated tables (Keeper path private to this database).
 
-    With a single-shard cluster in system.clusters GC deletes and erasure counts
-    rows with clusterAllReplicas; without one, both refuse and delete nothing.
+    The CI ClickHouse defines CI_CLUSTER, and this test fails without it, so
+    the replicated path always runs: the replica health check, the
+    all-replica oldest-span probe, and erasure's all-replica counts.
     """
     with _ch_test_owned_database("test_traj_lc_repl_") as database:
         with _ch_test_native_client(database=database) as client:
-            path = f"/clickhouse/tables/{{shard}}/{database}"
-            client.execute(
-                "CREATE TABLE spans (project_id UUID, id String, trace_id String, "
-                "start_time DateTime64(6, 'UTC'), "
-                "created_at DateTime64(6, 'UTC') DEFAULT now64(6, 'UTC'), "
-                "item_scope_id String DEFAULT '', "
-                "input_item_hashes Array(String) DEFAULT [], "
-                "output_item_hashes Array(String) DEFAULT [], "
-                "tool_def_hashes Array(String) DEFAULT [], "
-                "payload_encoding LowCardinality(String) DEFAULT 'inline', "
-                "payload_envelope String DEFAULT '', is_deleted UInt8 DEFAULT 0, "
-                "_version UInt64 DEFAULT 1) "
-                f"ENGINE = ReplicatedReplacingMergeTree('{path}/spans', '{{replica}}', "
-                "_version, is_deleted) ORDER BY (project_id, id)"
+            assert _cluster_hosts(client, CI_CLUSTER) == 1, (
+                f"{CI_CLUSTER} is missing from system.clusters; it comes from "
+                ".ci/clickhouse-test-config.xml"
             )
-            client.execute(
-                "CREATE TABLE trajectory_items (project_id UUID, scope_id String, "
-                "item_hash FixedString(32), item_type LowCardinality(String) DEFAULT 'raw', "
-                "role LowCardinality(String) DEFAULT '', content String, "
-                "persisted_at DateTime64(6, 'UTC') DEFAULT now64(6, 'UTC')) "
-                f"ENGINE = ReplicatedReplacingMergeTree('{path}/trajectory_items', "
-                "'{replica}', persisted_at) "
-                "PARTITION BY cityHash64(project_id) % 32 "
-                "ORDER BY (project_id, scope_id, item_hash)"
-            )
+            _create_replicated_tables(client, database)
             store = Store(client, database)
-            cluster = _single_shard_cluster(client)
-            pid = str(uuid.uuid4())
-            store.add_items([(pid, "s", _h(), store.now_us() - 9 * DAY_US)])
-            with GC_ON, override_settings(FI_TRAJECTORY_CH_CLUSTER=""):
+            now = store.now_us()
+            pid, held, key = str(uuid.uuid4()), str(uuid.uuid4()), _h()
+            store.add_items(
+                [(pid, "s", _h(), now - 9 * DAY_US), (held, "s", key, now - 9 * DAY_US)]
+            )
+            # held's span is within GC_MARGIN of its oldest item: nothing goes.
+            store.add_spans(
+                [
+                    {
+                        "project": held,
+                        "created_us": now - 9 * DAY_US + HOUR_US,
+                        "scope": "s",
+                        "inputs": [key],
+                    }
+                ]
+            )
+            with GC_ON, override_settings(FI_TRAJECTORY_CH_CLUSTER=CI_CLUSTER):
                 topology = lifecycle.resolve_topology(store.execute)
                 report = _gc(store)
-            if cluster is None:
-                assert topology.refusal == "cluster_unknown"
-                assert report["status"] == "refused"
-                assert not store.deletes()
-                return
-            assert topology.replicated and topology.refusal is None
-            assert report["status"] == "ok"
+            assert topology == lifecycle.Topology(
+                replicated=True, cluster=CI_CLUSTER, hosts=1, database=database
+            )
+            assert report["status"] == "ok", report
+            assert report["projects_held"] == 1
             assert store.items(pid) == set()
-            with override_settings(FI_TRAJECTORY_CH_CLUSTER=cluster):
-                receipt = lifecycle.verify_project_erased(pid, execute=store.execute)
+            assert len(store.items(held)) == 1
+            assert any(
+                "clusterAllReplicas" in sql and "system.replicas" in sql
+                for sql in store.statements
+            )
+            assert any(
+                "clusterAllReplicas" in sql and "min(created_at)" in sql
+                for sql in store.statements
+            )
+
+            gone = str(uuid.uuid4())
+            store.add_items([(gone, "s", _h(), now - HOUR_US) for _ in range(2)])
+            store.statements.clear()
+            with override_settings(FI_TRAJECTORY_CH_CLUSTER=CI_CLUSTER):
+                erased = lifecycle.erase_project_items(gone, execute=store.execute)
+                receipt = lifecycle.verify_project_erased(gone, execute=store.execute)
+            assert erased["rows"] == 2 and erased["delete_statements"] == 1
+            first_delete = next(
+                i for i, sql in enumerate(store.statements) if sql.startswith("DELETE")
+            )
+            # The row count that decides whether to delete reads every replica.
+            assert any(
+                "clusterAllReplicas" in sql for sql in store.statements[:first_delete]
+            )
             assert receipt["all_replicas"] is True
-            assert any("clusterAllReplicas" in sql for sql in store.statements)
+            assert store.items(gone) == set()
+
+
+def _replicated_fake(*, replicas=2, clusters=None, health=(4, 0), statements=None):
+    """A fake ClickHouse that reports replicated spans/trajectory_items."""
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TRAJECTORY_SPAN_COLUMNS,
+    )
+
+    clusters = clusters or [("prod", 1, 2, ["a:9000", "b:9000"])]
+    log = statements if statements is not None else []
+
+    def execute(sql, params=None):
+        log.append(sql)
+        if "engine = 'Distributed'" in sql:
+            return []
+        if "FROM system.tables" in sql and "count()" in sql:
+            return [(1,)]
+        if "FROM system.columns" in sql:
+            return [(name,) for name in TRAJECTORY_SPAN_COLUMNS]
+        if "name, engine FROM system.tables" in sql:
+            return [
+                ("spans", "ReplicatedReplacingMergeTree"),
+                ("trajectory_items", "ReplicatedReplacingMergeTree"),
+            ]
+        if "max(total_replicas)" in sql:
+            return [(replicas,)]
+        if "FROM system.clusters" in sql:
+            return list(clusters)
+        if sql == "SELECT currentDatabase()":
+            return [("db",)]
+        if "system.replicas" in sql and "clusterAllReplicas" in sql:
+            return [health]
+        raise AssertionError(f"unexpected statement: {sql}")
+
+    return execute
+
+
+@pytest.mark.parametrize(
+    ("health", "reason"),
+    [((4, 1), "replica_unhealthy"), ((3, 0), "replica_missing")],
+    ids=["unhealthy", "missing"],
+)
+def test_gc_refuses_while_a_replica_is_behind_or_missing(health, reason):
+    """A lagging or rebuilt replica could hide span rows from GC's reads."""
+    statements = []
+    redis_client = MagicMock()
+    execute = _replicated_fake(health=health, statements=statements)
+    with GC_ON:
+        report = lifecycle.trajectory_items_gc(
+            execute=execute, redis_client=redis_client
+        )
+    assert report["status"] == "refused" and report["reason"] == reason
+    assert not [sql for sql in statements if sql.lstrip().startswith("DELETE")]
+    assert not redis_client.mock_calls
+
+
+def test_replica_health_passes_only_when_every_replica_is_current():
+    execute = _replicated_fake(health=(4, 0))
+    with override_settings(FI_TRAJECTORY_CH_CLUSTER=""):
+        topology = lifecycle.resolve_topology(execute)
+    assert topology.hosts == 2 and topology.database == "db"
+    assert lifecycle.replica_health_refusal(execute, topology) is None
+    local = lifecycle.Topology(replicated=False)
+    assert lifecycle.replica_health_refusal(execute, local) is None
+
+
+def test_configured_cluster_must_cover_every_replica():
+    execute = _replicated_fake(replicas=3)
+    with override_settings(FI_TRAJECTORY_CH_CLUSTER="prod"):
+        topology = lifecycle.resolve_topology(execute)
+    assert topology.refusal == "cluster_replica_mismatch"
+
+
+def test_cluster_discovery_refuses_clusters_over_different_hosts():
+    execute = _replicated_fake(
+        clusters=[
+            ("alpha", 1, 2, ["a:9000", "c:9000"]),
+            ("prod", 1, 2, ["a:9000", "b:9000"]),
+        ]
+    )
+    with override_settings(FI_TRAJECTORY_CH_CLUSTER=""):
+        assert lifecycle.resolve_topology(execute).refusal == "cluster_ambiguous"
+    same_hosts = _replicated_fake(
+        clusters=[
+            ("alpha", 1, 2, ["a:9000", "b:9000"]),
+            ("prod", 1, 2, ["a:9000", "b:9000"]),
+        ]
+    )
+    with override_settings(FI_TRAJECTORY_CH_CLUSTER=""):
+        assert lifecycle.resolve_topology(same_hosts).cluster == "alpha"
 
 
 def test_gc_refuses_a_distributed_facade():
@@ -876,19 +1241,41 @@ def test_request_trajectory_erasure_joins_a_running_erasure(monkeypatch):
         lambda *args, **kwargs: calls.append((args, kwargs)),
     )
     pid = str(uuid.uuid4())
-    with override_settings(FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS=1234):
+    with override_settings(FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS=5000):
         ids = lifecycle.request_trajectory_erasure([pid.upper(), pid])
     assert ids == [f"trajectory-erasure-{pid}"]
     ((args, kwargs),) = calls
     assert args[0] is trajectory_erasure.TrajectoryErasureWorkflow
     assert args[1] == trajectory_erasure.TrajectoryErasureInput(
-        project_id=pid, ingest_wait_seconds=1234
+        project_id=pid, ingest_wait_seconds=5000
     )
     assert args[2:] == (f"trajectory-erasure-{pid}", "tasks_l")
     # Never cancel or terminate an erasure that is already running.
     assert kwargs["cancel_existing"] is False
     assert kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
     assert kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
+
+
+def test_erasure_ingest_wait_never_drops_below_the_collector_cache(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "tfc.temporal.common.client.start_workflow_sync",
+        lambda *args, **kwargs: calls.append(args[1]),
+    )
+    with override_settings(FI_TRAJECTORY_ERASURE_INGEST_WAIT_SECONDS=60):
+        lifecycle.request_trajectory_erasure([str(uuid.uuid4())])
+    assert calls[0].ingest_wait_seconds == lifecycle.ERASURE_MIN_INGEST_WAIT_SECONDS
+    assert lifecycle.ERASURE_MIN_INGEST_WAIT_SECONDS == 300 + 3600 + 60
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(None, 3960), ("", 3960), ("7200", 7200), ("60", 3960), ("1h", 3960)],
+)
+def test_erasure_ingest_wait_setting_parses_without_failing_boot(raw, expected):
+    from tfc.settings.settings import _trajectory_erasure_ingest_wait_seconds
+
+    assert _trajectory_erasure_ingest_wait_seconds(raw) == expected
 
 
 @pytest.mark.django_db

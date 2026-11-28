@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import os
 import re
@@ -51,7 +52,8 @@ def test_trajectory_seen_reset_changes_epoch_and_removes_only_traj_seen_keys(
     client.set("traj:other", "keep")
 
     out = io.StringIO()
-    with override_settings(REDIS_URL=url):
+    # The command always uses FI_TRAJECTORY_SEEN_REDIS_DB, not REDIS_URL's.
+    with override_settings(REDIS_URL=url, FI_TRAJECTORY_SEEN_REDIS_DB=14):
         call_command("trajectory_seen_reset", stdout=out)
 
     assert not any(client.exists(key) for key in seen)
@@ -84,4 +86,23 @@ def test_standalone_restore_needs_no_seen_reset():
     assert domains and "redis" not in domains.group(1)
 
     restore = (REPO_ROOT / "deploy/update/standalone_restore.py").read_text()
-    assert "def assert_no_running_consumers" in restore
+    # The restore stops every recorded container, then checks that nothing
+    # still uses a volume, before it writes any volume back.
+    methods = {
+        node.name: node
+        for cls in ast.parse(restore).body
+        if isinstance(cls, ast.ClassDef) and cls.name == "StandaloneRestore"
+        for node in cls.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    def calls(name):
+        return {
+            node.func.attr
+            for node in ast.walk(methods[name])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+
+    assert {"command", "assert_no_running_consumers"} <= calls("quiesce_attempt")
+    assert "'stop'" in ast.get_source_segment(restore, methods["quiesce_attempt"])
+    assert "assert_no_running_consumers" in calls("restore_volumes")

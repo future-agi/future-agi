@@ -41,6 +41,22 @@
     </raft_configuration>
   </keeper_server>
 
+  <!-- A single-shard, single-replica cluster over this server, added to the
+       image's own clusters. The trajectory lifecycle tests pin it
+       (FI_TRAJECTORY_CH_CLUSTER) so their replicated path, which counts rows
+       with clusterAllReplicas, always runs instead of refusing for want of a
+       cluster. -->
+  <remote_servers>
+    <traj_ci_single_replica>
+      <shard>
+        <replica>
+          <host>localhost</host>
+          <port>9000</port>
+        </replica>
+      </shard>
+    </traj_ci_single_replica>
+  </remote_servers>
+
   <!-- Point ReplicatedMergeTree at the embedded keeper. -->
   <zookeeper>
     <node>

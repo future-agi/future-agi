@@ -1916,7 +1916,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "recent span pointers across all projects; counts only, no view"
             ),
         ),
-        "_gc_bucket": filed(
+        "_EARLY_SPAN_SQL": filed(
+            NOT_A_USER_READ,
+            why=(
+                "daily trajectory GC checks, one row at most, whether a project "
+                "has a span old enough to hold its items back; no view"
+            ),
+        ),
+        "_OLDEST_SPAN_SQL": filed(
             NOT_A_USER_READ,
             why=(
                 "daily trajectory GC reads the oldest span created_at per project "

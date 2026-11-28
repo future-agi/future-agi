@@ -136,6 +136,17 @@
   },
   {
     "files": {
+      "tracer/tests/test_trajectory_retention_contract.py": 2
+    },
+    "reason": "^Skipped: the Cloud retention scheduler ships in the private ee/cloud tree$",
+    "why": "Not applicable by design on an oss run: the private package is not checked out. 2 tests; internal runs execute them.",
+    "issue": "TH-10706",
+    "owner": "tracer",
+    "expires": "2027-01-06",
+    "runs": "oss"
+  },
+  {
+    "files": {
       "tfc/tests/test_temporal_billing_imports.py": 1
     },
     "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud\\.billing\\.dunning'$",

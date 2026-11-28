@@ -12,7 +12,15 @@ code in this repo depends on three parts of that contract:
 - ``traj:epoch``: a token every collector reads. Changing it makes every pod
   forget what it has seen, in Redis and in its local LRU.
 - ``traj:contract:v2``: written by collectors that enforce the reuse bound. GC
-  deletes nothing while it is absent.
+  deletes nothing while it is absent. Any one collector refreshes it (24 h
+  TTL), so it does not prove that every collector enforces the bound: a pod
+  still on the legacy layout keeps writing ``traj:seen:<pid>:<scope>`` keys
+  (TTL up to ``LEGACY_SEEN_MAX_TTL``), and GC also deletes nothing while any
+  such key exists.
+- ``traj:gc:latch``: set by GC when the reference audit finds a violation.
+  GC deletes nothing while it exists; only an operator clears it
+  (``trajectory_audit --clear-gc-latch``). It is outside ``traj:seen:*``, so a
+  seen-store reset or a project erasure never removes it.
 
 The bounded seen store (key layout v2) is built in a separate change. Until it
 lands the collector still writes the legacy layout ``traj:seen:<pid>:<scope>``,
@@ -24,6 +32,7 @@ constant exists.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterable
 from datetime import timedelta
@@ -39,9 +48,13 @@ LEGACY_SEEN_MAX_TTL = timedelta(days=7)
 
 EPOCH_KEY = "traj:epoch"
 CONTRACT_KEY = "traj:contract:v2"
+GC_LATCH_KEY = "traj:gc:latch"
 SEEN_KEY_PREFIX = "traj:seen:"
 SEEN_V2_KEY_PREFIX = "traj:seen:v2:"
 ALL_SEEN_KEYS_PATTERN = SEEN_KEY_PREFIX + "*"
+# Legacy layout traj:seen:<project uuid>:<scope>. The first eight characters
+# of a UUID are hex followed by "-", which no v2 key ("traj:seen:v2:...") has.
+LEGACY_SEEN_KEYS_PATTERN = SEEN_KEY_PREFIX + "[0-9a-f]" * 8 + "-*"
 
 SCAN_COUNT = 1000
 UNLINK_BATCH = 500
@@ -126,32 +139,101 @@ def contract_key_present(client) -> bool:
         return False
 
 
+def gc_latch_present(client) -> bool:
+    """Whether ``traj:gc:latch`` is set. Any Redis error counts as set."""
+    if client is None:
+        return True
+    from redis.exceptions import RedisError
+
+    try:
+        return bool(client.exists(GC_LATCH_KEY))
+    except (RedisError, OSError):
+        return True
+
+
+def set_gc_latch(client, *, reason: str, at_us: int, counts: dict[str, int]) -> bool:
+    """Set ``traj:gc:latch`` with no TTL. Returns False if Redis refused it.
+
+    The value holds the reason, the server time and audit counts only.
+    """
+    from redis.exceptions import RedisError
+
+    body = json.dumps({"reason": reason, "at_us": int(at_us), **counts}, sort_keys=True)
+    try:
+        client.set(GC_LATCH_KEY, body)
+    except (RedisError, OSError):
+        return False
+    return True
+
+
+def clear_gc_latch(client) -> bool:
+    """Remove ``traj:gc:latch``. Returns whether it was set."""
+    return bool(client.delete(GC_LATCH_KEY))
+
+
+def legacy_seen_keys_present(client) -> bool:
+    """Whether any collector wrote a legacy ``traj:seen:<pid>:<scope>`` key.
+
+    A legacy collector may reuse an item for as long as its key lives (up to
+    ``LEGACY_SEEN_MAX_TTL``), past the reuse bound GC relies on. SCAN stops at
+    the first match. Any Redis error counts as present, which keeps GC from
+    deleting.
+    """
+    if client is None:
+        return True
+    from redis.exceptions import RedisError
+
+    try:
+        keys = client.scan_iter(match=LEGACY_SEEN_KEYS_PATTERN, count=SCAN_COUNT)
+        return next(iter(keys), None) is not None
+    except (RedisError, OSError):
+        return True
+
+
 def open_seen_redis():
-    """A client on the Redis the collector uses (REDIS_URL, database 0)."""
+    """A client on the Redis the collector uses.
+
+    The host comes from ``REDIS_URL``. The database is always
+    ``FI_TRAJECTORY_SEEN_REDIS_DB`` (0, the collector's ``FI_AUTH_REDIS_ADDR``
+    database), whatever database ``REDIS_URL`` names: the contract check,
+    erasure and the post-restore reset must act on the collector's keyspace.
+    """
     import redis
     from django.conf import settings
 
-    return redis.Redis.from_url(
+    client = redis.Redis.from_url(
         settings.REDIS_URL,
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=30,
     )
+    # from_url lets the URL's database win over a db= argument, so set it on
+    # the pool before any connection is made.
+    client.connection_pool.connection_kwargs["db"] = int(
+        getattr(settings, "FI_TRAJECTORY_SEEN_REDIS_DB", 0)
+    )
+    return client
 
 
 __all__ = [
     "ALL_SEEN_KEYS_PATTERN",
     "CONTRACT_KEY",
     "EPOCH_KEY",
+    "GC_LATCH_KEY",
     "GC_MARGIN",
     "IN_FLIGHT_MARGIN",
+    "LEGACY_SEEN_KEYS_PATTERN",
     "LEGACY_SEEN_MAX_TTL",
     "MAX_REUSE_AGE_CAP",
     "canonical_project_id",
+    "clear_gc_latch",
     "clear_project_seen_keys",
     "contract_key_present",
+    "gc_latch_present",
+    "legacy_seen_keys_present",
     "open_seen_redis",
     "project_seen_key_patterns",
     "reset_seen_store",
     "scan_unlink",
+    "set_gc_latch",
 ]

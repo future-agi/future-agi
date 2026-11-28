@@ -6,6 +6,12 @@ collector's reuse bound allows. Prints counts only and deletes nothing. The
 daily GC runs the same audit and deletes nothing while it reports a violation.
 
 After a restore, run it with ``--since <backup time>``; it should report 0.
+
+A violation found by the daily GC also sets the GC latch (``traj:gc:latch``):
+GC then deletes nothing, even after the violating span leaves the audit
+window, until an operator runs this command with ``--clear-gc-latch``. That
+clears the latch only if the audit is clean over ``--since`` (pass the latch
+time or earlier); ``--force`` clears it regardless.
 """
 
 from __future__ import annotations
@@ -15,7 +21,10 @@ from datetime import UTC, datetime
 
 from django.core.management.base import BaseCommand, CommandError
 
-from tracer.services.clickhouse.v2.trajectory_lifecycle import run_audit
+from tracer.services.clickhouse.v2.trajectory_lifecycle import (
+    clear_trajectory_gc_latch,
+    run_audit,
+)
 
 
 def _since_us(value: str) -> int:
@@ -29,7 +38,7 @@ def _since_us(value: str) -> int:
 
 
 class Command(BaseCommand):
-    help = "Count missing or over-age trajectory item references (report only)."
+    help = "Count missing or over-age trajectory item references; optionally clear the GC latch."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -37,11 +46,29 @@ class Command(BaseCommand):
             help="Audit spans created at or after this ISO 8601 time "
             "(default: the last two days).",
         )
+        parser.add_argument(
+            "--clear-gc-latch",
+            action="store_true",
+            help="Clear the GC latch if this audit finds no violation.",
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="With --clear-gc-latch: clear it even if this audit finds violations.",
+        )
 
     def handle(self, *args, **options):
         since = _since_us(options["since"]) if options.get("since") else None
         report = run_audit(since_us=since)
         self.stdout.write(json.dumps(report, sort_keys=True))
+        if options.get("clear_gc_latch"):
+            if report.get("violations") and not options.get("force"):
+                raise CommandError(
+                    "the audit found violations; the GC latch stays set "
+                    "(--force clears it anyway)"
+                )
+            cleared = clear_trajectory_gc_latch()
+            self.stdout.write(json.dumps({"gc_latch_cleared": cleared}))
         if report.get("violations"):
             raise CommandError(
                 f"{report['violations']} trajectory item reference violation(s)"
