@@ -73,6 +73,9 @@ def _cache_public_schema(view_factory, *args):
         # credentials must still have them checked on every call.
         if "Authorization" in request.headers or "X-Api-Key" in request.headers:
             return view(request, *args, **kwargs)
+        # Settings without the schema cache (e.g. tests) serve uncached.
+        if "openapi" not in settings.CACHES:
+            return view(request, *args, **kwargs)
         return cached(request, *args, **kwargs)
 
     return serve_schema

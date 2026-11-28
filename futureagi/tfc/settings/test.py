@@ -30,7 +30,7 @@ os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
 os.environ.setdefault("FUTURE_AGI_LICENSE_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
-from .settings import CACHES, INSTALLED_APPS  # noqa: E402
+from .settings import INSTALLED_APPS  # noqa: E402
 
 # Test mode indicator
 TESTING = True
@@ -103,11 +103,10 @@ CH25_EVAL_LOGGER_TABLE = os.environ.get("CH25_EVAL_LOGGER_TABLE", "tracer_eval_l
 
 # Test cache configuration
 CACHES = {
-    **CACHES,
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
         "LOCATION": "test-cache",
-    },
+    }
 }
 
 # Test Celery configuration
