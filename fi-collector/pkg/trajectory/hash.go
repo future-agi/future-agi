@@ -5,100 +5,30 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"sort"
+	"io"
 	"unicode/utf8"
 )
 
-// CanonicalJSON re-encodes valid JSON with recursively sorted object keys and
-// compact whitespace while preserving exact numeric representations via
-// json.Number. Two payloads differing only in object key order or whitespace
-// produce identical canonical bytes.
-func CanonicalJSON(raw []byte) ([]byte, error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var val any
-	if err := dec.Decode(&val); err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	buf.Grow(len(raw))
-	if err := encodeCanonical(&buf, val); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+// HashItem returns the 32-char lowercase hex encoding of the first 16 bytes
+// (128 bits) of SHA-256 over the exact bytes of content. No canonicalisation
+// happens: two serialisations of the same message that differ in key order,
+// whitespace or escapes are different items, so every row stored under one
+// key holds byte-identical content.
+func HashItem(content string) string {
+	return sha256Prefix(content)
 }
 
-// HashCanonical returns the 32-char lowercase hex encoding of the first 16
-// bytes (128 bits) of SHA-256 over the canonical JSON representation of raw.
-// Falls back to hashing raw bytes directly if raw is not valid JSON.
-func HashCanonical(raw []byte) string {
-	canon, err := CanonicalJSON(raw)
-	if err != nil {
-		canon = raw
-	}
-	sum := sha256.Sum256(canon)
-	return hex.EncodeToString(sum[:16])
+// PayloadChecksum is the envelope's per-side "x" field: the same 128-bit
+// SHA-256 prefix as HashItem, over the exact original side text.
+func PayloadChecksum(payload string) string {
+	return sha256Prefix(payload)
 }
 
-func encodeCanonical(buf *bytes.Buffer, v any) error {
-	switch x := v.(type) {
-	case nil:
-		buf.WriteString("null")
-	case bool:
-		if x {
-			buf.WriteString("true")
-		} else {
-			buf.WriteString("false")
-		}
-	case json.Number:
-		buf.WriteString(x.String())
-	case string:
-		b, err := marshalNoEscape(x)
-		if err != nil {
-			return err
-		}
-		buf.Write(b)
-	case []any:
-		buf.WriteByte('[')
-		for i, elem := range x {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			if err := encodeCanonical(buf, elem); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte(']')
-	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		buf.WriteByte('{')
-		for i, k := range keys {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			kb, err := marshalNoEscape(k)
-			if err != nil {
-				return err
-			}
-			buf.Write(kb)
-			buf.WriteByte(':')
-			if err := encodeCanonical(buf, x[k]); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte('}')
-	default:
-		b, err := marshalNoEscape(x)
-		if err != nil {
-			return err
-		}
-		buf.Write(b)
-	}
-	return nil
+func sha256Prefix(s string) string {
+	h := sha256.New()
+	_, _ = io.WriteString(h, s)
+	var sum [sha256.Size]byte
+	return hex.EncodeToString(h.Sum(sum[:0])[:16])
 }
 
 func marshalNoEscape(v any) ([]byte, error) {

@@ -2,8 +2,10 @@
 // multi-turn AI agent traces and dedup-aware storage billing telemetry.
 //
 // Core invariant:
-//   - Immutable message & tool-definition items are hashed over canonical JSON
-//     (recursively sorted keys) and stored verbatim once in `trajectory_items`.
+//   - Immutable message & tool-definition items are the exact byte ranges of
+//     the original payload, hashed over those bytes (no re-encoding) and stored
+//     verbatim once in `trajectory_items`; the span keeps the literal text
+//     between them so readers rebuild the original string exactly.
 //   - Static system prompts & tool schemas are scoped to "__project__" so they
 //     deduplicate across every trace in a project.
 //   - Conversation items are scoped to trace_session_id (falling back to
