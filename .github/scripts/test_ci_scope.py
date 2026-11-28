@@ -664,40 +664,34 @@ class CandidateScope(unittest.TestCase):
         # No job keeps a narrower guard, so a stray label starts none.
         self.assertNotIn("!(" + edit + ")", text)
 
-    def test_private_overlay_is_not_selected_from_merge_group_heads(self):
+    def test_overlay_requires_an_internal_event_in_the_upstream_repository(self):
         workflow = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
         selector = workflow.split("      - id: overlay\n")[1].split(
             "      - id: shards"
         )[0]
         script = textwrap.dedent(selector.split("        run: |\n")[1])
-        for event, head_repo, members, wanted, caller in (
-            ("pull_request", "base/repo", [], "true", "Backend CI"),
-            ("pull_request", "fork/repo", [], "false", "Backend CI"),
-            ("pull_request", "", [], "false", "Backend CI"),
+        upstream = "future-agi/future-agi"
+        fork = "fork/future-agi"
+        queue = "Backend merge queue"
+        for repo, event, head_repo, members, wanted, caller in (
+            (upstream, "pull_request", upstream, [], "true", "Backend CI"),
+            (upstream, "pull_request", fork, [], "false", "Backend CI"),
+            (upstream, "pull_request", "", [], "false", "Backend CI"),
             # Retarget proof forwards no secrets: an OSS run, like the queue.
-            ("pull_request", "base/repo", [], "false", "Retarget proof"),
-            ("pull_request", "fork/repo", [], "false", "Retarget proof"),
-            # Unchanged: dev/main pushes, dispatches and schedules are internal.
-            ("workflow_dispatch", "", [], "true", "Backend CI"),
-            ("schedule", "", [], "true", "Backend CI"),
-            (
-                "merge_group",
-                "",
-                ["base/repo", "base/repo"],
-                "false",
-                "Backend merge queue",
-            ),
-            (
-                "merge_group",
-                "",
-                ["base/repo", "fork/repo"],
-                "false",
-                "Backend merge queue",
-            ),
-            ("push", "", [], "true", "Backend CI"),
+            (upstream, "pull_request", upstream, [], "false", "Retarget proof"),
+            (upstream, "pull_request", fork, [], "false", "Retarget proof"),
+            (upstream, "merge_group", "", [upstream, upstream], "false", queue),
+            (upstream, "merge_group", "", [upstream, fork], "false", queue),
+            (upstream, "push", "", [], "true", "Backend CI"),
+            (upstream, "workflow_dispatch", "", [], "true", "Backend CI"),
+            (upstream, "schedule", "", [], "true", "Backend CI"),
+            (fork, "push", "", [], "false", "Backend CI"),
+            (fork, "workflow_dispatch", "", [], "false", "Backend CI"),
+            (fork, "schedule", "", [], "false", "Backend CI"),
+            (fork, "pull_request", fork, [], "false", "Backend CI"),
         ):
             with self.subTest(
-                event=event, members=members, head=head_repo, caller=caller
+                repo=repo, event=event, members=members, head=head_repo, caller=caller
             ):
                 # Both group compositions produce the same GitHub event shape:
                 # the head is a synthetic ref, not the provenance of its members.
@@ -720,7 +714,7 @@ class CandidateScope(unittest.TestCase):
                         os.environ,
                         GITHUB_EVENT_NAME=event,
                         GITHUB_WORKFLOW=caller,
-                        GITHUB_REPOSITORY="base/repo",
+                        GITHUB_REPOSITORY=repo,
                         PR_HEAD_REPO=head_repo,
                         GITHUB_EVENT_PATH=str(Path("event").resolve()),
                         GITHUB_OUTPUT=str(output),
@@ -736,7 +730,7 @@ class CandidateScope(unittest.TestCase):
             for s in steps
             if "secrets.EE_REPO_READ_TOKEN" in s or "with: *ee_checkout" in s
         ]
-        self.assertEqual(len(token_steps), 2)  # shards, independent control
+        self.assertEqual(len(token_steps), 3)  # shards, independent control, cloud suite
         guards = [
             next(
                 line.strip()
@@ -745,13 +739,7 @@ class CandidateScope(unittest.TestCase):
             )
             for s in token_steps
         ]
-        self.assertCountEqual(
-            guards,
-            [
-                "if: env.IS_INTERNAL_RUN == 'true'",
-                "if: env.IS_INTERNAL_RUN == 'true'",
-            ],
-        )
+        self.assertEqual(guards, ["if: env.IS_INTERNAL_RUN == 'true'"] * 3)
         for step in token_steps:
             self.assertRegex(
                 step,
@@ -760,7 +748,7 @@ class CandidateScope(unittest.TestCase):
         self.assertIn(
             "IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", workflow
         )
-        self.assertEqual(workflow.count("env: *backend_database_env"), 2)
+        self.assertEqual(workflow.count("env: *backend_database_env"), 3)
 
     def test_loader_uses_base_policy_and_bootstraps_conservatively(self):
         driver = bootstrap("backend-ci.yml")

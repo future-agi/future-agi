@@ -1,9 +1,14 @@
-"""Guard the shard command against unbounded verbose parametrization output."""
+"""Guard backend suite selection and what the workflow reports about each run."""
 
 import configparser
+import json
+import os
 import pathlib
 import re
 import shlex
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -95,6 +100,62 @@ class EvaluatorJobTest(unittest.TestCase):
         self.assertIn("--junitxml=agentic-eval-junit.xml", job)
         self.assertNotIn("continue-on-error:", job)
         self.assertNotIn("--ignore=", job)
+
+
+class ExtendedOverlayTest(unittest.TestCase):
+    def setUp(self):
+        workflow = (ROOT / ".github/workflows/backend-ci.yml").read_text()
+        _, marker, rest = workflow.partition("\n  extended-overlay:\n")
+        self.assertTrue(marker, "missing cloud suite job")
+        self.job = re.split(r"\n  [\w-]+:\n", rest, maxsplit=1)[0]
+        self.gate = workflow.split("\n  backend-tests:\n")[1]
+
+    def test_internal_backend_runs_select_the_whole_directory(self):
+        self.assertIn(
+            "    if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.internal == 'true'\n",
+            self.job,
+        )
+        self.assertIn("        extended-overlay,\n", self.gate.split("    if:")[0])
+        self.assertIn("CLOUD_DEPLOYMENT: DEV", self.job)
+        self.assertIn("--ds=tfc.settings.test --create-db", self.job)
+        self.assertIn(" ee/cloud/tests > /dev/null 2>&1\n", self.job)
+        self.assertNotIn("continue-on-error", self.job)
+        self.assertNotIn("upload-artifact", self.job)
+
+    def test_summary_counts_only_complete_passes_and_rejects_vacuous_runs(self):
+        script = textwrap.dedent(self.job.rsplit("        run: |\n", 1)[1])
+        retention = "ee/cloud/tests/test_retention.py::test_example"
+        other = "ee/cloud/tests/test_other.py::test_example"
+        passed = [[phase, "passed"] for phase in ("setup", "call", "teardown")]
+        skipped = [["setup", "runtime-skip", "fixture detail"], ["teardown", "passed"]]
+        for rows, counts, ok in (
+            ([], (0, 0, 0), False),
+            ([(retention, skipped)], (1, 0, 0), False),
+            ([(retention, skipped), (other, passed)], (2, 1, 0), False),
+            # Collection includes one deselected case with no terminal record.
+            ([(retention, passed), (other, skipped)], (3, 1, 1), True),
+        ):
+            with self.subTest(counts=counts), tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp)
+                summary = root / "summary"
+                (root / "cloud-ids.txt").write_text("id\n" * counts[0])
+                outcomes = [json.dumps(["key", *row]) + "\n" for row in rows]
+                (root / "cloud-terminal.jsonl").write_text("".join(outcomes))
+                result = subprocess.run(
+                    ["bash", "-ec", script],
+                    env={
+                        **os.environ,
+                        "RUNNER_TEMP": tmp,
+                        "GITHUB_STEP_SUMMARY": str(summary),
+                    },
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+                collected, passes, covered = counts
+                self.assertEqual(
+                    summary.read_text().strip(),
+                    f"Extended overlay: {collected} collected, {passes} passed ({covered} retention).",
+                )
 
 
 if __name__ == "__main__":

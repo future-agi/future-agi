@@ -802,7 +802,7 @@ class BackendWorkflowTest(unittest.TestCase):
         )
         checkout = "uses: future-agi/future-agi/.github/actions/checkout-ee@"
         steps = [step for step in self.workflow.split("\n      - ") if checkout in step]
-        self.assertEqual(len(steps), 2)  # shards, control
+        self.assertEqual(len(steps), 3)  # shards, control, cloud suite
         for step in steps:
             condition = next(
                 line.strip()

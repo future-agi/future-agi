@@ -182,10 +182,12 @@ jobs:
           # A call from Retarget proof forwards no secrets: like a merge group,
           # it runs without the private package (GITHUB_WORKFLOW is the caller's).
           internal=false
-          case "$GITHUB_EVENT_NAME" in
-            pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
-            push|workflow_dispatch|schedule) internal=true ;;
-          esac
+          if [[ $GITHUB_REPOSITORY == "future-agi/future-agi" ]]; then
+            case "$GITHUB_EVENT_NAME" in
+              pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+              push|workflow_dispatch|schedule) internal=true ;;
+            esac
+          fi
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
       - id: shards
         # The pytest shard matrix: the main legs always, the Metrics legs only
@@ -815,6 +817,59 @@ jobs:
         if: failure()
         run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
 
+  extended-overlay:
+    name: Extended overlay cloud tests
+    needs: [changes, plan]
+    if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.internal == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env: *backend_database_env
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out the extended overlay
+        if: env.IS_INTERNAL_RUN == 'true'
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
+        with: *ee_checkout
+      - uses: ./.github/actions/backend-test-packages/environment
+        with:
+          profile: ${{ inputs.backend_setup || 'baseline' }}
+      - name: Run the cloud suite on a fresh test database
+        id: cloud-suite
+        working-directory: futureagi
+        env:
+          CLOUD_DEPLOYMENT: DEV
+          PYTHONPATH: .ci
+        # Keep test output and individual outcomes off the public run.
+        run: |
+          : > "$RUNNER_TEMP/cloud-terminal.jsonl"
+          uv run --no-sync pytest -c pytest.ini --ds=tfc.settings.test --create-db -q \
+            -p collected_ids --ci-collected-ids="$RUNNER_TEMP/cloud-ids.txt" \
+            --ci-terminal-ids="$RUNNER_TEMP/cloud-terminal.jsonl" ee/cloud/tests > /dev/null 2>&1
+      - name: Report cloud suite counts
+        if: ${{ !cancelled() && steps.cloud-suite.outcome != 'skipped' }}
+        run: |
+          python3 -I - "$RUNNER_TEMP" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          results = Path(sys.argv[1])
+          with (results / 'cloud-ids.txt').open('rb') as ids:
+              collected = sum(1 for _ in ids)
+          passed = retention = 0
+          with (results / 'cloud-terminal.jsonl').open() as outcomes:
+              for line in outcomes:
+                  _, node, phases = json.loads(line)
+                  if phases == [['setup', 'passed'], ['call', 'passed'], ['teardown', 'passed']]:
+                      passed += 1
+                      retention += node.startswith('ee/cloud/tests/test_retention.py::')
+          print(f'Extended overlay: {collected} collected, {passed} passed ({retention} retention).')
+          if not collected or not retention:
+              sys.exit('Expected the cloud suite to collect tests and pass retention coverage')
+          PY
+
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS
     # image ships: every other job syncs --all-extras, so a MODULE-LEVEL
@@ -1147,6 +1202,7 @@ jobs:
         saml-multiworker,
         migrated-database,
         agentic-eval,
+        extended-overlay,
         slim-smoke,
         code-executor-base-pin,
       ]
@@ -1165,10 +1221,11 @@ jobs:
             def flag: if . == "true" then true elif . == "false" then false else error("invalid plan flag") end;
             def status: if . then "success" else "skipped" end;
             .changes.outputs as $p | ($p.backend|flag) as $b | ($p.metrics|flag) as $m |
-            ($p.update_safety|flag) as $u | ($p.executor_base|flag) as $x |
+            ($p.update_safety|flag) as $u | ($p.executor_base|flag) as $x | ($p.internal|flag) as $i |
             .changes.result == "success" and .["policy-self-test"].result == "success" and ($m == $b) and
             .["update-safety"].result == (($b or $u)|status) and
             .["code-executor-base-pin"].result == ($x|status) and
+            .["extended-overlay"].result == (($b and $i)|status) and
             ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
               .["agentic-eval"], .["slim-smoke"]] | all(.result == ($b|status)))
           ' <<<"$NEEDS"
