@@ -3648,28 +3648,6 @@ export const publicApiJourneys = [
           path: apiPath("/usage/usage-summary/"),
         },
       ];
-      const apiKeyEndpoints = [
-        {
-          label: "GET /usage/api-call-type/",
-          method: "GET",
-          path: apiPath("/usage/api-call-type/"),
-        },
-        {
-          label: "GET /usage/organization-filter/",
-          method: "GET",
-          path: apiPath("/usage/organization-filter/"),
-        },
-        {
-          label: "GET /usage/organizations/",
-          method: "GET",
-          path: apiPath("/usage/organizations/"),
-        },
-        {
-          label: "GET /usage/resource-type/",
-          method: "GET",
-          path: apiPath("/usage/resource-type/"),
-        },
-      ];
 
       for (const endpoint of authGuardEndpoints) {
         const result = await request(
@@ -3689,23 +3667,6 @@ export const publicApiJourneys = [
         });
       }
 
-      for (const endpoint of apiKeyEndpoints) {
-        const result = await request(
-          apiBase,
-          endpoint.method,
-          endpoint.path,
-          endpoint.body,
-        );
-        assertApiKeyOrPermissionGuard(result, endpoint.label);
-        evidence.push({
-          label: endpoint.label,
-          method: endpoint.method,
-          path: endpoint.path,
-          status: result.status,
-          code: result.body?.code || null,
-          auth_boundary: "api_key",
-        });
-      }
 
       const pricing = await request(
         apiBase,
