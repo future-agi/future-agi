@@ -2853,6 +2853,9 @@ def operator_tooling(module):
         or module.startswith("ee.cloud.internal.scripts.")
         # The scheduled retention job: deletes rows soft-deleted months ago.
         or module == "ee.cloud.tasks.retention"
+        # The daily trajectory-items GC, its audit command and the erasure
+        # workflow's steps; no request imports it.
+        or module == "tracer.services.clickhouse.v2.trajectory_lifecycle"
     )
 
 
