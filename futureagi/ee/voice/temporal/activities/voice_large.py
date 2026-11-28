@@ -625,10 +625,9 @@ async def fetch_and_persist_call_result(
                 provider_data = call.provider_call_data or {}
                 cost_breakdown = {}
 
-                if "livekit" in provider_data:
-                    usage = provider_data["livekit"].get("usage", {})
+                if costs.usage_snapshot is not None:
                     for category in ("stt", "llm", "tts"):
-                        cat_data = usage.get(category, {})
+                        cat_data = costs.usage_snapshot.get(category, {})
                         cost_value = getattr(costs, category, 0.0)
                         if cat_data or cost_value:
                             cost_breakdown[category] = {
@@ -647,8 +646,8 @@ async def fetch_and_persist_call_result(
                     )
                     cost_breakdown = vapi_metrics.cost_breakdown or {}
 
-                if cost_breakdown:
-                    call.customer_cost_breakdown = cost_breakdown
+                if cost_breakdown or costs.usage_snapshot is not None:
+                    call.customer_cost_breakdown = cost_breakdown or None
                     update_fields.append("customer_cost_breakdown")
 
                 call.customer_cost_cents = int(round(costs.total * 100))
