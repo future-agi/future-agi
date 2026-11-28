@@ -3,38 +3,17 @@ package trajectory
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"sort"
 	"strings"
+	"unicode/utf8"
 )
-
-// Envelope captures the minimal structural metadata needed to reconstruct the
-// exact original JSON shape of `spans.input` and `spans.output` from ordered
-// `trajectory_items` hashes.
-type Envelope struct {
-	Version int           `json:"v"`
-	Input   *PayloadShape `json:"in,omitempty"`
-	Output  *PayloadShape `json:"out,omitempty"`
-}
-
-// PayloadShape describes how one side (input or output) was decomposed.
-//
-// Supported formats:
-//   - "msg_array": top-level JSON array of message objects `[m0, m1, ...]`
-//   - "obj_messages": top-level JSON object containing a messages array under
-//     MessagesKey (e.g. "messages" or "input"), optional tools array under
-//     ToolsKey ("tools"), optional system field under SystemKey ("system" or
-//     "instructions"), and any remaining small wrapper fields in Wrapper.
-type PayloadShape struct {
-	Format      string                     `json:"f"`
-	MessagesKey string                     `json:"mk,omitempty"`
-	ToolsKey    string                     `json:"tk,omitempty"`
-	SystemKey   string                     `json:"sk,omitempty"`
-	SystemHash  string                     `json:"sh,omitempty"` // "p:<32hex>" when top-level system/instructions string or array was extracted
-	Wrapper     map[string]json.RawMessage `json:"w,omitempty"`
-}
 
 // ExtractionResult holds the deduplicated representation for a single span.
 type ExtractionResult struct {
 	Applied       bool
+	InputApplied  bool // the input side is extracted (spans.input holds a preview)
+	OutputApplied bool // the output side is extracted (spans.output holds a preview)
 	InputHashes   []string
 	OutputHashes  []string
 	ToolDefHashes []string
@@ -45,9 +24,20 @@ type ExtractionResult struct {
 	Items         []Item // all referenced items (before SeenStore filtering)
 }
 
+// extractFaultHook lets tests corrupt a side template between extraction and
+// the reconstruct self-check. Always nil outside tests. It is a plain package
+// variable read on every extraction, so no test in this package that calls
+// ExtractSpan (directly or through the converter) may use t.Parallel.
+var extractFaultHook func(side string, t *SideTemplate)
+
 // ExtractSpan inspects a span's input and output JSON payloads and, when at
 // least one side contains a recognized message array (or chat object with
 // messages/tools), decomposes it into content-addressed Items + an Envelope.
+//
+// Each side is decided on its own. A side is extracted only when it is valid
+// UTF-8 JSON without duplicate top-level keys and ReconstructSide, run on the
+// marshalled template exactly as a reader receives it, gives back the exact
+// original string. Otherwise the side stays inline in spans.input/output.
 //
 // Returns Applied=false for non-conversation spans (plain text, arbitrary maps,
 // invalid JSON), leaving those spans untouched as payload_encoding='inline'.
@@ -70,42 +60,31 @@ func ExtractSpan(
 		previewMaxBytes = DefaultPreviewMaxBytes
 	}
 
-	var (
-		items        []Item
-		inItems      []Item
-		outItems     []Item
-		inputHashes  []string
-		outputHashes []string
-		toolHashes   []string
-		env          = Envelope{Version: 1}
-		extractedIn  bool
-		extractedOut bool
-	)
-
-	if strings.TrimSpace(input) != "" {
-		if shape, msgHashes, tHashes, extracted := decomposePayload(projectID, scopeID, []byte(input), true); shape != nil {
-			env.Input = shape
-			inputHashes = msgHashes
-			toolHashes = append(toolHashes, tHashes...)
-			inItems = extracted
-			items = append(items, extracted...)
-			extractedIn = true
-		}
+	env := Envelope{Version: EnvelopeVersion}
+	in := extractSide(projectID, scopeID, input, true)
+	if in != nil && !in.selfCheck("in", scopeID) {
+		in = nil
 	}
-
-	if strings.TrimSpace(output) != "" {
-		if shape, msgHashes, tHashes, extracted := decomposePayload(projectID, scopeID, []byte(output), false); shape != nil {
-			env.Output = shape
-			outputHashes = msgHashes
-			toolHashes = append(toolHashes, tHashes...)
-			outItems = extracted
-			items = append(items, extracted...)
-			extractedOut = true
-		}
+	out := extractSide(projectID, scopeID, output, false)
+	if out != nil && !out.selfCheck("out", scopeID) {
+		out = nil
 	}
-
-	if !extractedIn && !extractedOut {
+	if in == nil && out == nil {
 		return ExtractionResult{}
+	}
+
+	var items []Item
+	inputHashes, outputHashes, toolHashes := []string{}, []string{}, []string{}
+	if in != nil {
+		env.Input = in.template
+		inputHashes = in.msgRefs
+		toolHashes = in.toolRefs
+		items = append(items, in.items...)
+	}
+	if out != nil {
+		env.Output = out.template
+		outputHashes = out.msgRefs
+		items = append(items, out.items...)
 	}
 
 	envBytes, err := marshalNoEscape(env)
@@ -115,23 +94,22 @@ func ExtractSpan(
 
 	res := ExtractionResult{
 		Applied:       true,
-		InputHashes:   nonNilSlice(inputHashes),
-		OutputHashes:  nonNilSlice(outputHashes),
-		ToolDefHashes: nonNilSlice(toolHashes),
+		InputApplied:  in != nil,
+		OutputApplied: out != nil,
+		InputHashes:   inputHashes,
+		OutputHashes:  outputHashes,
+		ToolDefHashes: toolHashes,
 		ItemScopeID:   scopeID,
 		EnvelopeJSON:  string(envBytes),
 		Items:         items,
+		InputPreview:  input,
+		OutputPreview: output,
 	}
-	if extractedIn {
-		res.InputPreview = smartMessagePreview(input, inItems, "user", previewMaxBytes)
-	} else {
-		// Output was extracted, input stays inline intact inside spans.input!
-		res.InputPreview = input
+	if in != nil {
+		res.InputPreview = smartMessagePreview(input, in.items, "user", previewMaxBytes)
 	}
-	if extractedOut {
-		res.OutputPreview = smartMessagePreview(output, outItems, "assistant", previewMaxBytes)
-	} else {
-		res.OutputPreview = output
+	if out != nil {
+		res.OutputPreview = smartMessagePreview(output, out.items, "assistant", previewMaxBytes)
 	}
 	return res
 }
@@ -168,172 +146,290 @@ func smartMessagePreview(raw string, items []Item, preferredRole string, maxByte
 	return TruncateUTF8(raw, maxBytes)
 }
 
-// decomposePayload tries to extract messages (and optional tools / top-level
-// system prompt) from a JSON array or chat request/response object.
-func decomposePayload(
-	projectID string,
-	scopeID string,
-	raw []byte,
-	allowToolsAndSystem bool,
-) (shape *PayloadShape, msgHashes []string, toolHashes []string, items []Item) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) < 2 {
-		return nil, nil, nil, nil
+// extractedSide is one side's decomposition before the self-check.
+type extractedSide struct {
+	original string
+	template *SideTemplate
+	msgRefs  []string
+	toolRefs []string
+	items    []Item // messages, then tools, then the system item
+}
+
+// selfCheck marshals the template, decodes it as a reader would and requires
+// ReconstructSide to return the exact original string.
+func (s *extractedSide) selfCheck(side, scopeID string) bool {
+	if extractFaultHook != nil {
+		extractFaultHook(side, s.template)
 	}
-
-	// Case 1: top-level JSON array of message objects, e.g. [{"role":"user",...}]
-	if trimmed[0] == '[' {
-		var arr []json.RawMessage
-		if err := json.Unmarshal(trimmed, &arr); err != nil || len(arr) == 0 {
-			return nil, nil, nil, nil
-		}
-		if !looksLikeMessageArray(arr) {
-			return nil, nil, nil, nil
-		}
-		hashes, extracted := extractMessages(projectID, scopeID, arr)
-		return &PayloadShape{Format: "msg_array"}, hashes, nil, extracted
+	encoded, err := marshalNoEscape(s.template)
+	if err != nil {
+		return false
 	}
+	var decoded SideTemplate
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return false
+	}
+	got, err := ReconstructSide(&decoded, s.msgRefs, s.toolRefs, ItemsResolver(scopeID, s.items))
+	return err == nil && got == s.original
+}
 
-	// Case 2: top-level JSON object containing messages/input/choices + optional tools/system
-	if trimmed[0] == '{' {
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(trimmed, &obj); err != nil || len(obj) == 0 {
-			return nil, nil, nil, nil
+// valueSpan is the exact byte range [start,end) of one JSON value inside the
+// side's original string.
+type valueSpan struct {
+	start, end int
+	raw        json.RawMessage
+}
+
+// member is one top-level object member: its decoded key and value range.
+type member struct {
+	key   string
+	value valueSpan
+}
+
+// slot is one extracted value inside the original string.
+type slot struct {
+	kind       byte
+	start, end int
+}
+
+// extractSide decomposes one side, or returns nil when the side stays inline.
+// Selection rules: a top-level message array; or a top-level object with a
+// messages/input/choices array (first match wins) and, on the input side only,
+// a tools array and a system/instructions value.
+func extractSide(projectID, scopeID, payload string, allowToolsAndSystem bool) *extractedSide {
+	trimmed := strings.TrimSpace(payload)
+	if len(trimmed) < 2 || !utf8.ValidString(payload) {
+		return nil
+	}
+	s := &extractedSide{original: payload}
+	var slots []slot
+
+	switch trimmed[0] {
+	case '[':
+		elems, ok := scanArray(payload, 0)
+		if !ok || len(elems) == 0 || !looksLikeMessageArray(raws(elems)) {
+			return nil
+		}
+		slots = s.addMessages(projectID, scopeID, elems, slots)
+
+	case '{':
+		members, ok := scanObject(payload)
+		if !ok || len(members) == 0 {
+			return nil
+		}
+		byKey := make(map[string]valueSpan, len(members))
+		for _, m := range members {
+			byKey[m.key] = m.value
 		}
 
-		// Find primary message-list key in precedence order.
-		var msgKey string
-		var msgArr []json.RawMessage
+		var msgElems []valueSpan
 		for _, candidate := range []string{"messages", "input", "choices"} {
-			rawField, ok := obj[candidate]
+			v, ok := byKey[candidate]
 			if !ok {
 				continue
 			}
-			var arr []json.RawMessage
-			if err := json.Unmarshal(rawField, &arr); err == nil && len(arr) > 0 {
-				if candidate == "choices" && looksLikeChoicesArray(arr) {
-					msgKey = candidate
-					msgArr = arr
-					break
-				}
-				if candidate != "choices" && looksLikeMessageArray(arr) {
-					msgKey = candidate
-					msgArr = arr
-					break
-				}
+			elems, ok := scanArray(payload[v.start:v.end], v.start)
+			if !ok || len(elems) == 0 {
+				continue
+			}
+			arr := raws(elems)
+			if candidate == "choices" && looksLikeChoicesArray(arr) || candidate != "choices" && looksLikeMessageArray(arr) {
+				msgElems = elems
+				break
 			}
 		}
 
-		// Also check optional tools array and top-level system/instructions (Anthropic / Responses API).
-		var toolsKey string
-		var toolsArr []json.RawMessage
-		var sysKey string
-		var sysRaw json.RawMessage
+		var toolElems []valueSpan
+		var sysValue *valueSpan
 		if allowToolsAndSystem {
-			if rawTools, ok := obj["tools"]; ok {
-				var arr []json.RawMessage
-				if err := json.Unmarshal(rawTools, &arr); err == nil && len(arr) > 0 {
-					toolsKey = "tools"
-					toolsArr = arr
+			if v, ok := byKey["tools"]; ok {
+				if elems, ok := scanArray(payload[v.start:v.end], v.start); ok && len(elems) > 0 {
+					toolElems = elems
 				}
 			}
 			for _, sk := range []string{"system", "instructions"} {
-				if rawSys, ok := obj[sk]; ok && len(bytes.TrimSpace(rawSys)) > 2 {
-					sysKey = sk
-					sysRaw = bytes.TrimSpace(rawSys)
+				if v, ok := byKey[sk]; ok && len(v.raw) > 2 {
+					sysValue = &v
 					break
 				}
 			}
 		}
 
-		if msgKey == "" && toolsKey == "" {
-			return nil, nil, nil, nil
+		if msgElems == nil && toolElems == nil {
+			return nil
 		}
-
-		shape = &PayloadShape{
-			Format:      "obj_messages",
-			MessagesKey: msgKey,
-			ToolsKey:    toolsKey,
-			SystemKey:   sysKey,
+		slots = s.addMessages(projectID, scopeID, msgElems, slots)
+		for _, e := range toolElems {
+			content := payload[e.start:e.end]
+			h := HashItem(content)
+			s.toolRefs = append(s.toolRefs, ProjectHashPrefix+h)
+			s.items = append(s.items, Item{
+				ProjectID: projectID,
+				ScopeID:   ProjectScopeID,
+				ItemHash:  h,
+				ItemType:  "tool_def",
+				Content:   content,
+			})
+			slots = append(slots, slot{kind: SlotTool, start: e.start, end: e.end})
 		}
-
-		if msgKey != "" {
-			hashes, extracted := extractMessages(projectID, scopeID, msgArr)
-			msgHashes = hashes
-			items = append(items, extracted...)
-		}
-
-		if toolsKey != "" {
-			for _, rawTool := range toolsArr {
-				tBytes := bytes.TrimSpace(rawTool)
-				h := HashCanonical(tBytes)
-				toolHashes = append(toolHashes, ProjectHashPrefix+h)
-				items = append(items, Item{
-					ProjectID: projectID,
-					ScopeID:   ProjectScopeID,
-					ItemHash:  h,
-					ItemType:  "tool_def",
-					Role:      "",
-					Content:   string(tBytes),
-				})
-			}
-		}
-
-		if sysKey != "" {
-			h := HashCanonical(sysRaw)
-			shape.SystemHash = ProjectHashPrefix + h
-			items = append(items, Item{
+		if sysValue != nil {
+			content := payload[sysValue.start:sysValue.end]
+			h := HashItem(content)
+			s.items = append(s.items, Item{
 				ProjectID: projectID,
 				ScopeID:   ProjectScopeID,
 				ItemHash:  h,
 				ItemType:  "message",
 				Role:      "system",
-				Content:   string(sysRaw),
+				Content:   content,
 			})
+			slots = append(slots, slot{kind: SlotSystem, start: sysValue.start, end: sysValue.end})
+			s.template = &SideTemplate{SystemHash: ProjectHashPrefix + h}
 		}
 
-		// Preserve all remaining wrapper keys (model, temperature, max_tokens, etc.).
-		wrapper := make(map[string]json.RawMessage, len(obj))
-		for k, v := range obj {
-			if k == msgKey || k == toolsKey || k == sysKey {
-				continue
-			}
-			wrapper[k] = v
-		}
-		if len(wrapper) > 0 {
-			shape.Wrapper = wrapper
-		}
-		return shape, msgHashes, toolHashes, items
+	default:
+		return nil
 	}
 
-	return nil, nil, nil, nil
+	if s.template == nil {
+		s.template = &SideTemplate{}
+	}
+	// Slots come from distinct top-level values or distinct elements of one
+	// array, so they never overlap; byte order is the template order.
+	sort.Slice(slots, func(i, j int) bool { return slots[i].start < slots[j].start })
+	refs := make([]byte, 0, len(slots))
+	gaps := make([]string, 0, len(slots)+1)
+	pos := 0
+	for _, sl := range slots {
+		if sl.start < pos {
+			return nil
+		}
+		gaps = append(gaps, payload[pos:sl.start])
+		refs = append(refs, sl.kind)
+		pos = sl.end
+	}
+	gaps = append(gaps, payload[pos:])
+	s.template.Gaps = gaps
+	s.template.Refs = string(refs)
+	s.template.Length = utf8.RuneCountInString(payload)
+	s.template.Checksum = PayloadChecksum(payload)
+	if s.msgRefs == nil {
+		s.msgRefs = []string{}
+	}
+	if s.toolRefs == nil {
+		s.toolRefs = []string{}
+	}
+	return s
 }
 
-func extractMessages(projectID, scopeID string, arr []json.RawMessage) ([]string, []Item) {
-	hashes := make([]string, 0, len(arr))
-	items := make([]Item, 0, len(arr))
-	for _, rawMsg := range arr {
-		mBytes := bytes.TrimSpace(rawMsg)
-		itemType, role := classifyMessage(mBytes)
-		h := HashCanonical(mBytes)
-
-		targetScope := scopeID
-		ref := h
+// addMessages records one item and one SlotMessage per element. System and
+// developer messages are project-scoped.
+func (s *extractedSide) addMessages(projectID, scopeID string, elems []valueSpan, slots []slot) []slot {
+	for _, e := range elems {
+		content := s.original[e.start:e.end]
+		itemType, role := classifyMessage(e.raw)
+		h := HashItem(content)
+		targetScope, ref := scopeID, h
 		if role == "system" || role == "developer" {
-			targetScope = ProjectScopeID
-			ref = ProjectHashPrefix + h
+			targetScope, ref = ProjectScopeID, ProjectHashPrefix+h
 		}
-		hashes = append(hashes, ref)
-		items = append(items, Item{
+		s.msgRefs = append(s.msgRefs, ref)
+		s.items = append(s.items, Item{
 			ProjectID: projectID,
 			ScopeID:   targetScope,
 			ItemHash:  h,
 			ItemType:  itemType,
 			Role:      role,
-			Content:   string(mBytes),
+			Content:   content,
 		})
+		slots = append(slots, slot{kind: SlotMessage, start: e.start, end: e.end})
 	}
-	return hashes, items
+	return slots
+}
+
+// scanArray reads s as exactly one JSON array (surrounding whitespace allowed)
+// and returns each element's byte range, offset by base.
+func scanArray(s string, base int) ([]valueSpan, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+		return nil, false
+	}
+	var out []valueSpan
+	for dec.More() {
+		v, ok := decodeValue(dec, s)
+		if !ok {
+			return nil, false
+		}
+		v.start += base
+		v.end += base
+		out = append(out, v)
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim(']') {
+		return nil, false
+	}
+	return out, atEOF(dec)
+}
+
+// scanObject reads s as exactly one JSON object (surrounding whitespace
+// allowed) and returns its members in order. Duplicate keys refuse the
+// object: a reader would see only one of the values.
+func scanObject(s string) ([]member, bool) {
+	dec := json.NewDecoder(strings.NewReader(s))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, false
+	}
+	var out []member
+	seen := make(map[string]struct{})
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, false
+		}
+		if _, dup := seen[key]; dup {
+			return nil, false
+		}
+		seen[key] = struct{}{}
+		v, ok := decodeValue(dec, s)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, member{key: key, value: v})
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, false
+	}
+	return out, atEOF(dec)
+}
+
+// decodeValue decodes the next value and locates its exact bytes in s.
+func decodeValue(dec *json.Decoder, s string) (valueSpan, bool) {
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return valueSpan{}, false
+	}
+	end := int(dec.InputOffset())
+	start := end - len(raw)
+	if start < 0 || end > len(s) || s[start:end] != string(raw) {
+		return valueSpan{}, false
+	}
+	return valueSpan{start: start, end: end, raw: raw}, true
+}
+
+func atEOF(dec *json.Decoder) bool {
+	_, err := dec.Token()
+	return err == io.EOF
+}
+
+func raws(elems []valueSpan) []json.RawMessage {
+	out := make([]json.RawMessage, len(elems))
+	for i, e := range elems {
+		out[i] = e.raw
+	}
+	return out
 }
 
 // classifyMessage extracts item_type and role from a message JSON object.
@@ -406,11 +502,4 @@ func looksLikeChoicesArray(arr []json.RawMessage) bool {
 	_, hasMsg := obj["message"]
 	_, hasText := obj["text"]
 	return hasMsg || hasText
-}
-
-func nonNilSlice(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
 }
