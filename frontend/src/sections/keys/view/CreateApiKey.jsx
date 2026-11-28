@@ -22,7 +22,13 @@ import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import { copyToClipboard } from "src/utils/utils";
 import SvgColor from "src/components/svg-color";
+import { handleError } from "src/utils/queryErrorHandler";
 import { expiresAtFromDate } from "./keyExpiry";
+
+// KEY_NAME_EXISTS is sent as a message, with the same code as other 400s.
+const isDuplicateName = (error) =>
+  error?.statusCode === 400 &&
+  error.result === "Keys with this already name exists.";
 
 const CreateApiKey = ({ open, onClose, refreshGrid }) => {
   const [keyName, setKeyName] = useState("");
@@ -48,19 +54,27 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
     mutate: handleAddApiKey,
     data: createdKey,
     isPending: loading,
+    variables: submittedName,
+    error,
     reset,
   } = useMutation({
-    mutationFn: () =>
+    mutationFn: (name) =>
       axios.post(endpoints.keys.generateSecretKey, {
-        key_name: keyName,
+        key_name: name,
         ...(expiresAt && { expires_at: expiresAt }),
       }),
+    meta: { errorHandled: true },
+    onError: (err) => {
+      if (!isDuplicateName(err)) handleError(err);
+    },
     onSuccess: () => {
       setShowKeys(true);
       // trackEvent(Events.saveApiClicked, { [PropertyName.click]: true });
       refreshGrid();
     },
   });
+
+  const nameTaken = submittedName === keyName && isDuplicateName(error);
 
   const isSecretKey = useMemo(() => {
     return createdKey && showKeys && open;
@@ -115,11 +129,17 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
               <TextField
                 label={"Key name"}
                 value={keyName}
+                error={nameTaken}
+                helperText={
+                  nameTaken &&
+                  "A key with this name already exists. Choose another name."
+                }
+                FormHelperTextProps={{ role: "alert" }}
                 onChange={(e) => setKeyName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    if (!isExpiryInvalid) handleAddApiKey();
+                    if (!isExpiryInvalid) handleAddApiKey(keyName);
                   }
                 }}
                 fullWidth
@@ -156,16 +176,10 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                 gap: 2,
               }}
             >
-              {/* <Typography
-                typography={"s1"}
-                fontWeight={"fontWeightRegular"}
-                color="text.primary"
-              >
-                Please make sure to store this API key and secret key in a
-                secure and accessible place. For security reasons, it won’t be
-                visible again in your Future AGI account. If you lose it, you’ll
-                need to generate a new one.
-              </Typography> */}
+              <Typography variant="body2">
+                Copy the API key and secret key before closing this dialog.
+                Store both securely. You can only copy them here.
+              </Typography>
               <Box display="flex" gap={1}>
                 <TextField
                   label={"API key"}
@@ -254,7 +268,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
               size="small"
               variant="contained"
               color="primary"
-              onClick={handleAddApiKey}
+              onClick={() => handleAddApiKey(keyName)}
               loading={loading}
               disabled={!keyName || isExpiryInvalid}
             >
