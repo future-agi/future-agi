@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -12,8 +14,9 @@ from django.utils import timezone
 
 from simulate.models import (
     HostedHarnessAttempt,
-    HostedHarnessExecution,
+    HostedHarnessEvent,
     HostedHarnessJob,
+    HostedHarnessReceipt,
 )
 from simulate.serializers.harness_job import CONNECTOR_ALIASES, LIVEKIT_ALIASES
 
@@ -63,7 +66,7 @@ _RETELL_CALLS_URL = "https://api.retellai.com/v3/list-calls"
 _RETELL_ENDED = frozenset({"ended", "not_connected", "error"})
 _RETELL_PAGE_LIMIT = 1000
 _REQUEST_TIMEOUT_SECONDS = 10
-_CALL_ID_LOOKUP_LIMIT = 25
+_CALL_READ_BUDGET_SECONDS = 40
 
 
 class ProviderCalls(StrEnum):
@@ -75,6 +78,7 @@ class ProviderCalls(StrEnum):
     NO_TARGET = "no_target"
     NO_CALLS = "no_calls"
     TOO_MANY_CALLS = "too_many_calls"
+    UNREACHABLE = "unreachable"
 
 
 def unchecked_confirmation(outcome: ProviderCalls) -> str:
@@ -280,45 +284,75 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
     call_ids = run_call_ids(job)
     try:
         if call_ids is not None:
-            by_id = _vapi_call_ended if connector == "vapi" else _retell_call_ended
-            return (
-                ProviderCalls.ENDED
-                if all(by_id(api_key, call_id) for call_id in call_ids)
-                else ProviderCalls.ACTIVE
+            return _known_calls(
+                connector, api_key, target, attempt.created_at, call_ids
             )
         reader = _vapi_calls if connector == "vapi" else _retell_calls
         return reader(api_key, target, attempt.created_at)
     except requests.HTTPError as error:
         if _key_rejected(error):
             return ProviderCalls.KEY_REJECTED
-        logger.warning(
-            "hosted_harness_cancel_provider_unreachable",
-            job_id=str(job.id),
-            connector=connector,
-            error=type(error).__name__,
-        )
-        return ProviderCalls.ACTIVE
+        _log_unreachable(job, connector, error)
+        return ProviderCalls.UNREACHABLE
     except (requests.RequestException, ValueError) as error:
-        logger.warning(
-            "hosted_harness_cancel_provider_unreachable",
-            job_id=str(job.id),
-            connector=connector,
-            error=type(error).__name__,
-        )
-        return ProviderCalls.ACTIVE
+        _log_unreachable(job, connector, error)
+        return ProviderCalls.UNREACHABLE
+
+
+def _log_unreachable(job: HostedHarnessJob, connector: str, error: Exception) -> None:
+    logger.warning(
+        "hosted_harness_cancel_provider_unreachable",
+        job_id=str(job.id),
+        connector=connector,
+        error=type(error).__name__,
+    )
 
 
 def run_call_ids(job: HostedHarnessJob) -> list[str] | None:
-    rows = list(
-        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
-            "call_execution__customer_call_id", "receipt__id"
-        )
-    )
-    if not rows or len(rows) > _CALL_ID_LOOKUP_LIMIT:
-        return None
-    if any(not call_id or receipt is None for call_id, receipt in rows):
-        return None
-    return [str(call_id) for call_id, _ in rows]
+    starts: Counter[str] = Counter()
+    connected: dict[str, set[str]] = defaultdict(set)
+    for event_type, payload in HostedHarnessEvent.no_workspace_objects.filter(
+        attempt__job=job,
+        attempt__attempt_number=job.current_attempt_number,
+        accepted=True,
+        event_type__in=("scenario_started", "call_connected"),
+    ).values_list("event_type", "payload"):
+        body = payload or {}
+        key = str(body.get("scenario_key") or "")
+        if event_type == "scenario_started":
+            starts[key] += 1
+        elif body.get("provider_call_id"):
+            connected[key].add(str(body["provider_call_id"]))
+    received = _received_call_ids(job)
+    ids: set[str] = set()
+    for key in starts.keys() | connected.keys():
+        known = connected[key] | ({received[key]} if received.get(key) else set())
+        if len(known) < starts[key]:
+            return None
+        ids |= known
+    return sorted(ids) if ids else None
+
+
+def _received_call_ids(job: HostedHarnessJob) -> dict[str, str]:
+    received: dict[str, str] = {}
+    for (
+        execution_key,
+        execution_call,
+        scenario_key,
+        scenario_call,
+    ) in HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt_number=job.current_attempt_number
+    ).values_list(
+        "execution__execution_key",
+        "execution__call_execution__customer_call_id",
+        "scenario__scenario_key",
+        "scenario__call_execution__customer_call_id",
+    ):
+        if execution_key:
+            received[execution_key] = execution_call or ""
+        else:
+            received[scenario_key] = scenario_call or ""
+    return received
 
 
 def _key_rejected(error: requests.HTTPError) -> bool:
@@ -364,23 +398,18 @@ def _livekit_rooms(job: HostedHarnessJob, config: Mapping[str, Any]) -> Provider
     except requests.HTTPError as error:
         if _key_rejected(error):
             return ProviderCalls.KEY_REJECTED
+        _log_unreachable(job, _LIVEKIT, error)
+        return ProviderCalls.UNREACHABLE
+    except HostedPhoneRoomCleanupError as error:
         logger.warning(
             "hosted_harness_cancel_livekit_rooms_remain",
             job_id=str(job.id),
             error=type(error).__name__,
         )
         return ProviderCalls.ACTIVE
-    except (
-        HostedPhoneRoomCleanupError,
-        requests.RequestException,
-        ValueError,
-    ) as error:
-        logger.warning(
-            "hosted_harness_cancel_livekit_rooms_remain",
-            job_id=str(job.id),
-            error=type(error).__name__,
-        )
-        return ProviderCalls.ACTIVE
+    except (requests.RequestException, ValueError) as error:
+        _log_unreachable(job, _LIVEKIT, error)
+        return ProviderCalls.UNREACHABLE
     return ProviderCalls.ENDED
 
 
@@ -448,23 +477,93 @@ def _retell_calls(api_key: str, agent_id: str, since: datetime) -> ProviderCalls
     return ProviderCalls.ENDED
 
 
-def _vapi_call_ended(api_key: str, call_id: str) -> bool:
+def _known_calls(
+    connector: str, api_key: str, target: str, since: datetime, call_ids: list[str]
+) -> ProviderCalls:
+    deadline = time.monotonic() + _CALL_READ_BUDGET_SECONDS
+    listed = (
+        _vapi_statuses(api_key, target, since)
+        if connector == "vapi"
+        else _retell_statuses(api_key, target, since)
+    )
+    ended = _VAPI_ENDED if connector == "vapi" else _RETELL_ENDED
+    read_one = _vapi_status if connector == "vapi" else _retell_status
+    for call_id in call_ids:
+        status = listed.get(call_id)
+        if status is None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return ProviderCalls.UNREACHABLE
+            status = read_one(api_key, call_id, min(left, _REQUEST_TIMEOUT_SECONDS))
+        if status not in ended:
+            return ProviderCalls.ACTIVE
+    return ProviderCalls.ENDED
+
+
+def _vapi_statuses(api_key: str, assistant_id: str, since: datetime) -> dict[str, str]:
+    response = requests.get(
+        _VAPI_CALLS_URL,
+        params={
+            "assistantId": assistant_id,
+            "createdAtGe": since.isoformat(),
+            "limit": str(_VAPI_PAGE_LIMIT),
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    calls = response.json()
+    return {
+        str(call["id"]): str(call.get("status") or "")
+        for call in (calls if isinstance(calls, list) else [])
+        if isinstance(call, Mapping) and call.get("id")
+    }
+
+
+def _retell_statuses(api_key: str, agent_id: str, since: datetime) -> dict[str, str]:
+    response = requests.post(
+        _RETELL_CALLS_URL,
+        json={
+            "filter_criteria": {
+                "agent": [{"agent_id": agent_id}],
+                "start_timestamp": {
+                    "type": "number",
+                    "op": "ge",
+                    "value": int(since.timestamp() * 1000),
+                },
+            },
+            "limit": _RETELL_PAGE_LIMIT,
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    body = response.json()
+    items = body.get("items") if isinstance(body, Mapping) else None
+    return {
+        str(item["call_id"]): str(item.get("call_status") or "")
+        for item in (items if isinstance(items, list) else [])
+        if isinstance(item, Mapping) and item.get("call_id")
+    }
+
+
+def _vapi_status(api_key: str, call_id: str, timeout: float) -> str:
     response = requests.get(
         f"{_VAPI_CALLS_URL}/{call_id}",
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=_REQUEST_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
     response.raise_for_status()
     call = response.json()
-    return isinstance(call, Mapping) and call.get("status") in _VAPI_ENDED
+    return str(call.get("status") or "") if isinstance(call, Mapping) else ""
 
 
-def _retell_call_ended(api_key: str, call_id: str) -> bool:
+def _retell_status(api_key: str, call_id: str, timeout: float) -> str:
     response = requests.get(
         f"{_RETELL_CALL_URL}/{call_id}",
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=_REQUEST_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
     response.raise_for_status()
     call = response.json()
-    return isinstance(call, Mapping) and call.get("call_status") in _RETELL_ENDED
+    return str(call.get("call_status") or "") if isinstance(call, Mapping) else ""

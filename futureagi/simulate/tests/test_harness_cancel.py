@@ -1,6 +1,11 @@
+import json
+import threading
+import uuid
 from datetime import timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import pytest
 import requests
@@ -8,6 +13,7 @@ from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
+    HostedHarnessEvent,
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
@@ -29,6 +35,11 @@ from simulate.services.harness_cancel import (
     treated_as_sandbox,
 )
 from simulate.services.harness_provider import serialize_job
+from simulate.services.hosted_harness import canonical_digest
+from simulate.services.hosted_harness_ingestion import (
+    _event_payload_error,
+    ingest_event_batch,
+)
 from simulate.services.phone_telephony import HostedPhoneRoomCleanupError
 from simulate.tasks.hosted_harness_cancel import confirm_hosted_harness_provider_cancel
 from simulate.tests.test_cancelled_call_journey import (  # noqa: F401 - fixture
@@ -115,6 +126,26 @@ class TestConnector:
 
 
 class TestRunCallIds:
+    def _event(self, attempt, event_type, key, call_id=None):
+        payload = {"scenario_key": key}
+        if event_type == "scenario_started":
+            payload.update(world_index=0, scenario_attempt=1)
+        else:
+            payload["provider_call_id"] = call_id
+        sequence = HostedHarnessEvent.no_workspace_objects.filter(
+            attempt=attempt
+        ).count()
+        HostedHarnessEvent.no_workspace_objects.create(
+            event_id=uuid.uuid4().hex,
+            attempt=attempt,
+            sequence=sequence + 1,
+            stage="running",
+            event_type=event_type,
+            payload=payload,
+            digest="sha256:" + "0" * 64,
+            emitted_at=timezone.now(),
+        )
+
     def _receive(self, run, attempt, execution, call_id):
         CallExecution.no_workspace_objects.filter(
             id=execution.call_execution_id
@@ -130,39 +161,142 @@ class TestRunCallIds:
             body={},
         )
 
-    def test_every_call_received_with_its_provider_id_gives_the_ids(self, running_run):
-        run, attempt = running_run
-        executions = HostedHarnessExecution.no_workspace_objects.filter(job=run)
-        for number, execution in enumerate(executions):
-            self._receive(run, attempt, execution, f"call-{number}")
+    def _keys(self, run):
+        first, second = HostedHarnessExecution.no_workspace_objects.filter(job=run)
+        return first, second
 
-        assert sorted(run_call_ids(run)) == ["call-0", "call-1"]
-
-    def test_a_call_still_without_a_receipt_falls_back_to_the_time_window(
+    def test_the_call_in_flight_at_stop_is_checked_by_the_id_it_sent_when_placed(
         self, running_run
     ):
         run, attempt = running_run
-        first, _ = HostedHarnessExecution.no_workspace_objects.filter(job=run)
-        self._receive(run, attempt, first, "call-0")
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-live")
 
-        assert run_call_ids(run) is None
+        assert run_call_ids(run) == ["call-live"]
 
-    def test_a_received_call_without_a_provider_id_falls_back(self, running_run):
-        run, attempt = running_run
-        for execution in HostedHarnessExecution.no_workspace_objects.filter(job=run):
-            self._receive(run, attempt, execution, None)
-
-        assert run_call_ids(run) is None
-
-    def test_a_stale_id_from_an_earlier_attempt_without_a_receipt_falls_back(
+    def test_a_call_sealed_by_the_stop_is_still_checked_with_its_provider(
         self, running_run
     ):
+        run, attempt = running_run
+        first, second = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-cut")
+        self._receive(run, attempt, first, "call-cut")
+        self._event(attempt, "scenario_started", second.execution_key)
+        self._event(attempt, "call_connected", second.execution_key, "call-live")
+
+        assert run_call_ids(run) == ["call-cut", "call-live"]
+
+    def test_a_retried_scenario_with_a_receipt_still_checks_its_first_call(
+        self, running_run
+    ):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-1")
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._receive(run, attempt, first, "call-2")
+
+        assert run_call_ids(run) == ["call-1", "call-2"]
+
+    def test_a_retried_scenario_needs_an_id_for_each_try(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-1")
+        self._event(attempt, "scenario_started", first.execution_key)
+
+        assert run_call_ids(run) is None
+
+        self._event(attempt, "call_connected", first.execution_key, "call-2")
+
+        assert run_call_ids(run) == ["call-1", "call-2"]
+
+    def test_a_placed_call_whose_start_has_not_arrived_is_still_checked(
+        self, running_run
+    ):
+        run, attempt = running_run
+        first, second = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-a")
+        self._event(attempt, "call_connected", second.execution_key, "call-b")
+
+        assert run_call_ids(run) == ["call-a", "call-b"]
+
+    def test_an_older_harness_is_checked_by_the_ids_on_its_receipts(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._receive(run, attempt, first, "call-r")
+
+        assert run_call_ids(run) == ["call-r"]
+
+    def test_a_receipt_without_a_provider_id_falls_back(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._receive(run, attempt, first, None)
+
+        assert run_call_ids(run) is None
+
+    def test_a_started_call_that_never_named_its_id_falls_back_to_the_time_window(
+        self, running_run
+    ):
+        run, attempt = running_run
+        first, second = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-1")
+        self._event(attempt, "scenario_started", second.execution_key)
+
+        assert run_call_ids(run) is None
+
+    def test_a_large_run_is_checked_by_every_id_without_a_cap(self, running_run):
+        run, attempt = running_run
+        for number in range(30):
+            self._event(attempt, "scenario_started", f"s-{number:02}")
+            self._event(
+                attempt, "call_connected", f"s-{number:02}", f"call-{number:02}"
+            )
+
+        assert run_call_ids(run) == [f"call-{number:02}" for number in range(30)]
+
+    def test_nothing_started_falls_back_rather_than_reading_stopped(self, running_run):
         run, _ = running_run
-        CallExecution.no_workspace_objects.filter(
-            hosted_harness_execution__job=run
-        ).update(customer_call_id="old-call")
 
         assert run_call_ids(run) is None
+
+    def test_an_earlier_attempt_s_calls_are_not_this_stop_s(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-old")
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            current_attempt_number=attempt.attempt_number + 1
+        )
+        run.refresh_from_db()
+
+        assert run_call_ids(run) is None
+
+
+class TestCallConnectedEvent:
+    @pytest.mark.parametrize(
+        ("payload", "error"),
+        [
+            ({"scenario_key": "s1", "provider_call_id": "call-1"}, None),
+            ({"scenario_key": "s1"}, True),
+            ({"scenario_key": "s1", "provider_call_id": " "}, True),
+            ({"scenario_key": "s1", "provider_call_id": "c" * 256}, True),
+            ({"scenario_key": "s1", "provider_call_id": 7}, True),
+            ({"scenario_key": "s1", "provider_call_id": "c", "x": 1}, True),
+        ],
+    )
+    def test_a_placed_call_is_accepted_only_with_its_scenario_and_provider_id(
+        self, payload, error
+    ):
+        found = _event_payload_error("call_connected", "running", payload)
+
+        assert (found is not None) is bool(error)
 
 
 class TestConfirmCancel:
@@ -364,7 +498,7 @@ class TestVapiCalls:
         ):
             assert provider_calls(job) is ProviderCalls.KEY_REJECTED
 
-    def test_vapi_unreachable_reads_active_so_the_check_retries(self, job):
+    def test_vapi_unreachable_is_not_an_open_call(self, job):
         with (
             patch.object(
                 harness_cancel, "_job_secrets", return_value={"VAPI_API_KEY": "k"}
@@ -375,33 +509,60 @@ class TestVapiCalls:
                 side_effect=requests.ConnectionError("down"),
             ),
         ):
-            assert provider_calls(job) is ProviderCalls.ACTIVE
+            assert provider_calls(job) is ProviderCalls.UNREACHABLE
 
-    @pytest.mark.parametrize(
-        ("statuses", "outcome"),
-        [
-            (["ended", "ended"], ProviderCalls.ENDED),
-            (["ended", "in-progress"], ProviderCalls.ACTIVE),
-        ],
-    )
-    def test_known_call_ids_are_read_one_by_one_not_by_time_window(
-        self, job, statuses, outcome
-    ):
-        calls = iter(_response({"status": status}) for status in statuses)
+    def _known(self, job, listed, by_id=None):
+        def get(url, **kwargs):
+            if url == "https://api.vapi.ai/call":
+                return _response(listed)
+            return _response(by_id[url.rsplit("/", 1)[1]])
+
         with (
             patch.object(harness_cancel, "run_call_ids", return_value=["c1", "c2"]),
             patch.object(
                 harness_cancel, "_job_secrets", return_value={"VAPI_API_KEY": "k"}
             ),
-            patch.object(
-                harness_cancel.requests, "get", side_effect=lambda *a, **k: next(calls)
-            ) as get,
+            patch.object(harness_cancel.requests, "get", side_effect=get) as got,
         ):
-            assert provider_calls(job) is outcome
+            return provider_calls(job), [call.args[0] for call in got.call_args_list]
 
-        urls = [call.args[0] for call in get.call_args_list]
-        assert urls == ["https://api.vapi.ai/call/c1", "https://api.vapi.ai/call/c2"]
-        assert all("params" not in call.kwargs for call in get.call_args_list)
+    def test_known_calls_are_read_from_one_listing_and_other_calls_are_ignored(
+        self, job
+    ):
+        outcome, urls = self._known(
+            job,
+            [
+                {"id": "c1", "status": "ended"},
+                {"id": "c2", "status": "ended"},
+                {"id": "someone-else", "status": "in-progress"},
+            ],
+        )
+
+        assert outcome is ProviderCalls.ENDED
+        assert urls == ["https://api.vapi.ai/call"]
+
+    def test_a_known_call_still_live_reads_active(self, job):
+        outcome, _ = self._known(
+            job,
+            [{"id": "c1", "status": "ended"}, {"id": "c2", "status": "in-progress"}],
+        )
+
+        assert outcome is ProviderCalls.ACTIVE
+
+    def test_a_known_call_missing_from_the_listing_is_read_by_its_id(self, job):
+        outcome, urls = self._known(
+            job, [{"id": "c1", "status": "ended"}], by_id={"c2": {"status": "ended"}}
+        )
+
+        assert outcome is ProviderCalls.ENDED
+        assert urls == ["https://api.vapi.ai/call", "https://api.vapi.ai/call/c2"]
+
+    def test_reads_past_the_time_budget_are_unreachable_not_open(self, job):
+        with patch.object(harness_cancel, "_CALL_READ_BUDGET_SECONDS", 0):
+            outcome, urls = self._known(job, [])
+
+        assert outcome is ProviderCalls.UNREACHABLE
+        assert urls == ["https://api.vapi.ai/call"]
 
 
 class TestRetellCalls:
@@ -460,25 +621,47 @@ class TestRetellCalls:
         ("status", "outcome"),
         [("ended", ProviderCalls.ENDED), ("ongoing", ProviderCalls.ACTIVE)],
     )
-    def test_known_call_ids_are_read_one_by_one_not_by_time_window(
+    def test_known_calls_are_read_from_the_listing_and_others_ignored(
         self, job, status, outcome
     ):
+        listed = {
+            "items": [
+                {"call_id": "call-9", "call_status": status},
+                {"call_id": "someone-else", "call_status": "ongoing"},
+            ]
+        }
         with (
             patch.object(harness_cancel, "run_call_ids", return_value=["call-9"]),
             patch.object(
                 harness_cancel, "_job_secrets", return_value={"RETELL_API_KEY": "k"}
             ),
             patch.object(
-                harness_cancel.requests,
-                "get",
-                return_value=_response({"call_status": status}),
-            ) as get,
-            patch.object(harness_cancel.requests, "post") as post,
+                harness_cancel.requests, "post", return_value=_response(listed)
+            ),
+            patch.object(harness_cancel.requests, "get") as get,
         ):
             assert provider_calls(job) is outcome
 
+        get.assert_not_called()
+
+    def test_a_known_call_missing_from_the_listing_is_read_by_its_id(self, job):
+        with (
+            patch.object(harness_cancel, "run_call_ids", return_value=["call-9"]),
+            patch.object(
+                harness_cancel, "_job_secrets", return_value={"RETELL_API_KEY": "k"}
+            ),
+            patch.object(
+                harness_cancel.requests, "post", return_value=_response({"items": []})
+            ),
+            patch.object(
+                harness_cancel.requests,
+                "get",
+                return_value=_response({"call_status": "ended"}),
+            ) as get,
+        ):
+            assert provider_calls(job) is ProviderCalls.ENDED
+
         assert get.call_args.args[0] == "https://api.retellai.com/v2/get-call/call-9"
-        post.assert_not_called()
 
 
 class TestLiveKitRooms:
@@ -503,17 +686,24 @@ class TestLiveKitRooms:
             api_secret="lk-secret",
         )
 
+    def test_a_room_still_there_reads_active(self):
+        outcome, _ = self._read(
+            _LIVEKIT_SECRETS, cleanup=HostedPhoneRoomCleanupError("rooms still active")
+        )
+
+        assert outcome is ProviderCalls.ACTIVE
+
     @pytest.mark.parametrize(
         "error",
         [
-            HostedPhoneRoomCleanupError("rooms still active"),
             requests.ConnectionError("down"),
+            requests.HTTPError(response=SimpleNamespace(status_code=503)),
         ],
     )
-    def test_a_room_still_there_or_livekit_unreachable_reads_active(self, error):
+    def test_livekit_unreachable_is_not_a_room_left_open(self, error):
         outcome, _ = self._read(_LIVEKIT_SECRETS, cleanup=error)
 
-        assert outcome is ProviderCalls.ACTIVE
+        assert outcome is ProviderCalls.UNREACHABLE
 
     def test_a_rejected_livekit_key_proves_nothing_and_says_so(self):
         rejected = requests.HTTPError(response=SimpleNamespace(status_code=401))
@@ -576,6 +766,23 @@ class TestProviderCheckTask:
         assert job.cancel_confirmed_by == Confirmation.PROVIDER_CALL_OPEN
         assert job.cancel_confirmed_at is not None
         assert cancel_status(job) == "unconfirmed"
+
+    def test_an_unreachable_provider_retries_within_five_minutes(self, job):
+        with pytest.raises(ProviderCallsActive):
+            self._run(job, ProviderCalls.UNREACHABLE)
+
+        job.refresh_from_db()
+        assert job.cancel_confirmed_at is None
+
+    def test_a_provider_unreachable_for_five_minutes_is_unchecked_not_open(self, job):
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            cancel_requested_at=timezone.now() - timedelta(minutes=5, seconds=1)
+        )
+
+        assert self._run(job, ProviderCalls.UNREACHABLE)["confirmed"] is False
+
+        job.refresh_from_db()
+        assert job.cancel_confirmed_by == Confirmation.PROVIDER_UNCHECKED
 
     def test_an_ended_call_confirms_the_stop(self, job):
         assert self._run(job, ProviderCalls.ENDED)["confirmed"] is True
@@ -794,3 +1001,156 @@ class TestReadApi:
 
         assert stop_summary(job) is None
         assert stop_summaries([job.test_execution_id]) == {}
+
+
+class _FakeVapi:
+    """A local stand-in for Vapi's call API: lists an assistant's calls and reads one by id."""
+
+    def __init__(self, calls):
+        self.calls = dict(calls)
+        self.paths = []
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                fake.paths.append(self.path)
+                route = urlparse(self.path)
+                if route.path == "/call":
+                    body = [
+                        {"id": call_id, "status": status, "type": "vapi.websocketCall"}
+                        for call_id, status in fake.calls.items()
+                    ]
+                elif route.path.removeprefix("/call/") in fake.calls:
+                    call_id = route.path.removeprefix("/call/")
+                    body = {"id": call_id, "status": fake.calls[call_id]}
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                data = json.dumps(body).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/call"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class TestFakeVapiStopJourney:
+    """A Vapi web run is stopped mid-call; its calls are checked against a local Vapi."""
+
+    def _event(self, attempt, sequence, event_type, payload):
+        return {
+            "event_id": f"journey-{attempt.id}-{sequence}",
+            "job_id": str(attempt.job_id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "sequence": sequence,
+            "stage": "running",
+            "type": event_type,
+            "payload": payload,
+            "digest": canonical_digest(payload),
+            "emitted_at": timezone.now(),
+        }
+
+    def _stopped_vapi_run(self, running_run, *, send_ids):
+        run, attempt = running_run
+        keys = [
+            execution.execution_key
+            for execution in HostedHarnessExecution.no_workspace_objects.filter(
+                job=run
+            ).order_by("execution_key")
+        ]
+        events = []
+        for number, key in enumerate(keys):
+            events.append(
+                self._event(
+                    attempt,
+                    len(events) + 1,
+                    "scenario_started",
+                    {"scenario_key": key, "world_index": 0, "scenario_attempt": 1},
+                )
+            )
+            if send_ids:
+                events.append(
+                    self._event(
+                        attempt,
+                        len(events) + 1,
+                        "call_connected",
+                        {"scenario_key": key, "provider_call_id": f"run-call-{number}"},
+                    )
+                )
+        result = ingest_event_batch(attempt, events)
+        assert result["rejected"] == []
+        payload = {**run.payload, "agent": _VAPI}
+        payload.pop("source", None)
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            payload=payload,
+            state=HostedHarnessJob.State.CANCELED,
+            cancel_requested_at=timezone.now(),
+        )
+        run.refresh_from_db()
+        return run
+
+    def _check(self, run, vapi):
+        with (
+            patch.object(harness_cancel, "_VAPI_CALLS_URL", vapi.url),
+            patch.object(
+                harness_cancel, "_job_secrets", return_value={"VAPI_API_KEY": "k"}
+            ),
+        ):
+            return confirm_hosted_harness_provider_cancel._original_func(str(run.id))
+
+    def test_a_live_call_holds_the_stop_until_it_ends_whatever_else_runs_on_the_assistant(
+        self, running_run
+    ):
+        run = self._stopped_vapi_run(running_run, send_ids=True)
+        vapi = _FakeVapi(
+            {
+                "run-call-0": "ended",
+                "run-call-1": "in-progress",
+                "customers-own-call": "in-progress",
+            }
+        )
+        try:
+            with pytest.raises(ProviderCallsActive):
+                self._check(run, vapi)
+            run.refresh_from_db()
+            assert stop_summary(run)["status"] == "requested"
+
+            vapi.calls["run-call-1"] = "ended"
+            assert self._check(run, vapi)["confirmed"] is True
+        finally:
+            vapi.close()
+
+        run.refresh_from_db()
+        assert run.cancel_confirmed_by == Confirmation.PROVIDER_CALL_ENDED
+        assert stop_summary(run)["status"] == "confirmed"
+        assert all(path.startswith("/call?assistantId=asst-1") for path in vapi.paths)
+
+    def test_without_the_ids_an_unrelated_call_on_the_assistant_holds_the_stop(
+        self, running_run
+    ):
+        run = self._stopped_vapi_run(running_run, send_ids=False)
+        vapi = _FakeVapi(
+            {
+                "run-call-0": "ended",
+                "run-call-1": "ended",
+                "customers-own-call": "in-progress",
+            }
+        )
+        try:
+            with pytest.raises(ProviderCallsActive):
+                self._check(run, vapi)
+        finally:
+            vapi.close()

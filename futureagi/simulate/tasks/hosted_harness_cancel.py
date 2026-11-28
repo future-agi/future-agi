@@ -37,11 +37,16 @@ def confirm_hosted_harness_provider_cancel(job_id: str) -> dict:
     if outcome is ProviderCalls.ENDED:
         record_confirmation(job.id, Confirmation.PROVIDER_CALL_ENDED)
         return {"job_id": job_id, "confirmed": True}
-    if outcome is ProviderCalls.ACTIVE:
+    if outcome in (ProviderCalls.ACTIVE, ProviderCalls.UNREACHABLE):
         requested = job.cancel_requested_at
         if requested and timezone.now() - requested < PROVIDER_CHECK_WINDOW:
             raise ProviderCallsActive(job_id)
-        record_confirmation(job.id, Confirmation.PROVIDER_CALL_OPEN)
+        record_confirmation(
+            job.id,
+            Confirmation.PROVIDER_CALL_OPEN
+            if outcome is ProviderCalls.ACTIVE
+            else Confirmation.PROVIDER_UNCHECKED,
+        )
     else:
         record_confirmation(job.id, unchecked_confirmation(outcome))
     logger.info(
