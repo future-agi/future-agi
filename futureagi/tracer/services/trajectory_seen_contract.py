@@ -118,9 +118,11 @@ def contract_key_present(client) -> bool:
     """
     if client is None:
         return False
+    from redis.exceptions import RedisError
+
     try:
         return bool(client.exists(CONTRACT_KEY))
-    except Exception:
+    except (RedisError, OSError):
         return False
 
 

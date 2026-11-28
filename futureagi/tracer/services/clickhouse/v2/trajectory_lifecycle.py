@@ -40,6 +40,7 @@ partitions per run.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -119,7 +120,7 @@ def open_executor() -> tuple[Execute, Callable[[], None]]:
     query_settings = {"max_execution_time": 3600, "use_query_cache": 0}
 
     def execute(sql: str, params: dict | None = None) -> list:
-        return client.execute(sql, params or {}, settings=query_settings)
+        return list(client.execute(sql, params or {}, settings=query_settings))
 
     return execute, client.disconnect
 
@@ -237,20 +238,32 @@ def resolve_topology(execute: Execute) -> Topology:
     return Topology(replicated=True, cluster=candidates[0])
 
 
+_REPLICA_COUNT_SQL = (
+    "SELECT count() FROM clusterAllReplicas(%(cluster)s, %(database)s, %(table)s) "
+    "WHERE project_id = toUUID(%(project)s)"
+)
+_LOCAL_COUNT_SQL = {
+    SPANS_TABLE: "SELECT count() FROM spans WHERE project_id = toUUID(%(project)s)",
+    ITEMS_TABLE: (
+        "SELECT count() FROM trajectory_items WHERE project_id = toUUID(%(project)s)"
+    ),
+}
+
+
 def _count_project_rows(
     execute: Execute, topology: Topology, table: str, project_id: str
 ) -> int:
     """Physical rows of ``table`` for one project, on every replica."""
-    params = {"project": project_id}
+    params: dict[str, Any] = {"project": project_id}
     if topology.replicated:
-        database = current_database(execute)
-        sql = (
-            f"SELECT count() FROM clusterAllReplicas(%(cluster)s, {database}.{table}) "
-            "WHERE project_id = toUUID(%(project)s)"
+        params.update(
+            cluster=topology.cluster or "",
+            database=current_database(execute),
+            table=table,
         )
-        params["cluster"] = topology.cluster
+        sql = _REPLICA_COUNT_SQL
     else:
-        sql = f"SELECT count() FROM {table} WHERE project_id = toUUID(%(project)s)"
+        sql = _LOCAL_COUNT_SQL[table]
     rows = execute(sql, params)
     return int(rows[0][0]) if rows else 0
 
@@ -502,8 +515,8 @@ def masked_item_partitions(execute: Execute, *, limit: int) -> list[str]:
         "WHERE database = currentDatabase() AND table = %(table)s "
         "AND active AND has_lightweight_delete "
         "GROUP BY partition_id ORDER BY sum(rows) DESC, partition_id "
-        f"LIMIT {int(limit)}",
-        {"table": ITEMS_TABLE},
+        "LIMIT %(limit)s",
+        {"table": ITEMS_TABLE, "limit": int(limit)},
     )
     return [str(row[0]) for row in rows]
 
@@ -582,17 +595,14 @@ def trajectory_items_gc(
 def _contract_present(redis_client: Any) -> bool:
     if redis_client is not None:
         return contract_key_present(redis_client)
-    try:
-        client = open_seen_redis()
-    except Exception:
-        return False
+    from redis.exceptions import RedisError
+
+    client = open_seen_redis()
     try:
         return contract_key_present(client)
     finally:
-        try:
+        with contextlib.suppress(RedisError, OSError):
             client.close()
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
