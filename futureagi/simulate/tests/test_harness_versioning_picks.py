@@ -2123,6 +2123,25 @@ class TestSplitApi:
             "locked": True,
         }
 
+    def test_an_empty_split_is_refused_by_the_plan_and_the_run(
+        self, auth_client, user, workspace, storage
+    ):
+        # The lock left its one train scenario out, so the train split has none to play.
+        environment, locked_version = _locked(user, workspace, "sp-plan-empty", storage)
+        HarnessLockedVersionMember.no_workspace_objects.filter(
+            locked_version=locked_version, split="train"
+        ).delete()
+
+        plan = auth_client.get(f"{BASE}/{environment.id}/run-plan/", {"split": "train"})
+        run = _post_run(auth_client, environment, {"split": "train", "trials": 1})
+
+        for response in (plan, run):
+            assert response.status_code == 422, response.content
+            assert response.json()["error"] == "split_empty"
+            assert response.json()["message"] == (
+                "The train split of lock 2026.11.1 has no scenario this run can play."
+            )
+
     def test_the_run_plan_refuses_a_split_of_unlocked_versions(
         self, auth_client, user, workspace, storage
     ):
