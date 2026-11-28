@@ -21,7 +21,7 @@ describe("ActorLimits", () => {
   it("shows one field per limit the cast lists, and the model when it lists one", () => {
     renderLimits({ fields: LIMIT_FIELDS.slice(0, 2) });
     expect(field("How many at once on a call")).toBeInTheDocument();
-    expect(field("Caller takes back after agent turns")).toBeInTheDocument();
+    expect(field("User takes back after agent turns")).toBeInTheDocument();
     expect(screen.queryByLabelText("Seconds of actors per call")).toBeNull();
     expect(screen.queryByLabelText("Model actors are played on")).toBeNull();
   });
@@ -84,7 +84,7 @@ describe("ActorLimits", () => {
       "placeholder",
       "Default: 2",
     );
-    expect(field("Caller takes back after agent turns")).not.toHaveAttribute(
+    expect(field("User takes back after agent turns")).not.toHaveAttribute(
       "placeholder",
     );
   });
@@ -101,9 +101,9 @@ describe("ActorLimits", () => {
       />,
     );
     expect(field("How many at once on a call")).toHaveValue("3");
-    expect(
-      field("Most messages in a conversation before the run"),
-    ).toHaveValue("40");
+    expect(field("Most messages in a conversation before the run")).toHaveValue(
+      "40",
+    );
   });
 
   it("saves the whole block: what was stored, what was typed, and none as no limit", () => {

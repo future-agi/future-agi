@@ -5,9 +5,14 @@ import {
   screen,
   fireEvent,
   waitFor,
+  act,
   within,
 } from "src/utils/test-utils";
 import { CLEAN, cast, typedActor } from "./castFixtures";
+
+// A label as typed, with or without the star a required field shows.
+const starred = (text) =>
+  new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\*)?$`);
 
 const mutate = vi.fn();
 const acceptMutate = vi.fn();
@@ -118,6 +123,12 @@ const { default: axios } = await import("src/utils/axios");
 const { actorsKey } = await import("src/api/simulate-environments/versions");
 const { default: WorldActorsPanel } = await import("../WorldActorsPanel");
 
+// A world with one record collection, so "Once a record exists" can be picked.
+const WITH_RECORDS = {
+  files: [],
+  records: [{ store: "crm", collection: "approvals" }],
+};
+
 const MANAGER = typedActor({
   id: "manager",
   name: "Priya Raman",
@@ -127,15 +138,26 @@ const MANAGER = typedActor({
 });
 
 const choose = (label, option) => {
-  fireEvent.mouseDown(screen.getByLabelText(label));
+  fireEvent.mouseDown(screen.getByLabelText(starred(label)));
   fireEvent.click(screen.getByRole("option", { name: option }));
 };
-const addActor = (side = "In the world") => {
-  fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(side) }));
+// Picks a join preset, then the way inside it when the preset covers several.
+const comeIn = (preset, way) => {
+  choose("Comes in", preset);
+  if (way) choose("What brings them in", way);
 };
+const addActor = () =>
+  fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
+// Lets a fold's close transition finish before asserting what is visible.
+const settle = () => act(() => new Promise((done) => setTimeout(done, 500)));
 const saveButton = () => screen.getByRole("button", { name: "Save to draft" });
 const sent = (call = 0) => mutate.mock.calls[call][0];
+// Save is always on; a click while something blocks it sends nothing.
+const refusesSave = () => {
+  const before = mutate.mock.calls.length;
+  fireEvent.click(saveButton());
+  expect(mutate.mock.calls.length).toBe(before);
+};
 
 describe("WorldActorsPanel saving against the real hooks", () => {
   const DRAFT_CHANGED = {
@@ -160,13 +182,23 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Edit Priya Raman" }),
     );
-    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "regional manager" },
     });
-    // Save waits for the server's check of exactly this edit.
-    await waitFor(() => expect(saveButton()).toBeEnabled(), {
-      timeout: 5000,
-    });
+    // The server's check of exactly this edit has been asked and answered.
+    await waitFor(
+      () =>
+        expect(
+          axios.post.mock.calls.some(
+            ([url, body]) =>
+              url === VALIDATION && body?.changes?.role === "regional manager",
+          ),
+        ).toBe(true),
+      { timeout: 5000 },
+    );
+    await waitFor(() =>
+      expect(within(saveButton()).queryByRole("progressbar")).toBeNull(),
+    );
   };
 
   beforeEach(() => {
@@ -211,7 +243,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     // A window-focus refetch moves the cast under the open form.
     axios.get.mockResolvedValue({ data: elsewhere });
     await client.invalidateQueries({ queryKey: actorsKey("env-1") });
-    await screen.findByText(/Wants: Approve only large discounts/);
+    await screen.findByText(/Pushes for: Approve only large discounts/);
     save.mockRejectedValueOnce(DRAFT_CHANGED);
 
     fireEvent.click(saveButton());
@@ -220,7 +252,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       changes: { role: "regional manager" },
       expected_revision: 3,
     });
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
 
@@ -273,17 +305,22 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Edit Priya Raman" }),
     );
-    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "regional manager" },
     });
     expect(
       await screen.findByText("The check was refused", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    // Save stays on, but a click with no answer from the check saves nothing.
+    fireEvent.click(saveButton());
+    expect(save).not.toHaveBeenCalled();
     expect(screen.queryByText("Checking…")).toBeNull();
     refuse = false;
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(saveButton()).toBeEnabled(), { timeout: 5000 });
+    await waitFor(
+      () => expect(screen.queryByText("The check was refused")).toBeNull(),
+      { timeout: 5000 },
+    );
   });
 
   it("asks again when the cast is read again under an open form", async () => {
@@ -385,9 +422,9 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       target: { files: [file()] },
     });
     await screen.findByText(/changed elsewhere while you were editing/);
-    await screen.findByText(/Wants: Approve only large discounts/);
+    await screen.findByText(/Pushes for: Approve only large discounts/);
     // What was typed stays.
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
     upload.mockResolvedValueOnce({
@@ -436,10 +473,12 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     axios.get.mockResolvedValue({ data: cast([], { revision: 4 }) });
     fireEvent.click(saveButton());
     await screen.findByText(/removed elsewhere/);
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
-    expect(saveButton()).toBeDisabled();
+    const saves = save.mock.calls.length;
+    fireEvent.click(saveButton());
+    expect(save.mock.calls.length).toBe(saves);
   });
 });
 
@@ -457,6 +496,35 @@ describe("WorldActorsPanel", () => {
     asked = undefined;
   });
 
+  it("sends only a value edited in Advanced settings after Advanced is hidden again", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.change(
+      screen.getByLabelText("May agree to (optional, one per line)"),
+      { target: { value: "A refund under $50" } },
+    );
+    // One toggle, as the design has it: the same label, open or closed.
+    const toggle = screen.getByRole("button", { name: "Advanced settings" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await settle();
+    fireEvent.click(saveButton());
+    expect(sent().op).toBe("replace");
+    expect(sent().changes).toEqual({ may_agree: ["A refund under $50"] });
+  });
+
+  it("keeps Enter in a field from saving or closing the form", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    addActor();
+    const name = screen.getByLabelText(starred("Name"));
+    fireEvent.change(name, { target: { value: "Priya" } });
+    fireEvent.submit(name.closest("form"));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByText("Save to draft")).toBeInTheDocument();
+  });
+
   it("lists every attached file with its role, evaluator-only ones too, and changes a role at the cast's revision", () => {
     roleMutate.mockReset();
     actorsData = cast([MANAGER], {
@@ -472,10 +540,10 @@ describe("WorldActorsPanel", () => {
     });
     render(<WorldActorsPanel envId="env-1" />);
     const card = within(screen.getByTestId("file-roles"));
-    expect(card.getByLabelText("answer-key.md")).toHaveTextContent(
+    expect(card.getByLabelText(starred("answer-key.md"))).toHaveTextContent(
       "Evaluator only",
     );
-    fireEvent.mouseDown(card.getByLabelText("refunds.md"));
+    fireEvent.mouseDown(card.getByLabelText(starred("refunds.md")));
     fireEvent.click(screen.getByRole("option", { name: "Seed records" }));
     expect(roleMutate).toHaveBeenCalledWith({
       path: "knowledge/refunds.md",
@@ -495,7 +563,7 @@ describe("WorldActorsPanel", () => {
     });
     render(<WorldActorsPanel envId="env-1" />);
     const card = within(screen.getByTestId("file-roles"));
-    expect(card.getByLabelText("refunds.md")).toHaveAttribute(
+    expect(card.getByLabelText(starred("refunds.md"))).toHaveAttribute(
       "aria-disabled",
       "true",
     );
@@ -545,7 +613,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Add actor")).toBeInTheDocument();
   });
 
-  it("groups the cast by side, the caller's side first, each with its count, in the cast's order", () => {
+  it("lists the whole cast in one list, in the cast's order, under In this environment", () => {
     actorsData = cast([
       typedActor({ id: "caller", name: "Dana", side: "caller" }),
       typedActor({
@@ -558,77 +626,36 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("Actors (3)")).toBeInTheDocument();
-    const callerSide = screen.getByTestId("actors-side-caller");
-    const world = screen.getByTestId("actors-side-world");
-    expect(
-      callerSide.compareDocumentPosition(world) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      within(callerSide).getByText("On the caller's side"),
-    ).toBeInTheDocument();
-    expect(within(callerSide).getByText("2")).toBeInTheDocument();
-    const names = within(callerSide)
+    expect(screen.getByText("In this environment")).toBeInTheDocument();
+    expect(screen.queryByTestId(/^actors-side-/)).toBeNull();
+    expect(screen.queryByText("On the caller's side")).toBeNull();
+    const names = screen
       .getAllByRole("button", { name: /^Edit / })
       .map((one) => one.getAttribute("aria-label"));
-    expect(names).toEqual(["Edit Dana", "Edit Jordan Taylor"]);
-    expect(within(world).getByText("In the world")).toBeInTheDocument();
-    expect(within(world).getByText("1")).toBeInTheDocument();
-    expect(within(world).getByText(/Priya Raman/)).toBeInTheDocument();
+    expect(names).toEqual([
+      "Edit Dana",
+      "Edit Jordan Taylor",
+      "Edit Priya Raman",
+    ]);
   });
 
-  it("says when a side has no one yet", () => {
-    render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      within(screen.getByTestId("actors-side-caller")).getByText(
-        "No one here yet.",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("starts an actor added on the caller's side on that side's default way of joining, and sends it", () => {
+  it("adds an actor from the cast's new_actor with one Add actor button", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    addActor("On the caller's side");
+    addActor();
+    expect(screen.queryByRole("menu")).toBeNull();
     expect(
-      screen.getByLabelText("How they join the conversation"),
-    ).toHaveTextContent("Heard nearby");
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Jordan" },
-    });
-    fireEvent.click(saveButton());
-    expect(sent().changes).toMatchObject({
-      side: "caller",
-      channel: "audio_mix",
-    });
-  });
-
-  it("asks which side before adding, and adds the actor on that side", () => {
-    actorsData = cast([]);
-    render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
-    const menu = screen.getByRole("menu");
-    expect(
-      within(menu).getByText(
-        "Someone nearby, who takes the phone, or a second person in the chat",
-      ),
+      screen.getByText("Added to this environment's draft"),
     ).toBeInTheDocument();
-    fireEvent.click(
-      within(menu).getByRole("menuitem", { name: /On the caller's side/ }),
-    );
-    expect(
-      screen.getByText(
-        "On the caller's side · added to this environment's draft",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Jordan" },
     });
     fireEvent.click(saveButton());
     expect(sent()).toMatchObject({
       op: "create",
-      changes: { side: "caller", name: "Jordan" },
+      changes: { side: "world", name: "Jordan" },
     });
+    expect(sent().changes).not.toHaveProperty("channel");
   });
 
   it("lists each actor with what it may do, when it comes in and its fallback, as the cast states them", () => {
@@ -645,10 +672,19 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText("Acts in the world")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "May do: crm.approve_discount · Comes in: When the agent calls crm.request_approval · If they do not answer: Sam Rivera answers instead · In 2 scenarios",
-      ),
+      screen.getByText("When the agent calls crm.request_approval"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("In 2 scenarios")).toBeInTheDocument();
+    expect(screen.queryByText(/^May do:/)).toBeNull();
+    fireEvent.click(screen.getByText("What they see"));
+    expect(screen.getByText("Their part")).toBeInTheDocument();
+    expect(
+      screen.getByText("May do: crm.approve_discount"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("If they do not answer: Sam Rivera answers instead"),
     ).toBeInTheDocument();
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
@@ -665,6 +701,7 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("What they see"));
     expect(
       screen.getByText(
         /May do: crm.approve_discount, crm.old \(not an action of this world\)/,
@@ -672,7 +709,23 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows how a speaking actor joins and how loud it is, beside what it may do", () => {
+  it("tags the caller with no way of taking part, and keeps a long comes-in tag to one line", () => {
+    const long =
+      "When the agent says refund, cancel, manager, supervisor, chargeback or complaint";
+    actorsData = cast([
+      typedActor({ id: "caller", name: "The caller", side: "caller" }),
+      { ...MANAGER, when_label: long },
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getAllByText("Acts in the world")).toHaveLength(1);
+    const tag = screen
+      .getAllByText(long)
+      .find((one) => one.closest(".MuiChip-root"));
+    // Tags keep the chip's own height; a cut-off one shows in full on hover.
+    expect(tag).toHaveStyle({ whiteSpace: "nowrap", textOverflow: "ellipsis" });
+  });
+
+  it("shows how a speaking actor joins and how loud it is as tags", () => {
     actorsData = cast([
       typedActor({
         id: "colleague",
@@ -683,30 +736,57 @@ describe("WorldActorsPanel", () => {
       }),
     ]);
     render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      screen.getByText(
-        "Heard nearby · Loudness automatic · May do: Nothing in the world · Comes in: From the start · If they do not answer: Nothing happens · In 2 scenarios",
-      ),
-    ).toBeInTheDocument();
+    for (const tag of [
+      "Heard nearby",
+      "Loudness automatic",
+      "From the start",
+      "In 2 scenarios",
+    ])
+      expect(screen.getByText(tag)).toBeInTheDocument();
+    expect(screen.queryByText("Acts in the world")).toBeNull();
   });
 
-  it("shows who can reach whom from each actor's reaches and when it comes in, once there is more than one actor", () => {
+  it("shows who can reach whom as a table, one row per actor, once there is more than one actor", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.queryByText("Who can reach whom")).toBeNull();
     actorsData = cast([
       { ...MANAGER, reaches: ["caller"], when_label: "When contacted" },
-      typedActor({ id: "caller", name: "Dana", side: "caller" }),
+      // Who reaches or brings in whom reads by person, since a role can be shared.
+      typedActor({
+        id: "caller",
+        name: "Dana",
+        role: "Customer",
+        side: "caller",
+        parent: "manager",
+      }),
     ]);
     const { container } = render(<WorldActorsPanel envId="env-2" />);
     expect(
       within(container).getByText("Who can reach whom"),
     ).toBeInTheDocument();
+    const table = within(container).getByRole("table");
     expect(
-      within(container).getByText("Its actions reach Dana"),
-    ).toBeInTheDocument();
-    expect(
-      within(container).getByText("Comes in: When contacted"),
-    ).toBeInTheDocument();
+      within(table)
+        .getAllByRole("columnheader")
+        .map((one) => one.textContent),
+    ).toEqual(["Actor", "Comes in", "Brought in by", "Its actions reach"]);
+    const [priya, dana] = within(table)
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) =>
+        within(row)
+          .getAllByRole("cell")
+          .map((one) => one.textContent),
+      );
+    expect(priya).toEqual([
+      "sales manager · Priya Raman",
+      "When contacted",
+      "—",
+      "Dana",
+    ]);
+    expect(dana[0]).toBe("Customer · Dana");
+    expect(dana[2]).toBe("Priya Raman");
+    expect(dana[3]).toBe("No other actor");
     expect(
       within(container).getByRole("button", { name: "Limits" }),
     ).toBeInTheDocument();
@@ -716,30 +796,33 @@ describe("WorldActorsPanel", () => {
   it("keeps limits typed but not saved when another change moves the cast", () => {
     const { rerender } = render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Limits" }));
-    fireEvent.change(screen.getByLabelText("How many at once on a call"), {
-      target: { value: "3" },
-    });
+    fireEvent.change(
+      screen.getByLabelText(starred("How many at once on a call")),
+      {
+        target: { value: "3" },
+      },
+    );
     actorsData = cast([MANAGER, typedActor({ id: "ops", name: "Ops" })], {
       revision: 4,
     });
     rerender(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByLabelText("How many at once on a call")).toHaveValue(
-      "3",
-    );
+    expect(
+      screen.getByLabelText(starred("How many at once on a call")),
+    ).toHaveValue("3");
   });
 
   it("says there is no caller only when the cast says so and has actors", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByText(/no caller record yet/)).toBeInTheDocument();
+    expect(screen.getByText(/no user record yet/)).toBeInTheDocument();
     actorsData = cast([]);
     const empty = render(<WorldActorsPanel envId="env-2" />);
     expect(
-      within(empty.container).queryByText(/no caller record yet/),
+      within(empty.container).queryByText(/no user record yet/),
     ).toBeNull();
     actorsData = cast([MANAGER], { has_caller: true });
     const withCaller = render(<WorldActorsPanel envId="env-3" />);
     expect(
-      within(withCaller.container).queryByText(/no caller record yet/),
+      within(withCaller.container).queryByText(/no user record yet/),
     ).toBeNull();
   });
 
@@ -747,7 +830,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" locked />);
     fireEvent.click(screen.getByText("What they see"));
     expect(
-      screen.getByText("What they want: Approve fast"),
+      screen.getByText("What they push for: Approve fast"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("What they know: The limit is 25%"),
@@ -771,33 +854,43 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([], { source: "saved", revision: 0 });
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Id"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
       target: { value: "manager" },
     });
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya" },
     });
-    fireEvent.click(screen.getByText("More details"));
     fireEvent.change(
-      screen.getByLabelText("Is done when (optional, one per line)"),
+      screen.getByLabelText(
+        starred("They give up when (optional, one per line)"),
+      ),
       { target: { value: "She has decided" } },
     );
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     fireEvent.change(
-      screen.getByLabelText("What they know (optional, one per line)"),
+      screen.getByLabelText(starred("What they know (optional, one per line)")),
       { target: { value: "The limit is 25%" } },
     );
     choose("Answers", "After a delay");
-    fireEvent.change(screen.getByLabelText("Seconds"), {
+    // A delay with its seconds cleared, which the server would take as none; Save asks for them.
+    fireEvent.change(screen.getByLabelText(starred("Seconds")), {
+      target: { value: "" },
+    });
+    refusesSave();
+    expect(
+      screen.getByLabelText(starred("Seconds")),
+    ).toHaveAccessibleDescription("Give the seconds, or 0 for no delay.");
+    fireEvent.change(screen.getByLabelText(starred("Seconds")), {
       target: { value: "5" },
     });
     fireEvent.mouseDown(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     );
     expect(screen.getByText("Approve a pending discount")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
     );
-    choose("Comes in", "When the agent calls an action");
+    comeIn("Joins partway", "When the agent calls an action");
     choose("The action", "crm.request_approval");
     fireEvent.click(saveButton());
     expect(sent()).toEqual({
@@ -820,7 +913,7 @@ describe("WorldActorsPanel", () => {
   it("shows the conflict the server finds before saving, and saves the action shared only once confirmed", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     expect(screen.queryByTestId("actor-permission-conflict")).toBeNull();
@@ -836,7 +929,7 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.mouseDown(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     );
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
@@ -845,8 +938,10 @@ describe("WorldActorsPanel", () => {
     expect(warning).toHaveTextContent(
       "crm.approve_discount is held only by Priya Raman today",
     );
-    expect(saveButton()).toBeDisabled();
-    fireEvent.click(within(warning).getByLabelText("Both should have it"));
+    refusesSave();
+    fireEvent.click(
+      within(warning).getByLabelText(starred("Both should have it")),
+    );
     fireEvent.click(saveButton());
     expect(sent().changes.permitted_actions).toEqual(["crm.approve_discount"]);
     expect(sent().shareActions).toEqual(["crm.approve_discount"]);
@@ -865,7 +960,7 @@ describe("WorldActorsPanel", () => {
     answer = heldBy("crm.approve_discount");
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     const field = screen.getByLabelText(
@@ -882,11 +977,11 @@ describe("WorldActorsPanel", () => {
     );
     expect(saveButton()).not.toBeDisabled();
     answer = heldBy("crm.approve_discount", "crm.request_approval");
-    fireEvent.mouseDown(field);
+    // The list stays open after a pick, so the next one is picked from it.
     fireEvent.click(
       screen.getByRole("option", { name: /crm.request_approval/ }),
     );
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
     expect(
       within(screen.getByTestId("actor-permission-conflict")).getByLabelText(
         "Both should have it",
@@ -897,11 +992,11 @@ describe("WorldActorsPanel", () => {
   it("shows no conflict when the server finds none", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     fireEvent.mouseDown(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     );
     fireEvent.click(
       screen.getByRole("option", { name: /crm.request_approval/ }),
@@ -913,30 +1008,87 @@ describe("WorldActorsPanel", () => {
     expect(sent().shareActions).toEqual([]);
   });
 
-  it("keeps Save off, saying Checking, until the server has answered for what the form holds", () => {
+  it("keeps Save on while checking; a click during the check waits on the button, then saves", () => {
     answer = undefined;
-    render(<WorldActorsPanel envId="env-1" />);
+    const { rerender } = render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
-    });
-    expect(saveButton()).toBeDisabled();
-    expect(screen.getByText("Checking…")).toBeInTheDocument();
-    answer = CLEAN;
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Lena K" },
     });
     expect(saveButton()).toBeEnabled();
     expect(screen.queryByText("Checking…")).toBeNull();
+    fireEvent.click(saveButton());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(within(saveButton()).getByRole("progressbar")).toBeInTheDocument();
+    // Leaving waits too, so the waiting save can't land behind the discard dialog.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(
+      screen.queryByRole("dialog", { name: /Discard changes/ }),
+    ).toBeNull();
+    answer = CLEAN;
+    rerender(<WorldActorsPanel envId="env-1" />);
+    expect(sent()).toMatchObject({ op: "create", changes: { name: "Lena" } });
   });
 
-  it("shows a server problem under its field and keeps Save off", () => {
+  it("closes an existing actor's form on Save when nothing really changed, sending nothing", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    const name = screen.getByLabelText(starred("Name"));
+    fireEvent.change(name, { target: { value: "Priya R." } });
+    fireEvent.change(name, { target: { value: "Priya Raman " } });
+    expect(saveButton()).toBeEnabled();
+    fireEvent.click(saveButton());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Save to draft" })).toBeNull();
+  });
+
+  it("shows a problem live on a field you changed and filled, and keeps empty required fields quiet until Save", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    answer = {
+      ...CLEAN,
+      problems: [{ field: "name", message: "Give them a name." }],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
+      target: { value: "Sales manager" },
+    });
+    expect(screen.queryByText("Give them a name.")).toBeNull();
+    answer = {
+      ...CLEAN,
+      problems: [
+        { field: "name", message: "Another actor is called Ops Lead." },
+      ],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
+      target: { value: "Ops Lead" },
+    });
+    expect(
+      screen.getByText("Another actor is called Ops Lead."),
+    ).toBeInTheDocument();
+    // Save stays open until its first click, which is the final check.
+    expect(saveButton()).toBeEnabled();
+    // Emptied again, a missing name waits for Save like any empty required field.
+    answer = {
+      ...CLEAN,
+      problems: [{ field: "name", message: "Give them a name." }],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
+      target: { value: "" },
+    });
+    expect(screen.queryByText("Give them a name.")).toBeNull();
+    expect(screen.queryByText("Checking…")).toBeNull();
+    fireEvent.click(saveButton());
+    expect(screen.getByText("Give them a name.")).toBeInTheDocument();
+  });
+
+  it("shows a server problem under its field and keeps Save off", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    addActor();
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
-    const wait = screen.getByLabelText("Waits, in seconds (optional)");
+    const wait = screen.getByLabelText(starred("Waits, in seconds (optional)"));
+    expect(wait).not.toBeVisible();
     answer = {
       ...CLEAN,
       problems: [
@@ -944,11 +1096,22 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.change(wait, { target: { value: "-5" } });
+    // An edited, filled field shows its problem live, and the fold opens itself so it shows under the field.
+    await settle();
+    expect(wait).toBeVisible();
     expect(screen.getByText("A wait is 0 seconds or more")).toBeInTheDocument();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
-    expect(saveButton()).toBeDisabled();
+    fireEvent.click(saveButton());
+    refusesSave();
+    // While the next answer is pending the fold stays open under the cursor.
+    answer = undefined;
+    fireEvent.change(wait, { target: { value: "-6" } });
+    await settle();
+    expect(wait).toBeVisible();
     answer = CLEAN;
     fireEvent.change(wait, { target: { value: "2.5" } });
+    await settle();
+    expect(wait).toBeVisible();
     expect(saveButton()).toBeEnabled();
     fireEvent.click(saveButton());
     expect(sent().changes.timeout_seconds).toBe(2.5);
@@ -964,24 +1127,25 @@ describe("WorldActorsPanel", () => {
       ...CLEAN,
       problems: [{ field: "id", message: "caller is kept by the environment" }],
     };
-    fireEvent.change(screen.getByLabelText("Id"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
       target: { value: "caller" },
     });
+    fireEvent.click(saveButton());
     expect(
       screen.getByText("caller is kept by the environment"),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("shows the id the server would give until one is typed, and sends none of its own", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    expect(screen.getByLabelText("Id")).toHaveValue("");
+    expect(screen.getByLabelText(starred("Id"))).toHaveValue("");
     answer = { ...CLEAN, suggested_id: "sam_lee_2" };
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Sam Lee" },
     });
-    expect(screen.getByLabelText("Id")).toHaveValue("sam_lee_2");
+    expect(screen.getByLabelText(starred("Id"))).toHaveValue("sam_lee_2");
     fireEvent.click(saveButton());
     expect(sent()).not.toHaveProperty("id");
   });
@@ -989,9 +1153,13 @@ describe("WorldActorsPanel", () => {
   it("sends no id when a typed id is cleared", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "x" } });
-    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
+      target: { value: "x" },
+    });
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Ravi Kumar" },
     });
     fireEvent.click(saveButton());
@@ -1001,37 +1169,53 @@ describe("WorldActorsPanel", () => {
   it("will not save an actor the server says is too long, and says by how much", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
     answer = { ...CLEAN, over_by: 4200 };
     fireEvent.change(
-      screen.getByLabelText("What they know (optional, one per line)"),
+      screen.getByLabelText(starred("What they know (optional, one per line)")),
       { target: { value: "a long fact" } },
     );
+    fireEvent.click(saveButton());
     expect(
       screen.getByText(/4,200 characters too long to save/),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
-  it("keeps the details a run does not read yet folded under More details", () => {
+  it("keeps the working settings folded under Advanced settings, with Pressure and How they behave always on screen", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    expect(
-      screen.getByLabelText("What they know (optional, one per line)"),
-    ).toBeVisible();
-    expect(
-      screen.getByLabelText("What they want (optional)"),
-    ).not.toBeVisible();
-    fireEvent.click(screen.getByText("More details"));
-    expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
-    expect(
-      screen.getByText(
-        /Given to them as background whenever they speak or decide in the moment/,
-      ),
-    ).toBeVisible();
+    const always = [
+      "What they know (optional, one per line)",
+      "What they push for (optional)",
+      "They give up when (optional, one per line)",
+      "How they behave (optional)",
+    ];
+    const folded = [
+      "Records they can read (optional)",
+      "Answers",
+      "How they act in the world",
+      "Waits, in seconds (optional)",
+      "If they do not answer",
+      "May agree to (optional, one per line)",
+    ];
+    for (const label of always)
+      expect(screen.getByLabelText(starred(label))).toBeVisible();
+    for (const label of folded)
+      expect(screen.getByLabelText(starred(label))).not.toBeVisible();
+    expect(screen.getByText("Pressure")).toBeVisible();
+    const [pressureHelp] = screen.getAllByText(
+      /Given to them as background whenever they speak or decide in the moment/,
+    );
+    expect(pressureHelp).toBeVisible();
+    // "Brought in by" sits in the fold, so its note stays there.
+    expect(pressureHelp).not.toHaveTextContent(/Brought in by/);
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    for (const label of folded)
+      expect(screen.getByLabelText(starred(label))).toBeVisible();
     expect(screen.queryByText(/not used by runs/)).toBeNull();
   });
 
@@ -1039,24 +1223,26 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    expect(screen.getByLabelText("Role (optional)")).toBeInTheDocument();
-    choose("How they join the conversation", "Heard nearby");
-    expect(screen.getByLabelText("Role")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(starred("Role (optional)")),
+    ).toBeInTheDocument();
+    choose("How they take part", "Heard nearby");
+    expect(screen.getByLabelText(starred("Role"))).toBeInTheDocument();
     expect(screen.getByText("a voice near the person")).toBeInTheDocument();
   });
 
   it("adds an actor who speaks with a channel and its loudness, and every other field too", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    addActor("On the caller's side");
+    addActor();
     expect(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     ).toBeInTheDocument();
-    choose("How they join the conversation", "Heard nearby");
-    fireEvent.change(screen.getByLabelText("Id"), {
+    choose("How they take part", "Heard nearby");
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
       target: { value: "colleague" },
     });
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Jordan" },
     });
     const automatic = screen.getByRole("checkbox", {
@@ -1065,13 +1251,13 @@ describe("WorldActorsPanel", () => {
     expect(automatic).toBeChecked();
     fireEvent.click(automatic);
     expect(screen.getByRole("slider")).toHaveValue("0.5");
-    expect(screen.getByText("50% of the caller's voice")).toBeInTheDocument();
+    expect(screen.getByText("50% of the user's voice")).toBeInTheDocument();
     choose("Gender", "Female");
     choose("Age", "60+");
     fireEvent.click(saveButton());
     expect(sent().id).toBe("colleague");
     expect(sent().changes).toEqual({
-      side: "caller",
+      side: "world",
       name: "Jordan",
       channel: "audio_mix",
       loudness_ratio: 0.5,
@@ -1083,8 +1269,8 @@ describe("WorldActorsPanel", () => {
   it("offers loudness only on a channel the cast says has one", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    addActor("On the caller's side");
-    choose("How they join the conversation", "Takes the phone");
+    addActor();
+    choose("How they take part", "Takes the phone");
     expect(screen.queryByText(/Automatic: each call picks/)).toBeNull();
   });
 
@@ -1101,7 +1287,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     // A stored age the server no longer offers still reads as stored.
-    expect(screen.getByLabelText("Age")).toHaveTextContent("32-40");
+    expect(screen.getByLabelText(starred("Age"))).toHaveTextContent("32-40");
     choose("Accent", "Indian");
     fireEvent.click(saveButton());
     expect(sent()).toMatchObject({
@@ -1131,9 +1317,9 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.click(screen.getByText("More details"));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     choose("Brought in by (optional)", "Jordan Taylor");
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Sam" },
     });
     fireEvent.click(saveButton());
@@ -1145,15 +1331,15 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Raman" },
     });
-    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "store manager" },
     });
     fireEvent.click(saveButton());
     addActor();
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue("");
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue("");
   });
 
   it("sends only the name when only the name is edited", () => {
@@ -1168,7 +1354,7 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya R." },
     });
     fireEvent.click(saveButton());
@@ -1179,17 +1365,6 @@ describe("WorldActorsPanel", () => {
       shareActions: [],
       changes: { name: "Priya R." },
     });
-  });
-
-  it("keeps Save off for an existing actor until something really changes", () => {
-    render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(saveButton()).toBeDisabled();
-    const name = screen.getByLabelText("Name");
-    fireEvent.change(name, { target: { value: "Priya R." } });
-    expect(saveButton()).not.toBeDisabled();
-    fireEvent.change(name, { target: { value: "Priya Raman " } });
-    expect(saveButton()).toBeDisabled();
   });
 
   it("names how an actor comes in as the server says, and going back to it in Comes in is no change", async () => {
@@ -1204,19 +1379,19 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      screen.getByText(/Comes in: 30 s after the start/),
-    ).toBeInTheDocument();
+    expect(screen.getByText("30 s after the start")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
-      "At a set time",
+    expect(screen.getByLabelText(starred("Comes in"))).toHaveTextContent(
+      "At a set moment",
     );
-    expect(screen.getByLabelText("Seconds after the start")).toHaveValue(30);
-    choose("Comes in", "When the agent contacts them");
+    expect(
+      screen.getByLabelText(starred("Seconds after the start")),
+    ).toHaveValue(30);
+    comeIn("When the agent contacts them");
     expect(saveButton()).not.toBeDisabled();
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
-    choose("Comes in", "At a set time");
-    expect(saveButton()).toBeDisabled();
+    comeIn("At a set moment");
+    refusesSave();
   });
 
   it("keeps a trigger the form cannot make by the server's words, until another is picked", () => {
@@ -1233,17 +1408,17 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+    expect(screen.getByLabelText(starred("Comes in"))).toHaveTextContent(
       "In about 25% of calls",
     );
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya R." },
     });
     fireEvent.click(saveButton());
     expect(sent().changes).toEqual({ name: "Priya R." });
   });
 
-  it("shows the server's problem with how an actor comes in under Comes in", async () => {
+  it("shows the server's problem with how an actor comes in under the trigger input left empty", async () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     answer = {
@@ -1252,36 +1427,78 @@ describe("WorldActorsPanel", () => {
         { field: "trigger", message: "Pick the action that brings them in" },
       ],
     };
-    choose("Comes in", "When the agent calls an action");
-    expect(saveButton()).toBeDisabled();
+    comeIn("Joins partway", "When the agent calls an action");
+    fireEvent.click(saveButton());
+    refusesSave();
+    // The trigger's own empty input carries the problem, not Comes in.
     expect(
-      screen.getByText("Pick the action that brings them in"),
-    ).toBeInTheDocument();
+      screen.getByLabelText(starred("The action")),
+    ).toHaveAccessibleDescription("Pick the action that brings them in");
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(
+      screen.getByLabelText(starred("Comes in")),
+    ).not.toHaveAccessibleDescription("Pick the action that brings them in");
     answer = CLEAN;
     choose("The action", "crm.approve_discount");
     expect(saveButton()).not.toBeDisabled();
   });
 
+  it("keeps a field that appears after Save quiet until the next Save", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    answer = {
+      ...CLEAN,
+      problems: [
+        { field: "trigger", message: "Pick the action that brings them in" },
+      ],
+    };
+    comeIn("Joins partway", "When the agent calls an action");
+    fireEvent.click(saveButton());
+    expect(
+      screen.getByText("Pick the action that brings them in"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    answer = {
+      ...CLEAN,
+      problems: [
+        { field: "trigger", message: "Give the seconds after the start" },
+      ],
+    };
+    comeIn("At a set moment");
+    expect(
+      screen.getByLabelText(starred("Seconds after the start")),
+    ).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("Give the seconds after the start")).toBeNull();
+    fireEvent.click(saveButton());
+    expect(
+      screen.getByLabelText(starred("Seconds after the start")),
+    ).toHaveAccessibleDescription("Give the seconds after the start");
+  });
+
   it("keeps the form open and Save off while the record match is half-typed JSON, and asks the server nothing", () => {
+    actorsData = cast([MANAGER], { knowledge_sources: WITH_RECORDS });
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
-    choose("Comes in", "Once a record exists");
-    fireEvent.change(screen.getByLabelText("Matching (optional)"), {
+    comeIn("Joins partway", "Once a record exists");
+    fireEvent.change(screen.getByLabelText(starred("Matching (optional)")), {
       target: { value: '{"status": ' },
     });
     expect(asked).toBeNull();
-    expect(screen.getByLabelText("Matching (optional)")).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    expect(
+      screen.getByLabelText(starred("Matching (optional)")),
+    ).toBeInTheDocument();
+    refusesSave();
   });
 
   it("sends a cap as typed, the server saying when it is not a whole number", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    const cap = screen.getByLabelText("Most turns in a call (optional)");
+    const cap = screen.getByLabelText(
+      starred("Most turns in a call (optional)"),
+    );
     answer = {
       ...CLEAN,
       problems: [
@@ -1289,7 +1506,8 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.change(cap, { target: { value: "2.7" } });
-    expect(saveButton()).toBeDisabled();
+    fireEvent.click(saveButton());
+    refusesSave();
     expect(
       screen.getByText("A whole number above 0, or empty"),
     ).toBeInTheDocument();
@@ -1307,26 +1525,30 @@ describe("WorldActorsPanel", () => {
       ...CLEAN,
       problems: [{ field: "max_lines", message: "max_lines must be above 0" }],
     };
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya R." },
     });
+    fireEvent.click(saveButton());
     expect(screen.getByTestId("actor-problems")).toHaveTextContent(
       "max_lines must be above 0",
     );
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("never crashes on a record match of only spaces, and sends it as no match", () => {
+    actorsData = cast([MANAGER], { knowledge_sources: WITH_RECORDS });
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
-    choose("Comes in", "Once a record exists");
-    fireEvent.change(screen.getByLabelText("Matching (optional)"), {
+    comeIn("Joins partway", "Once a record exists");
+    fireEvent.change(screen.getByLabelText(starred("Matching (optional)")), {
       target: { value: "   " },
     });
-    expect(screen.getByLabelText("Matching (optional)")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(starred("Matching (optional)")),
+    ).toBeInTheDocument();
     expect(asked.changes.trigger.where).toEqual({});
   });
 
@@ -1346,14 +1568,16 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit Priya Raman" }));
-    expect(screen.getByLabelText("Kind (optional)")).toHaveTextContent("robot");
-    expect(screen.getByLabelText("If they do not answer")).toHaveTextContent(
-      "Jordan answers instead",
+    expect(screen.getByLabelText(starred("Kind (optional)"))).toHaveTextContent(
+      "robot",
     );
-    expect(screen.getByLabelText("Brought in by (optional)")).toHaveTextContent(
-      "Jordan",
-    );
-    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+    expect(
+      screen.getByLabelText(starred("If they do not answer")),
+    ).toHaveTextContent("Jordan answers instead");
+    expect(
+      screen.getByLabelText(starred("Brought in by (optional)")),
+    ).toHaveTextContent("Jordan");
+    expect(screen.getByLabelText(starred("Comes in"))).toHaveTextContent(
       "Present from the start",
     );
   });
@@ -1361,9 +1585,9 @@ describe("WorldActorsPanel", () => {
   it("offers a fallback action's arguments only when the fallback picked is one of the actor's actions", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(screen.queryByLabelText("Taken with (JSON)")).toBeNull();
+    expect(screen.queryByLabelText(starred("Taken with (JSON)"))).toBeNull();
     choose("If they do not answer", "crm.approve_discount is taken for them");
-    fireEvent.change(screen.getByLabelText("Taken with (JSON)"), {
+    fireEvent.change(screen.getByLabelText(starred("Taken with (JSON)")), {
       target: { value: '{"set": {"status": "declined"}}' },
     });
     fireEvent.click(saveButton());
@@ -1371,6 +1595,19 @@ describe("WorldActorsPanel", () => {
       fallback: "crm.approve_discount",
       fallback_arguments: { set: { status: "declined" } },
     });
+  });
+
+  it("keeps the fold open while the fallback arguments are not valid JSON", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    choose("If they do not answer", "crm.approve_discount is taken for them");
+    const taken = screen.getByLabelText(starred("Taken with (JSON)"));
+    fireEvent.change(taken, { target: { value: "{not json" } });
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    await settle();
+    expect(taken).toBeVisible();
+    refusesSave();
   });
 
   it("shows a loading and a failed view inside the row, with a retry", () => {
@@ -1452,7 +1689,7 @@ describe("WorldActorsPanel", () => {
       screen.getByText("In 2 scenarios, so how they join stays as it is."),
     ).toBeInTheDocument();
     expect(
-      screen.getByLabelText("How they join the conversation"),
+      screen.getByLabelText(starred("How they take part")),
     ).toHaveAttribute("aria-disabled", "true");
   });
 
@@ -1504,20 +1741,23 @@ describe("WorldActorsPanel", () => {
   });
 
   it("still asks when an existing value was emptied and then folded away", async () => {
-    actorsData = cast([{ ...MANAGER, goal: "Approve refunds" }]);
+    const LABEL = "May agree to (optional, one per line)";
+    actorsData = cast([
+      {
+        ...MANAGER,
+        constraints: { ...MANAGER.constraints, may_agree: ["Up to 20%"] },
+      },
+    ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    const more = screen.getByRole("button", { name: /more details/i });
-    fireEvent.click(more);
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "What they want (optional)" }),
-      { target: { value: "" } },
-    );
-    fireEvent.click(more);
+    const fold = screen.getByRole("button", { name: /advanced settings/i });
+    fireEvent.click(fold);
+    fireEvent.change(screen.getByRole("textbox", { name: LABEL }), {
+      target: { value: "" },
+    });
+    fireEvent.click(fold);
     await waitFor(() =>
-      expect(
-        screen.queryByRole("textbox", { name: "What they want (optional)" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("textbox", { name: LABEL })).toBeNull(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(
@@ -1525,9 +1765,45 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the role as the main label and the name as who they speak as", () => {
+    actorsData = cast([
+      MANAGER,
+      typedActor({ id: "caller", name: "Dana", role: "", side: "caller" }),
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    const title = (text) =>
+      screen.getByText(
+        (_, el) => el?.tagName === "P" && el.textContent === text,
+      );
+    expect(title("sales manager · speaks as Priya Raman")).toBeInTheDocument();
+    expect(title("Dana")).toBeInTheDocument();
+  });
+
+  it("lists several people in one role under that role, each by name", () => {
+    actorsData = cast([
+      MANAGER,
+      typedActor({ id: "sam", name: "Sam Rivera", role: "Sales  Manager" }),
+      typedActor({ id: "lee", name: "Lee", role: "Fraud desk" }),
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    const text = (value) =>
+      screen.getByText(
+        (_, el) => el?.tagName === "P" && el.textContent === value,
+      );
+    expect(text("sales manager · 2 people")).toBeInTheDocument();
+    expect(text("Priya Raman")).toBeInTheDocument();
+    expect(text("Sam Rivera")).toBeInTheDocument();
+    // A role with one person keeps its own row, above the groups, so no group is followed by a row outside it.
+    const lone = text("Fraud desk · speaks as Lee");
+    expect(
+      lone.compareDocumentPosition(text("sales manager · 2 people")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("offers the full name in a tooltip only when it is cut off", async () => {
     render(<WorldActorsPanel envId="env-1" locked />);
-    const name = screen.getByText(/Priya Raman/);
+    const name = screen.getByText("sales manager");
     fireEvent.mouseEnter(name);
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(screen.queryByRole("tooltip")).toBeNull();
@@ -1664,9 +1940,28 @@ describe("WorldActorsPanel", () => {
       expect.any(Object),
     );
     fireEvent.click(within(block).getByRole("button", { name: "Edit actor" }));
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "sales manager",
     );
+  });
+
+  it("offers Add actor for a point no actor owns, opening the form straight away", () => {
+    actorsData = cast([MANAGER], {
+      unresolved: [
+        {
+          policy: "Refunds above $500 need finance",
+          why: "no actor owns the finance decision",
+          actor: null,
+        },
+      ],
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const block = screen.getByTestId("needs-decision");
+    fireEvent.click(within(block).getByRole("button", { name: "Add actor" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(
+      screen.getByText("Added to this environment's draft"),
+    ).toBeInTheDocument();
   });
 
   it("shows no decision block when nothing is waiting", () => {

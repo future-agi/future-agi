@@ -1,20 +1,14 @@
 import PropTypes from "prop-types";
-import ActorField from "./ActorField";
+import ActorField, { ActorFieldView } from "./ActorField";
 import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
-import {
-  KEPT,
-  fallbackActs,
-  fallbackKey,
-  parsedArguments,
-  whereProblem,
-  words,
-} from "./actorUtils";
+import { KEPT, presetOf, presetsFor, whereProblem, words } from "./actorUtils";
 
 const F = ACTORS_COPY.worldActors.form;
 
-// The trigger kinds the chosen way of joining offers and the cast's labels for them; only the inputs the picked kind
-// takes (`triggerKeys`) show.
+// Comes in is a join preset over the trigger kinds the chosen way of joining offers; a preset covering several asks
+// which one. Only the inputs the picked kind takes (`triggerKeys`) show. Waits and the fallback are in
+// ActorFallbackFields.
 export default function ActorTriggerFields({
   form,
   actor,
@@ -22,8 +16,6 @@ export default function ActorTriggerFields({
   triggerKeys,
   actionIds,
   collections,
-  fallbackWords,
-  others,
 }) {
   const { initial } = form;
   const takes = (key) => triggerKeys.includes(key);
@@ -33,69 +25,129 @@ export default function ActorTriggerFields({
       ? actor.when_label
       : triggerOptions.find((one) => one.value === initial.mode)?.label ||
         words(initial.mode);
-  const fallbackOptions = [
-    ...fallbackWords.map((one) => ({
-      value: fallbackKey({ kind: one.value, value: one.value }),
-      label: one.label,
-    })),
-    ...form.value("permitted").map((id) => ({
-      value: fallbackKey({ kind: "action", value: id }),
-      label: F.takesAction(id),
-    })),
-    ...others.map((one) => ({
-      value: fallbackKey({ kind: "actor", value: one.id }),
-      label: F.answeredBy(one.name || one.id),
-    })),
-  ];
-  const acts = fallbackActs(form.value("fallback"));
-  const argumentsWrong =
-    acts && parsedArguments(form.value("fallback_arguments")) === null
-      ? F.fallbackArgumentsWrong
-      : "";
   const where = takes("where") ? whereProblem(form.value("triggerWhere")) : "";
+  const presets = presetsFor(triggerOptions);
+  const mode = form.value("mode");
+  const current = presets.find((one) => one.id === presetOf(mode, presets));
+  const several = Boolean(current) && current.kinds.length > 1;
+  // Ways in this environment can't use, each with why: there is nothing for them to name.
+  const missing = {
+    ...(actionIds.length ? {} : { on_tool: F.kindNoActions }),
+    ...(collections.length ? {} : { conditional: F.kindNoCollections }),
+  };
+  const usable = (preset) => preset.kinds.filter((kind) => !missing[kind]);
+  // Picking a preset keeps the way already picked inside it, else the stored one, else its first usable one.
+  const choosePreset = (id) => {
+    if (id === KEPT) {
+      form.put("mode", KEPT);
+      return;
+    }
+    const next = presets.find((one) => one.id === id);
+    if (!next || next.kinds.includes(mode)) return;
+    const ways = usable(next);
+    form.put("mode", ways.includes(initial.mode) ? initial.mode : ways[0]);
+  };
+  // "Comes in" is worked out from the trigger kind, so it is not a form value of its own.
+  const presetForm = {
+    ...form,
+    initial: { ...initial, preset: presetOf(initial.mode, presets) },
+    // With a second select, a problem with how they come in shows under that one.
+    problems: several
+      ? form.problems
+      : { ...form.problems, preset: form.problems.mode },
+  };
   const field = (name, label, extra = {}) => (
     <ActorField form={form} name={name} label={label} {...extra} />
   );
   return (
     <>
-      {field("mode", F.trigger, {
-        options: triggerOptions,
-        helperText: F.triggerHelp,
-        startLabel: startModeLabel,
-      })}
+      <ActorFieldView
+        form={presetForm}
+        name="preset"
+        value={presetOf(mode, presets)}
+        onChange={(event) => choosePreset(event.target.value)}
+        label={F.trigger}
+        options={presets.map((one) => ({
+          value: one.id,
+          label: one.label || F.presets[one.id],
+          ...(usable(one).length
+            ? {}
+            : {
+                disabled: true,
+                note: [...new Set(one.kinds.map((kind) => missing[kind]))].join(
+                  ". ",
+                ),
+              }),
+        }))}
+        helperText={F.triggerHelp}
+        startLabel={startModeLabel}
+      />
+      {several && (
+        <ActorField
+          // The stored way is listed here only when it belongs to this preset.
+          form={{
+            ...form,
+            initial: {
+              ...initial,
+              mode: current.kinds.includes(initial.mode) ? initial.mode : "",
+            },
+          }}
+          name="mode"
+          label={F.presetWay}
+          options={triggerOptions
+            .filter((one) => current.kinds.includes(one.value))
+            .map((one) =>
+              missing[one.value]
+                ? { ...one, disabled: true, note: missing[one.value] }
+                : one,
+            )}
+        />
+      )}
+      {takes("p") &&
+        field("triggerChance", F.triggerChance, {
+          required: true,
+          type: "number",
+          helperText: F.triggerChanceHelp,
+          inputProps: { min: 1, max: 100, step: 1 },
+        })}
       {takes("tool") &&
         field("triggerTool", F.triggerTool, {
+          required: true,
+          disabled: actionIds.length === 0,
+          ...(actionIds.length ? {} : { helperText: F.triggerToolNone }),
           options: actionIds.map((id) => ({ value: id, label: id })),
           startLabel: initial.triggerTool,
         })}
       {takes("on_call") &&
-        field("triggerOnCall", F.triggerOnCall, {
+        field("triggerCall", F.triggerCall, {
           type: "number",
-          helperText: F.triggerOnCallHelp,
+          helperText: F.triggerCallHelp,
           inputProps: { min: 1, step: 1 },
-        })}
-      {takes("p") &&
-        field("triggerChance", F.triggerChance, {
-          type: "number",
-          helperText: F.triggerChanceHelp,
-          inputProps: { min: 0, max: 100 },
         })}
       {takes("words") &&
         field("triggerWords", F.triggerWords, {
+          required: true,
           helperText: F.triggerWordsHelp,
         })}
       {takes("turn") &&
         field("triggerTurn", F.triggerTurn, {
+          required: true,
           type: "number",
           inputProps: { min: 1 },
         })}
       {takes("seconds") &&
         field("triggerSeconds", F.triggerSeconds, {
+          required: true,
           type: "number",
           inputProps: { min: 0 },
         })}
       {takes("collection") &&
         field("triggerCollection", F.triggerCollection, {
+          required: true,
+          disabled: collections.length === 0,
+          ...(collections.length
+            ? {}
+            : { helperText: F.triggerCollectionNone }),
           options: collections.map((one) => ({ value: one, label: one })),
           startLabel: initial.triggerCollection,
         })}
@@ -103,20 +155,6 @@ export default function ActorTriggerFields({
         field("triggerWhere", F.triggerWhere, {
           error: Boolean(where),
           helperText: where || F.triggerWhereHelp,
-        })}
-      {field("timeout", F.timeout, {
-        type: "number",
-        helperText: F.timeoutHelp,
-        inputProps: { min: 0 },
-      })}
-      {field("fallback", F.fallback, {
-        options: fallbackOptions,
-        startLabel: actor.fallback.label,
-      })}
-      {acts &&
-        field("fallback_arguments", F.fallbackArguments, {
-          error: Boolean(argumentsWrong || form.problems.fallback_arguments),
-          helperText: argumentsWrong || F.fallbackArgumentsHelp,
         })}
     </>
   );
@@ -132,9 +170,4 @@ ActorTriggerFields.propTypes = {
   triggerKeys: PropTypes.arrayOf(PropTypes.string).isRequired,
   actionIds: PropTypes.arrayOf(PropTypes.string).isRequired,
   collections: PropTypes.arrayOf(PropTypes.string).isRequired,
-  // Fallbacks that are neither an action nor an actor.
-  fallbackWords: OPTIONS_SHAPE.isRequired,
-  others: PropTypes.arrayOf(
-    PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }),
-  ).isRequired,
 };

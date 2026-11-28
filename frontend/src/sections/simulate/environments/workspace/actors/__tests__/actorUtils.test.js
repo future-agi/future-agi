@@ -4,6 +4,7 @@ import {
   changesOf,
   fallbackActs,
   fallbackKey,
+  groupsByRole,
   hasEdits,
   initialFields,
   parsedArguments,
@@ -106,8 +107,12 @@ describe("changesOf", () => {
   });
 
   it("sends the trigger only when how they come in really changes, built from its own fields", () => {
-    expect(changesOf(MANAGER, { triggerSeconds: "30" }, TRIGGER_FIELDS)).toEqual({});
-    expect(changesOf(MANAGER, { triggerSeconds: "45" }, TRIGGER_FIELDS)).toEqual({
+    expect(
+      changesOf(MANAGER, { triggerSeconds: "30" }, TRIGGER_FIELDS),
+    ).toEqual({});
+    expect(
+      changesOf(MANAGER, { triggerSeconds: "45" }, TRIGGER_FIELDS),
+    ).toEqual({
       trigger: { kind: "after_seconds", seconds: 45 },
     });
     expect(
@@ -146,39 +151,36 @@ describe("changesOf", () => {
     });
   });
 
-  it("makes a chance from a percent, and reads a stored one back as a percent", () => {
-    expect(
-      changesOf(
-        NEW("world"),
-        { mode: "probability", triggerChance: "25" },
-        TRIGGER_FIELDS,
-      ).trigger,
-    ).toEqual({ kind: "probability", p: 0.25 });
-    const chance = typedActor({ trigger: { kind: "probability", p: 0.07 } });
-    expect(initialFields(chance).triggerChance).toBe(7);
-    expect(changesOf(chance, { triggerChance: "50" }, TRIGGER_FIELDS)).toEqual({
-      trigger: { kind: "probability", p: 0.5 },
+  it("sends a chance as a share and which call of the action only when given, as the cast's fields ask", () => {
+    const FIELDS = {
+      ...TRIGGER_FIELDS,
+      on_tool: ["tool", "on_call"],
+      probability: ["p"],
+    };
+    const chance = typedActor({
+      id: "lead",
+      trigger: { kind: "probability", p: 0.29 },
     });
-  });
-
-  it("keeps a later call of an action when the action is changed, and leaves an emptied call out", () => {
+    expect(initialFields(chance).triggerChance).toBe("29");
+    expect(changesOf(chance, { triggerChance: "29" }, FIELDS)).toEqual({});
+    expect(changesOf(chance, { triggerChance: "33.3" }, FIELDS)).toEqual({
+      trigger: { kind: "probability", p: 0.333 },
+    });
+    // Over 100% is left out, so the server asks for a chance in percent.
+    expect(changesOf(chance, { triggerChance: "150" }, FIELDS)).toEqual({
+      trigger: { kind: "probability" },
+    });
     const second = typedActor({
+      id: "ops",
       trigger: { kind: "on_tool", tool: "crm.approve", on_call: 2 },
     });
-    expect(initialFields(second).triggerOnCall).toBe(2);
-    expect(
-      changesOf(second, { triggerTool: "crm.reject" }, TRIGGER_FIELDS),
-    ).toEqual({ trigger: { kind: "on_tool", tool: "crm.reject", on_call: 2 } });
-    expect(changesOf(second, { triggerOnCall: "" }, TRIGGER_FIELDS)).toEqual({
-      trigger: { kind: "on_tool", tool: "crm.approve" },
+    expect(initialFields(second).triggerCall).toBe(2);
+    expect(changesOf(second, { triggerTool: "crm.other" }, FIELDS)).toEqual({
+      trigger: { kind: "on_tool", tool: "crm.other", on_call: 2 },
     });
-    expect(
-      changesOf(
-        NEW("world"),
-        { mode: "on_tool", triggerTool: "crm.approve", triggerOnCall: "3" },
-        TRIGGER_FIELDS,
-      ).trigger,
-    ).toEqual({ kind: "on_tool", tool: "crm.approve", on_call: 3 });
+    // Blank is the first call, which the server reads from the key being left out.
+    const blank = changesOf(second, { triggerCall: "" }, FIELDS).trigger;
+    expect(Object.keys(blank)).toEqual(["kind", "tool"]);
   });
 
   it("keeps a trigger the form cannot make, as the cast marks it, until another way is picked", () => {
@@ -238,10 +240,7 @@ describe("changesOf", () => {
   it("sends a new actor only what was set, with the side it was added on", () => {
     expect(changesOf(NEW("caller"), {})).toEqual({ side: "caller" });
     expect(
-      changesOf(
-        NEW("world"),
-        { name: "Sam", timing: "delayed", seconds: "5" },
-      ),
+      changesOf(NEW("world"), { name: "Sam", timing: "delayed", seconds: "5" }),
     ).toEqual({
       side: "world",
       name: "Sam",
@@ -275,5 +274,57 @@ describe("withStart", () => {
       { value: "robot", label: "Robot" },
     ]);
     expect(withStart(options, "")).toBe(options);
+  });
+});
+
+describe("groupsByRole", () => {
+  const one = (id, role) => typedActor({ id, name: id, role });
+  const shape = (cast) =>
+    groupsByRole(cast).map((group) => [
+      group.role,
+      group.actors.map((actor) => actor.id),
+    ]);
+
+  it("groups a role however its case and spacing are typed, under the role as first written, in cast order", () => {
+    expect(
+      shape([
+        one("priya", " Sales  manager"),
+        one("dana", "Fraud desk"),
+        one("sam", "SALES MANAGER"),
+        one("lee", "sales manager "),
+        one("ana", "Sales\tManager\n"),
+      ]),
+    ).toEqual([
+      ["Sales manager", ["priya", "sam", "lee", "ana"]],
+      ["Fraud desk", ["dana"]],
+    ]);
+  });
+
+  it("never puts actors without a role together, however the role is missing", () => {
+    expect(
+      shape([
+        one("a", ""),
+        one("b", "   "),
+        one("c", null),
+        one("d", undefined),
+      ]),
+    ).toEqual([
+      [null, ["a"]],
+      [null, ["b"]],
+      [null, ["c"]],
+      [null, ["d"]],
+    ]);
+  });
+
+  it("keeps roles that only look alike apart: a typo, a plural, other punctuation or extra words", () => {
+    expect(
+      shape([
+        one("a", "Sales manager"),
+        one("b", "Saless manager"),
+        one("c", "Sales managers"),
+        one("d", "Sales-manager"),
+        one("e", "Senior sales manager"),
+      ]).map(([, ids]) => ids.length),
+    ).toEqual([1, 1, 1, 1, 1]);
   });
 });

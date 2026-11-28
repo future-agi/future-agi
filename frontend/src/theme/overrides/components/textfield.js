@@ -154,6 +154,9 @@ export function textField(theme) {
         inputSizeSmall: {
           padding: "4px 10px",
         },
+        // A multi-line box adds none of MUI's own padding, so its text keeps the
+        // input padding above and starts where a single-line field's does.
+        multiline: { padding: 0 },
         // No notch: the label lives above the field, so the border runs
         // unbroken.
         notchedOutline: {

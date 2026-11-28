@@ -8,9 +8,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import ActorField from "./ActorField";
+import { useController } from "react-hook-form";
 import { ACTORS_COPY } from "./actors.constants";
-import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
+import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
 
@@ -21,9 +21,9 @@ export default function ActorActionFields({
   conflicts,
   shareConfirmed,
   onShare,
-  plays,
 }) {
-  const permitted = form.value("permitted");
+  const { field } = useController({ name: "permitted" });
+  const permitted = field.value;
   const problem = form.problems.permitted;
   const describe = (id) =>
     actions.find((one) => one.action === id)?.description || "";
@@ -31,6 +31,7 @@ export default function ActorActionFields({
     <>
       <Autocomplete
         multiple
+        disableCloseOnSelect
         size="small"
         options={actions.map((one) => one.action)}
         value={permitted}
@@ -82,13 +83,6 @@ export default function ActorActionFields({
           />
         </Alert>
       )}
-      <ActorField
-        form={form}
-        name="play"
-        label={F.play}
-        options={plays}
-        helperText={F.playHelp}
-      />
     </>
   );
 }
@@ -114,5 +108,4 @@ ActorActionFields.propTypes = {
   shareConfirmed: PropTypes.bool,
   // (checked)
   onShare: PropTypes.func.isRequired,
-  plays: OPTIONS_SHAPE.isRequired,
 };

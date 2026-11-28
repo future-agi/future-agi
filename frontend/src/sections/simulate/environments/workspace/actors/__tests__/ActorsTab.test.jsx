@@ -63,7 +63,13 @@ describe("ActorsTab", () => {
       />,
     );
     expect(screen.getByText("Actors (1)")).toBeInTheDocument();
-    expect(screen.getByText(/a friend with the caller/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent === "a friend with the caller · speaks as Rowan",
+      ),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Heard nearby · Female · 25-32 · In 2 scenarios"),
     ).toBeInTheDocument();

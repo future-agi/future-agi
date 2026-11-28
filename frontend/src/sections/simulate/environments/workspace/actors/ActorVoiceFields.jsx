@@ -31,14 +31,7 @@ export default function ActorVoiceFields({ form, options, loudness }) {
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
         {F.voiceHelp}
       </Typography>
-      {loudness && (
-        <ActorLoudness
-          value={form.value("loudness_ratio")}
-          bounds={loudness}
-          problem={form.problems.loudness_ratio}
-          onChange={(next) => form.put("loudness_ratio", next)}
-        />
-      )}
+      {loudness && <ActorLoudness form={form} bounds={loudness} />}
     </>
   );
 }

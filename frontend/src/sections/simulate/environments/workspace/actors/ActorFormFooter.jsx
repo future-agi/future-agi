@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { Alert, Button, Stack, Typography } from "@mui/material";
+import LoadingButton from "@mui/lab/LoadingButton";
 import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
 
@@ -10,9 +11,8 @@ export default function ActorFormFooter({
   problems,
   overBy,
   check,
-  checking,
-  canSave,
   busy,
+  saving,
   onCancel,
   onSave,
 }) {
@@ -64,28 +64,17 @@ export default function ActorFormFooter({
           borderColor: "divider",
         }}
       >
-        {checking && (
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.secondary",
-              alignSelf: "center",
-            }}
-          >
-            {F.checking}
-          </Typography>
-        )}
         <Button onClick={onCancel} disabled={busy}>
           {F.cancel}
         </Button>
-        <Button
+        <LoadingButton
           variant="contained"
           color="primary"
-          disabled={!canSave}
+          loading={saving}
           onClick={onSave}
         >
           {F.save}
-        </Button>
+        </LoadingButton>
       </Stack>
     </>
   );
@@ -103,9 +92,9 @@ ActorFormFooter.propTypes = {
     error: PropTypes.object,
     retry: PropTypes.func,
   }).isRequired,
-  checking: PropTypes.bool,
-  canSave: PropTypes.bool,
   busy: PropTypes.bool,
+  // Saving, or waiting for a check still running when Save was clicked.
+  saving: PropTypes.bool,
   onCancel: PropTypes.func,
   onSave: PropTypes.func,
 };

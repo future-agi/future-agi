@@ -6,14 +6,8 @@ const C = ACTORS_COPY.worldActors;
 const F = C.form;
 const ALERT = { mx: 2.5, mt: 1.5, flexShrink: 0 };
 
-export default function ActorFormHeader({
-  actor,
-  error,
-  offline,
-  conflict,
-}) {
+export default function ActorFormHeader({ actor, error, offline, conflict }) {
   const existing = Boolean(actor.id);
-  const sideLabel = C.sides[actor.side]?.label;
   return (
     <>
       <Box
@@ -30,9 +24,9 @@ export default function ActorFormHeader({
         <Typography noWrap sx={{ typography: "s1", fontWeight: 600 }}>
           {existing ? F.editTitle(actor.name || actor.id) : F.createTitle}
         </Typography>
-        {!existing && sideLabel && (
+        {!existing && (
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {F.createSubtitle(sideLabel)}
+            {F.createSubtitle}
           </Typography>
         )}
       </Box>

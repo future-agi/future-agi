@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   Box,
   Button,
+  Chip,
   Collapse,
   IconButton,
   Stack,
@@ -15,6 +16,7 @@ import { useActorView } from "src/api/simulate-environments/versions";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import { ACTORS_COPY } from "./actors.constants";
+import { actorTitle } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
 const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
@@ -25,29 +27,32 @@ const ONE_LINE = {
   verticalAlign: "top",
 };
 
-function summary(actor, loudChannels) {
+// How they take part, how loud, when they come in and how many scenarios, one short tag each.
+function tagsOf(actor, loudChannels) {
   return [
-    actor.channel && (CHANNEL_LABELS[actor.channel] || actor.channel),
+    actor.channel
+      ? CHANNEL_LABELS[actor.channel] || actor.channel
+      : actor.side !== "caller" && C.actsInWorld,
     actor.channel &&
       loudChannels.includes(actor.channel) &&
       (actor.loudness_ratio
         ? C.loudnessShare(actor.loudness_ratio)
         : C.loudnessAutomatic),
-    `${C.mayDo}: ${
-      actor.permissions.length
-        ? actor.permissions
-            .map((one) =>
-              one.in_world ? one.action : `${one.action} (${C.notInWorld})`,
-            )
-            .join(", ")
-        : C.nothing
-    }`,
-    `${C.comesIn}: ${actor.when_label}`,
-    `${C.ifNoAnswer}: ${actor.fallback.label}`,
+    actor.when_label,
     ACTORS_COPY.callActors.scenarios(actor.scenarios),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean);
+}
+
+// What the open row says about their part before what they see.
+function partOf(actor) {
+  const mayDo = actor.permissions.length
+    ? actor.permissions
+        .map((one) =>
+          one.in_world ? one.action : `${one.action} (${C.notInWorld})`,
+        )
+        .join(", ")
+    : C.nothing;
+  return [`${C.mayDo}: ${mayDo}`, `${C.ifNoAnswer}: ${actor.fallback.label}`];
 }
 
 export default function ActorRow({
@@ -59,8 +64,13 @@ export default function ActorRow({
   loudChannels,
   deleting,
   busy,
+  byName = false,
 }) {
   const [open, setOpen] = useState(false);
+  // Under a role heading the role is already said, so the row goes by the person's name.
+  const title = byName
+    ? { main: actor.name || actor.id, speaksAs: "" }
+    : actorTitle(actor);
   // Off while removing so the removed actor's view is not refetched.
   const {
     data: view,
@@ -106,20 +116,22 @@ export default function ActorRow({
         >
           <Box>
             <OverflowTooltip
-              title={[actor.name || actor.id, actor.role]
-                .filter(Boolean)
-                .join(" · ")}
+              title={
+                title.speaksAs
+                  ? `${title.main} · ${C.speaksAs(title.speaksAs)}`
+                  : title.main
+              }
             >
               <Typography
                 noWrap
                 sx={{ typography: "s1", fontWeight: 600, ...ONE_LINE }}
               >
-                {actor.name || actor.id}
-                {actor.role ? (
+                {title.main}
+                {title.speaksAs ? (
                   <Box
                     component="span"
                     sx={{ color: "text.secondary", fontWeight: 400 }}
-                  >{` · ${actor.role}`}</Box>
+                  >{` · ${C.speaksAs(title.speaksAs)}`}</Box>
                 ) : null}
               </Typography>
             </OverflowTooltip>
@@ -140,15 +152,41 @@ export default function ActorRow({
               </OverflowTooltip>
             </Box>
           ) : null}
-          <Typography
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              wordBreak: "break-word",
-            }}
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            useFlexGap
+            spacing={0.75}
+            sx={{ mt: 0.5 }}
           >
-            {summary(actor, loudChannels)}
-          </Typography>
+            {tagsOf(actor, loudChannels).map((tag) => (
+              <Chip
+                key={tag}
+                // A long comes-in text is cut off with an ellipsis and shows in full on hover.
+                label={
+                  <OverflowTooltip title={tag}>
+                    <Box
+                      component="span"
+                      sx={{
+                        display: "block",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {tag}
+                    </Box>
+                  </OverflowTooltip>
+                }
+                size="small"
+                sx={{
+                  bgcolor: "background.neutral",
+                  color: "text.secondary",
+                  maxWidth: "100%",
+                }}
+              />
+            ))}
+          </Stack>
           {actor.arrival_overrides?.length ? (
             <CustomTooltip
               show
@@ -223,6 +261,16 @@ export default function ActorRow({
         </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
+        <Stack spacing={0.75} sx={{ pl: 6.5, pr: 1.5, pb: 1 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.theirPart}
+          </Typography>
+          {partOf(actor).map((line) => (
+            <Typography key={line} sx={quiet}>
+              {line}
+            </Typography>
+          ))}
+        </Stack>
         {viewLoading && <ContentSkeleton variant="panel" sx={{ pl: 5 }} />}
         {viewFailed && !view && (
           <ErrorState
@@ -278,4 +326,6 @@ ActorRow.propTypes = {
   loudChannels: PropTypes.arrayOf(PropTypes.string),
   deleting: PropTypes.bool,
   busy: PropTypes.bool,
+  // Shown under its role's heading, titled by name.
+  byName: PropTypes.bool,
 };

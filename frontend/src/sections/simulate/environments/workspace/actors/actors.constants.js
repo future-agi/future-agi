@@ -11,7 +11,7 @@ export const ACTORS_COPY = {
       "Every limit on actors is a setting. Empty is the default for the channel; none is no limit.",
     labels: {
       max_active: "How many at once on a call",
-      caller_takes_back_after_turns: "Caller takes back after agent turns",
+      caller_takes_back_after_turns: "User takes back after agent turns",
       actor_seconds_per_call: "Seconds of actors per call",
       max_messages: "Most messages in a conversation before the run",
       live_turns_per_actor: "Most turns each actor takes during a run",
@@ -20,7 +20,7 @@ export const ACTORS_COPY = {
     none: "none",
     model: "Model actors are played on",
     modelHelp: "Each actor can also have its own",
-    callerModel: "The caller's model",
+    callerModel: "The user's model",
     save: "Save limits to draft",
     saveFailed: "The limits could not be saved",
     scenarioOverride: "A scenario can set its own values for any of these.",
@@ -29,15 +29,19 @@ export const ACTORS_COPY = {
     title: "Who can reach whom",
     subtitle:
       "Each actor's role, when it comes in and who its actions reach, from the records themselves.",
-    comesIn: (when) => `Comes in: ${when}`,
-    broughtBy: (name) => `Brought in by ${name}`,
-    reaches: (names) => `Its actions reach ${names.join(", ")}`,
-    reachesNoOne: "Its actions reach no other actor",
+    columns: {
+      actor: "Actor",
+      comesIn: "Comes in",
+      broughtBy: "Brought in by",
+      reaches: "Its actions reach",
+    },
+    reachesNoOne: "No other actor",
+    none: "—",
   },
   showSettings: "Limits",
   hideSettings: "Hide limits",
   noCaller:
-    "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
+    "There is no user record yet. The user is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
   callActors: {
     title: (n) => `Actors (${n})`,
     subtitle:
@@ -72,26 +76,18 @@ export const ACTORS_COPY = {
     unsaved: "Unsaved changes: saved with the environment's other changes",
     offline:
       "No connection: your change is kept and saves once you are back online",
-    everyoneAbout:
-      "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
+    inThisEnvironment: "In this environment",
+    speaksAs: (name) => `speaks as ${name}`,
+    people: (count) => `${count} people`,
     add: "Add actor",
-    sides: {
-      caller: {
-        label: "On the caller's side",
-        note: "Someone nearby, who takes the phone, or a second person in the chat",
-      },
-      world: {
-        label: "In the world",
-        note: "A manager who approves, a teammate on Slack, another company's system",
-      },
-    },
-    emptySide: "No one here yet.",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
     empty: "No actors yet. Add one, or ask the builder chat.",
-    wants: "Wants",
+    wants: "Pushes for",
+    actsInWorld: "Acts in the world",
+    theirPart: "Their part",
     mayDo: "May do",
     nothing: "Nothing in the world",
     notInWorld: "not an action of this world",
@@ -99,11 +95,9 @@ export const ACTORS_COPY = {
     hideView: "Hide what they see",
     sees: "Sees",
     neverSees: "Never sees",
-    comesIn: "Comes in",
     comesInDifferently: (n) =>
       `Comes in differently in ${n} scenario${n === 1 ? "" : "s"}`,
-    loudnessShare: (ratio) =>
-      `${Math.round(ratio * 100)}% as loud as the caller`,
+    loudnessShare: (ratio) => `${Math.round(ratio * 100)}% as loud as the user`,
     loudnessAutomatic: "Loudness automatic",
     ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
@@ -114,7 +108,7 @@ export const ACTORS_COPY = {
       "actor.name": "Name",
       "actor.role": "Role",
       "actor.persona": "Persona",
-      "actor.goal": "What they want",
+      "actor.goal": "What they push for",
       "actor.constraints": "What they may agree to and keep to themselves",
       "actor.behaviour": "How they behave",
       "actor.prompt": "Their prompt",
@@ -123,13 +117,15 @@ export const ACTORS_COPY = {
       "scenario.instruction": "What they do in this scenario",
       "scenario.knowledge": "What they know in this scenario",
       "caller.situation":
-        "The caller's situation, without the caller's own details",
+        "The user's situation, without the user's own details",
     },
     form: {
       createTitle: "Add actor",
-      createSubtitle: (side) => `${side} · added to this environment's draft`,
-      moreDetails: "More details",
-      lessDetails: "Hide more details",
+      createSubtitle: "Added to this environment's draft",
+      advanced: "Advanced settings",
+      pressure: "Pressure",
+      pressureHelp:
+        "Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them.",
       moreDetailsHelp:
         'Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and "Brought in by" is for reading only.',
       editTitle: (name) => `Edit ${name}`,
@@ -137,7 +133,8 @@ export const ACTORS_COPY = {
       idHelp: (rule) =>
         [
           "Made from the name; change it now if you like.",
-          rule,
+          // The server's rule comes without a full stop.
+          rule && rule.replace(/\.?$/, "."),
           "It never changes once saved.",
         ]
           .filter(Boolean)
@@ -147,24 +144,23 @@ export const ACTORS_COPY = {
       idFixed:
         "Fixed once saved, so scenarios and past runs keep pointing at this actor.",
       name: "Name",
-      nameHelp: "What others call them, such as Priya Raman",
+      nameHelp: "The person they speak as, such as Priya Sharma",
       role: "Role (optional)",
       roleRequired: "Role",
-      roleHelp:
-        "Who they are, in a few words, such as a manager or a family member",
+      roleHelp: "Their main label, such as Sales manager",
       tooLong: (over) =>
         `This actor is ${over.toLocaleString()} characters too long to save. Shorten what they know or their other long fields.`,
       kind: "Kind (optional)",
       parent: "Brought in by (optional)",
       parentHelp: "Someone already in the world who brings them in, if anyone",
       nobody: "No one",
-      goal: "What they want (optional)",
+      goal: "What they push for (optional)",
       goalHelp:
         "Their own aim, which is not the agent's task, such as approve only refunds she can justify",
       mayAgree: "May agree to (optional, one per line)",
       private: "Keeps to themselves (optional, one per line)",
       escalateWhen: "Hands over when (optional, one per line)",
-      stopWhen: "Is done when (optional, one per line)",
+      stopWhen: "They give up when (optional, one per line)",
       facts: "What they know (optional, one per line)",
       factsHelp: "Facts they can use, such as the refund limit is $500",
       files: "Files they can read (optional)",
@@ -181,9 +177,10 @@ export const ACTORS_COPY = {
       uploadFailed: "The document could not be uploaded",
       noRecords: "This environment's world has no records yet",
       style: "How they behave (optional)",
-      styleHelp: "Their manner, such as brisk and decides quickly",
+      styleHelp: "Their manner and traits, such as brisk and decides quickly",
       answers: "Answers",
       seconds: "Seconds",
+      delaySeconds: "Give the seconds, or 0 for no delay.",
       permitted: "World actions they may take (optional)",
       permittedHelp:
         "Pick from this environment's actions. The world refuses anything else they try and records the attempt.",
@@ -195,12 +192,26 @@ export const ACTORS_COPY = {
       trigger: "Comes in",
       triggerHelp:
         "When they first take part; a scenario can give them its own",
-      triggerTool: "The action",
-      triggerOnCall: "On its call number",
-      triggerOnCallHelp: "Empty or 1 is the first call of the action",
+      presets: {
+        start: "Present from the start",
+        partway: "Joins partway",
+        chance: "A chance on each call",
+        contacted: "When the agent contacts them",
+        moment: "At a set moment",
+      },
+      presetWay: "What brings them in",
+      kindNoActions: "Needs a world action, and this environment has none",
+      kindNoCollections:
+        "Needs a record collection, and this world has none yet",
+      triggerToolNone:
+        "This environment has no world actions, so pick another way they come in.",
+      triggerCollectionNone:
+        "This world has no record collections yet, so pick another way they come in.",
       triggerChance: "Chance (%)",
-      triggerChanceHelp:
-        "How likely they come in on a call, above 0 and up to 100",
+      triggerChanceHelp: "Drawn once per call, from 1 to 100",
+      triggerCall: "Which call of the action (optional)",
+      triggerCallHelp: "Empty is the first call",
+      triggerTool: "The action",
       triggerWords: "Words",
       triggerWordsHelp: "Separated by commas",
       triggerTurn: "From the agent's turn",
@@ -227,10 +238,9 @@ export const ACTORS_COPY = {
         "How long the world waits for them; 0 waits as long as the call lasts",
       fallback: "If they do not answer",
       answeredBy: (name) => `${name} answers instead`,
-      channel: "How they join the conversation",
-      noChannel: "Doesn't speak in the conversation",
+      channel: "How they take part",
+      noChannel: "Acts in the world only",
       problemsTitle: "Fix these before saving",
-      checking: "Checking…",
       checkFailed: "Couldn't check this change. Try again in a moment.",
       retryCheck: "Try again",
       play: "How they act in the world",
@@ -238,10 +248,10 @@ export const ACTORS_COPY = {
         "Deciding their own actions, they read what they see below and choose within what they may do; the world still refuses anything they may not.",
       noChannelHelp:
         "They act only through the world's actions. Pick how they join to have them speak too.",
-      loudness: "How loud, next to the caller (optional)",
+      loudness: "How loud, next to the user (optional)",
       loudnessAutomatic: (low, high) =>
-        `Automatic: each call picks between ${low} and ${high} of the caller's voice`,
-      loudnessFixed: (share) => `${share} of the caller's voice`,
+        `Automatic: each call picks between ${low} and ${high} of the user's voice`,
+      loudnessFixed: (share) => `${share} of the user's voice`,
       voice: "How they sound (optional)",
       voiceHelp:
         "Picks their voice on a call; left empty, a voice is chosen for them",

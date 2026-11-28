@@ -2,26 +2,29 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Autocomplete,
-  Box,
   Button,
+  Stack,
   TextField,
   Typography,
 } from "@mui/material";
+import { useController } from "react-hook-form";
+import Iconify from "src/components/iconify";
 import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
+import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
-const recordLabel = (one) => `${one.store}.${one.collection}`;
 
 export default function ActorKnowledgeFields({
-  files,
-  records,
+  form,
   sources,
   upload,
   uploadRules,
-  problems,
-  onChange,
 }) {
+  const { field } = useController({ name: "files" });
+  const files = field.value;
+  const { problems } = form;
+  const onChange = form.put;
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   // Evaluator-only files are listed, locked, so it's clear why an actor can't be given them.
@@ -32,6 +35,7 @@ export default function ActorKnowledgeFields({
     <>
       <Autocomplete
         multiple
+        disableCloseOnSelect
         size="small"
         options={[...sources.files, ...evaluatorOnly]}
         getOptionDisabled={(path) => evaluatorOnly.includes(path)}
@@ -56,12 +60,19 @@ export default function ActorKnowledgeFields({
         )}
       />
       {upload && (
-        <Box>
+        // The action and what it takes read as one line, right under the field the file lands in.
+        <Stack direction="row" alignItems="center" spacing={1.5}>
           <Button
             size="small"
+            variant="outlined"
             component="label"
             disabled={uploading}
-            sx={{ alignSelf: "flex-start" }}
+            startIcon={<Iconify icon="solar:cloud-upload-linear" width={16} />}
+            sx={{
+              flexShrink: 0,
+              color: "text.primary",
+              borderColor: "divider",
+            }}
           >
             {uploading ? F.uploading : F.upload}
             <input
@@ -94,45 +105,16 @@ export default function ActorKnowledgeFields({
             {uploadError ||
               F.uploadHelp(uploadRules.formats, uploadRules.max_label)}
           </Typography>
-        </Box>
+        </Stack>
       )}
-      <Autocomplete
-        multiple
-        size="small"
-        options={sources.records}
-        value={records}
-        onChange={(_, next) => onChange("records", next)}
-        getOptionLabel={recordLabel}
-        isOptionEqualToValue={(one, other) =>
-          recordLabel(one) === recordLabel(other)
-        }
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label={F.recordsRead}
-            error={Boolean(problems.records)}
-            helperText={
-              problems.records ||
-              (sources.records.length ? F.recordsHelp : F.noRecords)
-            }
-          />
-        )}
-      />
     </>
   );
 }
 
-const RECORD = PropTypes.shape({
-  store: PropTypes.string,
-  collection: PropTypes.string,
-});
-
 ActorKnowledgeFields.propTypes = {
-  files: PropTypes.arrayOf(PropTypes.string).isRequired,
-  records: PropTypes.arrayOf(RECORD).isRequired,
+  form: ACTOR_FORM_SHAPE.isRequired,
   sources: PropTypes.shape({
     files: PropTypes.arrayOf(PropTypes.string).isRequired,
-    records: PropTypes.arrayOf(RECORD).isRequired,
     // Every attached file's role by path; evaluator-only files are never in `files`.
     roles: PropTypes.objectOf(PropTypes.string),
   }).isRequired,
@@ -142,7 +124,4 @@ ActorKnowledgeFields.propTypes = {
     formats: PropTypes.arrayOf(PropTypes.string).isRequired,
     max_label: PropTypes.string.isRequired,
   }).isRequired,
-  problems: PropTypes.objectOf(PropTypes.string).isRequired,
-  // (field, next value)
-  onChange: PropTypes.func.isRequired,
 };

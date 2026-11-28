@@ -6,6 +6,36 @@ export const lines = (value) =>
 
 export const words = (key) => key.replace(/_/g, " ");
 
+// The role is an actor's main label; the name is who they speak as, shown only beside a role.
+const roleText = (role) =>
+  String(role ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+// Actors whose role matches, ignoring case and spacing, in one group under the role as first written, in the order
+// each group's first actor appears; an actor with no role is a group of its own.
+export const groupsByRole = (cast) => {
+  const groups = [];
+  const byRole = new Map();
+  cast.forEach((actor) => {
+    const role = roleText(actor.role);
+    const key = role.toLowerCase();
+    if (key && byRole.has(key)) {
+      byRole.get(key).actors.push(actor);
+      return;
+    }
+    const group = { role: role || null, actors: [actor] };
+    groups.push(group);
+    if (key) byRole.set(key, group);
+  });
+  return groups;
+};
+
+export const actorTitle = (actor) => ({
+  main: actor.role || actor.name || actor.id,
+  speaksAs: actor.role ? actor.name || "" : "",
+});
+
 // Keeps the starting value listed so a select never goes blank on it.
 export const withStart = (options, start, label = start) =>
   start && !options.some((one) => one.value === start)
@@ -20,24 +50,26 @@ const VOICE_FIELDS = ["gender", "age_group", "accent"];
 // The form field each trigger key the cast's `trigger_fields` names is typed in.
 export const TRIGGER_INPUTS = {
   tool: "triggerTool",
-  on_call: "triggerOnCall",
-  p: "triggerChance",
   words: "triggerWords",
   turn: "triggerTurn",
   seconds: "triggerSeconds",
   collection: "triggerCollection",
   where: "triggerWhere",
+  p: "triggerChance",
+  on_call: "triggerCall",
 };
 const TRIGGER_FIELDS = ["mode", ...Object.values(TRIGGER_INPUTS)];
+// Trigger keys a kind can take without a value: the record match and which call of the action.
+export const OPTIONAL_TRIGGER_KEYS = ["where", "on_call"];
 
 const typed = (value) => (value == null ? "" : value);
 
 const orNull = (text) => (String(text).trim() === "" ? null : text);
 const numberOrNull = (text) =>
   String(text).trim() === "" ? null : Number(text);
-
-// A chance is typed as a percent and stored from 0 to 1.
-const PERCENT = 100;
+// Left out when blank: the server takes no null for these, and a missing `on_call` is the first call.
+const numberOrNone = (text) =>
+  String(text ?? "").trim() === "" ? undefined : Number(text);
 
 // How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a chance as
 // a share of 1, a match as JSON (only read once `whereProblem` is ""). An emptied call of the action is left out:
@@ -50,12 +82,16 @@ const TRIGGER_VALUES = {
       .filter(Boolean),
   turn: numberOrNull,
   seconds: numberOrNull,
-  on_call: (text) => numberOrNull(text) ?? undefined,
-  p: (text) => {
-    const percent = numberOrNull(text);
-    return percent === null ? null : percent / PERCENT;
-  },
   where: (text) => (String(text).trim() ? JSON.parse(text) : {}),
+  // Typed as a percent, sent as a share; rounded so 33.3 is 0.333, not 0.33299… A percent outside 0 to 100 is left
+  // out, so the server asks for one in percent rather than judging the share.
+  p: (text) => {
+    const percent = numberOrNone(text);
+    return percent === undefined || percent <= 0 || percent > 100
+      ? undefined
+      : Math.round(percent * 100) / 10000;
+  },
+  on_call: numberOrNone,
 };
 
 // The trigger the form's fields make: its kind and each key the cast's `trigger_fields` lists for that kind.
@@ -73,6 +109,33 @@ export const triggerOf = (read, keys) => ({
       .filter(([, value]) => value !== undefined),
   ),
 });
+
+// The join presets, each the trigger kinds it stands for; labels are in ACTORS_COPY.
+export const JOIN_PRESETS = [
+  { id: "start", kinds: ["always"] },
+  { id: "partway", kinds: ["on_tool", "on_keyword", "conditional"] },
+  { id: "chance", kinds: ["probability"] },
+  { id: "contacted", kinds: ["contacted"] },
+  { id: "moment", kinds: ["mid_journey", "after_seconds"] },
+];
+
+// The presets a way of joining offers, narrowed to its kinds; a kind no preset covers stays its own choice.
+export const presetsFor = (offered) => {
+  const values = offered.map((one) => one.value);
+  const covered = new Set(JOIN_PRESETS.flatMap((one) => one.kinds));
+  return [
+    ...JOIN_PRESETS.map((one) => ({
+      id: one.id,
+      kinds: one.kinds.filter((kind) => values.includes(kind)),
+    })).filter((one) => one.kinds.length > 0),
+    ...offered
+      .filter((one) => !covered.has(one.value))
+      .map((one) => ({ id: one.value, kinds: [one.value], label: one.label })),
+  ];
+};
+
+export const presetOf = (kind, presets) =>
+  presets.find((one) => one.kinds.includes(kind))?.id ?? kind;
 
 export const whereProblem = (text) => {
   if (!String(text || "").trim()) return "";
@@ -108,12 +171,11 @@ export const fallbackActs = (key) => key.startsWith("action:");
 const triggerInput = (trigger, key) => {
   if (!(key in trigger)) return "";
   if (key === "words") return trigger.words.join(", ");
+  if (key === "p") return String(Math.round(trigger.p * 10000) / 100);
   if (key === "where")
     return Object.keys(trigger.where).length
       ? JSON.stringify(trigger.where)
       : "";
-  // Rounded, so 0.07 reads as 7, not 7.000000000000001.
-  if (key === "p") return Math.round(trigger.p * PERCENT * 1e6) / 1e6;
   return trigger[key];
 };
 
@@ -265,32 +327,58 @@ export const PROBLEM_FIELDS = {
   max_lines: "max_lines",
 };
 
-const MORE_DETAILS = [...CONSTRAINTS, "parent", "goal", "style"];
+// Fields the Advanced settings fold holds; the rest are always on screen.
+export const ADVANCED = [
+  "records",
+  "timing",
+  "seconds",
+  "play",
+  "timeout",
+  "fallback",
+  "fallback_arguments",
+  "model",
+  "max_turns",
+  "max_lines",
+  "may_agree",
+  "private",
+  "escalate_when",
+  "parent",
+];
 
 // A server problem on a field not in this set shows above Save.
-export const fieldsOnScreen = (read, { capField, loud, models, more }) =>
+export const fieldsOnScreen = (read, { capField, loud, models, advanced }) =>
   new Set([
     ...[
       "id",
       "name",
       "role",
-      "channel",
       "kind",
+      "channel",
+      "mode",
       "facts",
       "files",
-      "records",
       "permitted",
-      "play",
-      "mode",
-      "timeout",
-      "fallback",
-      "timing",
+      "goal",
+      "stop_when",
+      "style",
     ],
-    ...(capField ? [capField] : []),
     ...(read("channel") ? VOICE_FIELDS : []),
     ...(read("channel") && loud ? ["loudness_ratio"] : []),
-    ...(read("timing") === "delayed" ? ["seconds"] : []),
-    ...(fallbackActs(read("fallback")) ? ["fallback_arguments"] : []),
-    ...(models ? ["model"] : []),
-    ...(more ? MORE_DETAILS : []),
+    ...(advanced
+      ? [
+          "records",
+          "timing",
+          "play",
+          "timeout",
+          "fallback",
+          "parent",
+          "may_agree",
+          "private",
+          "escalate_when",
+          ...(capField ? [capField] : []),
+          ...(read("timing") === "delayed" ? ["seconds"] : []),
+          ...(fallbackActs(read("fallback")) ? ["fallback_arguments"] : []),
+          ...(models ? ["model"] : []),
+        ]
+      : []),
   ]);

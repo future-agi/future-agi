@@ -10,6 +10,7 @@ import {
   useUploadEnvironmentFile,
 } from "src/api/simulate-environments/versions";
 import ErrorState from "src/components/error-state";
+import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
 import FileRoles from "./FileRoles";
 import { refusalText } from "../evals/refusalText";
@@ -17,10 +18,9 @@ import ActorForm from "./ActorForm";
 import ActorLimits from "./ActorLimits";
 import ActorRelations from "./ActorRelations";
 import ActorRow from "./ActorRow";
-import ActorSideGroups from "./ActorSideGroups";
 import ActorsSkeleton from "./ActorsSkeleton";
-import AddActorMenu from "./AddActorMenu";
 import { ACTORS_COPY } from "./actors.constants";
+import { groupsByRole } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
 const OUTLINED = {
@@ -59,13 +59,20 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     setUploadMoved(false);
     setEditing({ actor, revision });
   };
-  // A new actor starts as the cast's `new_actor`, on its side's way of joining.
-  const addOn = (side) =>
-    openForm({
-      ...data.new_actor,
-      side,
-      channel: data.side_defaults[side].channel,
-    });
+  // A new actor starts as the cast's `new_actor`; how it takes part is picked in the form.
+  const addNew = () => openForm(data.new_actor);
+  const addButton = (variant) => (
+    <Button
+      size="small"
+      variant={variant}
+      disabled={edit.isPending}
+      onClick={addNew}
+      startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+      sx={variant === "outlined" ? OUTLINED : { flexShrink: 0 }}
+    >
+      {C.add}
+    </Button>
+  );
   const cast = data?.actors || [];
   const revision = data?.revision;
   // On a refused save or upload the form moves onto the refreshed record, keeping what was typed.
@@ -125,14 +132,16 @@ export default function WorldActorsPanel({ envId, locked = false }) {
   const loudChannels = (data ? data.channel_options : [])
     .filter((one) => one.loudness)
     .map((one) => one.channel);
+  const roleGroups = groupsByRole(cast);
   const deletingId =
     edit.isPending && edit.variables?.op === "delete"
       ? edit.variables.actorId
       : null;
-  const rows = (group) =>
+  const rows = (group, byName = false) =>
     group.map((actor) => (
       <ActorRow
         key={actor.id}
+        byName={byName}
         envId={envId}
         actor={actor}
         locked={locked}
@@ -229,7 +238,7 @@ export default function WorldActorsPanel({ envId, locked = false }) {
                             {C.unresolved.edit}
                           </Button>
                         ) : (
-                          <AddActorMenu label={C.add} onPick={addOn} />
+                          addButton("outlined")
                         )}
                       </Stack>
                     )}
@@ -253,17 +262,9 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       />
       <SectionCard
         title={C.groupTitle(C.title, cast.length)}
-        subtitle={C.everyoneAbout}
+        subtitle={C.inThisEnvironment}
         sx={{ mb: 2 }}
-        action={
-          !locked && (
-            <AddActorMenu
-              label={C.add}
-              disabled={edit.isPending}
-              onPick={addOn}
-            />
-          )
-        }
+        action={!locked && addButton("contained")}
       >
         {cast.length === 0 ? (
           <Typography
@@ -272,7 +273,41 @@ export default function WorldActorsPanel({ envId, locked = false }) {
             {C.empty}
           </Typography>
         ) : (
-          <ActorSideGroups cast={cast} renderRows={rows} />
+          <Stack
+            divider={
+              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+            }
+          >
+            {/* Actors alone in their role first, then each role with several people, so a group is never
+                followed by a row outside it. */}
+            {[
+              ...roleGroups.filter((group) => group.actors.length < 2),
+              ...roleGroups.filter((group) => group.actors.length > 1),
+            ].flatMap((group) =>
+              group.actors.length > 1
+                ? [
+                    <Typography
+                      key={`role:${group.role}`}
+                      noWrap
+                      sx={{
+                        px: 1.5,
+                        py: 0.75,
+                        typography: "s2",
+                        fontWeight: 600,
+                        bgcolor: "background.neutral",
+                      }}
+                    >
+                      {group.role}
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", fontWeight: 400 }}
+                      >{` · ${C.people(group.actors.length)}`}</Box>
+                    </Typography>,
+                    ...rows(group.actors, true),
+                  ]
+                : rows(group.actors),
+            )}
+          </Stack>
         )}
       </SectionCard>
       {cast.length > 1 && (
