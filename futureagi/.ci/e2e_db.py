@@ -221,6 +221,37 @@ def not_carried(root):
     return found
 
 
+CONNECT = re.compile(r"\bpost_migrate\s*\.\s*connect\(\s*([\w.]+)")
+DECORATED = re.compile(
+    r"@receiver\(\s*(?:[\w.]+\.)?post_migrate\b[^)]*\)\s*\n\s*def\s+(\w+)"
+)
+
+
+def post_migrate_receivers(root):
+    """(file, receiver) for each post_migrate receiver this repository connects.
+
+    The dump stops before post_migrate, so a restoring leg gets these rows
+    only from its own boot's migrate, which applies nothing. A receiver must
+    do its work then too. Test files are not searched.
+    """
+    root = Path(root)
+    found = set()
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(
+            d
+            for d in dirs
+            if not d.startswith(".") and d not in SKIP_DIRS and d != "tests"
+        )
+        for name in files:
+            if not name.endswith(".py") or name.startswith("test_"):
+                continue
+            path = Path(folder) / name
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for match in (*CONNECT.finditer(text), *DECORATED.finditer(text)):
+                found.add((path.relative_to(root).as_posix(), match.group(1)))
+    return sorted(found)
+
+
 def read_switch(value):
     """(the stacks the switch names, the other names in it), each once, in order."""
     named, unknown = [], []

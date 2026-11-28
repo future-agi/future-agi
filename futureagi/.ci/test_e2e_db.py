@@ -394,6 +394,55 @@ class WhatADumpDoesNotCarryTest(Workspace):
         )
 
 
+class ReceiverTest(Workspace):
+    """The dump stops before post_migrate: every receiver runs on the boot."""
+
+    # The project's post_migrate receivers. A leg that restores the dump gets
+    # their rows only from its stack's own migrate, which applies nothing.
+    KNOWN = [
+        ("agent_playground/apps.py", "_seed_after_migrate"),
+        ("ee/usage/apps.py", "self.create_usage_entries_after_migrate"),
+        ("model_hub/apps.py", "_seed_prompt_labels_after_migrate"),
+        (
+            "tfc/management/commands/bootstrap_install.py",
+            "_seed_prompt_labels_after_migrate",
+        ),
+    ]
+
+    def test_the_projects_post_migrate_receivers_are_these(self):
+        self.assertEqual(
+            e2e_db.post_migrate_receivers(ROOT / "futureagi"),
+            self.KNOWN,
+            "A post_migrate receiver was added, moved or removed. The saved E2E "
+            "dump stops before post_migrate, so on a leg that restores it the "
+            "receiver runs only from the boot's own migrate, which applies no "
+            "migration. The receiver must do its work then too: never only when "
+            "its own migrations were just applied, never by reading the plan. "
+            "Check that, then update KNOWN in futureagi/.ci/test_e2e_db.py.",
+        )
+
+    def test_the_search_finds_each_way_of_connecting_one(self):
+        folder = self.dir / "app"
+        (folder / "tests").mkdir(parents=True)
+        (folder / "apps.py").write_text(
+            "post_migrate.connect(\n    seed_one,\n    sender=self,\n)\n"
+            "signals.post_migrate.connect(self.seed_two)\n"
+        )
+        (folder / "signals.py").write_text(
+            "@receiver(post_migrate, sender=X)\ndef seed_three(sender, **kwargs):\n    pass\n"
+        )
+        (folder / "tests/test_apps.py").write_text("post_migrate.connect(fake)\n")
+        (folder / "test_more.py").write_text("post_migrate.connect(fake)\n")
+        self.assertEqual(
+            e2e_db.post_migrate_receivers(self.dir),
+            [
+                ("app/apps.py", "seed_one"),
+                ("app/apps.py", "self.seed_two"),
+                ("app/signals.py", "seed_three"),
+            ],
+        )
+
+
 class SwitchTest(Workspace):
     """E2E_DB_REUSE: which stacks restore, and what the plan job prints."""
 
