@@ -1204,3 +1204,47 @@ func TestSeenMarkCommittedAtUsesPersistedAtGeneration(t *testing.T) {
 	env.advance(seenV2Rlen) // now g0+2: the copy is past the reuse window
 	seenV2WantAll(t, "two generations after persisted_at", env.pod().Check(ctx, items, seenV2TokB), SeenRefresh)
 }
+
+type seenV2LogBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (w *seenV2LogBuf) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *seenV2LogBuf) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+// Run starts with the Redis startup check: with Redis down it logs the
+// startup WARN and the failed contract write, and still stops on shutdown.
+func TestSeenRunWarnsWhenRedisIsDown(t *testing.T) {
+	env := newSeenV2Env(t)
+	buf := &seenV2LogBuf{}
+	pod := env.store(SeenOptions{Logger: slog.New(slog.NewTextHandler(buf, nil))})
+	env.mr.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { pod.run(ctx, time.Hour); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(buf.String(), "trajectory_seen_redis_unavailable") || !strings.Contains(buf.String(), "op=contract") {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("Run did not log the startup check and contract failures: %s", buf.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Run did not stop on shutdown")
+	}
+}
