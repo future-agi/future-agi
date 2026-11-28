@@ -168,10 +168,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # aggregate-state read target it; only the shape of the aggregates differs.
     RAW_TABLE = "spans"
 
-    # Request-window bounds that may carry sub-second precision. Hour-rounded
-    # replacement-key scan bounds and the +/-1 day witness band keep dev text.
+    # Request-window bounds that may carry sub-second precision: the output
+    # window, a span partition's contribution window and the raw trace lane's
+    # +/-1 day witness band (it decides trace membership, so a truncated band
+    # would admit or drop a witness in the sub-second tail at either end).
+    # Hour-rounded replacement-key scan bounds keep their whole-hour text.
     _EXACT_REQUEST_BOUND_PARAMS = frozenset(
-        {"start_date", "end_date", "graph_contribution_start", "graph_contribution_end"}
+        {
+            "start_date",
+            "end_date",
+            "graph_contribution_start",
+            "graph_contribution_end",
+            "graph_witness_start_date",
+            "graph_witness_end_date",
+        }
     )
 
     def __init__(

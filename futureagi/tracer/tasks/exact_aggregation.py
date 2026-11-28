@@ -298,18 +298,27 @@ def _attribute_detail_payload(identity: dict[str, Any]) -> Any:
 
 def _load_exact_payload(namespace: str, identity: dict[str, Any]) -> Any:
     if namespace.startswith("observe-"):
+        from tracer.services.clickhouse.graph_dispatch import (
+            stamp_exact_window_bounds,
+        )
         from tracer.services.clickhouse.graph_metric_statistic import (
             stamp_snapshot_statistic,
         )
 
-        # The statistic travels in the cached payload. Readers serve a latency
-        # snapshot only when it says "mean", so one an older worker cached
-        # during a rolling deploy (unmarked) is a miss
-        # (graph_metric_statistic.snapshot_names_its_statistic).
-        return stamp_snapshot_statistic(
+        # The statistic and the window-bound precision travel in the cached
+        # payload. Readers serve a latency snapshot only when it says "mean",
+        # and an exact system or agent graph snapshot only when it says its
+        # window was read at microsecond precision, so one an older worker
+        # cached during a rolling deploy (unmarked) is a miss
+        # (graph_metric_statistic.snapshot_names_its_statistic,
+        # graph_dispatch.EXACT_WINDOW_BOUNDS_FIELD).
+        return stamp_exact_window_bounds(
             namespace,
-            identity.get("metric_id"),
-            _observe_payload(namespace, identity),
+            stamp_snapshot_statistic(
+                namespace,
+                identity.get("metric_id"),
+                _observe_payload(namespace, identity),
+            ),
         )
     if namespace == "dashboard-query":
         return _dashboard_payload(identity)

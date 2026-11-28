@@ -726,7 +726,12 @@ def test_rolling_worker_cache_cannot_drop_monetary_companion(
         pending_payload={},
     )
     accept = schedule.call_args.kwargs["accept_snapshot"]
-    assert not accept({key: [{"value": 0.625, "total_cost": 1.25}]})
+    # As a current worker caches it (the window-bound marker has its own test).
+    stamp = graph_dispatch.stamp_exact_window_bounds
+    assert not accept(stamp(namespace, {key: [{"value": 0.625, "total_cost": 1.25}]}))
     assert accept(
-        {key: [{"value": 0.625, "total_cost": 1.25, "cost_coverage": PARTIAL}]}
+        stamp(
+            namespace,
+            {key: [{"value": 0.625, "total_cost": 1.25, "cost_coverage": PARTIAL}]},
+        )
     )
