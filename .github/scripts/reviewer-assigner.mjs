@@ -263,9 +263,11 @@ async function upsertAssignment(pr, { login, round, note }) {
 
 // Everyone on the roster (config users) who can push here, except the author.
 async function reviewersFor(pr) {
+  const roster = Object.keys(config.users);
+  const push = await Promise.all(roster.map(canPush));
   return rosterReviewers(
-    Object.keys(config.users),
-    [...(await writers())],
+    roster,
+    roster.filter((_, i) => push[i]),
     pr.author,
   );
 }
@@ -326,20 +328,33 @@ async function reassign(pr, current) {
   });
 }
 
-// Internal means write access here: lower-case logins with push or higher,
-// read once per sweep and only when a write is due. Only internal authors'
-// pull requests rotate (external ones have their own flow), and only
-// internal reviewers are requested (GitHub refuses anyone else).
-let writersRead = null;
-function writers() {
-  writersRead ??= ghPaginated(
-    `/repos/${OWNER}/${REPO}/collaborators?permission=push&per_page=100`,
-  ).then((users) => new Set(users.map((u) => u.login.toLowerCase())));
-  return writersRead;
+// Internal means write access here (admin or write), read once per login and
+// only when a write is due. Only internal authors' pull requests rotate
+// (external ones have their own flow), and only internal reviewers are
+// requested (GitHub refuses anyone else). The collaborators list, read with
+// the App's token, leaves out people whose access comes only from their org
+// role, so each login's own permission is read instead.
+const pushCache = new Map();
+function canPush(login) {
+  const key = login.toLowerCase();
+  if (!pushCache.has(key))
+    pushCache.set(
+      key,
+      gh(
+        `/repos/${OWNER}/${REPO}/collaborators/${encodeURIComponent(login)}/permission`,
+      ).then(
+        (r) => r.permission === "admin" || r.permission === "write",
+        (e) => {
+          if (/ → 404:/.test(e.message)) return false; // no such user
+          throw e;
+        },
+      ),
+    );
+  return pushCache.get(key);
 }
 
 async function isInternal(login) {
-  return Boolean(login) && (await writers()).has(login.toLowerCase());
+  return Boolean(login) && (await canPush(login));
 }
 
 // Writes only when this PR needs them: no reviewer and never assigned → assign;
