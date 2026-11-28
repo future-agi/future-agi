@@ -263,6 +263,9 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": str(e)})
 
     async def handle_subscribe(self, content):
+        if self.user is None:
+            await self.close(code=4001)
+            return
         uuid = content.get("uuid")
         if not uuid:
             logger.error(

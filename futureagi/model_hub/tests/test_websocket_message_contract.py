@@ -270,6 +270,7 @@ def test_structured_alert_title_is_normalized_before_delivery():
         response = post_relay({"message": {"alert_title": {"label": "Synthetic"}}})
     assert response.status_code == 200
     send.assert_awaited_once()
+    assert send.await_args is not None
     assert send.await_args.args[1]["data"] == {"alert_title": "Notification"}
 
 
@@ -279,6 +280,7 @@ def test_legacy_text_is_enqueued_as_a_notification():
         response = post_relay({"message": "Synthetic notice"})
     assert response.status_code == 200
     send.assert_awaited_once()
+    assert send.await_args is not None
     assert send.await_args.args[1]["data"] == {"message": "Synthetic notice"}
 
 
