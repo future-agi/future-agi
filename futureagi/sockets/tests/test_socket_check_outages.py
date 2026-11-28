@@ -322,7 +322,7 @@ def test_check_running_before_a_failed_forced_check_does_not_clear_it():
         close=AsyncMock(),
     )
     guard = MembershipSocketGuard(consumer)
-    answers = []
+    answers: list[asyncio.Future[bool]] = []
 
     def database_sync_to_async(function):
         async def check(*args):
@@ -364,7 +364,7 @@ def test_check_running_before_a_failed_forced_check_does_not_clear_it():
 def test_credential_check_running_before_expire_is_not_reused():
     consumer = saml_consumer()
     guard = SamlSocketGuard(consumer)
-    release = {}
+    release: dict[str, asyncio.Event] = {}
 
     async def validate(self):
         if "event" in release:
@@ -427,7 +427,7 @@ def test_denial_read_before_a_membership_change_does_not_close_the_socket():
         close=AsyncMock(),
     )
     guard = MembershipSocketGuard(consumer)
-    answers = []
+    answers: list[asyncio.Future[bool]] = []
 
     def database_sync_to_async(function):
         async def check(*args):
@@ -773,8 +773,8 @@ class _BlockedGroupAdd:
 
     def __init__(self, group):
         self.group = group
-        self.entered = None
-        self.released = None
+        self.entered = asyncio.Event()
+        self.released = asyncio.Event()
 
     def patch(self):
         from tfc.channel_layers import ThreadSafeInMemoryChannelLayer
@@ -791,10 +791,6 @@ class _BlockedGroupAdd:
         return patch.object(
             ThreadSafeInMemoryChannelLayer, "group_add", blocked_group_add
         )
-
-    def start(self):
-        self.entered = asyncio.Event()
-        self.released = asyncio.Event()
 
 
 async def _until(condition, what):
@@ -819,7 +815,6 @@ def test_window_recovery_stops_answering_when_a_new_check_is_pending(settings):
     blocked = _BlockedGroupAdd(f"uuid_org_{org.pk}_{first}")
 
     async def run():
-        blocked.start()
         socket = await open_direct_socket(member, org, saml=True)
         try:
             credential.failure = OperationalError("synthetic database outage")
@@ -887,7 +882,6 @@ def test_frames_kept_meanwhile_are_answered_when_the_forced_check_succeeds(setti
     )
 
     async def run():
-        blocked.start()
         socket = await open_direct_socket(member, org, saml=True)
         try:
             credential.failure = OperationalError("synthetic database outage")
@@ -934,7 +928,6 @@ def test_window_recovery_joins_no_group_after_disconnect(settings):
     recovered = _recovery_finished()
 
     async def run():
-        blocked.start()
         socket = await open_direct_socket(member, org, saml=True)
         credential.failure = OperationalError("synthetic database outage")
         checks = credential.checks

@@ -163,7 +163,7 @@ endpoint. GKE applies a policy only to a Service a route references. */ -}}
       (dict "component" "backend" "check" (dict "requestPath" "/health/" "host" "localhost")) -}}
 {{- if or $g.otlp.enabled $g.otlpGrpc.enabled -}}
 {{- /* The admin port serves /healthz; it is the one the readiness probe uses. */ -}}
-{{- $checks = append $checks (dict "component" "fi-collector" "check" (dict "portSpecification" "USE_FIXED_PORT" "port" 9464 "requestPath" "/healthz")) -}}
+{{- $checks = append $checks (dict "component" "fi-collector" "check" (dict "portSpecification" "USE_FIXED_PORT" "port" (include "futureagi.collector.adminPort" . | int) "requestPath" "/healthz")) -}}
 {{- end -}}
 {{- if $g.llmGateway.enabled -}}
 {{- $checks = append $checks (dict "component" "agentcc-gateway" "check" (dict "requestPath" "/readyz")) -}}

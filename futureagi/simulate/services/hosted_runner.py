@@ -33,6 +33,7 @@ from django.conf import settings
 
 from model_hub.models.develop_dataset import Cell, Row
 from simulate.models import AgentDefinition, CallExecution, Scenarios, TestExecution
+from simulate.services.call_provider import record_hosted_voice_target
 
 logger = structlog.get_logger(__name__)
 
@@ -325,7 +326,7 @@ def build_start_runner_job(
 
     if mode in _VOICE_MODES:
         simulator_agent = test_execution.simulator_agent or run_test.simulator_agent
-        return _build_voice_job(
+        job = _build_voice_job(
             mode=mode,
             run_id=run_id,
             run_test=run_test,
@@ -335,6 +336,18 @@ def build_start_runner_job(
             simulator_agent=simulator_agent,
             selected_keys=selected_keys,
         )
+        # Freeze the identity resolved by this job, not a fresh lookup of a
+        # mutable version or credentials at result time. Leave sibling calls
+        # untouched when rebuilding only selected attempts.
+        calls = test_execution.calls.filter(
+            scenario_id__in=ordered_ids,
+            deleted=False,
+            status=CallExecution.CallStatus.PENDING,
+        )
+        if call_execution_ids:
+            calls = calls.filter(id__in=call_execution_ids)
+        record_hosted_voice_target(calls, agent_version, job["metadata"]["provider"])
+        return job
 
     adapter, world_kind = _MODE_TO_ENVIRONMENT[mode]
 
@@ -872,66 +885,12 @@ def _voice_credentials(agent_definition, agent_version):
 
 
 def _voice_provider(agent_definition, credentials, agent_version=None) -> str:
-    from simulate.services.agent_definition import provider_for_version
-    from simulate.services.agent_setup import LEGACY_TYPE
-
-    version = _resolve_agent_version(agent_definition, agent_version)
     provider = (
-        provider_for_version(version)
-        if version is not None
-        else getattr(agent_definition, "provider", None)
+        getattr(credentials, "provider_type", None)
+        or _agent_field(agent_definition, agent_version, "provider", None)
+        or "livekit"
     )
-    provider = str(provider or "livekit").strip().lower()
-    # Normalize supported aliases (livekit_bridge -> livekit) for the credential
-    # family and runner profile, without coercing other providers to vapi.
-    provider = LEGACY_TYPE.get(provider, provider)
-    # The row's enum is a storage encoding (Bland rows can say vapi), not
-    # authority to change the provider authored by the selected version.
-    if credentials is not None and credentials.provider_type != provider:
-        raise HostedRunnerBuildError("voice runner credentials do not match provider")
-    return provider
-
-
-def _vapi_credential_assistant(agent_definition, credentials, agent_version):
-    """Keep the target identity bound to the exact credential ID in the job.
-
-    Unlike the native paired resolver, hosted jobs must not replace an empty
-    or unreadable row with definition secrets: Temporal resolves that ID only.
-    A migrated legacy row may belong to a different version of this agent.
-    """
-    from simulate.services.agent_definition import provider_for_version
-
-    if credentials is None:
-        return _agent_field(agent_definition, agent_version, "assistant_id")
-    if credentials.provider_type != "vapi":
-        raise HostedRunnerBuildError("voice runner credentials do not match provider")
-
-    owner = credentials.agent_version
-    if credentials.agent_definition_id not in (None, agent_definition.id):
-        raise HostedRunnerBuildError("voice runner credentials belong to another agent")
-    if owner is not None:
-        if (
-            owner.agent_definition_id != agent_definition.id
-            or owner.organization_id != agent_definition.organization_id
-            or owner.workspace_id != agent_definition.workspace_id
-        ):
-            raise HostedRunnerBuildError(
-                "voice runner credential version is outside the agent scope"
-            )
-        owner_provider = provider_for_version(owner)
-        fallback = (owner.configuration_snapshot or {}).get("assistant_id")
-    else:
-        if credentials.agent_definition_id != agent_definition.id:
-            raise HostedRunnerBuildError(
-                "voice runner credentials have no owning agent"
-            )
-        owner_provider = agent_definition.provider
-        fallback = agent_definition.assistant_id
-    if owner_provider != "vapi":
-        raise HostedRunnerBuildError(
-            "voice runner credential owner does not match provider"
-        )
-    return credentials.assistant_id or fallback
+    return str(provider).strip().lower()
 
 
 def _resolve_agent_inbound(agent_version, agent_definition) -> bool:
@@ -1022,17 +981,10 @@ def _voice_agent_definition(
             agent_def["transport"] = {"kind": transport_kind}
         else:
             env_var = profile["api_key_env"]
-            assistant_id = (
-                _vapi_credential_assistant(agent_definition, credentials, agent_version)
-                if provider == "vapi"
-                else (
-                    getattr(credentials, "assistant_id", None) or field("assistant_id")
-                )
-            )
             agent_def["target"] = {
                 "provider": provider,
                 profile["target_id_field"]: _require(
-                    assistant_id,
+                    getattr(credentials, "assistant_id", None) or field("assistant_id"),
                     f"{provider} {profile['target_id_field']}",
                 ),
                 "api_key_env": env_var,

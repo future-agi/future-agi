@@ -88,11 +88,44 @@ class ConversationCapability:
     document: dict[str, Any]
 
 
+def _window(rows, *, before: int | None = None) -> tuple[list, bool]:
+    """The newest `EVENT_LIMIT` rows before `before` (all when None), oldest first, and whether older ones are left
+    out of it."""
+    if before is not None:
+        rows = rows.filter(sequence__lt=before)
+    page = list(rows.order_by("-sequence")[: EVENT_LIMIT + 1])
+    return list(reversed(page[:EVENT_LIMIT])), len(page) > EVENT_LIMIT
+
+
+def _after(rows, after: int) -> tuple[list, bool]:
+    """The oldest `EVENT_LIMIT` rows past `after`, oldest first, and whether newer ones are left for the next read."""
+    page = list(rows.filter(sequence__gt=after).order_by("sequence")[: EVENT_LIMIT + 1])
+    return page[:EVENT_LIMIT], len(page) > EVENT_LIMIT
+
+
+def _history(rows: list, older: bool) -> dict[str, Any]:
+    """Where a window of the newest items starts and whether items before it were left out."""
+    return {
+        "oldest_sequence": rows[0].sequence if rows else None,
+        "has_older": older,
+    }
+
+
 def serialize_conversation(
     conversation: HostedHarnessConversation,
+    *,
+    events_after: int | None = None,
 ) -> dict[str, Any]:
-    messages = list(reversed(conversation.messages.order_by("-sequence")[:EVENT_LIMIT]))
-    events = list(reversed(conversation.events.order_by("-sequence")[:EVENT_LIMIT]))
+    """The conversation with its newest messages and events. Messages change in place (a streamed reply, a state), so
+    every read carries the newest ones whole. Events never change, so `events_after` limits them to the ones past the
+    sequence the reader already has, oldest first, `events_has_newer` saying whether more are left to read.
+    """
+    messages, older_messages = _window(conversation.messages)
+    if events_after is None:
+        events, older_events = _window(conversation.events)
+        newer_events = False
+    else:
+        events, newer_events = _after(conversation.events, events_after)
     job_metadata = (conversation.job.payload or {}).get("metadata") or {}
     lease = HostedHarnessConversationLease.no_workspace_objects.filter(
         conversation=conversation
@@ -104,6 +137,8 @@ def serialize_conversation(
             conversation.job.state not in _TERMINAL_JOB_STATES
             or conversation.latest_workspace_object_key
             or job_metadata.get("authoring_object_key")
+            # A composition's workspace is assembled from its releases (contract §7.8).
+            or job_metadata.get("release_composition")
         )
     )
     return {
@@ -116,12 +151,81 @@ def serialize_conversation(
         "messages": [_serialize_message(message) for message in messages],
         "events": [_serialize_event(event) for event in events],
         "event_watermark": conversation.event_acked_through,
+        "history": {
+            "messages": _history(messages, older_messages),
+            **(
+                {"events": _history(events, older_events)}
+                if events_after is None
+                else {}
+            ),
+        },
+        "events_has_newer": newer_events,
         "runtime": {
             "state": lease.state if lease else "cold",
             "warm_until": lease.expires_at.isoformat() if lease else None,
             "degraded": conversation.state == HostedHarnessConversation.State.DEGRADED,
             "available": chat_available,
         },
+    }
+
+
+class MessageNotInConversation(LookupError):
+    """The message a history read is asked to show is not one of this conversation's."""
+
+
+def conversation_history(
+    conversation: HostedHarnessConversation,
+    *,
+    kind: str,
+    before: int | None = None,
+    around: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """One page of `EVENT_LIMIT` messages or events, oldest first: the ones just before sequence `before`, for reading
+    back past the window a conversation read carries, or, with `around`, the messages around that message, so a change
+    that cites it can show it in place. Raises `MessageNotInConversation` when `around` is not this conversation's."""
+    rows_of = conversation.messages if kind == "messages" else conversation.events
+    rows: list
+    if around is not None:
+        target = (
+            conversation.messages.filter(id=around)
+            .values_list("sequence", flat=True)
+            .first()
+        )
+        if target is None:
+            raise MessageNotInConversation(str(around))
+        older = list(
+            rows_of.filter(sequence__lt=target).order_by("-sequence")[
+                : EVENT_LIMIT // 2
+            ]
+        )
+        newer = list(
+            rows_of.filter(sequence__gte=target).order_by("sequence")[
+                : EVENT_LIMIT - len(older)
+            ]
+        )
+        if len(older) + len(newer) < EVENT_LIMIT:
+            older = list(
+                rows_of.filter(sequence__lt=target).order_by("-sequence")[
+                    : EVENT_LIMIT - len(newer)
+                ]
+            )
+        rows = [*reversed(older), *newer]
+    else:
+        rows, _ = _window(rows_of, before=before)
+    oldest = rows[0].sequence if rows else None
+    newest = rows[-1].sequence if rows else None
+    return {
+        "kind": kind,
+        "messages": (
+            [_serialize_message(row) for row in rows] if kind == "messages" else []
+        ),
+        "events": [_serialize_event(row) for row in rows] if kind == "events" else [],
+        "oldest_sequence": oldest,
+        "newest_sequence": newest,
+        "has_older": oldest is not None
+        and rows_of.filter(sequence__lt=oldest).exists(),
+        "has_newer": newest is not None
+        and rows_of.filter(sequence__gt=newest).exists(),
     }
 
 
@@ -456,6 +560,10 @@ def environment_authoring_revision(job: HostedHarnessJob) -> str:
     revision = str(metadata.get("authoring_revision") or "")
     if revision:
         return revision
+    composition = metadata.get("release_composition")
+    if isinstance(composition, dict):
+        # A composition's accepted files are its suite (contract §7.8).
+        return str(composition["suite"]["digest"])
     object_key = str(metadata.get("authoring_object_key") or "")
     if not object_key:
         return ""
@@ -504,6 +612,7 @@ def enqueue_message(
     payload: dict[str, Any] | None = None,
     server_payload: dict[str, Any] | None = None,
     expected_revision: str | None = None,
+    admit_authoring: bool = False,
 ) -> tuple[HostedHarnessConversation, HostedHarnessConversationMessage, bool]:
     """Queue a user command. ``server_payload`` holds the ``_`` keys only the platform
     sets; ``expected_revision`` is the environment revision when the caller read it."""
@@ -520,7 +629,16 @@ def enqueue_message(
             if not str(key).startswith("_")
         },
     }
+    from simulate.services.harness_releases import adaptation_of, record_approval
+
     with transaction.atomic():
+        adaptation = None
+        if reply_to is not None and adaptation_of(job) is not None:
+            # The reply may be its approval, kept on the job. Locked before the conversation,
+            # as complete_adaptation locks them.
+            adaptation = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update()
             .filter(job=job)
@@ -558,6 +676,11 @@ def enqueue_message(
                     status_code=409,
                 )
             return conversation, existing, False
+        if admit_authoring:
+            # Only a new post-build user command starts another billable turn.
+            from simulate.services.harness_usage import require_harness_authoring
+
+            require_harness_authoring(str(job.organization_id))
         if reply_to is not None:
             target = conversation.messages.filter(
                 id=reply_to,
@@ -592,6 +715,8 @@ def enqueue_message(
         conversation.next_message_sequence += 1
         conversation.last_activity_at = timezone.now()
         if reply_to is not None:
+            if adaptation is not None:
+                record_approval(adaptation, conversation.blocking_input, content)
             # Answered: the turn waiting on it runs on, so the question is no longer open.
             conversation.blocking_input = None
             if conversation.state == HostedHarnessConversation.State.WAITING_FOR_USER:
@@ -686,7 +811,7 @@ def issue_conversation_capability(
         return None
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/conversations/{conversation.id}"
-    document = {
+    document: dict[str, Any] = {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
         "conversation_id": str(conversation.id),
         "job_id": str(conversation.job_id),
@@ -714,6 +839,11 @@ def issue_conversation_capability(
             "overview": f"{prefix}/overview/",
         },
     }
+    from simulate.services import evidence_drafts
+
+    if evidence_drafts.is_drafting_job(conversation.job):
+        for name in evidence_drafts.UNOFFERED_ENDPOINTS:
+            document["endpoints"].pop(name, None)
     return ConversationCapability(
         lease=lease, token=token, fence=fence, document=document
     )
@@ -967,12 +1097,26 @@ def ingest_conversation_events(
 ) -> dict[str, Any]:
     # Validate the entire raw batch before digest encoding or acknowledgement writes.
     validate_jsonb_strings(events, field="events")
+    from simulate.services.harness_releases import adaptation_of
+
     with transaction.atomic():
+        adaptation = None
+        if adaptation_of(conversation.job) is not None and any(
+            event["kind"] in {"question_requested", "confirmation_requested"}
+            for event in events
+        ):
+            # The question may be its approval, kept on the job. Locked before the
+            # conversation, as complete_adaptation locks them.
+            adaptation = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=conversation.job_id
+            )
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
                 id=conversation.id
             )
         )
+        if adaptation is not None:
+            conversation.job = adaptation
         lease = (
             HostedHarnessConversationLease.no_workspace_objects.select_for_update().get(
                 conversation=conversation
@@ -1011,7 +1155,7 @@ def ingest_conversation_events(
                 state=HostedHarnessConversationMessage.State.QUEUED,
             ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
         for event in events:
-            _ingest_event(conversation, event)
+            _ingest_event(conversation, event, chat_only=lease.attempt_id is None)
         lease.command_watermark = max(
             lease.command_watermark, conversation.command_acked_through
         )
@@ -1046,7 +1190,10 @@ def ingest_conversation_events(
 
 
 def _ingest_event(
-    conversation: HostedHarnessConversation, event: dict[str, Any]
+    conversation: HostedHarnessConversation,
+    event: dict[str, Any],
+    *,
+    chat_only: bool = False,
 ) -> None:
     canonical = {key: value for key, value in event.items() if key != "digest"}
     if canonical_digest(canonical) != event["digest"]:
@@ -1107,12 +1254,27 @@ def _ingest_event(
                 event["emitted_at"],
             )
         )
+    if chat_only and event["kind"] == "turn_completed":
+        from simulate.services.harness_usage import bill_builder_turn
+
+        # A turn in a chat sandbox of its own: no attempt's ledger covers its spend.
+        transaction.on_commit(
+            partial(bill_builder_turn, str(conversation.id), event.get("payload") or {})
+        )
     _project_event(conversation, event)
+
+
+# Why an answer was not taken: the builder asked its question again, to be answered with one of its options.
+ASKED_AGAIN = (
+    "Not taken as the answer: the builder asked again. Answer with one of the options."
+)
 
 
 def _project_event(
     conversation: HostedHarnessConversation, event: dict[str, Any]
 ) -> None:
+    from simulate.services.harness_releases import adaptation_of, record_approval
+
     kind = event["kind"]
     payload = event.get("payload") or {}
     message_id = event.get("message_id")
@@ -1122,6 +1284,10 @@ def _project_event(
         conversation.active_invocation_id = event["invocation_id"]
     if kind == "turn_started":
         conversation.state = HostedHarnessConversation.State.RESPONDING
+        if not payload.get("resumed"):
+            # A fresh turn means the turn that asked has ended, so its question can no longer be answered; a resumed
+            # turn asks it again itself.
+            conversation.blocking_input = None
         command_id = payload.get("command_message_id")
         if command_id:
             conversation.messages.filter(
@@ -1195,13 +1361,56 @@ def _project_event(
             role=HostedHarnessConversationMessage.Role.USER, reply_to=message_id
         ).exists():
             # Asked again after a restart, but already answered.
+            if adaptation_of(conversation.job) is not None:
+                # With the answer it takes now: an earlier attempt's approval was cleared.
+                answer = conversation.messages.filter(
+                    role=HostedHarnessConversationMessage.Role.USER, reply_to=message_id
+                ).order_by("sequence")[0]
+                record_approval(conversation.job, payload, answer.content)
             return
+        # An answer still queued for another question can't be taken any more: that question is closed and the builder
+        # asks this one in its place, so the person answers this one. The answer says why it stopped.
+        for stale in conversation.messages.filter(
+            role=HostedHarnessConversationMessage.Role.USER,
+            state=HostedHarnessConversationMessage.State.QUEUED,
+            reply_to__isnull=False,
+        ).exclude(reply_to=message_id):
+            stale.state = HostedHarnessConversationMessage.State.FAILED
+            stale.payload = {**(stale.payload or {}), "failure_reason": ASKED_AGAIN}
+            stale.save(update_fields=["state", "payload", "updated_at"])
         conversation.state = HostedHarnessConversation.State.WAITING_FOR_USER
         conversation.blocking_input = {
             "message_id": str(message_id),
             "kind": kind,
             **payload,
         }
+        return
+    if kind == "question_answered":
+        # The builder took the reply in the middle of its turn. A design builds for an hour after
+        # its approval, so waiting for turn_completed would leave the question showing as open.
+        try:
+            reply_id = uuid.UUID(str(payload.get("reply_message_id")))
+        except ValueError:
+            raise HostedHarnessError(
+                "conversation_reply_id_invalid",
+                f"{kind} requires the reply's reply_message_id",
+                status_code=422,
+            ) from None
+        if not message_id:
+            raise HostedHarnessError(
+                "conversation_message_id_missing",
+                f"{kind} requires message_id",
+                status_code=422,
+            )
+        conversation.messages.filter(
+            id=reply_id,
+            role=HostedHarnessConversationMessage.Role.USER,
+            reply_to=message_id,
+        ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        open_question = (conversation.blocking_input or {}).get("message_id")
+        if str(open_question or "") == str(message_id):
+            conversation.blocking_input = None
+            conversation.state = HostedHarnessConversation.State.RESPONDING
         return
     if kind == "turn_interrupted":
         control_id = payload.get("interrupt_message_id") or payload.get(
@@ -1213,6 +1422,8 @@ def _project_event(
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
         conversation.state = HostedHarnessConversation.State.WARM_IDLE
+        # A stopped turn's question stops with it.
+        conversation.blocking_input = None
         conversation.active_invocation_id = None
         return
     if kind == "turn_completed":
@@ -1222,23 +1433,25 @@ def _project_event(
                 id=command_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
-        blocking_message_id = (conversation.blocking_input or {}).get("message_id")
-        answered = bool(
-            blocking_message_id
-            and conversation.messages.filter(
-                role=HostedHarnessConversationMessage.Role.USER,
-                reply_to=blocking_message_id,
-                sequence__lte=conversation.command_acked_through,
-            ).exists()
-        )
-        if answered:
+        if not payload.get("ignored"):
+            # The turn is over: a question it asked that nobody answered ended with
+            # it (one asked again within the turn too); only a later turn asks anew.
             conversation.blocking_input = None
-        if (
-            conversation.state != HostedHarnessConversation.State.WAITING_FOR_USER
-            or answered
-        ):
+            conversation.state = HostedHarnessConversation.State.WARM_IDLE
+        elif conversation.state != HostedHarnessConversation.State.WAITING_FOR_USER:
             conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
+        if command_id:
+            from simulate.services import evidence_drafts
+
+            transaction.on_commit(
+                partial(
+                    evidence_drafts.turn_ended,
+                    str(conversation.id),
+                    str(command_id),
+                    str(payload.get("outcome") or ""),
+                )
+            )
         # Only a finished turn leaves a complete suite; checkpoints taken mid-turn are scratch.
         if payload.get("outcome") == "success":
             conversation_id, sequence = str(conversation.id), event["sequence"]
@@ -1293,10 +1506,14 @@ def _numbers_meant(numbers: Any, ranges: Any) -> list[int]:
     return list(dict.fromkeys(found))
 
 
-def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
+def _scenario_summary(
+    row: HostedHarnessScenario, full: bool, lifecycle: Any = None
+) -> dict[str, Any]:
     persona = row.persona if isinstance(row.persona, dict) else {}
     summary = {
         "number": row.number,
+        # The badge the Scenarios tab shows, and why, so the builder can explain it.
+        "lifecycle": _lifecycle_line(row, lifecycle),
         "name": row.name or row.scenario_key,
         "use_case": row.use_case,
         "branch": row.branch,
@@ -1332,6 +1549,120 @@ def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
     return summary
 
 
+def _lifecycle_line(row: Any, lifecycle: Any) -> dict[str, Any] | None:
+    """A row's state, reason and reason text, read from the Scenarios tab's own lifecycle; None unversioned."""
+    from simulate.services.harness_provider import _with_lifecycle
+
+    if lifecycle is None:
+        return None
+    view = _with_lifecycle(
+        {
+            "scenario_key": row.scenario_key,
+            "draft_change": getattr(row, "draft_change", None),
+        },
+        lifecycle,
+    )["lifecycle"]
+    return {name: view.get(name) for name in ("state", "reason", "reason_text")}
+
+
+def removed_scenarios(
+    environment: HostedHarnessJob, drafted: Any = None
+) -> list[dict[str, Any]]:
+    """The cases the environment had and no longer holds, each with its key, name, the last saved suite version that
+    held it and its document there, so the chat can restore one under its key or copy it.
+
+    Read from the saved suite versions, not from a row's deleted flag: a case any saved version held that the current
+    suite does not. The current suite is the open draft when there is one (a case removed only in the draft is
+    offered from the default version), else the default saved version, else the live rows. An archived case is not
+    removed and is not offered."""
+    from django.db.models import F
+
+    from simulate.models import HarnessSuiteMember, HarnessSuiteVersion
+    from simulate.models.harness_versioning import VersionStatus
+    from simulate.services.harness_starting_records import scenario_token
+
+    if drafted is not None:
+        current = {row.scenario_key for row in drafted}
+    elif environment.suite_version_id:
+        current = set(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=environment.suite_version_id
+            ).values_list("scenario_key", flat=True)
+        )
+    else:
+        current = set(
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment
+            ).values_list("scenario_key", flat=True)
+        )
+    # Newest saved version first, the version number breaking a tie: the first member of a key is the last saved
+    # version that held it. Only ids here; the documents are read once per chosen version below.
+    chosen: dict[str, Any] = {}
+    for member_id, key in (
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version__job=environment,
+            suite_version__status=VersionStatus.ACTIVE,
+        )
+        .exclude(scenario_key__in=current)
+        .order_by(
+            "-suite_version__created_at",
+            F("suite_version__version_number").desc(nulls_last=True),
+        )
+        .values_list("id", "scenario_key")
+    ):
+        chosen.setdefault(key, member_id)
+    if not chosen:
+        return []
+    # An archived case is put away, not removed, whether or not its saved member still links its row.
+    archived = set(
+        HostedHarnessScenario.all_objects.filter(
+            job=environment, scenario_key__in=list(chosen), archived_at__isnull=False
+        ).values_list("scenario_key", flat=True)
+    )
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            id__in=[one for key, one in chosen.items() if key not in archived]
+        ).select_related("scenario")
+    )
+    documents = dict(
+        HarnessSuiteVersion._base_manager.filter(
+            id__in={member.suite_version_id for member in members}
+        ).values_list("id", "documents")
+    )
+    removed: list[tuple[int, dict[str, Any]]] = []
+    for member in members:
+        row = member.scenario
+        held = (documents.get(member.suite_version_id) or {}).get("scenarios") or []
+        entries = [one for one in held if isinstance(one, dict)]
+        # Exact key first; an older document saved without keys is matched by its name, as it was read before.
+        content = next(
+            (one for one in entries if one.get("scenario_key") == member.scenario_key),
+            None,
+        ) or next(
+            (
+                one
+                for one in entries
+                if not one.get("scenario_key")
+                and scenario_token(one.get("name"))
+                == scenario_token(member.scenario_key)
+            ),
+            member.content or {},
+        )
+        removed.append(
+            (
+                member.number or 0,
+                {
+                    "scenario_key": member.scenario_key,
+                    "name": (row.name if row is not None else "")
+                    or member.scenario_key,
+                    "suite_version": str(member.suite_version_id),
+                    "content": content,
+                },
+            )
+        )
+    return [entry for _, entry in sorted(removed, key=lambda pair: pair[0])]
+
+
 def conversation_scenarios(
     conversation: HostedHarnessConversation, params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1349,6 +1680,8 @@ def conversation_scenarios(
     environment = conversation.job.environment or conversation.job
     # The unsaved scenarios, numbered as Save will number them.
     drafted = draft_rows(environment)
+    if params.get("removed"):
+        return {"removed": removed_scenarios(environment, drafted)}
     live = (
         drafted
         if drafted is not None
@@ -1394,6 +1727,12 @@ def conversation_scenarios(
     matching = queryset.count()
     rows = list(queryset[(page - 1) * page_size : page * page_size])
     found = {row.number for row in rows}
+    from simulate.services.harness_provider import _lifecycle_for_list
+
+    # The same lifecycle the Scenarios tab lists, on the environment's default pair.
+    lifecycle = _lifecycle_for_list(environment, {}) if rows else None
+    if not isinstance(lifecycle, dict):
+        lifecycle = None
     return {
         "total_scenarios": live.count(),
         "matching": matching,
@@ -1403,7 +1742,10 @@ def conversation_scenarios(
         "numbers_not_found": [number for number in numbers if number not in found]
         if numbers and matching <= page_size
         else [],
-        "rows": [_scenario_summary(row, full=bool(params.get("full"))) for row in rows],
+        "rows": [
+            _scenario_summary(row, full=bool(params.get("full")), lifecycle=lifecycle)
+            for row in rows
+        ],
     }
 
 
@@ -1513,6 +1855,16 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
             )
         ],
     }
+    from simulate.services.harness_provider import _lifecycle_for_list
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+    # The Scenarios tab's own counts (Validate's proofs included), so the builder never counts from its sandbox.
+    lifecycle = _lifecycle_for_list(environment, {})
+    overview["lifecycle_counts"] = (
+        lifecycle_counts(list(lifecycle["views"].values()) + lifecycle["archived"])
+        if isinstance(lifecycle, dict)
+        else None
+    )
     if drafts.drafts_apply(environment):
         listed = drafts.list_drafts(environment)
         overview["drafts"] = {
@@ -1552,10 +1904,60 @@ def _suite_snapshot(job: HostedHarnessJob) -> dict[str, tuple[int | None, str, s
     }
 
 
+FAILED_CHANGES_KEY = "failed_scenario_changes"
+
+
+def record_failed_changes(environment: HostedHarnessJob, failed: Any) -> dict[str, str]:
+    """Keep which scenarios the builder's last save could not apply, by key with the first line of
+    why; each save replaces the set, so a fixed case leaves it."""
+    kept = {
+        str(one.get("scenario_key")).strip()[:255]: next(
+            (
+                line.strip()
+                for line in str(one.get("reason") or "").splitlines()
+                if line.strip()
+            ),
+            "it could not be loaded",
+        )[:300]
+        for one in failed or []
+        if isinstance(one, dict) and str(one.get("scenario_key") or "").strip()
+    }
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=environment.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        if kept:
+            metadata[FAILED_CHANGES_KEY] = kept
+        else:
+            metadata.pop(FAILED_CHANGES_KEY, None)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    # The caller's copy too, so a later save of it does not write the old set back.
+    environment.payload = locked.payload
+    return kept
+
+
+def failed_changes(environment: HostedHarnessJob) -> dict[str, str]:
+    """The scenarios the builder's last save could not apply, by key."""
+    found = ((environment.payload or {}).get("metadata") or {}).get(FAILED_CHANGES_KEY)
+    return (
+        {str(key): str(why) for key, why in found.items()}
+        if isinstance(found, dict)
+        else {}
+    )
+
+
 def publish_conversation_workspace(
-    conversation: HostedHarnessConversation, *, digest: str
+    conversation: HostedHarnessConversation,
+    *,
+    digest: str,
+    failed_scenarios: Any = None,
 ) -> dict[str, Any]:
-    """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not."""
+    """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not.
+    ``failed_scenarios`` are the cases the builder could not apply; the rest still save."""
     conversation = HostedHarnessConversation.no_workspace_objects.get(
         id=conversation.id
     )
@@ -1567,6 +1969,19 @@ def publish_conversation_workspace(
         }
     job = conversation.job
     environment = job.environment or job
+    from simulate.services.harness_scenario_actions import (
+        VALIDATION_RUNNING,
+        live_validation,
+    )
+    from simulate.services.harness_versioning import drafts as draft_store
+
+    # Outside drafts this publish saves new defaults: never while a validation of the default pair runs.
+    if not draft_store.drafts_apply(environment) and live_validation(environment):
+        return {
+            "applied": False,
+            "code": "validation_running",
+            "message": VALIDATION_RUNNING,
+        }
     before = _suite_snapshot(environment)
     try:
         published = promote_latest_checkpoint(conversation, retire_runtime=False)
@@ -1580,11 +1995,15 @@ def publish_conversation_workspace(
         }
     from simulate.services.harness_versioning import drafts
 
+    failed = record_failed_changes(environment, failed_scenarios)
     if drafts.drafts_apply(environment):
         # Saved to the unsaved changes: nothing is live until the person presses Save.
         return {
             "applied": True,
             "draft": True,
+            "failed": [
+                {"scenario_key": key, "reason": why} for key, why in failed.items()
+            ],
             "revision": str(
                 ((published.payload or {}).get("metadata") or {}).get(
                     "authoring_revision"
@@ -1608,6 +2027,7 @@ def publish_conversation_workspace(
 
     return {
         "applied": True,
+        "failed": [{"scenario_key": key, "reason": why} for key, why in failed.items()],
         "revision": str(
             ((published.payload or {}).get("metadata") or {}).get("authoring_revision")
             or ""
@@ -1693,10 +2113,13 @@ def start_conversation_run(
     operation_id: str = "",
 ) -> dict[str, Any]:
     """Run the scenarios the chat names by tab number, the way the Scenarios tab does."""
+    from simulate.services.evidence_drafts import refuse_run
     from simulate.services.harness_usage import require_harness_call_usage
+    from simulate.services.harness_versioning.rebuild import turn_command
     from simulate.services.hosted_harness import create_selected_harness_run
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
+    refuse_run(turn_command(conversation))
     job = conversation.job
     environment = job.environment or job
     wanted = _numbers_meant(numbers, ranges)
@@ -1748,7 +2171,13 @@ def start_conversation_run(
 
 # What a chat workspace reproduces faithfully. Build outputs (the bundle manifest, seeded
 # stores) are not in it, so those keep what the last build produced.
-_CHECKPOINT_STAGE_KINDS = ("contract", "scenarios", "sub_goals", "coverage")
+_CHECKPOINT_STAGE_KINDS = (
+    "contract",
+    "scenarios",
+    "sub_goals",
+    "coverage",
+    "call_actors",
+)
 
 
 def _schedule_checkpoint_promotion(conversation_id: str, turn_sequence: int) -> None:
@@ -1895,6 +2324,8 @@ class _DraftCommand:
     origin: str
     author: Any
     draft_kwargs: dict[str, Any]
+    # The person's message the turn answered, which each change it makes cites.
+    message_id: str
 
 
 def _draft_command(
@@ -1913,6 +2344,7 @@ def _draft_command(
         origin=origin or ("extend" if payload.get("_origin") == "extend" else "chat"),
         author=command_author(payload, environment),
         draft_kwargs=draft_kwargs,
+        message_id=str(command.id) if command is not None else "",
     )
 
 
@@ -1956,7 +2388,7 @@ def promote_conversation_checkpoint(
 
     Only a completed environment is published to; while authoring runs, its pipeline owns
     these. A checkpoint older than the published one is ignored, so a late delivery never
-    rolls the environment back.
+    rolls the environment back. A fix's request for variations lands in the fix instead.
     """
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import drafts, rebuild
@@ -1981,7 +2413,35 @@ def promote_conversation_checkpoint(
             "the chat checkpoint is no longer stored",
             status_code=409,
         )
+    from simulate.services.harness_releases import composition_of
+
+    if composition_of(environment) is not None:
+        from simulate.services.harness_composition_edits import (
+            promote_composition_checkpoint,
+        )
+
+        return promote_composition_checkpoint(
+            conversation,
+            environment,
+            checkpoint,
+            digest=digest,
+            sequence=sequence,
+            expected_revision=expected_revision,
+            retire_runtime=retire_runtime,
+        )
     archive = _authoring_archive(checkpoint)
+    from simulate.services import agent_fix_variations, evidence_drafts
+
+    if command is not None and evidence_drafts.is_evidence_command(command):
+        # An evidence turn read untrusted production text: its saves never reach
+        # the environment; its scenarios become proposals on the import.
+        evidence_drafts.land(environment, conversation, archive, command)
+        return environment
+    if command is not None and agent_fix_variations.is_fix_command(command):
+        # A fix's variations land in the fix's own suite version, never in the
+        # environment's drafts or defaults.
+        agent_fix_variations.land(environment, conversation, archive, command)
+        return environment
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
     outputs = {
@@ -1991,6 +2451,9 @@ def promote_conversation_checkpoint(
     }
     suite = (outputs.get("scenarios") or {}).get("data")
     require_checkpoint_scenarios(suite)
+    from simulate.services.harness_starting_record_rework import refuse_invented
+
+    refuse_invented(environment, archive, command)
 
     observed_revision = environment_authoring_revision(environment)
     stale_revision = None
@@ -2057,6 +2520,7 @@ def promote_conversation_checkpoint(
                     origin=draft_command.origin,
                     user=draft_command.author,
                     expected=expected,
+                    message_id=draft_command.message_id,
                     **draft_command.draft_kwargs,
                 )
             except HostedHarnessError as exc:
@@ -2248,12 +2712,17 @@ def _authoring_archive(checkpoint: bytes) -> bytes:
 
 
 def _bind_added_scenarios(
-    environment: HostedHarnessJob, rows: list[HostedHarnessScenario] | None = None
+    environment: HostedHarnessJob,
+    rows: list[HostedHarnessScenario] | None = None,
+    *,
+    personas: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Give scenarios the chat added the platform identity a Run creates its calls from.
 
     ``rows`` limits it to those scenarios, dropped ones included; by default every live
-    unbound scenario of the environment is bound.
+    unbound scenario of the environment is bound. ``personas`` gives each new scenario's
+    persona by key, exactly as its sealed suite presents it (a composition's
+    ``provision.json``); otherwise it is derived from the indexed row.
     """
     from simulate.services.alk_simulate_ingestion import (
         ALKSimulateIngestionError,
@@ -2276,7 +2745,11 @@ def _bind_added_scenarios(
         return
     try:
         shared, created = append_alk_sim_scenarios(
-            environment.run_test, [_provision_persona(one) for one in added]
+            environment.run_test,
+            [
+                personas[one.scenario_key] if personas else _provision_persona(one)
+                for one in added
+            ],
         )
     except ALKSimulateIngestionError as exc:
         raise HostedHarnessError("scenario_provision_failed", str(exc)) from exc

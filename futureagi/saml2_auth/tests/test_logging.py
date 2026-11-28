@@ -82,16 +82,16 @@ def test_acs_body_is_not_copied_onto_the_tracing_span():
     """Verifier finding 1 (P1): the ACS form body must never reach a tracing span.
 
     OTelContextMiddleware copies request.POST onto the current span unless the
-    path is in SENSITIVE_BODY_PATH_PREFIXES. The ACS endpoint receives the raw
+    path is sensitive. The ACS endpoint receives the raw
     SAMLResponse, so /saml2_auth/ must be treated as sensitive or the assertion
     is exported on every request, success or failure.
     """
 
-    from tfc.telemetry.middleware import SENSITIVE_BODY_PATH_PREFIXES
+    from tfc.telemetry.middleware import is_sensitive_body_path
 
-    assert any(
-        "/saml2_auth/acs/".startswith(prefix) for prefix in SENSITIVE_BODY_PATH_PREFIXES
-    ), "ACS path is not excluded from request-body span capture"
+    assert is_sensitive_body_path("/saml2_auth/acs/"), (
+        "ACS path is not excluded from request-body span capture"
+    )
 
 
 def test_denials_log_their_own_reason(api_client, idp_a):

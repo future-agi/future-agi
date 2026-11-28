@@ -14,6 +14,7 @@ from model_hub.models.choices import (
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
 )
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
@@ -105,8 +106,10 @@ def _call_transcript_turns(call: Any) -> list[dict[str, Any]]:
         rows = getattr(call, "_displayable_transcripts", None)
         if rows is None:
             rows = list(
-                call.transcripts.filter(
-                    speaker_role__in=get_displayable_transcript_roles()
+                with_speakers(
+                    call.transcripts.filter(
+                        speaker_role__in=get_displayable_transcript_roles()
+                    )
                 ).order_by("start_time_ms")
             )
         return list(CallTranscriptSerializer(rows, many=True).data)
@@ -3719,6 +3722,7 @@ def send_rule_completion_email(
     back.
     """
     from tfc.utils.email import email_helper
+    from tfc.utils.email_unsubscribe import AUTOMATION_RULE_RUNS
 
     recipients = _rule_completion_recipients(
         rule, triggered_by_user_id=triggered_by_user_id
@@ -3769,6 +3773,7 @@ def send_rule_completion_email(
                 "error_message": error_message or "",
             },
             to_email_list=recipients,
+            notification_category=AUTOMATION_RULE_RUNS,
         )
     except Exception as exc:
         logger.warning(

@@ -21,6 +21,7 @@ accumulate and hit PgBouncer's pool limit (~20 by default).
 
 import asyncio
 import traceback
+from functools import partial
 from itertools import chain
 from uuid import uuid4
 
@@ -31,11 +32,9 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 from temporalio import activity
 
-from simulate.models.test_execution import CallExecution
-from simulate.services.agent_definition import (
-    provider_for_version,
-    resolve_provider_configuration_for_version,
-)
+from simulate.models.test_execution import CallExecution, CallTranscript
+from simulate.selectors.call_transcripts import with_speakers
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.services.harness_evals import effective_simulation_mapping
 from simulate.temporal.types.activities import (
@@ -46,8 +45,13 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
-from simulate.utils.test_execution_utils import eval_source
+from simulate.utils.stored_transcript_roles import call_actor_label
+from simulate.utils.test_execution_utils import (
+    accrue_check_run_eval_cost,
+    eval_source,
+)
 from simulate.utils.verdicts import has_stored_verdict
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.utils.case import to_camel_case, to_snake_case
 from tfc.utils.evaluation_denials import EvaluationDenied
 from tfc.utils.storage_client import server_reachable_url
@@ -240,7 +244,9 @@ def _build_transcript_data(call_execution):
         if is_text:
             transcripts = call_execution.chat_messages.all().order_by("created_at")
         else:
-            transcripts = call_execution.transcripts.all().order_by("start_time_ms")
+            transcripts = with_speakers(call_execution.transcripts.all()).order_by(
+                "start_time_ms"
+            )
 
         if transcripts.exists():
             transcript_text = []
@@ -304,6 +310,10 @@ def _build_transcript_data(call_execution):
                 conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
                     if not transcript.content.strip():
+                        continue
+                    if transcript.speaker_role == CallTranscript.SpeakerRole.ACTOR:
+                        speaker = call_actor_label(transcript.speaker_name)
+                        transcript_text.append(f"{speaker}: {transcript.content}")
                         continue
                     if transcript.speaker_role not in conversational_roles:
                         continue
@@ -982,7 +992,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 call_execution.save(update_fields=["eval_outputs"])
 
                 eval_config.status = StatusType.FAILED.value
-                eval_config.save()
+                eval_config.save(update_fields=["status", "updated_at"])
                 raise ValueError(error_message)
 
         # A recording variable that resolved empty (e.g. stereo on a
@@ -1034,6 +1044,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 else None,
             }
 
+        source = eval_source(call_execution.test_execution_id)
+        # A fix's check run counts what its evals bill, and nobody reads its localizer.
+        check_run = source == FIX_CHECK_RUN_EVAL_SOURCE
         eval_result = run_eval_func(
             config=config,
             mappings=updated_mapping,
@@ -1041,10 +1054,15 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             org=organization,
             model=eval_config.model,
             kb_id=eval_config.kb_id,
-            error_localizer=eval_config.error_localizer,
+            error_localizer=eval_config.error_localizer and not check_run,
             workspace=call_execution.test_execution.run_test.workspace,
-            source=eval_source(call_execution.test_execution_id),
+            source=source,
             call_context=_call_context,
+            on_billed=(
+                partial(accrue_check_run_eval_cost, call_execution.test_execution_id)
+                if check_run
+                else None
+            ),
         )
 
         if isinstance(eval_result, str):
@@ -1076,7 +1094,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             )
 
             el_enabled = error_localizer_enabled(eval_config)
-            if el_enabled and eval_output is not None:
+            if el_enabled and not check_run and eval_output is not None:
                 try:
                     trigger_error_localization_for_simulate(
                         eval_template=eval_template,
@@ -1093,7 +1111,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     )
 
             eval_config.status = StatusType.COMPLETED.value
-            eval_config.save()
+            eval_config.save(update_fields=["status", "updated_at"])
 
     except EvaluationDenied as denial:
         record_evaluation_denial(call_execution, eval_config, denial)
@@ -1117,7 +1135,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         call_execution.save(update_fields=["eval_outputs"])
 
         eval_config.status = StatusType.FAILED.value
-        eval_config.save()
+        eval_config.save(update_fields=["status", "updated_at"])
         raise
 
 
@@ -1558,6 +1576,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from simulate.models import AgentDefinition
     from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
+    from tracer.models.observability_provider import ProviderChoices
 
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
@@ -1590,6 +1609,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
         else:
             agent_version = agent_definition.get_version(selected_version.id)
 
+        snapshot = agent_version.configuration_snapshot
         agent_type = agent_definition.agent_type
         is_text_agent = agent_type == AgentDefinition.AgentTypeChoices.TEXT
 
@@ -1627,9 +1647,12 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     )
                 return
 
-            configuration = resolve_provider_configuration_for_version(agent_version)
-            customer_api_key = configuration.api_key
-            customer_assistant_id = configuration.assistant_id
+            customer_api_key = resolve_api_key_for_version(agent_version)
+            customer_assistant_id = (
+                snapshot.get("assistant_id")
+                if snapshot and snapshot.get("assistant_id")
+                else None
+            )
 
             if not customer_api_key or not customer_assistant_id:
                 logger.info(
@@ -1647,7 +1670,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
 
             logger.info(f"Using customer_call_id: {customer_call_id}")
 
-            customer_provider = provider_for_version(agent_version)
+            customer_provider = snapshot.get("provider", ProviderChoices.VAPI)
             from simulate.semantics import ToolCallingSupportedProviders
 
             provider_value = getattr(customer_provider, "value", customer_provider)

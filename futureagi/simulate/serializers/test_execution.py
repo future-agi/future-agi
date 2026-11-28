@@ -15,7 +15,9 @@ from simulate.models import (
     CallTranscript,
     TestExecution,
 )
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers.chat_message import ChatMessageSerializer
+from simulate.services.call_provider import call_agent_provider
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
 from tracer.models.observability_provider import ProviderChoices
@@ -72,12 +74,20 @@ class CallTranscriptSerializer(serializers.ModelSerializer):
 
     start_time_seconds = serializers.SerializerMethodField()
     end_time_seconds = serializers.SerializerMethodField()
+    speaker_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True
+    )
+    actor_id = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, allow_null=True
+    )
 
     class Meta:
         model = CallTranscript
         fields = [
             "id",
             "speaker_role",
+            "speaker_name",
+            "actor_id",
             "content",
             "start_time_ms",
             "start_time_seconds",
@@ -610,35 +620,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return recordings or {}
 
     def get_provider(self, obj):
-        """Return the provider that produced this call's stored provider payload.
-
-        The agent definition can be Vapi while the executed call payload is
-        stored under another provider key (for example LiveKit web/SIP flows).
-        The drawer uses this value for both the chip and provider-specific
-        metrics rendering, so prefer the actual payload key when available.
-        """
-        provider_data = getattr(obj, "provider_call_data", None)
-        if isinstance(provider_data, dict):
-            for provider in (
-                ProviderChoices.VAPI.value,
-                ProviderChoices.RETELL.value,
-                ProviderChoices.LIVEKIT.value,
-                ProviderChoices.ELEVEN_LABS.value,
-                ProviderChoices.OTHERS.value,
-            ):
-                if isinstance(provider_data.get(provider), dict) and provider_data.get(
-                    provider
-                ):
-                    return provider
-
-            for provider, payload in provider_data.items():
-                if isinstance(payload, dict) and payload:
-                    return provider
-
-        try:
-            return obj.test_execution.agent_definition.provider
-        except (AttributeError, Exception):
-            return None
+        return call_agent_provider(obj)
 
     def get_call_type(self, obj):
         """
@@ -758,19 +740,25 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         # Filter out transcripts with 'unknown' speaker role
         if hasattr(obj, "transcripts"):
-            filtered_transcripts = obj.transcripts.exclude(
-                speaker_role=CallTranscript.SpeakerRole.UNKNOWN
+            filtered_transcripts = with_speakers(
+                obj.transcripts.exclude(speaker_role=CallTranscript.SpeakerRole.UNKNOWN)
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+            rows = CallTranscriptSerializer(
+                filtered_transcripts,
+                many=True,
+                context={"recording_offset_ms": offset},
+            ).data
+            # Pending calls commonly have neither transcripts nor provider data.
+            # Resolve only when there are roles to align; nonempty transcripts
+            # still diagnose missing/unsupported provider metadata.
+            if not rows:
+                return []
             return SpeakerRoleResolver.align_transcript_rows(
-                CallTranscriptSerializer(
-                    filtered_transcripts,
-                    many=True,
-                    context={"recording_offset_ms": offset},
-                ).data,
+                rows,
                 provider=SpeakerRoleResolver.detect_provider(
                     getattr(obj, "provider_call_data", None)
                 ),
@@ -1442,6 +1430,32 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
     avg_turn_count = serializers.FloatField(read_only=True)
     avg_csat_score = serializers.FloatField(read_only=True)
     failed_calls = serializers.IntegerField(read_only=True)
+    debug_failures_connected_calls = serializers.IntegerField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Connected calls as Debug failures counts them: per call and live "
+            "calls only. Null until the run finishes. Unlike connected_calls, it "
+            "counts a completed chat on a voice run and skips a deleted call."
+        ),
+    )
+    failing_calls = serializers.IntegerField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Calls whose outcome is failed or error, as Debug failures counts "
+            "them. Null until the run finishes. Unlike failed_calls, it counts "
+            "a completed call that failed its evals."
+        ),
+    )
+    has_debug_failures_analysis = serializers.BooleanField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Whether the run has a Debug failures analysis the optimiser-analysis "
+            "read returns, in any status. Null until the run finishes."
+        ),
+    )
     total_duration = serializers.FloatField(read_only=True)
 
 
@@ -1572,19 +1586,25 @@ class CallExecutionSerializer(serializers.ModelSerializer):
         """Get transcripts excluding those with 'unknown' role"""
         # Filter out transcripts with 'unknown' speaker role
         if hasattr(obj, "transcripts"):
-            filtered_transcripts = obj.transcripts.exclude(
-                speaker_role=CallTranscript.SpeakerRole.UNKNOWN
+            filtered_transcripts = with_speakers(
+                obj.transcripts.exclude(speaker_role=CallTranscript.SpeakerRole.UNKNOWN)
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+            rows = CallTranscriptSerializer(
+                filtered_transcripts,
+                many=True,
+                context={"recording_offset_ms": offset},
+            ).data
+            # Pending calls commonly have neither transcripts nor provider data.
+            # Resolve only when there are roles to align; nonempty transcripts
+            # still diagnose missing/unsupported provider metadata.
+            if not rows:
+                return []
             return SpeakerRoleResolver.align_transcript_rows(
-                CallTranscriptSerializer(
-                    filtered_transcripts,
-                    many=True,
-                    context={"recording_offset_ms": offset},
-                ).data,
+                rows,
                 provider=SpeakerRoleResolver.detect_provider(
                     getattr(obj, "provider_call_data", None)
                 ),

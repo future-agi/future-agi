@@ -7,7 +7,6 @@ views; only synthetic account setup uses the ORM directly.
 
 import asyncio
 import json
-import sys
 import types
 from uuid import uuid4
 
@@ -16,24 +15,12 @@ from asgiref.sync import sync_to_async
 from channels.routing import URLRouter
 from rest_framework.test import APIClient
 
-try:
-    from channels.testing import WebsocketCommunicator
-except ModuleNotFoundError as exc:
-    if exc.name != "daphne":
-        raise
-    # channels.testing imports its optional live-server class from daphne, which
-    # the backend environment omits; the communicator itself never uses it.
-    daphne_testing = types.ModuleType("daphne.testing")
-    daphne_testing.DaphneProcess = type("DaphneProcess", (), {})
-    sys.modules.setdefault("daphne", types.ModuleType("daphne"))
-    sys.modules.setdefault("daphne.testing", daphne_testing)
-    from channels.testing import WebsocketCommunicator
-
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.services.token_service import issue_tokens
+from saml2_auth.tests.ws_helpers import WebsocketCommunicator
 from sockets.routing import websocket_urlpatterns
 from tfc.constants.levels import Level
 from tfc.middleware.jwt_auth import JWTAuthMiddleware
@@ -140,7 +127,7 @@ def relay(key, target=None):
     """Publish through the real relay endpoint with the tenant's system key."""
 
     message = {"alert_title": "Synthetic notification", "marker": uuid4().hex}
-    body = {"message": message}
+    body: dict[str, object] = {"message": message}
     if target:
         body.update(send_to_uuid=True, uuid=target)
         message["uuid"] = target

@@ -1,12 +1,13 @@
 """
 Tests for ObservabilityService in tracer/services/observability_providers.py.
 
+Fixes CORE-BACKEND-WCN (VAPI 401) and CORE-BACKEND-WTW (Retell 401).
+
 Run with: pytest tracer/tests/test_observability_providers.py -v
 """
 
 import threading
 from datetime import timedelta
-from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -14,7 +15,6 @@ import requests
 from requests.exceptions import HTTPError
 from structlog.testing import capture_logs
 
-from simulate.models.agent_definition import ProviderCredentials
 from tracer.models.observability_provider import ProviderChoices
 from tracer.services.observability_providers import (
     RETELL_HYDRATION_WORKERS,
@@ -215,14 +215,6 @@ class TestVerifyApiKey:
         )
 
 
-class _LegacyVapiAgent(SimpleNamespace):
-    provider = "vapi"
-
-    @property
-    def credentials_legacy(self):
-        raise ProviderCredentials.DoesNotExist
-
-
 class TestFetchVapiLogs:
     """Tests for _fetch_vapi_logs method."""
 
@@ -233,21 +225,19 @@ class TestFetchVapiLogs:
         ).ObservabilityService,
         "_get_agent_definition",
     )
-    def test_classifies_missing_agent(self, mock_get_agent, mock_requests_get):
-        """Incomplete setup must not look like a successful empty import."""
-        from tracer.services.observability_providers import (
-            ObservabilityService,
-            VapiConfigurationError,
-        )
+    def test_returns_empty_list_when_no_api_key(
+        self, mock_get_agent, mock_requests_get
+    ):
+        """Returns empty list when agent has no API key (graceful handling)."""
+        from tracer.services.observability_providers import ObservabilityService
 
         mock_get_agent.return_value = None
         mock_provider = Mock()
         mock_provider.id = "vapi-provider-123"
 
-        with pytest.raises(VapiConfigurationError) as raised:
-            ObservabilityService._fetch_vapi_logs(mock_provider)
+        result = ObservabilityService._fetch_vapi_logs(mock_provider)
 
-        assert raised.value.reason_code == "missing_agent"
+        assert result == []
         # Should not make HTTP request when validation fails
         mock_requests_get.assert_not_called()
 
@@ -262,12 +252,8 @@ class TestFetchVapiLogs:
         """Makes HTTP request when API key is valid."""
         from tracer.services.observability_providers import ObservabilityService
 
-        mock_agent = _LegacyVapiAgent(
-            deleted=False,
-            active_version=None,
-            latest_version=None,
-            api_key="valid-vapi-key",
-        )
+        mock_agent = Mock()
+        mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -300,12 +286,8 @@ class TestFetchVapiLogs:
             ObservabilityService,
         )
 
-        mock_agent = _LegacyVapiAgent(
-            deleted=False,
-            active_version=None,
-            latest_version=None,
-            api_key="valid-vapi-key",
-        )
+        mock_agent = Mock()
+        mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -357,12 +339,8 @@ class TestFetchVapiLogs:
             ObservabilityService,
         )
 
-        mock_agent = _LegacyVapiAgent(
-            deleted=False,
-            active_version=None,
-            latest_version=None,
-            api_key="valid-vapi-key",
-        )
+        mock_agent = Mock()
+        mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -401,12 +379,8 @@ class TestFetchVapiLogs:
         """Makes only one request when results are under VAPI_PAGE_LIMIT."""
         from tracer.services.observability_providers import ObservabilityService
 
-        mock_agent = _LegacyVapiAgent(
-            deleted=False,
-            active_version=None,
-            latest_version=None,
-            api_key="valid-vapi-key",
-        )
+        mock_agent = Mock()
+        mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
 
@@ -441,7 +415,7 @@ def _provider_with_agent(assistant_id=None, api_key="legacy-retell-key"):
 
     provider = Mock()
     provider.id = "retell-provider-1"
-    agent = Mock(deleted=False)
+    agent = Mock()
     agent.assistant_id = assistant_id or FAKE_AGENT_ID
     agent.api_key = api_key
     provider.agent_definition = agent
@@ -2481,19 +2455,15 @@ class TestObservabilityServiceIntegration:
         assert api_key == "test-vapi-api-key-12345"
 
     @patch("tracer.services.observability_providers.requests.get")
-    def test_fetch_vapi_logs_classifies_missing_agent(
+    def test_fetch_vapi_logs_returns_empty_when_no_agent(
         self, mock_get, vapi_provider_without_agent
     ):
-        """Missing links surface as configuration health instead of empty success."""
-        from tracer.services.observability_providers import (
-            ObservabilityService,
-            VapiConfigurationError,
-        )
+        """Verify _fetch_vapi_logs returns empty list when no agent (graceful handling)."""
+        from tracer.services.observability_providers import ObservabilityService
 
-        with pytest.raises(VapiConfigurationError) as raised:
-            ObservabilityService._fetch_vapi_logs(vapi_provider_without_agent)
+        result = ObservabilityService._fetch_vapi_logs(vapi_provider_without_agent)
 
-        assert raised.value.reason_code == "missing_agent"
+        assert result == []
         # Should not make HTTP request when validation fails
         mock_get.assert_not_called()
 
@@ -2598,7 +2568,7 @@ class TestGetCallLogsForRowsWithoutHostedHistory:
             result = ObservabilityService.get_call_logs(provider)
 
         assert result == [{"id": "call-1"}]
-        fetch.assert_called_once_with(provider, None, None, configuration=None)
+        fetch.assert_called_once_with(provider, None, None)
 
     def test_an_unlisted_provider_still_raises(self):
         provider = Mock()

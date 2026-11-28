@@ -32,6 +32,12 @@ class MediaNotAccessibleError(ValueError):
         )
 
 
+class EvalConfigError(ValueError):
+    """Raised when an eval's own configuration cannot run, for example a
+    custom eval with no rule prompt. Its message is the backend's own text,
+    so callers may show it to users."""
+
+
 class CodeEvalSetupError(ValueError):
     """Raised when this install cannot run a code eval at all: no code
     executor, or no Node.js for a JavaScript eval. Its message is always one of

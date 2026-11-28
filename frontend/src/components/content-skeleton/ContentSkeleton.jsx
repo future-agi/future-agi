@@ -35,6 +35,18 @@ function Rows({ count }) {
 }
 Rows.propTypes = { count: PropTypes.number };
 
+/**
+ * The props as propTypes gives them, for a TypeScript caller; any other prop goes to
+ * the loader or the Box.
+ * @typedef {object} ContentSkeletonProps
+ * @property {"page" | "rows" | "panel"} [variant]
+ * @property {number} [rows]
+ * @property {string} [label]
+ * @property {string} [role]
+ * @property {object} [sx]
+ */
+
+/** @param {ContentSkeletonProps & Record<string, unknown>} props */
 export default function ContentSkeleton({
   variant = "rows",
   rows,

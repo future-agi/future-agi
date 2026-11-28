@@ -13,6 +13,11 @@ from typing import Any
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.harness_environment import sub_goal_catalogue
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    graded_call_receipt,
+    sub_goal_result,
+)
 from simulate.services.run_results_v3 import call_outcome
 
 # A finding about our own test caller is our bug, not the user's agent.
@@ -62,20 +67,25 @@ def build_diagnosis(
     # The run page's own reading of an errored call (the harness verdict, else the
     # call status), so the drawer and the page count the same calls. Eval ids only
     # matter past that point, so none are needed here.
-    infra = {call.id for call in calls if call_outcome(call, {}) == "error"}
+    infra: set = set()
     verdicts: dict = {}
     for call in calls:
-        if call.id in infra:
+        outcome = call_outcome(call, {})
+        if outcome == "error":
+            infra.add(call.id)
             continue
-        receipt = (call.call_metadata or {}).get("hosted_harness_receipt") or {}
-        # Same reading as the harness ingestion: `judged` is only the kind (a judge
-        # or a code checkpoint), and a sub-goal nothing decided was not tested.
+        # A cancelled call is never graded, so it is not measured. It did not
+        # error either, so it is not excluded as one.
+        if outcome == "cancelled":
+            continue
+        receipt = graded_call_receipt(call.call_metadata) or {}
+        # As ingestion reads it: `judged` is only the kind; undecided, not applicable or inconclusive was not tested.
         verdicts[call.id] = [
-            (str(goal["name"]), goal["held"])
+            (str(goal["name"]), SUB_GOAL_PASSED[result])
             for goal in receipt.get("sub_goals") or []
             if isinstance(goal, dict)
             and goal.get("name")
-            and goal.get("held") is not None
+            and (result := sub_goal_result(goal)) in SUB_GOAL_PASSED
         ]
     broken: dict[str, list] = defaultdict(list)
     passed: dict = defaultdict(set)
@@ -135,7 +145,9 @@ def build_diagnosis(
             ]
         return result
 
-    catalogue = sub_goal_catalogue(execution.run_test_id)
+    catalogue = sub_goal_catalogue(
+        execution.run_test_id, test_execution_id=execution.id
+    )
     goals = []
     for name, call_ids in broken.items():
         goal_ways = ways(by_goal.get(name, []))

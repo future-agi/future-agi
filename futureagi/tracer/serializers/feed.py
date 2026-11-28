@@ -92,7 +92,35 @@ class TrendPointSerializer(serializers.Serializer):
     users = serializers.IntegerField()
 
 
+class FeedEscalationSerializer(serializers.Serializer):
+    current_count = serializers.IntegerField()
+    affected_trace_count = serializers.IntegerField()
+    baseline = serializers.FloatField()
+    entry_threshold = serializers.FloatField()
+    recovery_threshold = serializers.FloatField()
+    unit = serializers.ChoiceField(choices=["findings", "failed_evaluations"])
+    window_start = serializers.DateTimeField()
+    window_end = serializers.DateTimeField()
+    evaluated_at = serializers.DateTimeField()
+    algorithm_version = serializers.CharField()
+    policy_revision = serializers.IntegerField()
+    input_revision = serializers.IntegerField()
+    entry_confirmation_minutes = serializers.IntegerField()
+    recovery_confirmation_minutes = serializers.IntegerField()
+
+
 class FeedListRowSerializer(serializers.Serializer):
+    status_origin = serializers.ChoiceField(
+        choices=["system", "manual", "legacy_unknown"], required=False
+    )
+    status_revision = serializers.IntegerField(required=False)
+    escalation = FeedEscalationSerializer(allow_null=True, required=False)
+    escalation_error = serializers.ChoiceField(
+        choices=["evidence_unavailable", "calculation_failed"],
+        allow_null=True,
+        required=False,
+        help_text="Why the latest automatic escalation check failed; null when it succeeded.",
+    )
     severity_assessment_status = serializers.CharField(required=False)
     severity_source = serializers.CharField(required=False)
     severity_reason = serializers.CharField(allow_blank=True, required=False)
@@ -187,6 +215,8 @@ class RcaSummarySerializer(serializers.Serializer):
 class FeedDetailCoreSerializer(serializers.Serializer):
     row = FeedListRowSerializer()
     description = serializers.CharField(allow_null=True)
+    fix_hypothesis = serializers.CharField(allow_null=True)
+    falsifier = serializers.CharField(allow_null=True)
     success_trace = TracePreviewSerializer(allow_null=True)
     representative_trace = TracePreviewSerializer(allow_null=True)
     rca = RcaSummarySerializer(allow_null=True, required=False)

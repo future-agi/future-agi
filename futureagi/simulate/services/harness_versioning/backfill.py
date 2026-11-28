@@ -481,6 +481,7 @@ def legacy_source(payload: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
                 "repository": source.get("repository"),
                 "ref": source.get("ref"),
                 "commit_sha": source.get("commit_sha"),
+                "subfolder": source.get("subfolder"),
             }
         )
     if kind == "archive":
@@ -511,6 +512,8 @@ def legacy_source(payload: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         {
             "provider": connector,
             "assistant_id": config.get("assistant_id") or config.get("agent_id"),
+            # What the provider held when the version was made; a Sync compares it.
+            "profile_digest": source.get("profile_digest"),
         }
     )
 

@@ -32,19 +32,41 @@ describe("extractKpis", () => {
   it.each([AGENT_TYPES.VOICE, AGENT_TYPES.CHAT])(
     "keeps completed_calls out of every bucket (%s)",
     (agentType) => {
-      const { evalMetrics, callDetails, systemMetrics, deterministicEvals } = extractKpis(
-        { completed_calls: 16, total_calls: 20, avg_turn_count: 4 },
-        agentType,
-      );
+      const { evalMetrics, callDetails, systemMetrics, deterministicEvals } =
+        extractKpis(
+          { completed_calls: 16, total_calls: 20, avg_turn_count: 4 },
+          agentType,
+        );
 
       expect(evalMetrics).not.toHaveProperty("completed_calls");
       expect(callDetails).not.toHaveProperty("completed_calls");
       expect(systemMetrics).not.toHaveProperty("completed_calls");
-      expect(deterministicEvals.map((e) => e.id)).not.toContain("completed_calls");
+      expect(deterministicEvals.map((e) => e.id)).not.toContain(
+        "completed_calls",
+      );
       // The neighbouring keys still route as they did — this excludes one key,
       // it does not switch the classifier off.
       expect(callDetails).toHaveProperty("total_calls", 20);
       expect(systemMetrics).toHaveProperty("avg_turn_count", 4);
     },
   );
+
+  // Debug failures' counts and analysis flag, all null while the run is live.
+  // A value would paint a phantom eval, and null a phantom choice chart.
+  it.each([
+    ["failing_calls", AGENT_TYPES.VOICE, 3],
+    ["failing_calls", AGENT_TYPES.CHAT, null],
+    ["has_debug_failures_analysis", AGENT_TYPES.VOICE, true],
+    ["debug_failures_connected_calls", AGENT_TYPES.VOICE, 15],
+    ["debug_failures_connected_calls", AGENT_TYPES.CHAT, null],
+    ["has_debug_failures_analysis", AGENT_TYPES.CHAT, null],
+  ])("keeps %s out of every bucket (%s, %s)", (key, agentType, value) => {
+    const { evalMetrics, callDetails, systemMetrics, deterministicEvals } =
+      extractKpis({ [key]: value, total_calls: 20 }, agentType);
+
+    expect(evalMetrics).not.toHaveProperty(key);
+    expect(callDetails).not.toHaveProperty(key);
+    expect(systemMetrics).not.toHaveProperty(key);
+    expect(deterministicEvals.map((e) => e.id)).not.toContain(key);
+  });
 });

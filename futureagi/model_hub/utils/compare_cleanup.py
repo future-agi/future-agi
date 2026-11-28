@@ -20,7 +20,7 @@ import shutil
 import stat
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import structlog
@@ -118,7 +118,7 @@ def _expired_remote_compare_ids() -> list[str]:
     if not client.bucket_exists(bucket):
         return []
     now = timezone.now()
-    newest = {}
+    newest: dict[str, datetime] = {}
     for obj in client.list_objects(bucket, prefix=REMOTE_PREFIX, recursive=True):
         compare_id, _, page = obj.object_name[len(REMOTE_PREFIX) :].partition("/")
         if not compare_id or not page:

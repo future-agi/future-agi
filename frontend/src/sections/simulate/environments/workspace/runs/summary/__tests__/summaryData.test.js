@@ -14,18 +14,19 @@ const run = {
   total: 20,
   passed: 15,
   failed: 5,
+  passRate: 75,
   agentVersion: "v2",
   durationS: 11.9,
 };
 
 describe("buildSummaryRow", () => {
-  it("derives pass rate and tasks from the run and keeps its identity", () => {
+  it("carries the run's pass rate and tasks and keeps its identity", () => {
     const row = buildSummaryRow(run, { task_success: 49, policy: 28 });
     expect(row.ordinal).toBe(2);
     expect(row.label).toBe("Run 2");
     expect(row.agentVersion).toBe("v2");
     expect(row.tasks).toBe(20);
-    expect(row.passRate).toBe(75); // 15 / 20
+    expect(row.passRate).toBe(75);
     expect(row.durationS).toBe(11.9);
     expect(row.at).toBe("2026-01-13T16:42:10.000Z"); // finishedAt preferred
     expect(row.scores).toEqual({ task_success: 49, policy: 28 });
@@ -43,10 +44,8 @@ describe("buildSummaryRow", () => {
     expect(row).not.toHaveProperty("meanReturn");
   });
 
-  it("does not divide by zero on an empty run", () => {
-    const row = buildSummaryRow({ ...run, total: 0, passed: 0 }, undefined);
-    expect(row.passRate).toBe(0);
-    expect(row.scores).toEqual({});
+  it("shows no rate for a run the server scored nothing in", () => {
+    expect(buildSummaryRow({ ...run, passRate: null }, {}).passRate).toBeNull();
   });
 });
 

@@ -1,16 +1,18 @@
 import { dsPalette } from "src/theme/ds-tokens";
+import { CATEGORY_SLOTS } from "src/sections/projects/LLMTracing/InstantEval/results/answerColors";
 
 // Category identities keep their slot across sorting, filters and run paging.
-// Three all-pairs-distinct system slots avoid boolean and neutral slots.
-// The darker (light-mode) data steps pass contrast and separation checks on
-// both chart surfaces; use those documented steps deliberately in both modes.
-// Hue and identity bounds are independent: the original eight named series
-// remain selectable; slots four through eight use neutral marks. Only the
-// original identity overflow and unmatched items fold into labelled Other.
-const CATEGORY_STEPS = [1, 4, 6].map((slot) => dsPalette("light").data[slot]);
+// The four slots are Instant eval's category hues (blue, teal, pink and lime
+// from the data set, each mode with its own step), never a status hue: red
+// would read as the high-severity mark beside it. Hue
+// and identity bounds are independent: the original eight named series remain
+// selectable; slots five through eight use neutral marks. Only the original
+// identity overflow and unmatched items fold into labelled Other.
+const categorySteps = (mode) =>
+  CATEGORY_SLOTS.map((i) => dsPalette(mode).data[i]);
 export const CATEGORY_PALETTE = {
-  light: CATEGORY_STEPS,
-  dark: CATEGORY_STEPS,
+  light: categorySteps("light"),
+  dark: categorySteps("dark"),
 };
 export const OTHER_COLOR = {
   light: dsPalette("light").text.disabled,

@@ -1,14 +1,12 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { enqueueSnackbar } from "notistack";
 import { Box, Stack, Typography, Button, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { paths } from "src/routes/paths";
 import { useDeleteEnvironment } from "src/api/simulate-environments/environments";
-import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { ENTRY_TAB } from "../environmentOptions";
 import {
   DELETE_DIALOG_COPY,
@@ -20,8 +18,11 @@ import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import EnvVersionPin from "./EnvVersionPin";
+import { compositionSummary } from "./composition/composition.helpers";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import useDeleteRefusal from "../hooks/useDeleteRefusal";
 
 // The environment workspace header: back to the list, the
 // name + status badge + env-version pin, the primary "Run simulation" action, and
@@ -42,6 +43,7 @@ export default function WorkspaceHeader({
   scenarioCount: serverScenarioCount,
 }) {
   const navigate = useNavigate();
+  const { canEdit } = useSimulationAccess();
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Run configuration: the header's Repeats pill sets k, and Run starts a
@@ -56,6 +58,7 @@ export default function WorkspaceHeader({
     env?.buildStatus === BUILD_STATUS.BUILDING &&
     env?.status !== ENV_STATUS.CANCELLING;
   const deleteEnv = useDeleteEnvironment();
+  const { showDeleteRefusal, unlockConfirm } = useDeleteRefusal();
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
   // overlays that name onto `env`, so the header reflects the new name at once.
@@ -68,7 +71,7 @@ export default function WorkspaceHeader({
     deleteEnv.mutate(env.id, {
       onSuccess: () =>
         navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`),
-      onError: (error) => enqueueSnackbar(errorMessage(error), { variant: "error" }),
+      onError: (error) => showDeleteRefusal(env.id, error),
     });
 
   return (
@@ -98,22 +101,30 @@ export default function WorkspaceHeader({
           </Typography>
           <LivePill env={env} />
           {canRename && (
-            <CustomTooltip show title="Rename environment" size="small" arrow>
-              <IconButton
-                aria-label="Rename environment"
-                size="small"
-                onClick={() => setRenameOpen(true)}
-                sx={{ color: "text.subtitle" }}
-              >
-                <Iconify icon="solar:pen-linear" width={15} />
-              </IconButton>
+            <CustomTooltip
+              show
+              title={canEdit ? "Rename environment" : WORKSPACE_COPY.viewer.rename}
+              size="small"
+              arrow
+            >
+              <span>
+                <IconButton
+                  aria-label="Rename environment"
+                  size="small"
+                  disabled={!canEdit}
+                  onClick={() => setRenameOpen(true)}
+                  sx={{ color: "text.subtitle" }}
+                >
+                  <Iconify icon="solar:pen-linear" width={15} />
+                </IconButton>
+              </span>
             </CustomTooltip>
           )}
           {/* The default environment version; hidden while versioning is off. */}
           <EnvVersionPin env={env} />
         </Stack>
         <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
-          {env.tagline}
+          {env.composition ? compositionSummary(env.composition) : env.tagline}
         </Typography>
       </Box>
 
@@ -127,6 +138,7 @@ export default function WorkspaceHeader({
               trials={headerTrials}
               onChange={setHeaderTrials}
               scenarioCount={scenarioCount}
+              composition={env.composition}
             />
           )}
           <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
@@ -191,6 +203,7 @@ export default function WorkspaceHeader({
           }
         />
       )}
+      {unlockConfirm}
     </Stack>
   );
 }
@@ -201,6 +214,7 @@ WorkspaceHeader.propTypes = {
     name: PropTypes.string,
     tagline: PropTypes.string,
     surface: PropTypes.string,
+    composition: PropTypes.object,
     status: PropTypes.string,
     buildStatus: PropTypes.string,
     platform: PropTypes.shape({

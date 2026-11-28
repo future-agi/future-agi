@@ -15,8 +15,10 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.webhook import WebhookClient
 
+from tfc.routers import force_primary
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
+from tfc.utils.email_unsubscribe import MONITOR_ALERTS
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.webhook_delivery import post_webhook
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -74,6 +76,15 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
     if monitor.project_id is None:
         raise MonitorConfigError(get_error_message("MONITOR_PROJECT_REQUIRED"))
 
+    if monitor.metric_type == MonitorMetricTypeChoices.DERIVED_METRIC:
+        from tracer.services.derived_metrics.integrations import (
+            DerivedMonitorQueryBuilder,
+        )
+
+        # Duck-types the monitor builder protocol (value/historical queries);
+        # it is not a MonitorMetricsQueryBuilder subclass.
+        return DerivedMonitorQueryBuilder(monitor)  # type: ignore[return-value]
+
     eval_config_id = None
     eval_output_type = None
     if (
@@ -130,6 +141,20 @@ def get_interval_kind(monitor: UserAlertMonitor) -> str:
 
 def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) -> None:
     """Sends an email notification for an alert."""
+    # Re-read the recipients: the monitor was loaded before the metric query,
+    # and someone may have unsubscribed (or been removed) since.
+    try:
+        with force_primary():
+            monitor.refresh_from_db(fields=["notification_emails"])
+    except UserAlertMonitor.DoesNotExist:
+        return
+    except Exception:
+        # Best effort, like the Slack and webhook senders: an escape here
+        # would retry the whole monitor task and fire its alert twice.
+        logger.exception(
+            "monitor_alert_recipient_reload_failed", monitor_id=str(monitor.id)
+        )
+        return
     if not monitor.notification_emails:
         return
     try:
@@ -142,6 +167,8 @@ def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) 
                 "alert_type": alert_type,
             },
             to_email_list=list(monitor.notification_emails),
+            notification_category=MONITOR_ALERTS,
+            unsubscribe_scope=str(monitor.id),
         )
         logger.info(f"Sent {alert_type} alert email for monitor {monitor.id}")
     except Exception as e:
@@ -345,6 +372,11 @@ def process_monitor_task(monitor_id: str, now_iso: str) -> None:
 
 def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
     """Processes a single monitor."""
+    if monitor.metric_type == MonitorMetricTypeChoices.DERIVED_METRIC:
+        from tracer.services.derived_metrics.integrations import process_derived_monitor
+
+        return process_derived_monitor(monitor, now)
+
     time_window_start = now - timedelta(minutes=monitor.alert_frequency)
 
     # Build once: value + historical share the builder (avoids a second eval
@@ -388,6 +420,8 @@ def _get_metric_value(
         timeout_ms=MONITOR_QUERY_TIMEOUT_MS,
         settings=MONITOR_CH_SETTINGS,
     )
+    if hasattr(builder, "validate_result"):
+        builder.validate_result()
     if result.data:
         return result.data[0].get("value")
     return None
@@ -444,8 +478,10 @@ def _check_static_threshold(
     current_value: float,
     time_window_start: datetime,
     now: datetime,
-) -> None:
-    """Checks for alerts based on static thresholds."""
+    *,
+    comparison_value: float | None = None,
+) -> str | None:
+    """Check static thresholds, optionally against a conservative confidence bound."""
     op = monitor.threshold_operator
     critical_val = monitor.critical_threshold_value
     warning_val = monitor.warning_threshold_value
@@ -453,10 +489,11 @@ def _check_static_threshold(
     alert_type = None
     threshold_val = None
 
-    if critical_val is not None and _compare(current_value, op, critical_val):
+    checked_value = current_value if comparison_value is None else comparison_value
+    if critical_val is not None and _compare(checked_value, op, critical_val):
         alert_type = AlertTypeChoices.CRITICAL
         threshold_val = critical_val
-    elif warning_val is not None and _compare(current_value, op, warning_val):
+    elif warning_val is not None and _compare(checked_value, op, warning_val):
         alert_type = AlertTypeChoices.WARNING
         threshold_val = warning_val
 
@@ -466,6 +503,8 @@ def _check_static_threshold(
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val})."
         )
+        if comparison_value is not None:
+            message += f" The entire fixed-window 95% interval is beyond the threshold (nearest bound {comparison_value:.6g})."
         _handle_alert_trigger(
             monitor,
             message,
@@ -475,6 +514,7 @@ def _check_static_threshold(
             current_value=current_value,
             threshold_value=threshold_val,
         )
+    return alert_type
 
 
 def _check_percentage_change_threshold(

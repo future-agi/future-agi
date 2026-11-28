@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "src/utils/test-utils";
 import axios from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import TaskCreatePage from "../TaskCreatePage";
 import TaskSamplingSection from "../components/task_sampling_section";
 import TaskSchedulingSection from "../components/TaskSchedulingSection";
@@ -16,6 +17,8 @@ const harness = vi.hoisted(() => ({
   initialValues: null,
   selection: false,
 }));
+
+const TASK_ID = "11111111-1111-4111-8111-111111111111";
 
 const mixedTaskFilters = [
   {
@@ -141,7 +144,104 @@ describe("Task Create mixed catalog filter submission", () => {
       endDate: "2026-08-25T00:00:00.000Z",
       runType: "historical",
     };
-    axios.post.mockResolvedValue({ data: { result: { id: "task-1" } } });
+    axios.post.mockResolvedValue({
+      data: { status: true, result: { id: TASK_ID } },
+    });
+  });
+
+  const renderCreate = () =>
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+        }
+      >
+        <TaskCreatePage />
+      </QueryClientProvider>,
+    );
+
+  it("acknowledges saving, clears the draft only with success/id, and navigates to that task", async () => {
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(harness.navigate).toHaveBeenCalledWith(`/dashboard/tasks/${TASK_ID}`),
+    );
+    expect(harness.clearDraft).toHaveBeenCalledTimes(1);
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Task saved. Check its status on the task page.",
+      { variant: "success" },
+    );
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {},
+    { data: { status: true, result: {} } },
+    { data: { status: true, result: { id: "" } } },
+    { data: { status: true, result: { id: "   " } } },
+    { data: { status: true, result: { id: 123 } } },
+    { data: { status: true, result: { id: {} } } },
+    { data: { status: true, result: { id: "not-a-task-id" } } },
+    { data: { status: false, result: { id: TASK_ID } } },
+    { data: { result: { id: TASK_ID } } },
+  ])("retains the draft on an unreadable acknowledgement %#", async (response) => {
+    axios.post.mockResolvedValue(response);
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Creation unconfirmed. Check Tasks before creating another.",
+        { variant: "warning" },
+      ),
+    );
+    expect(harness.clearDraft).not.toHaveBeenCalled();
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    new Error("Network response lost"),
+    new Error("API response did not match its contract"),
+    { statusCode: 502, result: "private provider payload" },
+  ])("retains the draft and discourages blind repeat creation after response uncertainty %#", async (error) => {
+    axios.post.mockRejectedValue(error);
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Creation unconfirmed. Check Tasks before creating another.",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.clearDraft).not.toHaveBeenCalled();
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps useful explicit validation feedback without clearing the draft", async () => {
+    axios.post.mockRejectedValue({
+      statusCode: 400,
+      result: "Eval configs not found for project",
+    });
+    renderCreate();
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "Create task" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Eval configs not found for project",
+        { variant: "error" },
+      ),
+    );
+    expect(harness.clearDraft).not.toHaveBeenCalled();
+    expect(harness.navigate).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
   });
 
   it("creates a valid continuous task after live → row percentage → Historical data → retained live restore", async () => {

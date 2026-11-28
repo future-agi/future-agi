@@ -9,6 +9,8 @@ import {
   waitForElementToBeRemoved,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import {
   MemoryRouter,
   useLocation,
@@ -63,6 +65,13 @@ vi.mock("notistack", async (importOriginal) => {
   };
 });
 
+// The run's fix launch options; Run Epoch reads which failing cases came
+// from evidence. None by default.
+const fixLaunchOptions = vi.fn();
+vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFixLaunchOptions: (id, opts) => fixLaunchOptions(id, opts),
+}));
 // Self-improvement is in beta; the launch-flow tests below open it explicitly.
 const useSelfImprovementOpen = vi.fn();
 // Fix my agent is a beta capability; each test sets whether the org has it.
@@ -97,11 +106,23 @@ vi.mock(
 );
 
 // The fix launch form reads launch-options itself; stub it to a marker that
-// names the run it was opened for.
+// names the run it was opened for, and the cases Run Epoch picked.
+const launchFix = vi.hoisted(() => ({ props: null }));
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
-  // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId }) =>
-    open ? <div>{`launch-fix:${sourceRunId}`}</div> : null,
+  // Reads the captured props, which the assertions read too.
+  default: (props) => {
+    launchFix.props = props;
+    const { open, sourceRunId, initialTargets, initialNote } = launchFix.props;
+    return open ? (
+      <>
+        <div>{`launch-fix:${sourceRunId}`}</div>
+        {initialTargets ? (
+          <div>{`fix-targets:${initialTargets.join(",")}`}</div>
+        ) : null}
+        {initialNote ? <div>{`fix-note:${initialNote}`}</div> : null}
+      </>
+    ) : null;
+  },
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -277,7 +298,15 @@ RunAnalyticsStub.propTypes = {
 };
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
-function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
+function CallDrawerStub({
+  task,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+  onOpenTrial,
+}) {
   if (!task) return null;
   return (
     <div>
@@ -294,6 +323,9 @@ function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
       <button type="button" onClick={onNext} disabled={!hasNext}>
         next call
       </button>
+      <button type="button" onClick={() => onOpenTrial("x1", 3)}>
+        open trial x1 at step 3
+      </button>
     </div>
   );
 }
@@ -304,6 +336,7 @@ CallDrawerStub.propTypes = {
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   onClose: PropTypes.func,
+  onOpenTrial: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
@@ -359,7 +392,6 @@ const ANALYSIS = {
     measuredCalls: 12,
     brokenGoals: 1,
     brokenCalls: 3,
-    oneOffs: 1,
   },
   goals: [
     {
@@ -420,6 +452,11 @@ const OPT_RUN = {
 // exercises the real (backed) run-detail route, which is what this whole
 // suite predates and assumes. `client` lets a test share a spy-wrapped client,
 // and any remaining props (e.g. `onStartRun`) pass straight through to RunDetail.
+// The product theme carries the run colours the header badge tints from.
+const theme = createTheme({
+  palette: { data: Array.from({ length: 8 }, () => "#7857fc") },
+});
+
 const renderDetail = ({
   backed = true,
   envState = { evals: [] },
@@ -431,19 +468,21 @@ const renderDetail = ({
     passedClient ??
     new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <LocationProbe />
-        <RunDetail
-          env={ENV}
-          envState={envState}
-          backed={backed}
-          testId="rt1"
-          executionId="ex1"
-          {...props}
-        />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider theme={theme}>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <LocationProbe />
+          <RunDetail
+            env={ENV}
+            envState={envState}
+            backed={backed}
+            testId="rt1"
+            executionId="ex1"
+            {...props}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 };
 
@@ -468,6 +507,8 @@ const locationText = () => screen.getByTestId("location").textContent;
 const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
 
 beforeEach(() => {
+  fixLaunchOptions.mockReset();
+  fixLaunchOptions.mockReturnValue({ options: undefined });
   useSelfImprovementOpen.mockReturnValue(true);
   fixMyAgentAllowed.mockReturnValue(true);
   enqueueSnackbar.mockReset();
@@ -518,7 +559,7 @@ describe("RunDetail resume", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
+    expect(screen.getByText(/agent v2 · 5 not finished/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume" }));
     expect(resumeMutate).toHaveBeenCalledTimes(1);
   });
@@ -571,7 +612,7 @@ describe("RunDetail", () => {
     );
   });
 
-  it("renders the identity header with the real ordinal, agent, status and task count", () => {
+  it("renders the identity header with the real ordinal, agent, status and task count", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: STATS,
@@ -579,13 +620,75 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText(/Run 3 · agent v2/)).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
     // The lifecycle remains Completed even when some calls fail.
     expect(screen.getByText("Completed")).toBeInTheDocument();
-    expect(screen.getByText(/Refund Copilot · 12 tasks/)).toBeInTheDocument();
+    // The sub-line keeps the agent; the env name and task count are in its
+    // hover card.
+    await userEvent.setup().hover(screen.getByText(/^agent v2/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /Refund Copilot · 12 tasks/,
+    );
     expect(
       screen.getByRole("tab", { name: /Test runs \(12\)/ }),
     ).toBeInTheDocument();
+  });
+
+  it("puts the scenario version and seed in the sub-line's hover card", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        suiteVersion: { id: "s3", label: "v3" },
+        seed: "7902",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    await userEvent.setup().hover(screen.getByText(/^agent v2/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /Refund Copilot · 12 tasks · scenarios v3 · seed 7902/,
+    );
+  });
+
+  it("opens the sub-line's hover card on keyboard focus and keeps its visible text as the name", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        environmentVersion: { id: "e2", label: "v2" },
+        suiteVersion: { id: "s3", label: "v3" },
+        seed: "7902",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    const user = userEvent.setup();
+    const subLine = screen.getByText(/^agent v2 · env v2/);
+    expect(subLine).toHaveAttribute("tabindex", "0");
+    // The hover text describes it; it must not replace the visible name.
+    expect(subLine).not.toHaveAttribute("aria-label");
+
+    for (let i = 0; i < 30 && document.activeElement !== subLine; i += 1) {
+      await user.tab();
+    }
+    expect(subLine).toHaveFocus();
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent(/scenarios v3 · seed 7902/);
+    expect(subLine).toHaveAttribute("aria-describedby", tip.id);
+  });
+
+  it("names the environment, not 'agent -', while the run summary is missing", () => {
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: STATS,
+      isLoading: true,
+    });
+    renderDetail();
+    expect(screen.getByText("Run complete")).toBeInTheDocument();
+    expect(screen.getByText("Refund Copilot")).toBeInTheDocument();
+    expect(screen.queryByText(/^agent -/)).toBeNull();
   });
 
   it.each([
@@ -672,8 +775,9 @@ describe("RunDetail", () => {
     renderDetail();
 
     expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
-      "Check run c2-target for this fix · agent v2",
+      "Check run c2-target for this fix",
     );
+    expect(screen.getByText(/^agent v2/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
       "href",
       "/dashboard/simulate/environments/env-1/improvements/fix-1",
@@ -765,6 +869,193 @@ describe("RunDetail", () => {
     for (const name of [/Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
+  });
+
+  describe("Run Epoch", () => {
+    const scenario = (key, evidence, failing) => ({
+      key,
+      name: key,
+      passed: !failing,
+      failing_sub_goals: failing ? ["booked"] : [],
+      evidence_import_id: evidence,
+    });
+    const finished = () =>
+      useRunDetail.mockReturnValue({
+        identity: IDENTITY,
+        stats: STATS,
+        isLoading: false,
+      });
+
+    it("starts a fix on the failing cases an evidence import added", async () => {
+      const user = userEvent.setup();
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          scenarios: [
+            scenario("evidence-a", "import-1", true),
+            scenario("ordinary", null, true),
+            scenario("evidence-b", "import-1", false),
+          ],
+        },
+      });
+      renderDetail();
+
+      // It says which cases Epoch starts from.
+      await user.hover(screen.getByRole("button", { name: "Run Epoch" }));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Starts an epoch from the 1 failing scenario that came from imported evidence.",
+      );
+      await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+      expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+      expect(screen.getByText("fix-targets:evidence-a")).toBeInTheDocument();
+      // Nothing added silently: the form says where its cases came from.
+      expect(
+        screen.getByText("fix-note:1 failing scenario from imported evidence"),
+      ).toBeInTheDocument();
+      expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
+        enabled: true,
+      });
+    });
+
+    it("tops up with the run's other failing cases to reach the minimum, imported first", async () => {
+      const user = userEvent.setup();
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          limits: { scenarios_min: 3 },
+          scenarios: [
+            scenario("ordinary-1", null, true),
+            scenario("evidence-a", "import-1", true),
+            scenario("ordinary-2", null, false),
+            scenario("ordinary-3", null, true),
+            scenario("ordinary-4", null, true),
+          ],
+        },
+      });
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+      expect(
+        screen.getByText("fix-targets:evidence-a,ordinary-1,ordinary-3"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "fix-note:1 from imported evidence, 2 more failing scenarios from this run to reach the minimum",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("locks Export, Run Epoch and Debug failures for a Viewer, saying why", async () => {
+      const user = userEvent.setup();
+      vi.mocked(useSimulationAccess).mockReturnValue({
+        canEdit: false,
+        canRun: false,
+      });
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: { scenarios: [scenario("evidence-a", "import-1", true)] },
+      });
+      try {
+        renderDetail();
+
+        for (const [name, reason] of [
+          ["Export", "You don't have permission to export run results."],
+          ["Run Epoch", "You don't have permission to start runs."],
+          ["Debug failures", "You don't have permission to start runs."],
+        ]) {
+          const button = screen.getByRole("button", { name });
+          expect(button).toBeDisabled();
+          await user.hover(button.parentElement);
+          expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+          await user.unhover(button.parentElement);
+          await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+        }
+      } finally {
+        vi.mocked(useSimulationAccess).mockReturnValue({
+          canEdit: true,
+          canRun: true,
+        });
+      }
+    });
+
+    it.each([
+      ["failed", null],
+      ["pending", null],
+      ["not_requested", null],
+      ["failed", "import-1"],
+      ["completed", null],
+      ["completed", "import-1"],
+    ])(
+      "reports diagnosis availability without requesting analysis: %s, import %s",
+      async (status, evidence) => {
+        const request = vi.fn();
+        useDebugAnalysis.mockReturnValue(
+          debugHook({ ...ANALYSIS, status }, { request }),
+        );
+        fixLaunchOptions.mockReturnValue({
+          options: { scenarios: [scenario("case", evidence, true)] },
+        });
+        renderDetail();
+        await userEvent
+          .setup()
+          .click(screen.getByRole("button", { name: "Run Epoch" }));
+        expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+        expect(useDebugAnalysis).toHaveBeenCalledWith("ex1");
+        expect(launchFix.props.diagnosisUnavailable).toBe(
+          status !== "completed",
+        );
+        expect(launchFix.props.initialTargets).toEqual(
+          evidence ? ["case"] : undefined,
+        );
+        expect(request).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { status: "running" },
+      { fixRun: { id: "check", label: "check" } },
+    ])(
+      "does not offer Epoch for live or check runs with cached options",
+      (identity) => {
+        useRunDetail.mockReturnValue({
+          identity: { ...IDENTITY, ...identity },
+          stats: STATS,
+        });
+        fixLaunchOptions.mockReturnValue({
+          options: { scenarios: [scenario("ordinary", null, true)] },
+        });
+        renderDetail();
+        expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+      },
+    );
+
+    it("is not offered when all cases passed", () => {
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          scenarios: [
+            scenario("ordinary", null, false),
+            scenario("evidence-b", "import-1", false),
+          ],
+        },
+      });
+      renderDetail();
+
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+    });
+
+    it("reads nothing for an org without Fix my agent", () => {
+      finished();
+      fixMyAgentAllowed.mockReturnValue(false);
+      renderDetail();
+
+      expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
+        enabled: false,
+      });
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+    });
   });
 
   it("enables the header actions once the run has finished", () => {
@@ -909,17 +1200,19 @@ describe("RunDetail", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
     // Build a fresh element each call so RunDetail re-renders.
     const tree = () => (
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <RunDetail
-            env={ENV}
-            envState={{ evals: [] }}
-            backed
-            testId="rt1"
-            executionId="ex1"
-          />
-        </MemoryRouter>
-      </QueryClientProvider>
+      <ThemeProvider theme={theme}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <RunDetail
+              env={ENV}
+              envState={{ evals: [] }}
+              backed
+              testId="rt1"
+              executionId="ex1"
+            />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </ThemeProvider>
     );
 
     useRunDetail.mockReturnValue({
@@ -1083,6 +1376,7 @@ describe("RunDetail", () => {
         pinnedAgentVersion: { id: "a4", label: "v4" },
         environmentVersion: { id: "e1", label: "v1" },
         suiteVersion: { id: "s2", label: "v2" },
+        seed: "7902065059689103066",
       },
       stats: STATS,
       isLoading: false,
@@ -1092,6 +1386,7 @@ describe("RunDetail", () => {
     await user.click(screen.getByRole("button", { name: "rerun ticked" }));
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a"], 2, {
       initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+      seed: "7902065059689103066",
     });
   });
 
@@ -1109,9 +1404,8 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(
-      screen.getByText("Run 3 · agent v4 · env v2 · scenarios v3"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v4 · env v2/)).toBeInTheDocument();
     expect(screen.getByText("A4 differs from E2")).toBeInTheDocument();
   });
 
@@ -1128,7 +1422,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText("Run 3 · agent v2 · env v2")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v2 · env v2/)).toBeInTheDocument();
     expect(
       screen.getByText("Agent differs from its environment version"),
     ).toBeInTheDocument();
@@ -1142,7 +1436,8 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText("Run 3 · agent v2")).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v2/)).toBeInTheDocument();
     expect(screen.queryByText(/differs from/)).toBeNull();
   });
 
@@ -1191,8 +1486,10 @@ describe("RunDetail", () => {
       screen.getByText('Passes when the agent says exactly "Hi there."'),
     ).toBeInTheDocument();
     expect(screen.getByText("Omits the word book")).toBeInTheDocument();
-    // One-offs keep Omega's prose, with its call ids read as the call's label.
-    expect(screen.getByText("Also seen, 1 call each")).toBeInTheDocument();
+    // One-offs are grouped by name; opening a group shows Omega's prose, with
+    // its call ids read as the call's label.
+    expect(screen.getByText("Also seen")).toBeInTheDocument();
+    await user.click(screen.getByText("Omitted price information"));
     expect(
       screen.getByText(
         'In call "spanish-meal-policy · Trial 1" the agent never gave the fare',
@@ -1275,7 +1572,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByRole("button", { name: "View 3 calls" }));
+    await user.click(screen.getByRole("button", { name: "View calls" }));
 
     expect(
       screen.getByText('run-trace-table:{"callExecutionId":["c1","c2","c3"]}'),
@@ -1284,6 +1581,31 @@ describe("RunDetail", () => {
     await waitForElementToBeRemoved(() =>
       screen.queryByText(/exact mandatory greeting/),
     );
+  });
+
+  it("starts no diagnosis before the run's counts arrive", async () => {
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: true,
+    });
+    const hook = debugHook({
+      ...ANALYSIS,
+      status: "not_requested",
+      goals: [],
+      oneOffs: [],
+    });
+    useDebugAnalysis.mockReturnValue(hook);
+    // Click it anyway, as a quick user would, to show the click does nothing.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeDisabled();
+    await user.click(button);
+
+    expect(hook.request).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("requests the diagnosis once when the drawer opens on an unanalyzed run", async () => {
@@ -1365,18 +1687,18 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByRole("button", { name: "Improve" }));
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
     expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
     expect(screen.queryByText("optimizer-form")).toBeNull();
   });
 
-  it("hides Improve when the org does not have Fix my agent", async () => {
+  it("hides Run Epoch when the org does not have Epoch", async () => {
     fixMyAgentAllowed.mockReturnValue(false);
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    expect(screen.queryByRole("button", { name: "Improve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
   });
 
   it("shows the Imagine tab as coming soon (no backend)", async () => {
@@ -1394,7 +1716,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: "Improve" });
+    const cta = screen.getByRole("button", { name: "Run Epoch" });
     expect(cta).toBeEnabled();
     expect(cta).not.toHaveTextContent("Beta");
   });
@@ -1450,6 +1772,20 @@ describe("RunDetail", () => {
     expect(screen.getByRole("button", { name: "prev call" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "next call" }));
     expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the drawer the table's live row for the open call, not the row it opened with", async () => {
+    const user = userEvent.setup();
+    callListNavigation.mockReturnValue({
+      hasPrev: false,
+      hasNext: false,
+      openRow: { id: "c1", simulationCallType: "voice", status: "live-status" },
+      onPrev: vi.fn(),
+      onNext: vi.fn(),
+    });
+    renderDetail();
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(screen.getByText(/live-status/)).toBeInTheDocument();
   });
 
   it("opens the stepped-to call and has the table follow to its page", async () => {
@@ -1640,18 +1976,20 @@ describe("RunDetail ?rowId=", () => {
 
     pageLoading = false;
     rerender(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/?rowId=x1"]}>
-          <LocationProbe />
-          <RunDetail
-            env={ENV}
-            envState={{ evals: [] }}
-            backed
-            testId="rt1"
-            executionId="ex1"
-          />
-        </MemoryRouter>
-      </QueryClientProvider>,
+      <ThemeProvider theme={theme}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={["/?rowId=x1"]}>
+            <LocationProbe />
+            <RunDetail
+              env={ENV}
+              envState={{ evals: [] }}
+              backed
+              testId="rt1"
+              executionId="ex1"
+            />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </ThemeProvider>,
     );
 
     expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
@@ -1715,6 +2053,48 @@ describe("RunDetail ?rowId=", () => {
     expect(locationText()).toBe("?foo=1|REPLACE");
   });
 
+  it("keeps a step link while its call opens and drops it on another call", async () => {
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?rowId=x1&participantsStep=3"] });
+
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("participantsStep=3");
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c51", simulationCallType: "voice" },
+        source: "table",
+        page: 2,
+      }),
+    );
+    expect(locationText()).toBe("?rowId=c51|REPLACE");
+  });
+
+  it("opens another trial from the trials table at its step, even off the table page", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("rowId=x1");
+    expect(locationText()).toContain("participantsStep=3");
+  });
+
+  it("keeps the open call when a trial picked from the trials table can't be found", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: undefined, error: { statusCode: 404 } });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    await waitFor(() => expect(locationText()).toContain("rowId=c1"));
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
+  });
+
   it("writes a row opened from Analytics to the URL", async () => {
     const user = userEvent.setup();
     renderDetail();
@@ -1723,5 +2103,206 @@ describe("RunDetail ?rowId=", () => {
     await user.click(screen.getByRole("button", { name: "open from chart" }));
 
     expect(locationText()).toBe("?rowId=c9|REPLACE");
+  });
+});
+
+describe("RunDetail build notice", () => {
+  it("says when the run used a build without the environment's actors, and says nothing otherwise", () => {
+    const notice =
+      "This run used a build without the environment's actors, so none of them came in.";
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, buildNotice: notice },
+      stats: STATS,
+      isLoading: false,
+    });
+    const { unmount } = renderDetail();
+    expect(screen.getByTestId("run-build-notice")).toHaveTextContent(notice);
+    unmount();
+
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(screen.queryByTestId("run-build-notice")).toBeNull();
+  });
+});
+
+describe("RunDetail Debug failures needs connected calls and a failure", () => {
+  const withCounts = (connected, failed) =>
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, connected, failed },
+      isLoading: false,
+    });
+  const unanalyzed = () => {
+    const hook = debugHook({
+      ...ANALYSIS,
+      status: "not_requested",
+      goals: [],
+      oneOffs: [],
+    });
+    useDebugAnalysis.mockClear();
+    useDebugAnalysis.mockReturnValue(hook);
+    return hook;
+  };
+
+  it.each([
+    [14, 4, "You need at least 15 connected calls to debug failures."],
+    [15, 0, "Nothing failed in this run, so there’s nothing to debug."],
+  ])(
+    "with %i connected and %i failing it is disabled, says why, and never requests a diagnosis",
+    async (connected, failed, reason) => {
+      withCounts(connected, failed);
+      const hook = unanalyzed();
+      // A disabled MUI button takes no pointer events; force the click through.
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      renderDetail();
+
+      const button = screen.getByRole("button", { name: "Debug failures" });
+      expect(button).toBeDisabled();
+      // The reason reaches the keyboard through the focusable wrapper.
+      expect(button.parentElement).toHaveAttribute("tabindex", "0");
+      await user.hover(button.parentElement);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+
+      await user.click(button);
+      expect(hook.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it("on a run the rule blocks, a diagnosis already made stays openable", async () => {
+    withCounts(5, 0);
+    const diagnosed = debugHook();
+    // The page reads the run's diagnosis by its id; a closed read is empty.
+    useDebugAnalysis.mockImplementation((id) =>
+      id
+        ? diagnosed
+        : debugHook({ ...ANALYSIS, status: "not_requested", goals: [] }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+
+    expect(
+      screen.getByText("Opens the call with the exact mandatory greeting"),
+    ).toBeInTheDocument();
+    expect(diagnosed.request).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [5, 0, false],
+    [15, 1, true],
+  ])(
+    "a failed diagnosis on a run with %i connected and %i failing offers Try again: %s",
+    async (connected, failed, retryable) => {
+      withCounts(connected, failed);
+      const hook = debugHook({
+        ...ANALYSIS,
+        status: "failed",
+        errorMessage: "Debug analysis failed",
+        goals: [],
+        oneOffs: [],
+      });
+      useDebugAnalysis.mockReturnValue(hook);
+      const user = userEvent.setup();
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+      expect(screen.getByText(/Debug analysis failed/)).toBeInTheDocument();
+      if (retryable) {
+        await user.click(screen.getByRole("button", { name: "Try again" }));
+        expect(hook.request).toHaveBeenCalledTimes(1);
+      } else {
+        // A retry would be refused: the run needs more connected calls first.
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+        expect(
+          screen.getByText(
+            "Debug analysis failed. You need at least 15 connected calls to debug failures.",
+          ),
+        ).toBeInTheDocument();
+      }
+    },
+  );
+
+  it("a rule refusal says why and offers no Try again", async () => {
+    withCounts(15, 1);
+    useDebugAnalysis.mockReturnValue(
+      debugHook(
+        { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+        { requestError: { code: "investigation_too_few_calls" } },
+      ),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(
+      screen.getByText(
+        "You need at least 15 connected calls to debug failures.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByText("Couldn't finish the diagnosis")).toBeNull();
+  });
+
+  it("a server error still offers Try again", async () => {
+    withCounts(15, 1);
+    const hook = debugHook(
+      { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+      { requestError: { statusCode: 500, message: "Internal Server Error" } },
+    );
+    useDebugAnalysis.mockReturnValue(hook);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(hook.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("with 15 connected and a failing call it is enabled and requests the diagnosis on open", async () => {
+    withCounts(15, 1);
+    const hook = unanalyzed();
+    const user = userEvent.setup();
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(hook.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's refusal in the same words", async () => {
+    withCounts(15, 1);
+    useDebugAnalysis.mockReturnValue(
+      debugHook(
+        { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+        {
+          requestError: {
+            code: "investigation_nothing_failed",
+            detail: "raw server text",
+          },
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(
+      screen.getByText(
+        "Nothing failed in this run, so there’s nothing to debug.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("raw server text")).toBeNull();
   });
 });

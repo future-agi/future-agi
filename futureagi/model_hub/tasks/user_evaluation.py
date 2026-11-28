@@ -1698,7 +1698,10 @@ def process_single_error_localization(task_id):
                 logger.error(f"Error in updating span metadata: {str(e)}")
                 if refund_cost_for_api_call is not None:
                     refund_cost_for_api_call(api_call_log_row)
-                task.mark_as_failed(str(e))
+                # Observe shows this reason to users; keep driver/DB text in logs.
+                task.mark_as_failed(
+                    "Error localization finished but its result could not be saved."
+                )
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:

@@ -50,7 +50,10 @@ name: release-images
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
   workflow_dispatch:
     inputs:
       version:
@@ -532,7 +535,7 @@ jobs:
       verify-command: |
         uv --version
         git --version
-        python -c "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq, claude_agent_sdk"
+        python -c "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq, claude_agent_sdk, presidio_analyzer, presidio_anonymizer, en_core_web_sm"
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -863,7 +866,15 @@ jobs:
   # (release-update-manifest.yml signs only images whose revision label is the
   # tag's commit, whatever vouched for their digests).
   build-digests:
-    needs: [guard, approve, build, serving-gpu, code-executor, backend, standalone, simulation-runner]
+    needs:
+      - guard
+      - approve
+      - build
+      - serving-gpu
+      - code-executor
+      - backend
+      - standalone
+      - simulation-runner
     if: ${{ !cancelled() && !failure() && needs.approve.result == 'success' && contains(needs.guard.outputs.components, '"update-manifest"') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -998,7 +1009,17 @@ jobs:
   # names against it and, as every run does, that each image's revision label
   # is the tag's commit.
   update-manifest:
-    needs: [guard, approve, build, serving-gpu, code-executor, backend, standalone, simulation-runner, helm-chart, build-digests]
+    needs:
+      - guard
+      - approve
+      - build
+      - serving-gpu
+      - code-executor
+      - backend
+      - standalone
+      - simulation-runner
+      - helm-chart
+      - build-digests
     if: ${{ !cancelled() && !failure() && needs.approve.result == 'success' && contains(needs.guard.outputs.components, '"update-manifest"') }}
     permissions:
       contents: write # Release assets
@@ -1011,7 +1032,16 @@ jobs:
   # release notes. Each image was already checked before its tags moved; this
   # job never fails the release.
   size-report:
-    needs: [guard, approve, build, serving-gpu, code-executor, backend, backend-slim, standalone, simulation-runner]
+    needs:
+      - guard
+      - approve
+      - build
+      - serving-gpu
+      - code-executor
+      - backend
+      - backend-slim
+      - standalone
+      - simulation-runner
     if: always() && needs.approve.result == 'success' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10

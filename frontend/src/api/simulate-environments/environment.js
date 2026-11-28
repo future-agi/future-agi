@@ -17,6 +17,7 @@ import {
   jobStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { usePrebuiltEnvironments } from "./prebuilt";
+import { keepChat } from "./chatHistory";
 import { conversationInFlight } from "./conversationProjection";
 import { environmentVersionsKey, refreshDrafts } from "./versions";
 
@@ -28,7 +29,7 @@ import { environmentVersionsKey, refreshDrafts } from "./versions";
 // merge + real scenarios/evals/amendments/end_conditions/stores) turns on with it.
 export const HARNESS_DETAIL_ENABLED = true;
 
-// The harness detail poll cadence, matching HarnessDetail's own 2s tick, with a
+// The harness detail poll cadence: a 2s tick, with a
 // faster 1s tick while a conversation turn is in flight so a reply lands promptly.
 const REFETCH_MS = 2000;
 const REFETCH_ACTIVE_MS = 1000;
@@ -69,14 +70,56 @@ const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 // workspace never settles on its "not found" state.
 const isJobNotFound = (error) => errorStatus(error) === 404;
 
-export const harnessJobQuery = (envId, { enabled = true } = {}) => ({
+// Read the job with only the chat events newer than the ones held, a page at a
+// time until caught up.
+const readNewer = async (envId, { conversation_id, events: held }) => {
+  let after = held.at(-1).sequence;
+  let events = [];
+  for (;;) {
+    const job = await getHarnessJob(envId, { eventsAfter: after });
+    // Another conversation, so the cursor was not one of its events.
+    if (job.conversation?.conversation_id !== conversation_id) {
+      return getHarnessJob(envId);
+    }
+    const page = job.conversation.events ?? [];
+    events = [...events, ...page];
+    if (!job.conversation.events_has_newer || !page.length) {
+      return { ...job, conversation: { ...job.conversation, events } };
+    }
+    after = page.at(-1).sequence;
+  }
+};
+
+const readHarnessJob = async (envId, held) => {
+  if (!held?.conversation?.events?.length) return getHarnessJob(envId);
+  try {
+    return await readNewer(envId, held.conversation);
+  } catch (error) {
+    // Only the hosted provider reads from a cursor.
+    if (errorStatus(error) === 501) return getHarnessJob(envId);
+    throw error;
+  }
+};
+
+export const harnessJobQuery = (
+  envId,
+  { enabled = true, queryClient } = {},
+) => ({
   queryKey: ["harness-job", envId],
-  queryFn: () => getHarnessJob(envId),
+  queryFn: () =>
+    readHarnessJob(envId, queryClient?.getQueryData(["harness-job", envId])),
+  structuralSharing: keepChat,
   enabled: Boolean(envId) && enabled,
   retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
   refetchInterval: (query) =>
     isJobNotFound(query.state.error) ? false : jobRefetchInterval(query.state.data),
 });
+
+/** The job poll. Every reader goes through this, so each can ask for only what is new. */
+export const useHarnessJob = (envId, { enabled } = {}) => {
+  const queryClient = useQueryClient();
+  return useQuery(harnessJobQuery(envId, { enabled, queryClient }));
+};
 
 // §6 environment detail. Fetched once on open and refetched by the workspace
 // when the job poll crosses `validating_scenarios` (sections appear) or reaches
@@ -116,8 +159,8 @@ function seedTablesFromEnvironment(environment = {}) {
     .filter((table) => table.name);
 }
 
-// Parse the run's stage_outputs (kinds contract / environment / scenarios — see
-// HarnessDetail's StageOutput) into world fields. Returns null when nothing is
+// Parse the run's stage_outputs (kinds contract / environment / scenarios) into
+// world fields. Returns null when nothing is
 // parseable. Only non-empty fields are set, so a field the run has not produced
 // yet stays absent and its panel renders its own empty state — a real
 // environment is never filled in from a fixture.
@@ -263,25 +306,27 @@ const overlayDefined = (base, extra) => {
   return merged;
 };
 
-// Resolve an environment id to its record. Order: an adopted client env in the
-// store, then the harness backend, then the prebuilt template catalogue. An
-// unknown id whose harness fetch 404s (and that no template claims) is notFound.
+// Client records and prebuilt templates resolve locally. Other ids go to the
+// harness backend; a 404 there means the environment was not found.
 export function useEnvironment(envId) {
   const clientEnv = useEnvironmentsStore((s) => s.workspaceEnvs[envId]);
   const prebuilt = usePrebuiltEnvironments();
+  const templateEnv = useMemo(
+    () => prebuilt.data?.find((tpl) => tpl.id === envId) || null,
+    [prebuilt.data, envId],
+  );
 
-  // A client record only shadows the poll when it is genuinely client-only
-  // (template/fork, or a mockMode build). A real build-adopted record
-  // (origin:"harness") already holds the completed job's real snapshot, so the
-  // client-first branch below serves it without a second fetch.
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: !clientEnv }));
+  // Catalogue entries have no job. Resolve the local catalogue before issuing
+  // either backend lookup, including on a cold workspace load.
+  const lookupJob = !clientEnv && !prebuilt.isPending && !templateEnv;
+  const jobQuery = useHarnessJob(envId, { enabled: lookupJob });
 
   // §6 detail (gated by HARNESS_DETAIL_ENABLED). The job poll stays the live
   // heartbeat (§7); the detail carries no progress, so it is fetched once and
   // refetched when the job crosses `validating_scenarios` (sections appear) or a
   // terminal stage (results appear).
   const detailQuery = useQuery(
-    harnessEnvironmentQuery(envId, { enabled: HARNESS_DETAIL_ENABLED && !clientEnv }),
+    harnessEnvironmentQuery(envId, { enabled: HARNESS_DETAIL_ENABLED && lookupJob }),
   );
   const stage = jobQuery.data?.status?.stage;
   const detailRefetch = detailQuery.refetch;
@@ -361,11 +406,6 @@ export function useEnvironment(envId) {
   const harness = useMemo(
     () => (jobQuery.data ? harnessJobToEnvironment(jobQuery.data) : null),
     [jobQuery.data],
-  );
-
-  const templateEnv = useMemo(
-    () => prebuilt.data?.find((tpl) => tpl.id === envId) || null,
-    [prebuilt.data, envId],
   );
 
   if (clientEnv) {

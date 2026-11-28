@@ -177,7 +177,6 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     @validated_request(
         request_serializer=VerifyApiKeyRequestSerializer,
         responses={200: VerifyResponseSerializer, 400: ApiErrorResponseSerializer},
-        serializer_context=lambda request: {"request": request},
     )
     @action(detail=False, methods=["post"])
     def verify_api_key(self, request):
@@ -192,8 +191,6 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     workspace=getattr(request, "workspace", None),
                     agent_id=agent_id,
                     masked_value=api_key,
-                    source_version_id=request.validated_data.get("source_version_id"),
-                    provider=provider,
                 )
                 if not api_key:
                     msg = "Could not resolve the api key. Please recheck the same"
@@ -224,7 +221,6 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     @validated_request(
         request_serializer=VerifyAssistantIdRequestSerializer,
         responses={200: VerifyResponseSerializer, 400: ApiErrorResponseSerializer},
-        serializer_context=lambda request: {"request": request},
     )
     @action(detail=False, methods=["post"])
     def verify_assistant_id(self, request):
@@ -240,8 +236,6 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     agent_id=agent_id,
                     assistant_id=assistant_id,
                     masked_value=api_key,
-                    source_version_id=request.validated_data.get("source_version_id"),
-                    provider=provider,
                 )
                 if not api_key:
                     msg = "Could not resolve the api key. Please recheck the same"

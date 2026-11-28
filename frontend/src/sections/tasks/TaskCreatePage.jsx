@@ -12,6 +12,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { formatDate } from "src/utils/report-utils";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { isUUID } from "src/utils/utils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import TaskPanels from "./components/task_panels";
@@ -120,29 +121,34 @@ const TaskCreatePage = () => {
   const project = useWatch({ control, name: "project" });
   const name = useWatch({ control, name: "name" });
 
+  const creationUnconfirmed =
+    "Creation unconfirmed. Check Tasks before creating another.";
   const { mutate: createTask, isPending } = useMutation({
     meta: { errorHandled: true },
+    retry: false,
     mutationFn: (data) =>
       axios.post(endpoints.project.createEvalTask(), { ...data }),
     onSuccess: (resp) => {
-      // Drop the localStorage draft now that the task is persisted
-      // server-side — otherwise it'd reappear next time the user opens
-      // the same `?draft=<id>` URL.
-      clearDraft();
-      enqueueSnackbar("Task created successfully", { variant: "success" });
       const newTaskId = resp?.data?.result?.id;
-      if (newTaskId) {
-        navigate(`/dashboard/tasks/${newTaskId}`);
-      } else {
-        navigate("/dashboard/tasks");
+      if (
+        resp?.data?.status !== true ||
+        typeof newTaskId !== "string" ||
+        !isUUID(newTaskId)
+      ) {
+        enqueueSnackbar(creationUnconfirmed, { variant: "warning" });
+        return;
       }
+      // Only a readable success/id confirms saving. Keep the draft if the
+      // response is lost or unreadable; repeating create is not deduplicated.
+      clearDraft();
+      enqueueSnackbar("Task saved. Check its status on the task page.", {
+        variant: "success",
+      });
+      navigate(`/dashboard/tasks/${newTaskId}`);
     },
     onError: (err) => {
       enqueueSnackbar(
-        getSafeActionErrorMessage(
-          err,
-          "Task could not be created. Review the filters and try again.",
-        ),
+        getSafeActionErrorMessage(err, creationUnconfirmed),
         { variant: "error" },
       );
     },

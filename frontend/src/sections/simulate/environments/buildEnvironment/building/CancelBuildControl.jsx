@@ -5,6 +5,9 @@ import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useCancelHarnessJob } from "src/api/simulate-environments/cancelBuild";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import ViewerLock from "../../components/ViewerLock";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 
 /**
  * Cancel an in-progress environment build, from the build pane.
@@ -20,6 +23,7 @@ import { useCancelHarnessJob } from "src/api/simulate-environments/cancelBuild";
 export default function CancelBuildControl({ envId, building = false }) {
   const [confirming, setConfirming] = useState(false);
   const cancel = useCancelHarnessJob(envId);
+  const { canEdit } = useSimulationAccess();
 
   if (!building || !envId) return null;
 
@@ -35,17 +39,19 @@ export default function CancelBuildControl({ envId, building = false }) {
 
   return (
     <>
-      <Button
-        size="small"
-        variant="outlined"
-        color="error"
-        disabled={cancel.isPending}
-        onClick={() => setConfirming(true)}
-        startIcon={<Iconify icon="solar:close-circle-linear" width={15} />}
-        sx={{ typography: "s2" }}
-      >
-        {cancel.isPending ? "Canceling…" : "Cancel build"}
-      </Button>
+      <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.cancel}>
+        <Button
+          size="small"
+          variant="outlined"
+          color="error"
+          disabled={!canEdit || cancel.isPending}
+          onClick={() => setConfirming(true)}
+          startIcon={<Iconify icon="solar:close-circle-linear" width={15} />}
+          sx={{ typography: "s2" }}
+        >
+          {cancel.isPending ? "Canceling…" : "Cancel build"}
+        </Button>
+      </ViewerLock>
       <ConfirmDialog
         open={confirming}
         onClose={() => setConfirming(false)}

@@ -8,20 +8,15 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Iterable
-from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import timezone as dt_timezone
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Iterable, Optional
 
 import httpx
 import requests
 import structlog
 
 from simulate.temporal.utils.async_storage import MAX_AUDIO_FILE_SIZE
-
-if TYPE_CHECKING:
-    from simulate.models.agent_definition import AgentDefinition
 
 logger = structlog.get_logger(__name__)
 
@@ -67,14 +62,6 @@ class VapiArtifactNotReadyError(Exception):
 
 class VapiRateLimitError(Exception):
     """429 from Vapi."""
-
-
-@dataclass(frozen=True)
-class VapiConfiguration:
-    """One selected agent version's listing and recording configuration."""
-
-    api_key: str | None = field(repr=False)
-    assistant_id: str | None
 
 
 class VapiRecordingService:
@@ -233,22 +220,13 @@ class VapiRecordingService:
 
     @classmethod
     def _api_key_from_agent_definition(cls, agent_def) -> Optional[str]:
-        return cls.configuration_from_agent_definition(agent_def).api_key
+        """Resolve Vapi api_key through the canonical ProviderCredentials chain."""
+        from simulate.services.agent_definition import resolve_api_key_for_version
 
-    @classmethod
-    def configuration_from_agent_definition(
-        cls, agent_def: AgentDefinition
-    ) -> VapiConfiguration:
-        """Use the same selected pair as simulation, detail and preflight reads."""
-        from simulate.services.agent_definition import (
-            resolve_vapi_configuration_for_version,
-        )
-
-        configuration = resolve_vapi_configuration_for_version(
-            agent_def.active_version or agent_def.latest_version,
-            agent_definition=agent_def,
-        )
-        return VapiConfiguration(configuration.api_key, configuration.assistant_id)
+        version = agent_def.active_version or agent_def.latest_version
+        if version is None:
+            return None
+        return resolve_api_key_for_version(version)
 
     @classmethod
     async def download_artifact_async(

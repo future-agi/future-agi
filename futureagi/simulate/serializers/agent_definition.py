@@ -5,18 +5,23 @@ from django.core.validators import URLValidator
 from django.db import transaction
 from rest_framework import serializers
 
-from agentcc.services.credential_manager import mask_key
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
+from simulate.serializers.websocket_fields import (
+    WebsocketHeadersField,
+    WebsocketUrlField,
+)
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
+    WebsocketFields,
     is_masked,
-    provider_family,
-    resolve_vapi_configuration_for_version,
+    merge_websocket_secrets,
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
+from tfc.permissions.utils import cached_is_read_only_user
 from tracer.models.observability_provider import ProviderChoices
 from tracer.services.observability_switch import observability_is_on
 
@@ -44,13 +49,8 @@ def _extract_credentials_input(
     """
     return ProviderCredentialsInput(
         provider=validated_data.get("provider") or fallback_provider,
-        previous_provider=fallback_provider,
         api_key=validated_data.get("api_key"),
-        **(
-            {"assistant_id": validated_data["assistant_id"]}
-            if "assistant_id" in validated_data
-            else {}
-        ),
+        assistant_id=validated_data.get("assistant_id"),
         livekit_url=validated_data.pop("livekit_url", None),
         livekit_api_key=validated_data.pop("livekit_api_key", None),
         livekit_api_secret=validated_data.pop("livekit_api_secret", None),
@@ -59,6 +59,22 @@ def _extract_credentials_input(
         livekit_max_concurrency=validated_data.pop("livekit_max_concurrency", None),
         provider_was_provided="provider" in validated_data,
     )
+
+
+def _save_credentials(version, creds_input):
+    try:
+        sync_provider_credentials(version, creds_input)
+    except CredentialsNeedReentry as error:
+        raise serializers.ValidationError(error.message) from error
+
+
+def _merged_websocket(data, instance: AgentDefinition) -> WebsocketFields:
+    try:
+        return merge_websocket_secrets(
+            data, instance.websocket_url, instance.websocket_headers
+        )
+    except CredentialsNeedReentry as error:
+        raise serializers.ValidationError(error.message) from error
 
 
 class AgentDefinitionOperationSerializer(serializers.Serializer):
@@ -103,6 +119,18 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
     )
     livekit_api_secret = serializers.CharField(
         write_only=True, required=False, allow_blank=True
+    )
+    websocket_url = WebsocketUrlField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        required=False,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
     )
 
     class Meta:
@@ -172,16 +200,13 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             except AgentVersion.credentials.RelatedObjectDoesNotExist:
                 pass
 
-        if instance.provider == "vapi":
-            configuration = resolve_vapi_configuration_for_version(
-                version, agent_definition=instance
-            )
-            data["api_key"] = mask_key(configuration.api_key or "")
-            data["assistant_id"] = configuration.assistant_id or ""
-        elif creds:
+        hide_keys = cached_is_read_only_user(self.context)
+        if creds:
             if creds.provider_type == "livekit":
                 data["livekit_url"] = creds.server_url
-                data["livekit_api_key"] = creds.get_masked_api_key()
+                data["livekit_api_key"] = (
+                    "" if hide_keys else creds.get_masked_api_key()
+                )
                 data["livekit_agent_name"] = creds.agent_name
                 data["livekit_config_json"] = creds.config_json or {}
                 data["livekit_max_concurrency"] = (
@@ -190,7 +215,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 data["api_key"] = ""
                 data["assistant_id"] = ""
             else:
-                data["api_key"] = creds.get_masked_api_key()
+                data["api_key"] = "" if hide_keys else creds.get_masked_api_key()
                 data["assistant_id"] = creds.assistant_id or data.get(
                     "assistant_id", ""
                 )
@@ -424,6 +449,8 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        if self.instance is not None:
+            _merged_websocket(attrs, self.instance)
         return attrs
 
     @transaction.atomic
@@ -442,7 +469,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 commit_message="Initial version",
                 status="draft",
             )
-        sync_provider_credentials(version, creds_input)
+        _save_credentials(version, creds_input)
         return instance
 
     @transaction.atomic
@@ -450,21 +477,14 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         instance = AgentDefinition.objects.select_for_update(of=("self",)).get(
             pk=instance.pk
         )
+        validated_data.update(_merged_websocket(validated_data, instance))
 
         creds_input = _extract_credentials_input(
             validated_data, fallback_provider=instance.provider or ""
         )
 
         new_api_key = validated_data.get("api_key")
-        if (
-            creds_input.provider_was_provided
-            and provider_family(creds_input.provider)
-            != provider_family(instance.provider)
-            and (not new_api_key or is_masked(new_api_key))
-        ):
-            # A new provider must not inherit the old definition's fallback key.
-            validated_data["api_key"] = ""
-        elif new_api_key is not None and is_masked(new_api_key):
+        if new_api_key is not None and is_masked(new_api_key):
             validated_data.pop("api_key")
 
         instance = super().update(instance, validated_data)
@@ -472,7 +492,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.active_version or instance.latest_version
         if version:
-            sync_provider_credentials(version, creds_input)
+            _save_credentials(version, creds_input)
         return instance
 
 
@@ -481,6 +501,16 @@ class AgentDefinitionListSerializer(serializers.ModelSerializer):
 
     latest_version = serializers.SerializerMethodField()
     latest_version_id = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
 
     class Meta:
         model = AgentDefinition
@@ -610,7 +640,6 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
                 organization=organization
             )
 
-    @transaction.atomic
     def update(self, instance, validated_data):
         # Serialize concurrent writes on this agent (see
         # AgentDefinitionSerializer.update for the same pattern).
@@ -638,13 +667,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         )
         instance.inbound = validated_data.get("inbound", instance.inbound)
         instance.agent_type = validated_data.get("agent_type", instance.agent_type)
-        api_key = validated_data.get("api_key")
-        if api_key is not None and not is_masked(api_key):
-            instance.api_key = api_key
-        elif creds_input.provider_was_provided and provider_family(
-            creds_input.provider
-        ) != provider_family(creds_input.previous_provider):
-            instance.api_key = ""
+        instance.api_key = validated_data.get("api_key", instance.api_key)
         instance.model = validated_data.get("model", instance.model)
         instance.model_details = validated_data.get(
             "model_details", instance.model_details
@@ -657,7 +680,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.active_version or instance.latest_version
         if version:
-            sync_provider_credentials(version, creds_input)
+            _save_credentials(version, creds_input)
         return instance
 
     def to_representation(self, instance):

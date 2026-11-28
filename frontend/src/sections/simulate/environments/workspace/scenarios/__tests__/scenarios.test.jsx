@@ -16,6 +16,7 @@ import ScenariosStep from "../ScenariosStep";
 import {
   TEST_ENV,
   SERVER_ROWS,
+  makeServerRows,
   envStateFor,
   renderWithClient,
   openDisplay,
@@ -39,17 +40,33 @@ vi.mock("notistack", () => ({
 
 // The list reads the server (fixtures) source; serve the 20-row sample suite.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
-  const actual = await vi.importActual("src/api/simulate-environments/scenarios");
+  const actual = await vi.importActual(
+    "src/api/simulate-environments/scenarios",
+  );
   return {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
-    scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
+    scenarioCoverage: vi.fn(async () => ({
+      axes: [],
+      per_axis: [],
+      rows: [],
+      columns: [],
+      cells: [],
+    })),
+    // The Validate buttons read the running validation on a versioned suite.
+    getRunningScenarioValidation: vi.fn(async () => ({
+      job_id: null,
+      to_prove: 0,
+    })),
   };
 });
-const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { listScenarios, amendScenarios } = await import(
+  "src/api/simulate-environments/scenarios"
+);
+const { default: axios } = await import("src/utils/axios");
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -59,12 +76,19 @@ const { queryScenarioFixture, resetScenarioFixture } = await import(
 const defaultView = () => queryScenarioFixture({ limit: 25 });
 const firstRowId = () => defaultView().results[0].id;
 
-const renderStep = (rows = SERVER_ROWS) => {
-  const patch = vi.fn();
+const renderStep = (rows = SERVER_ROWS) =>
   renderWithClient(
-    <ScenariosStep env={TEST_ENV} envState={envStateFor(rows)} patch={patch} />,
+    <ScenariosStep env={TEST_ENV} envState={envStateFor(rows)} />,
   );
-  return { patch };
+
+const pickUseCaseFilter = (useCase) => {
+  fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+  fireEvent.click(screen.getByRole("option", { name: "Use case" }));
+  fireEvent.click(screen.getByText("Select values..."));
+  const searchValues = screen.getByPlaceholderText("Search values...");
+  fireEvent.change(searchValues, { target: { value: useCase.slice(0, 24) } });
+  fireEvent.click(screen.getAllByText(useCase).at(-1));
+  fireEvent.keyDown(searchValues, { key: "Escape" });
 };
 
 beforeEach(() => {
@@ -78,6 +102,33 @@ beforeEach(() => {
   amendScenarios.mockResolvedValue({ receipts: [] });
 });
 
+describe("ScenariosStep actor names", () => {
+  it("names each actor as the scenario row resolves it, and never asks for the cast", async () => {
+    const get = vi.spyOn(axios, "get");
+    const rows = [
+      {
+        ...SERVER_ROWS[0],
+        actors: [
+          { id: "friend", name: "Draft name", when_label: "From the start" },
+          { id: "boss", name: "Pat", when_label: "When contacted" },
+        ],
+      },
+    ];
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, rows),
+    );
+    renderWithClient(
+      <ScenariosStep
+        env={{ ...TEST_ENV, versioning: { enabled: true } }}
+        envState={envStateFor(rows)}
+      />,
+    );
+    expect(await screen.findByText("With Draft name, Pat")).toBeInTheDocument();
+    expect(get.mock.calls.map(([url]) => url).join()).not.toMatch(/actors/);
+    get.mockRestore();
+  });
+});
+
 describe("ScenariosStep", () => {
   it("opens on its content, with no heading repeating the tab or its count", () => {
     renderStep();
@@ -88,13 +139,17 @@ describe("ScenariosStep", () => {
   it("puts Add scenarios in the list toolbar", () => {
     renderStep();
     const toolbar = screen.getByRole("toolbar", { name: "Scenarios" });
-    expect(within(toolbar).getByRole("button", { name: "Add scenarios" })).toBeInTheDocument();
+    expect(
+      within(toolbar).getByRole("button", { name: "Add scenarios" }),
+    ).toBeInTheDocument();
   });
 
   it("puts Coverage in the list toolbar instead of a card above it", async () => {
     renderStep();
     const toolbar = screen.getByRole("toolbar", { name: "Scenarios" });
-    expect(await within(toolbar).findByRole("button", { name: /^Coverage/ })).toBeInTheDocument();
+    expect(
+      await within(toolbar).findByRole("button", { name: /^Coverage/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/click to expand/)).toBeNull();
   });
 
@@ -106,13 +161,36 @@ describe("ScenariosStep", () => {
     expect(screen.queryByRole("button", { name: "Row height" })).toBeNull();
 
     const panel = openDisplay();
-    expect(within(panel).getByRole("tab", { name: "Table" })).toHaveAttribute("aria-selected", "true");
-    expect(within(panel).getByRole("tab", { name: "Short" })).toHaveAttribute("aria-selected", "true");
+    expect(within(panel).getByRole("tab", { name: "Table" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(panel).getByRole("tab", { name: "Short" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     // Grouping is one dropdown, so more server axes never lengthen the panel.
-    expect(within(panel).getByRole("combobox", { name: "Group by" })).toBeInTheDocument();
+    expect(
+      within(panel).getByRole("combobox", { name: "Group by" }),
+    ).toBeInTheDocument();
     expect(within(panel).queryByRole("option")).toBeNull();
-    fireEvent.click(within(panel).getByRole("tab", { name: "Large" }));
-    expect(within(panel).getByRole("tab", { name: "Large" })).toHaveAttribute("aria-selected", "true");
+    // Every setting changes the row, however short its texts are.
+    const rowHeight = () =>
+      getComputedStyle(document.querySelector("tbody tr[aria-label^='Open ']"))
+        .height;
+    expect(rowHeight()).toBe("48px");
+    for (const [name, height] of [
+      ["Medium", "80px"],
+      ["Large", "100px"],
+      ["Extra large", "150px"],
+    ]) {
+      fireEvent.click(within(panel).getByRole("tab", { name }));
+      expect(within(panel).getByRole("tab", { name })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(rowHeight()).toBe(height);
+    }
     closeDisplay();
   });
 
@@ -122,14 +200,23 @@ describe("ScenariosStep", () => {
     const search = screen.getByPlaceholderText(/Search scenarios/i);
     fireEvent.change(search, { target: { value: "injection" } });
 
-    const expected = queryScenarioFixture({ limit: 25, search: "injection" }).count;
+    const expected = queryScenarioFixture({
+      limit: 25,
+      search: "injection",
+    }).count;
     expect(expected).toBeGreaterThan(0);
-    const readout = await screen.findByText(`${expected} of ${SERVER_ROWS.length}`);
+    const readout = await screen.findByText(
+      `${expected} of ${SERVER_ROWS.length}`,
+    );
     // The count sits with the results, not in the toolbar row.
-    expect(screen.getByRole("toolbar", { name: "Scenarios" })).not.toContainElement(readout);
+    expect(
+      screen.getByRole("toolbar", { name: "Scenarios" }),
+    ).not.toContainElement(readout);
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-    expect(screen.queryByText(`${expected} of ${SERVER_ROWS.length}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(`${expected} of ${SERVER_ROWS.length}`),
+    ).not.toBeInTheDocument();
     expect(search).toHaveValue("");
   });
 
@@ -141,22 +228,13 @@ describe("ScenariosStep", () => {
     // the Basic filter rows are still there.
     expect(screen.queryByPlaceholderText(/Ask AI/i)).not.toBeInTheDocument();
 
-    // The default Basic row lands on the first field (Scenario, a string). Switch
-    // it to the Use case enum, then pick a value. The field select is the first
-    // combobox in the row.
-    const combos = screen.getAllByRole("combobox");
-    fireEvent.mouseDown(combos[0]);
-    fireEvent.click(screen.getByRole("option", { name: "Use case" }));
-
     const UC = SERVER_ROWS.find((r) => r.number === 1).use_case;
-    fireEvent.click(screen.getByText("Select values..."));
-    const searchValues = screen.getByPlaceholderText("Search values...");
-    fireEvent.change(searchValues, { target: { value: UC.slice(0, 24) } });
-    const options = screen.getAllByText(UC);
-    fireEvent.click(options[options.length - 1]);
+    pickUseCaseFilter(UC);
 
     const expected = queryScenarioFixture({ limit: 25, use_case: [UC] }).count;
-    expect(await screen.findByText(`${expected} of ${SERVER_ROWS.length}`)).toBeInTheDocument();
+    expect(
+      await screen.findByText(`${expected} of ${SERVER_ROWS.length}`),
+    ).toBeInTheDocument();
     // applyFilters emits the SERVER param name (use_case), not a client alias.
     expect(listScenarios).toHaveBeenLastCalledWith(
       "job-test",
@@ -185,8 +263,13 @@ describe("ScenariosStep", () => {
     const options = screen.getAllByText(UC);
     fireEvent.click(options[options.length - 1]);
 
-    const expected = queryScenarioFixture({ limit: 25, use_case_not: [UC] }).count;
-    expect(await screen.findByText(`${expected} of ${SERVER_ROWS.length}`)).toBeInTheDocument();
+    const expected = queryScenarioFixture({
+      limit: 25,
+      use_case_not: [UC],
+    }).count;
+    expect(
+      await screen.findByText(`${expected} of ${SERVER_ROWS.length}`),
+    ).toBeInTheDocument();
     // Negation emits the `<field>_not` server key.
     expect(listScenarios).toHaveBeenLastCalledWith(
       "job-test",
@@ -224,13 +307,18 @@ describe("ScenariosStep", () => {
     });
   });
 
-  it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
+  it("opens the Add scenarios panel from the empty placeholder when there are no scenarios", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).
-    listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, []));
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, []),
+    );
     renderStep([]);
     expect(await screen.findByText("No scenarios yet")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add scenarios" }));
+    expect(
+      await screen.findByText(/Add the ones it couldn't work out/),
+    ).toBeInTheDocument();
   });
 
   it("enables the edit pencil", async () => {
@@ -242,7 +330,8 @@ describe("ScenariosStep", () => {
 });
 
 describe("ScenariosStep — bulk selection", () => {
-  const selectFirstRow = () => fireEvent.click(screen.getAllByRole("checkbox")[1]);
+  const selectFirstRow = () =>
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
 
   it("surfaces the SelectionBar and publishes the selection to the bus", async () => {
     renderStep();
@@ -259,7 +348,9 @@ describe("ScenariosStep — bulk selection", () => {
     const firstName = defaultView().results[0].name;
     selectFirstRow();
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete selected scenarios" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete selected scenarios" }),
+    );
     // Confirm-then-drop: the dialog gates the delete, and there is no Undo.
     expect(screen.getByText("Delete scenarios?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -289,26 +380,29 @@ describe("ScenariosStep — bulk selection", () => {
 describe("ScenariosStep — locked template", () => {
   const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-  const renderLocked = (locked) => {
-    const patch = vi.fn();
+  const renderLocked = (locked) =>
     renderWithClient(
-      <ScenariosStep env={TEST_ENV} envState={envStateFor()} patch={patch} locked={locked} />,
+      <ScenariosStep env={TEST_ENV} envState={envStateFor()} locked={locked} />,
     );
-    return { patch };
-  };
 
   it("locks the Add scenarios CTA behind the fork tooltip", () => {
     renderLocked(true);
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Add scenarios" }),
+    ).toBeDisabled();
     expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
   });
 
   it("disables the per-row edit and delete with the fork tooltip", async () => {
     renderLocked(true);
     await screen.findByRole("table");
-    expect(screen.getAllByRole("button", { name: "Edit scenario" })[0]).toBeDisabled();
     expect(
-      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
+      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+    ).toBeDisabled();
+    expect(
+      screen.getAllByRole("button", {
+        name: "Remove from this environment",
+      })[0],
     ).toBeDisabled();
     expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
   });
@@ -323,27 +417,60 @@ describe("ScenariosStep — locked template", () => {
     renderLocked(true);
     await screen.findByRole("table");
     pickView("List");
-    expect(screen.getAllByRole("button", { name: "Edit scenario" })[0]).toBeDisabled();
     expect(
-      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
+      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+    ).toBeDisabled();
+    expect(
+      screen.getAllByRole("button", {
+        name: "Remove from this environment",
+      })[0],
     ).toBeDisabled();
   });
 
   it("keeps group-by and hide-group available while locked — they're view state, not mutations", async () => {
     renderLocked(true);
     await screen.findByRole("table");
-    expect(screen.getAllByRole("button", { name: "Hide this group" })[0]).toBeEnabled();
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" })[0],
+    ).toBeEnabled();
     const panel = openDisplay();
-    expect(within(panel).getByRole("combobox", { name: "Group by" })).not.toHaveAttribute("aria-disabled");
+    expect(
+      within(panel).getByRole("combobox", { name: "Group by" }),
+    ).not.toHaveAttribute("aria-disabled");
   });
 
   it("leaves the row controls enabled and checkboxes present when not locked", async () => {
     renderLocked(false);
     await screen.findByRole("table");
-    expect(screen.getAllByRole("button", { name: "Edit scenario" })[0]).toBeEnabled();
-    expect(screen.getAllByRole("button", { name: "Remove from this environment" })[0]).toBeEnabled();
+    expect(
+      screen.getAllByRole("button", { name: "Edit scenario" })[0],
+    ).toBeEnabled();
+    expect(
+      screen.getAllByRole("button", {
+        name: "Remove from this environment",
+      })[0],
+    ).toBeEnabled();
     expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
+  });
+});
+
+describe("ScenariosStep — adapted environment", () => {
+  it("lets scenarios be selected to run, and leaves changing them to the chat", async () => {
+    renderWithClient(
+      <ScenariosStep
+        env={{ ...TEST_ENV, composition: { suite: { digest: "sha256:ab" } } }}
+        envState={envStateFor()}
+      />,
+    );
+    await screen.findByRole("table");
+    expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
+    for (const name of [
+      "Add scenarios",
+      "Edit scenario",
+      "Remove from this environment",
+    ])
+      expect(screen.getAllByRole("button", { name })[0]).toBeDisabled();
   });
 });
 
@@ -355,7 +482,9 @@ describe("ScenariosStep — group-by axis", () => {
 
     const panel = openDisplay();
     await waitFor(() =>
-      expect(within(panel).getByRole("combobox", { name: "Group by" })).toHaveTextContent("No grouping"),
+      expect(
+        within(panel).getByRole("combobox", { name: "Group by" }),
+      ).toHaveTextContent("No grouping"),
     );
     closeDisplay();
   });
@@ -364,7 +493,9 @@ describe("ScenariosStep — group-by axis", () => {
     renderStep();
     await screen.findByRole("table");
     // Hide one group so there's a hidden set to clear.
-    fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Hide this group" })[0],
+    );
     expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
 
     // Switch the axis to Accent through the Display panel.
@@ -372,7 +503,9 @@ describe("ScenariosStep — group-by axis", () => {
 
     const panel = openDisplay();
     await waitFor(() =>
-      expect(within(panel).getByRole("combobox", { name: "Group by" })).toHaveTextContent("Accent"),
+      expect(
+        within(panel).getByRole("combobox", { name: "Group by" }),
+      ).toHaveTextContent("Accent"),
     );
     closeDisplay();
     // Switching the axis dropped the hidden set — the counter is gone.
@@ -387,14 +520,22 @@ describe("ScenariosStep — hide group", () => {
     renderStep();
     await screen.findByRole("table");
     const n = groupCount();
-    expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n);
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(n);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);
-    expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n - 1);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Hide this group" })[0],
+    );
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(n - 1);
     expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Show all" }));
-    expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n);
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(n);
   });
 
   it("shows the all-hidden empty state when every group is hidden", async () => {
@@ -403,15 +544,75 @@ describe("ScenariosStep — hide group", () => {
     const n = groupCount();
     // Hiding always removes the first remaining group; n clicks empties it.
     for (let i = 0; i < n; i += 1) {
-      fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Hide this group" })[0],
+      );
     }
     expect(
-      screen.getByText("Every group is hidden. Click Show all to bring them back."),
+      screen.getByText(
+        "Every group is hidden. Click Show all to bring them back.",
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(`· ${n} groups hidden`))).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`· ${n} groups hidden`)),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Show all" }));
-    expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n);
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(n);
+  });
+
+  it("counts and restores a hidden group from another page", async () => {
+    // Disjoint groups: the second page has no row from the group hidden on page 1.
+    const rows = makeServerRows(30).map((row) => ({
+      ...row,
+      use_case: row.number <= 25 ? "First group" : "Second group",
+    }));
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, rows),
+    );
+    renderStep(rows);
+    await screen.findByText("First group");
+    fireEvent.click(screen.getByRole("button", { name: "Hide this group" }));
+    expect(screen.queryByText("First group")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Go to page 2"));
+    await screen.findByText("Second group");
+    expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(screen.queryByText(/group hidden/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Go to page 1"));
+    expect(await screen.findByText("First group")).toBeInTheDocument();
+  });
+
+  it("restores the hidden group without clearing the active use case filter", async () => {
+    renderStep();
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    const useCase = SERVER_ROWS[0].use_case;
+    pickUseCaseFilter(useCase);
+    const matching = SERVER_ROWS.filter((row) => row.use_case === useCase);
+    const readout = `${matching.length} of ${SERVER_ROWS.length}`;
+    await screen.findByText(readout);
+    fireEvent.keyDown(screen.getAllByRole("combobox")[0], { key: "Escape" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Hide this group" }),
+    );
+    expect(screen.getByText(/Every group is hidden/)).toBeInTheDocument();
+    expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText(useCase)).toBeInTheDocument();
+    expect(
+      within(table).getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Filter (1)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(readout)).toBeInTheDocument();
   });
 
   it("hides a group from the list view", async () => {
@@ -419,10 +620,16 @@ describe("ScenariosStep — hide group", () => {
     await screen.findByRole("table");
     const n = groupCount();
     pickView("List");
-    expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n);
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(n);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);
-    expect(screen.getAllByRole("button", { name: "Hide this group" })).toHaveLength(n - 1);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Hide this group" })[0],
+    );
+    expect(
+      screen.getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(n - 1);
     expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
   });
 });
@@ -460,11 +667,105 @@ describe("groupScenarios", () => {
 describe("groupKeyOf fallbacks", () => {
   it("labels a persona-less row 'No persona'", async () => {
     const { groupKeyOf } = await import("../scenarios.constants");
-    expect(groupKeyOf({ id: "x" }, "persona")).toEqual({ id: "persona:none", label: "No persona" });
+    expect(groupKeyOf({ id: "x" }, "persona")).toEqual({
+      id: "persona:none",
+      label: "No persona",
+    });
   });
 
   it("labels a sub-goal-less row 'No sub-goals'", async () => {
     const { groupKeyOf } = await import("../scenarios.constants");
-    expect(groupKeyOf(null, "subgoal")).toEqual({ id: "subgoal:none", label: "No sub-goals" });
+    expect(groupKeyOf(null, "subgoal")).toEqual({
+      id: "subgoal:none",
+      label: "No sub-goals",
+    });
+  });
+});
+
+describe("ScenariosStep lifecycle", () => {
+  const COUNTS = {
+    draft: 4,
+    validated: 0,
+    active: 6,
+    kept_as_written: 0,
+    archived: 0,
+    proved: 6,
+    not_proved: 4,
+    legacy_without_control: 0,
+  };
+
+  it("reaches archived scenarios from the counts line, even when every one is archived, and back", async () => {
+    listScenarios.mockImplementation((jobId, params) => ({
+      ...queryScenarioFixture(
+        params.lifecycle === "archived"
+          ? { limit: params.limit, page: 1 }
+          : { ...params, search: "no-such-scenario" },
+        SERVER_ROWS,
+      ),
+      lifecycle_counts: { ...COUNTS, active: 0, draft: 0, archived: 10 },
+    }));
+    renderStep();
+    const archived = await screen.findByRole("button", { name: "10 archived" });
+    expect(archived).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(archived);
+    await waitFor(() =>
+      expect(listScenarios).toHaveBeenCalledWith(
+        "job-test",
+        expect.objectContaining({ lifecycle: "archived" }),
+      ),
+    );
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(archived).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Filter (1)" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    fireEvent.click(archived);
+    expect(archived).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("shows the counts line and asks the list for one state, empty when none match", async () => {
+    listScenarios.mockImplementation((jobId, params) => {
+      if (params.lifecycle === "source_changed") {
+        return {
+          ...queryScenarioFixture(
+            { ...params, search: "no-such-scenario" },
+            SERVER_ROWS,
+          ),
+          lifecycle_counts: COUNTS,
+        };
+      }
+      return {
+        ...queryScenarioFixture(params, SERVER_ROWS),
+        lifecycle_counts: COUNTS,
+      };
+    });
+    renderStep();
+    expect(
+      await screen.findByText("6 proved · 0 kept as written · 4 not proved"),
+    ).toBeInTheDocument();
+
+    // State sits inside Filter: one pick, "Is" only, as the list takes it.
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+    fireEvent.click(screen.getByRole("option", { name: "State" }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[1]);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Is",
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: "Is" }));
+    fireEvent.click(screen.getByText(/^Select value/));
+    fireEvent.click(screen.getByText("Source changed"));
+
+    await waitFor(() =>
+      expect(listScenarios).toHaveBeenLastCalledWith(
+        "job-test",
+        expect.objectContaining({ lifecycle: "source_changed" }),
+      ),
+    );
+    expect(
+      await screen.findByText("No scenarios match your filters."),
+    ).toBeInTheDocument();
   });
 });

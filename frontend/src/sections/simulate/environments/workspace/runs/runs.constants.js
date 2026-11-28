@@ -1,3 +1,5 @@
+import { stopChipOf } from "./runStop";
+
 // Shared lifecycle mapping for the runs list and detail header.
 const RUN_STATE = {
   pending: "queued",
@@ -10,7 +12,11 @@ const RUN_STATE = {
   cancelled: "cancelled",
 };
 
-export const runStateFor = (status) => RUN_STATE[status?.toLowerCase()];
+export const runStateFor = (status, stop) => {
+  const state = RUN_STATE[status?.toLowerCase()];
+  if (state !== "cancelled" && state !== "cancelling") return state;
+  return stopChipOf(stop) || state;
+};
 
 // An eval's or CSAT's scoring state, as the v3 calls API sends it. `error` is
 // what older payloads sent for a failed eval.
@@ -24,7 +30,13 @@ export const SCORING_STATUS = {
 
 // The statuses whose dot animates — a run in one of these phases is still
 // moving, so the chip breathes.
-export const LIVE_STATUSES = ["running", "booting", "grading", "cancelling"];
+export const LIVE_STATUSES = [
+  "running",
+  "booting",
+  "grading",
+  "cancelling",
+  "stop_requested",
+];
 
 // TestExecution lifecycle states that can still advance and need polling.
 export const ACTIVE_EXECUTION_STATUSES = new Set([
@@ -50,6 +62,8 @@ export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
 export const STATUS_META = {
   in_progress: { role: "info", label: "In progress" },
   inconclusive: { role: "neutral", label: "Inconclusive" },
+  no_score: { role: "neutral", label: "No score" },
+  not_applicable: { role: "neutral", label: "Not applicable" },
   queued: { role: "neutral", label: "Queued" },
   booting: { role: "info", label: "Provisioning" },
   running: { role: "info", label: "Running" },
@@ -66,6 +80,10 @@ export const STATUS_META = {
   error: { role: "danger", label: "Error" },
   // A stopped run until the backend confirms its sandbox is gone.
   cancelling: { role: "neutral", label: "Cancelling" },
+  stop_requested: { role: "neutral", label: "Stop requested" },
+  stopped: { role: "neutral", label: "Stopped" },
+  stop_unconfirmed: { role: "warning", label: "Stop not confirmed" },
+  cleanup_failed: { role: "danger", label: "Cleanup failed" },
   cancelled: { role: "neutral", label: "Cancelled" },
 };
 

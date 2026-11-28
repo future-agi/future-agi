@@ -5,6 +5,7 @@ import os
 import re
 import traceback
 from decimal import Decimal
+from functools import partial
 from itertools import chain
 from typing import Any
 from uuid import UUID, uuid4
@@ -134,10 +135,6 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.selectors.runs import user_executions
-from simulate.services.agent_definition import (
-    provider_for_version,
-    resolve_provider_configuration_for_version,
-)
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
@@ -169,11 +166,13 @@ from simulate.utils.processing_outcomes import (
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import (
+    accrue_check_run_eval_cost,
     eval_source,
     generate_simulator_agent_prompt,
+    is_fix_check_run,
 )
 from simulate.utils.verdicts import has_stored_verdict
-from tfc.constants.api_calls import APICallStatusChoices
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE, APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
@@ -4449,7 +4448,11 @@ class TestExecutor:
                 # the judge when enable_tool_evaluation is on -- but only for
                 # an explicit (harness) dispatch, not a native run test's
                 # undispatched call.
-                if run_test.enable_tool_evaluation and eval_config_ids is not None:
+                if (
+                    run_test.enable_tool_evaluation
+                    and eval_config_ids is not None
+                    and not is_fix_check_run(call_execution.test_execution_id)
+                ):
                     try:
                         mark_eval_progress(call_execution)
                         self._run_tool_evaluation(
@@ -4585,8 +4588,11 @@ class TestExecutor:
                     logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                     traceback.print_exc()
 
-            # Run tool evaluation before marking as completed (only if enabled)
-            if test_execution.run_test.enable_tool_evaluation:
+            # Run tool evaluation before marking as completed (only if enabled). Nobody
+            # reads the tool-call judge on a fix's check run, so it is not paid for there.
+            if test_execution.run_test.enable_tool_evaluation and not is_fix_check_run(
+                test_execution.id
+            ):
                 try:
                     mark_eval_progress(call_execution)
                     self._run_tool_evaluation(call_execution, test_execution)
@@ -5402,6 +5408,9 @@ class TestExecutor:
                 f"Running evaluation {eval_config.id} for call {call_execution.id}"
             )
 
+            source = eval_source(call_execution.test_execution_id)
+            # A fix's check run counts what its evals bill, and nobody reads its localizer.
+            check_run = source == FIX_CHECK_RUN_EVAL_SOURCE
             eval_result = run_eval_func(
                 config=config,
                 mappings=updated_mapping,
@@ -5409,10 +5418,17 @@ class TestExecutor:
                 org=organization,
                 model=eval_config.model,
                 kb_id=eval_config.kb_id,
-                error_localizer=eval_config.error_localizer,
+                error_localizer=eval_config.error_localizer and not check_run,
                 workspace=call_execution.test_execution.run_test.workspace,
-                source=eval_source(call_execution.test_execution_id),
+                source=source,
                 call_context=_call_context,
+                on_billed=(
+                    partial(
+                        accrue_check_run_eval_cost, call_execution.test_execution_id
+                    )
+                    if check_run
+                    else None
+                ),
             )
 
             if isinstance(eval_result, str):
@@ -5450,7 +5466,7 @@ class TestExecutor:
                 )
 
                 el_enabled = error_localizer_enabled(eval_config)
-                if el_enabled and eval_output is not None:
+                if el_enabled and not check_run and eval_output is not None:
                     try:
                         trigger_error_localization_for_simulate(
                             eval_template=eval_template,
@@ -5723,6 +5739,10 @@ class TestExecutor:
             else:
                 agent_version = agent_definition.get_version(selected_version.id)
 
+            # A harness `AgentDefinition` has no `AgentVersion`, so
+            # `latest_version` is None. Only the voice branch reads
+            # `snapshot`, and it already treats `{}` as absent.
+            snapshot = agent_version.configuration_snapshot if agent_version else {}
             # Check if this is a TEXT (chat) agent
             agent_type = agent_definition.agent_type
             is_text_agent = agent_type == AgentDefinition.AgentTypeChoices.TEXT
@@ -5741,48 +5761,30 @@ class TestExecutor:
                 # Extract tool calls from chat messages
                 tool_calls_data = agent._extract_tool_calls(call_data)
             else:
-                if not agent_version:
+                if not snapshot:
                     logger.info(
                         f"Skipping tool evaluation for voice call {call_execution.id} - "
-                        "agent definition has no version"
+                        "agent definition has no version snapshot"
                     )
                     return
 
-                from simulate.semantics import ToolCallingSupportedProviders
-
-                customer_provider = provider_for_version(agent_version)
-                if customer_provider not in ToolCallingSupportedProviders:
-                    # The legacy extraction below is Vapi-specific, just like
-                    # the supported adapter set. Never send another provider's
-                    # resolved credentials to Vapi (Bland rows also encode VAPI).
-                    logger.info(
-                        f"Tool evaluation not supported for provider "
-                        f"'{customer_provider}' (call {call_execution.id}), skipping"
-                    )
-                    return
-
-                configuration = resolve_provider_configuration_for_version(
-                    agent_version
+                customer_api_key = (
+                    snapshot.get("api_key")
+                    if snapshot and snapshot.get("api_key")
+                    else None
                 )
-                customer_api_key = configuration.api_key
-                customer_assistant_id = configuration.assistant_id
-                if not customer_api_key or not customer_assistant_id:
-                    logger.info(
-                        "No customer credentials provided, skipping tool evaluation"
-                    )
-                    return
+
+                customer_assistant_id = (
+                    snapshot.get("assistant_id")
+                    if snapshot and snapshot.get("assistant_id")
+                    else None
+                )
 
                 # Handle VOICE agents (existing logic)
                 logger.info("Processing VOICE agent - using call data")
 
-                # The active evaluation task intentionally starts without voice
-                # services. Initialize only this credentialed voice consumer;
-                # text/tool-disabled evaluations stay provider-neutral.
+                # Get our call data via VoiceServiceManager (provider-specific transport/parsing lives there)
                 try:
-                    if self.voice_service_manager is None:
-                        self.voice_service_manager = VoiceServiceManager(
-                            system_voice_provider=self.system_voice_provider
-                        )
                     our_call_data = self.voice_service_manager.get_call(
                         call_execution.service_provider_call_id, call_data_stored=True
                     )
@@ -5812,13 +5814,17 @@ class TestExecutor:
                                 FindClientCallInput,
                             )
 
-                            customer_call_id = self.voice_service_manager.find_client_call(
-                                FindClientCallInput(
-                                    customer_api_key=customer_api_key,
-                                    customer_assistant_id=customer_assistant_id,
-                                    our_call_data=our_call_data,
-                                    customer_voice_service_provider=customer_provider,
-                                    time_window_seconds=10,
+                            customer_call_id = (
+                                self.voice_service_manager.find_client_call(
+                                    FindClientCallInput(
+                                        customer_api_key=customer_api_key,
+                                        customer_assistant_id=customer_assistant_id,
+                                        our_call_data=our_call_data,
+                                        customer_voice_service_provider=snapshot.get(
+                                            "provider", ProviderChoices.VAPI
+                                        ),
+                                        time_window_seconds=10,
+                                    )
                                 )
                             )
 
@@ -6132,9 +6138,10 @@ def _run_simulate_evaluations_task(
             "test_execution__run_test",
         ).get(id=call_execution_id)
 
-        # Keep transcript/eval helpers provider-neutral. Voice tool evaluation
-        # initializes its transport lazily only after resolving supported
-        # customer credentials; other evaluations must not require Vapi setup.
+        # Evaluation only needs transcript/eval helpers. Initializing the
+        # configured voice provider here makes otherwise provider-neutral
+        # evaluations fail when, for example, Vapi credentials are absent for
+        # a LiveKit, Retell, chat, or connect-only run.
         test_executor = TestExecutor(initialize_voice_service=False)
         test_executor._run_simulate_evaluations(
             call_execution, eval_config_ids=eval_config_ids, skip_existing=skip_existing

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from ee.falcon_ai.consumers import FalconAIConsumer
 
 logger = logging.getLogger("tests.usage_events")
@@ -35,7 +36,9 @@ def _make_consumer(query_string="workspace_id=ws-123", user=None):
     consumer.channel_layer = AsyncMock()
     consumer.channel_name = "synthetic-channel"
     # Membership revalidation has its own tests (test_consumer_membership.py).
-    consumer._membership.ensure_member = AsyncMock(return_value=True)
+    consumer._membership = MagicMock(
+        spec=consumer._membership, ensure_member=AsyncMock(return_value=True)
+    )
     return consumer
 
 
@@ -336,6 +339,9 @@ class TestFalconAIConsumer:
         stream_buffer.cleanup_after_done.return_value = None
 
         agent = mock_agent_loop.return_value
+        agent.partial_content = None
+        agent.total_input_tokens = 0
+        agent.total_output_tokens = 0
         agent.llm_client = SimpleNamespace(_gateway_cost=0.07)
         agent.run = AsyncMock(
             return_value={
@@ -375,7 +381,9 @@ class TestFalconAIConsumer:
         )
         task = consumer._agent_task
         assert task is not None
-        await asyncio.wait_for(task, timeout=2)
+        await task
+        assert not task.cancelling(), "Chat turn was cancelled before completion"
+        stream_buffer.cleanup_after_done.assert_called_once_with()
 
         event = mock_emit.call_args.args[0]
         logger.info("captured_falcon_usage_event %s", event.model_dump(mode="json"))

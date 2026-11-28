@@ -1,8 +1,11 @@
+// Disabled: no module imports this file, so Google Ads never loads. Google
+// Analytics 4 loads from src/utils/googleAnalytics.js instead. Kept so Ads can
+// be restored by uncommenting its calls in main.jsx, auth-guard.jsx and
+// jwt-register-view.jsx.
 import {
   GOOGLE_ADS_ID,
   GOOGLE_ADS_SIGNUP_LABEL,
   GOOGLE_ADS_ENABLED,
-  GA_ID,
   AD_CONVERSION_VALUE,
   AD_CONVERSION_CURRENCY,
 } from "src/config-global";
@@ -49,11 +52,8 @@ export function initGoogleAds() {
   gtag("config", GOOGLE_ADS_ID, {
     linker: { domains: LINKER_DOMAINS, accept_incoming: true },
   });
-  if (GA_ID) {
-    gtag("config", GA_ID, {
-      linker: { domains: LINKER_DOMAINS, accept_incoming: true },
-    });
-  }
+  // GA4 is configured by src/utils/googleAnalytics.js. Configuring GA_ID here
+  // as well would count every page view twice if Ads is restored.
 
   const s = document.createElement("script");
   s.async = true;

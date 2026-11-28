@@ -234,7 +234,8 @@ def _packaged_dictionaries():
 
 def test_the_packaged_dictionary_sites_are_all_covered():
     sites = [name for name, _ in _packaged_dictionaries()]
-    assert sum(site.startswith("v2/") for site in sites) == 3
+    # 015/017/018 plus the 028 repair that re-issues the same three on every replica.
+    assert sum(site.startswith("v2/") for site in sites) == 6
     assert sum(site.startswith("schema.py:") for site in sites) == 12
 
 
@@ -435,13 +436,13 @@ V2_CONFIG = {
 }
 
 
-def _v2_dictionaries_applied_with_credentials(client):
+def _v2_dictionaries_applied_with_credentials(client, passes=1):
     dicts = dictionary_statements(_executed(client))
     assert [re.search(r"DICTIONARY (?:IF NOT EXISTS )?(\w+)", s)[1] for s in dicts] == [
         "trace_dict",
         "end_users_dict",
         "trace_sessions_dict",
-    ]
+    ] * passes
     for sql in dicts:
         assert_credentialed(sql)
 
@@ -464,7 +465,8 @@ def test_ch25_apply_schema_command_applies_dictionaries_with_credentials(
         zk_table_path_prefix=None,
     )
     assert local_apply.connect.call_args.kwargs["username"] == USER
-    _v2_dictionaries_applied_with_credentials(local_apply.client)
+    # The full apply runs 015/017/018 and then the 028 repair of the same three.
+    _v2_dictionaries_applied_with_credentials(local_apply.client, passes=2)
 
 
 def test_migration_0078_applies_dictionaries_with_credentials(local_apply, monkeypatch):
@@ -476,7 +478,8 @@ def test_migration_0078_applies_dictionaries_with_credentials(local_apply, monke
     monkeypatch.delenv("CH_PASSWORD")
     monkeypatch.setattr(v2, "get_v2_config", lambda: dict(V2_CONFIG))
     migration.forwards(None, None)
-    _v2_dictionaries_applied_with_credentials(local_apply.client)
+    # 0078 applies the whole packaged schema, so the 028 repair runs too.
+    _v2_dictionaries_applied_with_credentials(local_apply.client, passes=2)
 
 
 # ---------------------------------------------------------------------------

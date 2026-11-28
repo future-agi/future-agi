@@ -1,0 +1,655 @@
+[
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "eq", "value": 0 }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "ne", "value": 0 }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "lt", "value": 0 }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "lte", "value": 0 }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "gt", "value": 0 }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "gte", "value": 0 }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_text",
+        "attribute_key": "locale",
+        "value_type": "text",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_text",
+          "attribute_key": "locale",
+          "value_type": "text",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "eq", "value": "fr" }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_text",
+        "attribute_key": "locale",
+        "value_type": "text",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_text",
+          "attribute_key": "locale",
+          "value_type": "text",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "ne", "value": "fr" }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_text",
+        "attribute_key": "locale",
+        "value_type": "text",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "any",
+        "condition_stage": "observation",
+        "condition": { "operator": "eq", "value": "fr" }
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_text",
+          "attribute_key": "locale",
+          "value_type": "text",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "any",
+          "condition_stage": "observation",
+          "condition": { "operator": "eq", "value": "fr" }
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "eq", "value": true }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_text",
+        "attribute_key": "locale",
+        "value_type": "text",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "all",
+        "condition_stage": "observation",
+        "condition": { "operator": "eq", "value": "fr" }
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_text",
+          "attribute_key": "locale",
+          "value_type": "text",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "all",
+          "condition_stage": "observation",
+          "condition": { "operator": "eq", "value": "fr" }
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "eq", "value": true }],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "first"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "total",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "first"
+        }
+      ],
+      "conditions": [],
+      "value_alias": "value_1"
+    },
+    "value_format": "number",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "total",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [],
+      "value_alias": "value_1"
+    },
+    "value_format": "number",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "sum"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "total",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "sum"
+        }
+      ],
+      "conditions": [],
+      "value_alias": "value_1"
+    },
+    "value_format": "number",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_number",
+        "attribute_key": "price",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "count"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "total",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_number",
+          "attribute_key": "price",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "count"
+        }
+      ],
+      "conditions": [],
+      "value_alias": "value_1"
+    },
+    "value_format": "number",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_text",
+        "attribute_key": "locale",
+        "value_type": "text",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      },
+      {
+        "source": "eval",
+        "config_id": "11111111-1111-4111-8111-111111111111",
+        "config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "value_type": "number",
+        "ordering": "sentence",
+        "alias": "value_2",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "share",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_text",
+          "attribute_key": "locale",
+          "value_type": "text",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        },
+        {
+          "source": "eval",
+          "config_id": "11111111-1111-4111-8111-111111111111",
+          "config_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "value_type": "number",
+          "ordering": "sentence",
+          "alias": "value_2",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [
+        { "alias": "value_1", "operator": "eq", "value": "fr" },
+        { "alias": "value_2", "operator": "eq", "value": 0 }
+      ],
+      "value_alias": "value_1"
+    },
+    "value_format": "percent",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  },
+  {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "name": "Typed metric",
+    "description": "",
+    "formula": "",
+    "inputs": [
+      {
+        "source": "span",
+        "field": "attribute_bool",
+        "attribute_key": "resolved",
+        "value_type": "boolean",
+        "ordering": "sentence",
+        "alias": "value_1",
+        "reducer": "latest"
+      }
+    ],
+    "selection_unit": "session",
+    "kind": "count",
+    "level": "conversation",
+    "field_spec": {
+      "inputs": [
+        {
+          "source": "span",
+          "field": "attribute_bool",
+          "attribute_key": "resolved",
+          "value_type": "boolean",
+          "ordering": "sentence",
+          "alias": "value_1",
+          "reducer": "latest"
+        }
+      ],
+      "conditions": [{ "alias": "value_1", "operator": "eq", "value": false }],
+      "value_alias": "value_1"
+    },
+    "value_format": "number",
+    "value_labels": {},
+    "weighting": "none",
+    "filters": []
+  }
+]

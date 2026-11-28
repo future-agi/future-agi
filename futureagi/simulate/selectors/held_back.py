@@ -24,7 +24,10 @@ from simulate.selectors.agent_fix import FINISHED_RUN_STATES
 from simulate.services.hosted_harness_gateway import (
     AUTHORING_FAILED,
     RUNTIME_VALIDATION_FAILED,
+    UNKNOWN_FAILURE_CAUSE,
+    closed_failure_cause,
 )
+from simulate.services.hosted_harness_ingestion import graded_call_receipt
 from simulate.services.run_compare import trial_passed, wilson_interval
 
 # The environment payload metadata key; never copied to a run's payload.
@@ -64,6 +67,15 @@ def held_back(environment: HostedHarnessJob) -> HeldBack | None:
 def coding_agent_key(request: Any) -> OrgApiKey | None:
     """The coding agent API key the request authenticated with, else ``None``."""
     return request.org_api_key if is_coding_agent_key(request) else None
+
+
+def refusal_body(exc: Any, request: Any) -> dict[str, Any]:
+    """A refusal as the caller may read it: a coding agent never gets the readiness
+    selection, which names every requested case, held-back ones included."""
+    body: dict[str, Any] = exc.as_dict()
+    if coding_agent_key(request) is not None:
+        body.pop("selection", None)
+    return body
 
 
 def detail_without(detail: dict[str, Any], keys: Collection[str]) -> dict[str, Any]:
@@ -130,20 +142,106 @@ _RUN_METADATA_FIELDS = (
     "version_pins",
 )
 # A failure's details hold the guest's logs, and a certify on a cache miss runs every
-# case of the suite there, held-back ones included; only these fields stay.
+# case of the suite there, held-back ones included; only these fields stay, and a cause
+# only as a value from the closed set.
 _RUN_FAILURE_FIELDS = ("domain", "stage", "code", "message")
+# A run that stopped because a process it needs didn't start in time records this closed code,
+# without a cause: the run cannot tell which process it was, so the words don't say.
+START_TIMEOUT_CODE = "depends_on_timeout"
+START_TIMEOUT_LINE = (
+    "Stopped — a service this run needs didn't start in time. Run it again."
+)
 # The message a coding agent reads instead of the stored one, which can end with what
 # the guest printed: the label of its code.
 _FAILURE_LABELS = {
     "authoring_runtime_validation_failed": RUNTIME_VALIDATION_FAILED,
     "authoring_failed": AUTHORING_FAILED,
+    START_TIMEOUT_CODE: START_TIMEOUT_LINE,
+}
+# What each cause means and what to do next, in plain words; the stable code stays beside it.
+CAUSE_WORDS = {
+    "agent_exited_before_ready": (
+        "Didn't start — the agent exited before it was ready. "
+        "Fix the crash on startup, then push a new agent version."
+    ),
+    "agent_not_ready_in_time": (
+        "Didn't start in time — the agent wasn't ready within the limit. "
+        "Run it again; if it repeats, make it start or listen sooner."
+    ),
+    "dependency_not_ready_in_time": (
+        "Didn't start in time — a service this run needs wasn't ready within the limit. "
+        "Run it again."
+    ),
+    "chat_target_timeout": (
+        "Stopped — the agent didn't reply to a message in time. "
+        "Run it again. If it repeats, make the agent reply faster."
+    ),
+    "chat_target_refused": (
+        "Stopped — the agent refused the connection. "
+        "Check that it listens on the port it was given, then push a new agent version."
+    ),
+    # No guest text reaches the reader, so the next step is the reader's own.
+    "unknown": (
+        "We couldn't run this agent version in its environment, and the run recorded no cause. "
+        "Run it again; if it repeats, start the agent on your own machine and check that it "
+        "comes up."
+    ),
 }
 
 
+def failure_cause(failure: Mapping[str, Any]) -> str | None:
+    """The cause a failure reads with: its own from the closed set (``unknown`` for a value
+    outside it), or None when it recorded none. Nothing else decides it: the message can carry
+    what the guest printed."""
+    return closed_failure_cause(failure["cause"]) if "cause" in failure else None
+
+
+def has_plain_words(failure: Mapping[str, Any]) -> bool:
+    """Whether a person's failure gets product wording instead of the recorded diagnostic."""
+    return (
+        failure_cause(failure) is not None
+        or failure.get("code") == START_TIMEOUT_CODE
+        or (
+            failure.get("domain") == "infrastructure"
+            and failure.get("retryable") is not False
+        )
+    )
+
+
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
-    """A failure's message as a coding agent reads it: fixed text for its code."""
+    """A failure's message as a coding agent and a call row read it: when the failure has a
+    cause, what it means and what to do, with a named cause's code last; otherwise fixed text
+    for its code. An unknown cause reads as words only: the machine field still says it."""
+    cause = failure_cause(failure)
+    if cause == UNKNOWN_FAILURE_CAUSE:
+        return CAUSE_WORDS[cause]
+    if cause is not None:
+        return f"{CAUSE_WORDS[cause]} (cause: {cause})"
     code = str(failure.get("code") or "failed")
     return _FAILURE_LABELS.get(code, f"The run failed ({code})")
+
+
+def person_failure_message(failure: Mapping[str, Any]) -> str:
+    """A failure's message on a person's own run: the same words, and, when the failure has a
+    cause, what the stored message adds to its label after them. A person may read what their
+    agent printed, and it names which crash it was; a coding agent never reads a person's run."""
+    if failure_cause(failure) is None:
+        if failure.get("code") == START_TIMEOUT_CODE:
+            return START_TIMEOUT_LINE
+        if has_plain_words(failure):
+            return (
+                "Stopped — an issue occurred while running this. Run it again; "
+                "it doesn't count against the agent."
+            )
+        return str(failure.get("message") or "")
+    words = coding_agent_failure_message(failure)
+    message = str(failure.get("message") or "")
+    label = _FAILURE_LABELS.get(str(failure.get("code") or ""))
+    if label and message.startswith(f"{label}: "):
+        message = message[len(label) + 2 :]
+    elif message == label:
+        message = ""
+    return f"{words} {message}" if message else words
 
 
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
@@ -161,6 +259,11 @@ def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
                     for name in _RUN_FAILURE_FIELDS
                     if name in failure
                 },
+                **(
+                    {"cause": cause}
+                    if (cause := failure_cause(failure)) is not None
+                    else {}
+                ),
                 "message": coding_agent_failure_message(failure),
             },
         }
@@ -219,10 +322,12 @@ def verify_result(run: HostedHarnessJob) -> dict[str, Any]:
         job=run
     ).values_list("call_execution__call_metadata", flat=True):
         total += 1
-        receipt = (call_metadata or {}).get("hosted_harness_receipt")
+        receipt = graded_call_receipt(call_metadata)
         if not isinstance(receipt, Mapping):
             continue
-        verdict = trial_passed(receipt.get("sub_goals"), receipt.get("status"))
+        verdict = trial_passed(
+            receipt.get("sub_goals"), receipt.get("status"), receipt.get("failure")
+        )
         passed += verdict is True
         failed += verdict is False
     rate = None

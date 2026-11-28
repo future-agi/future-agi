@@ -3,3 +3,7 @@ test-results/
 playwright-report/
 blob-report/
 .auth/
+all-blob-reports/
+merged-report.json
+listed-suite.json
+FLOWS.md

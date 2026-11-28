@@ -106,9 +106,8 @@ def test_provider_poll_emits_one_stable_billing_key_per_rehosted_artifact(
         op, "emit_span_ingestion_usage", lambda **kwargs: emitted.append(kwargs)
     )
 
-    # Polling supplies the already resolved provider-scoped key.
-    op.process_and_store_logs([{}], provider, api_key="synthetic-provider-key")
-    op.process_and_store_logs([{}], provider, api_key="synthetic-provider-key")
+    op.process_and_store_logs([{}], provider)
+    op.process_and_store_logs([{}], provider)
 
     assert [event["payload_bytes"] for event in emitted] == [100, 200, 100, 200]
     assert emitted[0]["event_id"] == emitted[2]["event_id"]

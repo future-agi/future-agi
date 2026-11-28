@@ -81,13 +81,16 @@ class SamlSocketGuard:
         # record its result as recent.
         self._generation += 1
 
+    def _is_inactive(self) -> bool:
+        return self.revoked or self.closed
+
     async def ensure_live(self, *, inbound: bool) -> bool:
         """Return whether the socket remains usable, closing revoked sessions."""
 
         auth_scope = self.consumer.scope.get("auth_scope")
         if auth_scope is None:
             return True
-        if self.revoked or self.closed:
+        if self._is_inactive():
             return False
 
         now_monotonic = time.monotonic()
@@ -109,7 +112,7 @@ class SamlSocketGuard:
             await self._check_unavailable(type(exc).__name__)
             return False
 
-        if self.revoked or self.closed:
+        if self._is_inactive():
             return False
         self._validated_once = True
         self._unavailable_since = None
@@ -143,7 +146,7 @@ class SamlSocketGuard:
         if not connecting and elapsed < window:
             self._schedule_window_check(window - elapsed)
             return
-        if self.closed or self.revoked:
+        if self._is_inactive():
             return
         self.closed = True
         self._cancel_window_check()
@@ -190,7 +193,7 @@ class SamlSocketGuard:
 
     def _start_window_check(self) -> None:
         self._window_timer = None
-        if self.pending and not (self.revoked or self.closed):
+        if self.pending and not self._is_inactive():
             self._window_task = asyncio.ensure_future(self._window_check())
 
     async def _window_check(self) -> None:
@@ -223,7 +226,7 @@ class SamlSocketGuard:
             task.cancel()
 
     async def _revoke(self, reason: str) -> None:
-        if self.revoked or self.closed:
+        if self._is_inactive():
             return
         self.revoked = True
         self._cancel_window_check()

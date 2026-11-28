@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import axiosInstance from "src/utils/axios";
 import { validateContractedRequestConfig } from "src/api/contracts/openapi-contract";
 
 import BudgetRBACSection from "./BudgetRBACSection";
+
+import RequestDetailDrawer from "../logs/RequestDetailDrawer";
+import useRequestDetail from "../logs/hooks/useRequestDetail";
+
+vi.mock("../logs/hooks/useRequestDetail");
+vi.mock("../guardrails/FeedbackWidget", () => ({ default: () => null }));
 
 let mockBudgetTab;
 
@@ -58,6 +64,45 @@ describe("BudgetRBACSection", () => {
     vi.restoreAllMocks();
     mockBudgetTab = undefined;
   });
+
+  it.each([
+    ["priced", "0.5", { cost_source: "catalog" }, "$0.5000"],
+    ["free", 0, { cost_source: "org_custom" }, "$0.00"],
+    ["unpriced", 0, { cost_source: "unpriced" }, "Unpriced"],
+    ["empty unpriced", null, { cost_source: "unpriced" }, "Unpriced"],
+    ["unknown source", 0, {}, "$0.00"],
+  ])(
+    "matches the drawer for a %s request",
+    async (_, cost, metadata, expected) => {
+      const log = {
+        id: "cost-log",
+        model: "test-model",
+        status_code: 200,
+        cost,
+        metadata,
+      };
+      mockBudgetTab = "audit";
+      vi.spyOn(axiosInstance, "get").mockResolvedValue({
+        data: { results: [log] },
+      });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const view = render(
+        <QueryClientProvider client={client}>
+          <BudgetRBACSection />
+        </QueryClientProvider>,
+      );
+      const row = await screen.findByRole("row", { name: /test-model/ });
+      const rowCost = within(row).getByText(expected).textContent;
+      view.unmount();
+      vi.mocked(useRequestDetail).mockReturnValue({ data: { result: log } });
+      render(<RequestDetailDrawer open logId={log.id} onClose={vi.fn()} />);
+      expect(
+        within(screen.getByText("Cost").parentElement).getByText(rowCost),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("loads Recent Activity with a query the API contract accepts", async () => {
     mockBudgetTab = "audit";

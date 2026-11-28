@@ -11,9 +11,16 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.selectors.held_back import coding_agent_key, coding_agent_run
+from accounts.authentication import viewer_denied
+from simulate.selectors.held_back import (
+    coding_agent_failure_message,
+    coding_agent_key,
+    coding_agent_run,
+    person_failure_message,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
+    HarnessScenarioListResponseSerializer,
 )
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
@@ -25,14 +32,18 @@ from simulate.serializers.harness_job import (
     HarnessPreflightSerializer,
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+    HarnessScenarioAmendResponseSerializer,
     HarnessScenarioAmendSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
 )
 from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationHistoryPageSerializer,
+    HarnessConversationHistoryQuerySerializer,
     HarnessConversationMessageCreateSerializer,
     HarnessConversationReadSerializer,
+    HarnessJobReadQuerySerializer,
 )
 from simulate.services.harness_credentials import (
     HOSTED_FILE_KEY_PREFIX,
@@ -55,6 +66,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("create an environment")
     @validated_request(
         request_serializer=HarnessJobCreateSerializer,
         responses={202: HarnessJobReadSerializer},
@@ -67,6 +79,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def list(self, request):
         return get_harness_provider().list(request)
 
+    @viewer_denied("upload agent code")
     @action(
         detail=False,
         methods=["post"],
@@ -101,6 +114,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def source_upload(self, request):
         return get_harness_provider().source_upload(request)
 
+    @viewer_denied("add or change secrets")
     @action(
         detail=False,
         methods=["post"],
@@ -217,6 +231,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
             }
         return Response(result, status=status.HTTP_201_CREATED)
 
+    @viewer_denied("add or change secrets")
     @validated_request(
         request_serializer=HarnessSecretValuesSerializer,
         responses={202: HarnessAgentCredentialsResponseSerializer},
@@ -278,13 +293,16 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 user=request.user,
             )
         except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            return Response(
+                exc.as_dict(), status=exc.status_code, headers=exc.headers()
+            )
         environment.refresh_from_db(fields=["agent_version"])
         return Response(
             {"agent_version": agent_version_item(environment, version)},
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @viewer_denied("check an environment setup")
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
         responses={200: HarnessPreflightResponseSerializer},
@@ -294,7 +312,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def preflight(self, request):
         return get_harness_provider().preflight(request)
 
-    @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
+    @validated_request(
+        query_serializer=HarnessJobReadQuerySerializer,
+        responses={200: HarnessJobReadSerializer},
+    )
     def retrieve(self, request, pk=None):
         """One harness job. A coding agent key reads its own run narrowly, outside
         this schema: only `status` (its failure as domain, stage, code and a fixed
@@ -302,10 +323,23 @@ class HarnessJobViewSet(viewsets.ViewSet):
         five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
         `job.source`, which name every case of the suite."""
         response = get_harness_provider().retrieve(request, pk)
-        if coding_agent_key(request) is None or response.status_code != 200:
+        if response.status_code != 200:
             return response
-        return Response(coding_agent_run(response.data))
+        if coding_agent_key(request) is not None:
+            return Response(coding_agent_run(response.data))
+        job_status = response.data.get("status") or {}
+        failure = job_status.get("failure")
+        if isinstance(failure, dict) and failure.get("message"):
+            metadata = (response.data.get("job") or {}).get("metadata") or {}
+            message = (
+                coding_agent_failure_message(failure)
+                if metadata.get("coding_agent_key_id")
+                else person_failure_message(failure)
+            )
+            job_status["failure"] = {**failure, "person_message": message}
+        return response
 
+    @viewer_denied("cancel a build")
     @validated_request(
         request_serializer=HarnessJobActionSerializer,
         responses={200: HarnessJobReadSerializer},
@@ -315,6 +349,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def cancel(self, request, pk=None):
         return get_harness_provider().cancel(request, pk)
 
+    @viewer_denied("change a build")
     @validated_request(
         request_serializer=HarnessJobAdjustmentSerializer,
         reject_unknown_fields=True,
@@ -323,6 +358,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def adjust(self, request, pk=None):
         return get_harness_provider().adjust(request, pk)
 
+    @viewer_denied("extend a build")
     @validated_request(
         request_serializer=HarnessJobExtendSerializer,
         reject_unknown_fields=True,
@@ -331,6 +367,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
 
+    @validated_request(responses={200: HarnessScenarioListResponseSerializer})
     @action(detail=True, methods=["get"], url_path="scenarios")
     def scenarios(self, request, pk=None):
         return get_harness_provider().list_scenarios(request, pk)
@@ -339,14 +376,17 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def scenario_coverage(self, request, pk=None):
         return get_harness_provider().scenario_coverage(request, pk)
 
+    @viewer_denied("change scenarios")
     @validated_request(
         request_serializer=HarnessScenarioAmendSerializer,
+        responses={200: HarnessScenarioAmendResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="scenarios/amend")
     def amend_scenarios(self, request, pk=None):
         return get_harness_provider().amend_scenarios(request, pk)
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},
@@ -356,6 +396,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def runs(self, request, pk=None):
         return get_harness_provider().run(request, pk)
 
+    @viewer_denied("send messages to the builder")
     @validated_request(
         request_serializer=HarnessConversationMessageCreateSerializer,
         responses={
@@ -367,6 +408,16 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path=r"conversation/messages")
     def conversation_message(self, request, pk=None):
         return get_harness_provider().send_message(request, pk)
+
+    @validated_request(
+        query_serializer=HarnessConversationHistoryQuerySerializer,
+        responses={200: HarnessConversationHistoryPageSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path=r"conversation/history")
+    def conversation_history(self, request, pk=None):
+        """The builder chat's messages or events just before a sequence, oldest first, for reading back past the
+        window a job read carries."""
+        return get_harness_provider().conversation_history(request, pk)
 
     @action(detail=False, methods=["get"])
     def health(self, request):

@@ -63,7 +63,7 @@ export const quickstartTracing = (project = "my-project") => ({
   snippets: [
     {
       label: "Python",
-      code: `pip install fi-instrumentation-otel
+      code: `pip install -U "fi-instrumentation-otel>=1.5.0"
 ${KEYS}
 
 from fi_instrumentation import register

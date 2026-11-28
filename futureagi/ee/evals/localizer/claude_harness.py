@@ -128,7 +128,7 @@ class LocalizationCase:
     # of "missing findings" if the agent cannot finish without it.
     media_tool_error: MediaToolUnavailable | None = None
 
-    def __init__(self, localizer: ErrorLocalizer, media: MediaRegistry):
+    def __init__(self, localizer: ClaudeAgentLocalizer, media: MediaRegistry):
         self.localizer = localizer
         self.media = media
         self.inputs: dict[str, tuple] = {}
@@ -158,6 +158,7 @@ class LocalizationCase:
             return self.media_tool_error
         if (
             key not in self.inputs
+            and key is not None
             and (self.localizer.input_type or {}).get(key) == "audio"
         ):
             return self.media_tool_error

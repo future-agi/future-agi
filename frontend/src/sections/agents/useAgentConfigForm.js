@@ -14,14 +14,6 @@ import {
   VOICE_TRANSPORT,
 } from "./constants";
 
-const getVersionFormValues = (agentDetails) => ({
-  ...getAgentFormValues(agentDetails),
-  // Keep the same selected version through validation, preflight and submission.
-  sourceVersionId: agentDetails?.configuration_snapshot
-    ? agentDetails.id
-    : undefined,
-});
-
 export const useAgentConfigForm = (schema, agentDetails) => {
   const {
     control,
@@ -37,12 +29,12 @@ export const useAgentConfigForm = (schema, agentDetails) => {
   } = useForm({
     mode: "onSubmit",
     resolver: zodResolver(schema, undefined, { mode: "async" }),
-    defaultValues: getVersionFormValues(agentDetails),
+    defaultValues: getAgentFormValues(agentDetails),
   });
 
   useEffect(() => {
     if (agentDetails?.configuration_snapshot) {
-      reset(getVersionFormValues(agentDetails));
+      reset(getAgentFormValues(agentDetails));
     }
   }, [agentDetails, reset]);
 
@@ -92,9 +84,6 @@ export const useAgentSubmit = ({
     try {
       // Build payload with snake_case keys for the backend
       let payload = {
-        ...(data.sourceVersionId && {
-          source_version_id: data.sourceVersionId,
-        }),
         agent_type: data.agentType,
         agent_name: data.agentName,
         languages: data.languages,

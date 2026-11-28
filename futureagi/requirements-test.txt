@@ -534,7 +534,7 @@ mypy-extensions==1.1.0
     #   typing-inspect
 nexus-rpc==1.4.0
     # via temporalio
-nltk==3.8.1
+nltk==3.10.3
     # via
     #   core-backend (pyproject.toml)
     #   rouge-score

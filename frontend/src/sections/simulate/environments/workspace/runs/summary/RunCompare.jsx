@@ -160,6 +160,13 @@ export default function RunCompare({ open, onClose, env, current, against }) {
             {counts.join(" · ")}
           </Typography>
         )}
+        {summary?.excluded_not_comparable > 0 && (
+          <Typography
+            sx={{ mt: 0.5, typography: "s3", color: "text.secondary" }}
+          >
+            {COPY.notComparable(summary.excluded_not_comparable)}
+          </Typography>
+        )}
         <Box sx={{ overflowX: "auto", mt: 1 }}>
           <Table size="small" sx={tableSx}>
             <TableHead>

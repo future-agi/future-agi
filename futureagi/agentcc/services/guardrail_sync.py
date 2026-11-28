@@ -12,7 +12,7 @@ from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
 logger = structlog.get_logger(__name__)
 
 
-def sync_guardrail_policies(org, user=None):
+def sync_guardrail_policies(org, user=None, *, push=True):
     """
     Collect all active guardrail policies for the org, merge their checks
     into a single guardrail config, create a new org config version, and
@@ -45,9 +45,10 @@ def sync_guardrail_policies(org, user=None):
                     "_scope": policy.scope,
                 }
 
+    # The gateway contract has no guardrails.enabled; an empty map means "no
+    # org-wide checks" and keeps the org's payload valid.
     merged_guardrails = {
-        "enabled": len(merged_checks) > 0,
-        "checks": list(merged_checks.values()),
+        "checks": list(merged_checks.values()) if merged_checks else {},
     }
 
     with transaction.atomic():
@@ -79,6 +80,8 @@ def sync_guardrail_policies(org, user=None):
     # Push to gateway
     from agentcc.services.config_push import push_org_config
 
+    if not push:
+        return active_config
     synced = push_org_config(str(org.id), active_config)
     if synced:
         logger.info(

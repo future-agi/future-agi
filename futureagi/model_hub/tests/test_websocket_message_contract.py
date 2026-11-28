@@ -15,7 +15,7 @@ from django.test import override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 from structlog.testing import capture_logs
 
-from accounts.models import OrgApiKey
+from accounts.models import Organization, OrgApiKey, User
 from model_hub.utils import call_websocket
 from sockets.consumer import DataConsumer
 from tfc.utils.websocket_relay_auth import (
@@ -111,6 +111,12 @@ def signed_meta(organization_id, raw, *, now=None):
     }
 
 
+def authenticate_relay(request, user: User, **auth_attributes):
+    """Supply the request attributes normally set by API key authentication."""
+    vars(request).update(auth_attributes)
+    force_authenticate(request, user=user)
+
+
 def post_relay(payload, *, raw=None, headers=None):
     """Call the relay as its internal caller: the system key and a signature."""
 
@@ -128,13 +134,11 @@ def post_relay(payload, *, raw=None, headers=None):
     )
     # The selected authenticated organization wins over both the user default
     # and any untrusted organization_id in the body.
-    request.organization = SimpleNamespace(id=ORG)
-    request.org_api_key = SimpleNamespace(type="system", organization_id=ORG)
-    force_authenticate(
+    authenticate_relay(
         request,
-        user=SimpleNamespace(
-            is_authenticated=True, organization=SimpleNamespace(id=OTHER_ORG)
-        ),
+        user=User(organization=Organization(id=OTHER_ORG)),
+        organization=Organization(id=ORG),
+        org_api_key=OrgApiKey(type="system", organization_id=ORG),
     )
     return CallWebsocketView.as_view()(request)
 
@@ -302,15 +306,12 @@ def test_relay_requires_authenticated_organization(targeted, organization_attrib
         **signed_meta(ORG, raw),
     )
     # Even a correctly signed system-key request needs its organization.
-    request.org_api_key = SimpleNamespace(type="system", organization_id=ORG)
-    if organization_attribute == "none":
-        request.organization = None
     # A legacy user FK and an untrusted body cannot restore tenant authority.
-    force_authenticate(
+    authenticate_relay(
         request,
-        user=SimpleNamespace(
-            is_authenticated=True, organization=SimpleNamespace(id=ORG)
-        ),
+        user=User(organization=Organization(id=ORG)),
+        org_api_key=OrgApiKey(type="system", organization_id=ORG),
+        **({"organization": None} if organization_attribute == "none" else {}),
     )
     with patch("tfc.views.socket.get_channel_layer") as layer:
         layer.return_value.group_send = AsyncMock()
@@ -344,10 +345,12 @@ def test_relay_refuses_callers_other_than_the_internal_client(
     request = APIRequestFactory().post(
         "/call-websocket/", raw, content_type="application/json", **headers
     )
-    request.organization = SimpleNamespace(id=ORG)
-    if key_type is not None:
-        request.org_api_key = SimpleNamespace(type=key_type, organization_id=key_org)
-    force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
+    keys = (
+        {"org_api_key": OrgApiKey(type=key_type, organization_id=key_org)}
+        if key_type is not None
+        else {}
+    )
+    authenticate_relay(request, user=User(), organization=Organization(id=ORG), **keys)
     with patch("tfc.views.socket.get_channel_layer") as layer:
         response = CallWebsocketView.as_view()(request)
     assert response.status_code == 403

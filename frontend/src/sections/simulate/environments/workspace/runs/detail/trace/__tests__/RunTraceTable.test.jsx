@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
-import { within } from "@testing-library/react";
+import { act, within } from "@testing-library/react";
 
 // The wrapper owns the network hook; feed it a fixed set of mapped tasks.
 const useRunCalls = vi.fn();
@@ -37,8 +37,12 @@ const TASKS = [
     scenario: "Refund a double charge",
     goal: "Refund a double charge",
     subGoalResults: [
-      { name: "Identity verified", passed: true },
-      { name: "Refund created", passed: true },
+      {
+        name: "Identity verified",
+        display_name: "Identity verified",
+        passed: true,
+      },
+      { name: "Refund created", display_name: "Refund created", passed: true },
     ],
     persona: "Impatient caller",
     personaDetails: {
@@ -60,7 +64,13 @@ const TASKS = [
     id: "t2",
     scenario: "Escalate to a human",
     goal: "Escalate to a human",
-    subGoalResults: [{ name: "Transferred to human", passed: false }],
+    subGoalResults: [
+      {
+        name: "Transferred to human",
+        display_name: "Transferred to human",
+        passed: false,
+      },
+    ],
     persona: "Angry caller",
     personaDetails: {
       name: "Angry caller",
@@ -205,6 +215,98 @@ describe("RunTraceTable", () => {
         isLoading: false,
       };
     });
+  });
+
+  it("shows a status chip when its count goes from 0 to more on a live run", () => {
+    const result = (counts) => ({
+      tasks: TASKS,
+      columns: COLUMNS,
+      groups: groupsFor(TASKS),
+      facets: FACETS,
+      statusCounts: counts,
+      count: TASKS.length,
+      totalPages: 1,
+      isLoading: false,
+    });
+    useRunCalls.mockImplementation(() => result({ passed: 1, failed: 1 }));
+    const view = renderTable();
+    expect(screen.queryByRole("button", { name: "Error" })).toBeNull();
+
+    useRunCalls.mockImplementation(() =>
+      result({ passed: 1, failed: 1, error: 1 }),
+    );
+    view.rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Error" })).toHaveTextContent(
+      "1",
+    );
+  });
+
+  it("does not grow the status bar when a reload follows an empty result", () => {
+    useRunCalls.mockImplementation(() => ({
+      tasks: [],
+      columns: COLUMNS,
+      groups: [],
+      facets: {},
+      statusCounts: {},
+      count: 0,
+      totalPages: 1,
+      // A reload showing the previous (empty) page: loading, but not first.
+      isLoading: true,
+      isFirstLoad: false,
+    }));
+    renderTable();
+    expect(screen.queryByRole("button", { name: "Queued" })).toBeNull();
+  });
+
+  it("measures the table box again when the toolbar changes height", () => {
+    const observers = [];
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.targets = [];
+        observers.push(this);
+      }
+      observe(target) {
+        this.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {
+        this.targets = [];
+      }
+    };
+    let top = 100;
+    const rect = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(() => ({ top, bottom: top, height: 0 }));
+    try {
+      renderTable();
+      // The box that scrolls the table runs to the window bottom.
+      const boxHeight = () => {
+        let el = screen.getByRole("table");
+        while (el && getComputedStyle(el).overflowY !== "auto") {
+          el = el.parentElement;
+        }
+        // Outermost auto-scroll ancestor is the fixed-height box.
+        let outer = el;
+        for (let p = el?.parentElement; p; p = p.parentElement) {
+          if (getComputedStyle(p).overflowY === "auto") outer = p;
+        }
+        return parseFloat(getComputedStyle(outer).height);
+      };
+      const watching = observers.filter((o) => o.targets.length);
+      expect(watching.length).toBeGreaterThan(0);
+      const first = boxHeight();
+
+      const before = rect.mock.calls.length;
+      top = 138; // the toolbar wrapped to a second row
+      act(() => watching.forEach((o) => o.callback()));
+      expect(rect.mock.calls.length).toBeGreaterThan(before);
+      expect(boxHeight()).toBe(first - 38);
+    } finally {
+      rect.mockRestore();
+      globalThis.ResizeObserver = original;
+    }
   });
 
   it.each([
@@ -399,7 +501,10 @@ describe("RunTraceTable", () => {
     expect(onQueryChange).toHaveBeenLastCalledWith(base);
     // What it reports is what it asked the list for — the drawer reads the
     // same cache entry.
-    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", base);
+    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", {
+      ...base,
+      keepPrevious: true,
+    });
 
     await user.click(screen.getByRole("button", { name: /Group by/ }));
     await user.click(screen.getByRole("menuitem", { name: "Status" }));
@@ -425,6 +530,86 @@ describe("RunTraceTable", () => {
       "ex1",
       expect.objectContaining({ filters: { goal_outcome: ["escalated"] } }),
     );
+  });
+
+  it("forwards actor filters to the server", () => {
+    renderTable({
+      initialFilters: { callActor: ["friend"], callActor_not: ["none"] },
+    });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { actor: ["friend"], actor_not: ["none"] },
+      }),
+    );
+  });
+
+  it("says how many calls each actor was planned for and how many it never reached", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [
+          { value: "none", count: 3, label: "Simulated user only" },
+          {
+            value: "friend",
+            count: 4,
+            label: "Rowan",
+            delivered: 2,
+            dropped: 1,
+            not_triggered: 1,
+          },
+          {
+            value: "kid",
+            count: 2,
+            label: "Sam",
+            delivered: 2,
+            dropped: 0,
+            not_triggered: 0,
+          },
+        ],
+      },
+    }));
+    renderTable();
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(await screen.findByRole("option", { name: "Actor" }));
+    await user.click(screen.getByText(/Select values/));
+    expect(
+      await screen.findByText("Rowan (4; 1 dropped, 1 not triggered)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sam (2)")).toBeInTheDocument();
+    expect(screen.getByText("Simulated user only (3)")).toBeInTheDocument();
+  });
+
+  it("keeps the Actor filter on offer while the next results load", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
+    }));
+    const { rerender } = renderTable();
+    // `keepPrevious` keeps the last facets while the next page loads.
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
+      isLoading: true,
+    }));
+    rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    expect(
+      await screen.findByRole("option", { name: "Actor" }),
+    ).toBeInTheDocument();
   });
 
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
@@ -916,6 +1101,37 @@ describe("RunTraceTable", () => {
     expect(
       within(screen.getByRole("button", { name: "All" })).getByText("9"),
     ).toBeInTheDocument();
+    // A status with no calls has no chip.
+    expect(screen.queryByRole("button", { name: "Queued" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Error" })).toBeNull();
+  });
+
+  it("keeps the selected status chip, pressed, when it has no calls", () => {
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      statusCounts: { passed: 2 },
+    }));
+    renderTable({ initialFilters: { status: ["failed"] } });
+
+    const failed = screen.getByRole("button", { name: "Failed" });
+    expect(failed).toHaveAttribute("aria-pressed", "true");
+    expect(within(failed).getByText("0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Error" })).toBeNull();
+  });
+
+  it("shows every status chip, greyed, until the counts load", () => {
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      statusCounts: {},
+      isLoading: true,
+      isFirstLoad: true,
+    }));
+    renderTable();
+
+    expect(screen.getByRole("button", { name: "Queued" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Failed" })).toBeInTheDocument();
   });
 
   it("lets a status chip replace the panel's status filter", async () => {

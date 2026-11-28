@@ -18,7 +18,7 @@ import math
 import os
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -236,7 +236,7 @@ async def dispatch_managed_stream(
     json_body: dict,
     timeout: float,
     on_unauthorized: Callable[[], None],
-) -> AsyncIterator[dict]:
+) -> AsyncGenerator[dict, None]:
     import httpx
 
     headers = {
@@ -318,7 +318,7 @@ async def stream_managed_service(
     *,
     json_body: dict,
     timeout: float = MANAGED_STREAM_TIMEOUT_SECONDS,
-) -> AsyncIterator[dict]:
+) -> AsyncGenerator[dict, None]:
     token = await asyncio.to_thread(get_service_token)
     if token is None:
         raise ManagedServiceError("ACTIVATION_FAILED", "Could not obtain service token")

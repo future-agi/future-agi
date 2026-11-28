@@ -13,6 +13,18 @@ import (
 // Redacted like the OpenAI-shaped writer: a dialect response is the same
 // boundary, and an upstream message can carry a credential in a URL.
 func WriteError(w http.ResponseWriter, code int, status string, message string) {
+	if gate, ok := w.(interface {
+		GuardrailError(*models.APIError) *models.APIError
+	}); ok {
+		original := &models.APIError{Status: code, Message: message}
+		if safe := gate.GuardrailError(original); safe != original {
+			code, status, message = safe.Status, MapStatusToGoogleStatus(safe.Status), safe.Message
+		}
+	}
+	writeErrorBody(w, code, status, message)
+}
+
+func writeErrorBody(w http.ResponseWriter, code int, status, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(newErrorBody(code, status, message))
@@ -68,6 +80,11 @@ func MapStatusToGoogleStatus(statusCode int) string {
 
 // WriteAPIError converts a gateway APIError to Google error format.
 func WriteAPIError(w http.ResponseWriter, apiErr *models.APIError) {
+	if gate, ok := w.(interface {
+		GuardrailError(*models.APIError) *models.APIError
+	}); ok {
+		apiErr = gate.GuardrailError(apiErr)
+	}
 	status := MapStatusToGoogleStatus(apiErr.Status)
-	WriteError(w, apiErr.Status, status, apiErr.Message)
+	writeErrorBody(w, apiErr.Status, status, apiErr.Message)
 }

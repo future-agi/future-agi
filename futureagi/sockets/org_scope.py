@@ -16,14 +16,15 @@ from channels.db import database_sync_to_async
 async def resolve_socket_organization(scope, user):
     """Return the organization allowed by this socket's credential."""
 
+    requested: UUID | None = None
     try:
-        requested = parse_qs(
+        values = parse_qs(
             scope.get("query_string", b"").decode(), keep_blank_values=True
         ).get("organization_id")
-        if requested is not None:
-            if len(requested) != 1:
+        if values is not None:
+            if len(values) != 1:
                 return None
-            requested = UUID(requested[0])
+            requested = UUID(values[0])
     except (UnicodeError, ValueError):
         return None
 

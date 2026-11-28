@@ -279,6 +279,118 @@ class TestObservationSpanWorkspaceScopeAPI:
             project_id=str(custom_eval_config.project_id),
         )
 
+    @staticmethod
+    def _eval_detail_with_localizer_task(
+        auth_client, observation_span, custom_eval_config, task_org, **task_fields
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerTask,
+        )
+
+        eval_logger_id = uuid.uuid4()
+        ErrorLocalizerTask.no_workspace_objects.create(
+            source=ErrorLocalizerSource.OBSERVE,
+            source_id=eval_logger_id,
+            organization=task_org,
+            **task_fields,
+        )
+        with patch(
+            "tracer.views.observation_span.V2AnalyticsQueryService"
+        ) as analytics_cls:
+            analytics_cls.return_value.get_eval_detail_ch.return_value = {
+                "id": str(eval_logger_id),
+                "output_bool": 0,
+                "output_float": None,
+                "output_str_list": [],
+                "output_str": None,
+                "eval_explanation": "The moon is not made of cheese.",
+                "error": 0,
+                "error_message": None,
+                "output_metadata": {},
+            }
+            response = auth_client.get(
+                "/tracer/observation-span/get_evaluation_details/",
+                {
+                    "observation_span_id": observation_span.id,
+                    "custom_eval_config_id": str(custom_eval_config.id),
+                },
+            )
+        assert response.status_code == status.HTTP_200_OK
+        return response.json()["result"]
+
+    def test_eval_detail_reports_failed_localization_reason(
+        self, auth_client, observation_span, custom_eval_config, organization
+    ):
+        result = self._eval_detail_with_localizer_task(
+            auth_client,
+            observation_span,
+            custom_eval_config,
+            organization,
+            status="failed",
+            error_message="Error localization failed (timeout).",
+        )
+
+        assert result["error_localizer_status"] == "failed"
+        assert (
+            result["error_localizer_message"] == "Error localization failed (timeout)."
+        )
+        assert result["error_analysis"] is None
+
+    def test_eval_detail_serves_completed_localization_before_ch_catches_up(
+        self, auth_client, observation_span, custom_eval_config, organization
+    ):
+        analysis = {
+            "input_1": [
+                {
+                    "unit_key": "s1",
+                    "rank": "1",
+                    "orgSen": {
+                        "text": "made of cheese",
+                        "start_idx": 12,
+                        "end_idx": 26,
+                    },
+                    "reason": "The moon is rock.",
+                }
+            ]
+        }
+        result = self._eval_detail_with_localizer_task(
+            auth_client,
+            observation_span,
+            custom_eval_config,
+            organization,
+            status="completed",
+            error_analysis=analysis,
+            selected_input_key="output",
+            input_data={"output": "The moon is made of cheese."},
+            input_types={"output": "text"},
+        )
+
+        assert result["error_localizer_status"] == "completed"
+        assert result["error_analysis"] == analysis
+        assert result["selected_input_key"] == "output"
+        assert result["input_data"] == {"output": "The moon is made of cheese."}
+
+    def test_eval_detail_ignores_another_orgs_localizer_task(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        from accounts.models import Organization
+
+        other_org = Organization.objects.create(
+            name=f"Other Org {uuid.uuid4().hex[:8]}"
+        )
+        result = self._eval_detail_with_localizer_task(
+            auth_client,
+            observation_span,
+            custom_eval_config,
+            other_org,
+            status="failed",
+            error_message="foreign reason",
+        )
+
+        assert result["error_localizer_status"] is None
+        assert result["error_localizer_message"] is None
+
     def test_root_spans_omits_same_org_other_workspace_trace(
         self, auth_client, organization, user
     ):

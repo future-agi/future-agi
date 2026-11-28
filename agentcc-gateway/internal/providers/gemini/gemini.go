@@ -101,7 +101,17 @@ func (p *Provider) ID() string { return p.id }
 // PriceTableName is "vertex_ai" on Vertex AI and "gemini" on the Gemini API,
 // the names the price table keys each one's models under.
 func (p *Provider) PriceTableName() string {
-	if p.vertexAI {
+	return priceTableName(p.vertexAI)
+}
+
+// PriceTableNameFor is the PriceTableName a provider built on baseURL states,
+// without building one.
+func PriceTableNameFor(baseURL string) string {
+	return priceTableName(isVertexAI(baseURL))
+}
+
+func priceTableName(vertexAI bool) string {
+	if vertexAI {
 		return "vertex_ai"
 	}
 	return "gemini"
@@ -190,12 +200,50 @@ func (p *Provider) releaseSemaphore() {
 	<-p.semaphore
 }
 
+// ChatRouteDrops reports drops only for an otherwise valid Gemini attempt.
+func (p *Provider) ChatRouteDrops(req *models.ChatCompletionRequest) (models.ChatRoute, []string) {
+	drops := models.GeminiOmittedParams(req)
+	if len(drops) == 0 || rejectUnsupportedTools(req.Tools, false) != nil || validateToolPolicy(req) != nil {
+		return models.RouteGemini, nil
+	}
+	return models.RouteGemini, drops
+}
+
+func logToolPolicyDrops(req *models.ChatCompletionRequest) {
+	if drops, names := models.GeminiToolPolicyWarning(req); len(drops) != 0 {
+		slog.Warn("gemini drops unenforceable tool settings", "parameters", drops, "tool_names", names)
+	}
+}
+
+func validateToolPolicy(req *models.ChatCompletionRequest) error {
+	// Non-function tools retain their raw payload; the drop ruling applies
+	// only to function declarations that we translate ourselves.
+	for _, tool := range req.Tools {
+		if !tool.IsFunction() && tool.HasNonDirectCallerPolicy() {
+			return models.ErrBadRequest("unsupported_tool_policy", "gemini cannot enforce allowed_callers")
+		}
+	}
+	allowed, err := models.ParseAllowedToolsChoice(req.ToolChoice)
+	if err != nil {
+		return models.ErrBadRequest("invalid_tool_choice", err.Error())
+	}
+	if allowed != nil {
+		if _, err := allowed.Filter(req.Tools); err != nil {
+			return models.ErrBadRequest("invalid_tool_choice", err.Error())
+		}
+	}
+	return nil
+}
+
 // ChatCompletion sends a non-streaming request to Gemini.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	if err := RejectUnsupportedTools(req.Tools); err != nil {
 		return nil, err
 	}
 
+	if err := validateToolPolicy(req); err != nil {
+		return nil, err
+	}
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("gemini: concurrency limit reached")
 	}
@@ -221,6 +269,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		httpReq.Header.Set(k, v)
 	}
 
+	logToolPolicyDrops(req)
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		if common.TimedOut(ctx, err) {
@@ -258,6 +307,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		if err := validateToolPolicy(req); err != nil {
+			errs <- err
+			return
+		}
 
 		if err := RejectUnsupportedTools(req.Tools); err != nil {
 			errs <- err
@@ -295,6 +348,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			httpReq.Header.Set(k, v)
 		}
 
+		logToolPolicyDrops(req)
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			if common.TimedOut(ctx, err) {

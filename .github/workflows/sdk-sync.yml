@@ -3,11 +3,23 @@ name: sdk-sync
 # Carries every backend release into futureagi-sdk. When release-images has
 # published the images of a vX.Y.Z tag, this checks out the SDK repository,
 # refreshes its contract slice from this tag's api_contracts/openapi/swagger.json,
-# regenerates the Python and TypeScript clients, pins the
-# release in sdkgen/contracts/BACKEND_VERSION, and opens a pull request on the
-# SDK's dev branch that merges itself once the SDK's CI and E2E (against this
-# very release image) pass. From there the SDK's promote and release-please
-# workflows take it to main, PyPI and npm.
+# regenerates the Python and TypeScript clients and the docs reference pages
+# (docs/sdk-reference, all from that one pinned contract), pins the release in
+# sdkgen/contracts/BACKEND_VERSION, and opens a pull request on the SDK's dev
+# branch that merges itself once the SDK's CI and E2E (against this very release
+# image) pass. Promotion from dev to main is reviewed separately; main's guarded
+# release-please/publish workflows then release the packages to PyPI and npm.
+# Once the SDK docs-dispatch changes are promoted to main and the docs receiver
+# is deployed, publication also requests a reference PR in future-agi/docs
+# (sdk-reference-sync.yml there), using the published SDK commit, not dev.
+# The SDK catalog is the allowlist: an endpoint without a catalog entry becomes
+# neither a method nor a page, and an endpoint this release removed while the
+# catalog still lists it fails this job with the operations named (a breaking
+# change for SDK users; someone retires or remaps the entry).
+#
+# Backend-side compatibility is e2e-ci.yml, which runs the SDK live suites
+# against the stack built from every PR; the old sdk-compatibility.yml (disabled,
+# generated clients from paths the SDK no longer has) is gone.
 #
 # The commit is `feat(contract): ...` when generated code changed (a minor SDK
 # release) and `chore(contract): ...` when only the pin moved (no release).

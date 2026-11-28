@@ -1,7 +1,14 @@
 import { statusColors } from "src/utils/runStatus";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  Typography,
+} from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -32,7 +39,11 @@ import {
   seriesHasDataPoints,
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
-import { toTimeRangePayload } from "./dashboardDateRange";
+import DerivedMetricCardContext from "./DerivedMetricCardContext";
+import {
+  isPinnedWindowExcluded,
+  toTimeRangePayload,
+} from "./dashboardDateRange";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
   AGGREGATION_REQUEST_TIMEOUT_MS,
@@ -47,41 +58,13 @@ import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import ContentSkeleton from "src/components/content-skeleton";
 import { seriesColors } from "src/theme/data-colors";
+import {
+  buildChartSeriesColorMap,
+  buildSeriesColorMap,
+  getSeriesColor,
+} from "./chartColors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-// Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
-// at 4 series. Walk each name once and, on a taken slot, advance to the next
-// free one — distinct up to palette size, stable for the common non-colliding case.
-// `palette` is the theme's data palette (seriesColors(theme)).
-const buildSeriesColorMap = (names, palette) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % palette.length;
-    let picked = start;
-    for (let i = 0; i < palette.length; i += 1) {
-      const candidate = (start + i) % palette.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = palette[picked];
-  });
-  return map;
-};
-const getSeriesColorFromMap = (map, name, palette) =>
-  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
-
 function getApexType(chartType) {
   const map = {
     line: "line",
@@ -146,6 +129,7 @@ export default function WidgetChart({
   globalDateRange,
   refreshRequestId = 0,
   onQuerySettled,
+  onRestoreSavedWindow,
 }) {
   const theme = useTheme();
   const queryMutation = useDashboardQuery();
@@ -524,14 +508,10 @@ export default function WidgetChart({
   const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
     () =>
-      buildSeriesColorMap(
-        series.map((s) => s.name),
-        palette,
-      ),
-    [series, palette],
+      buildChartSeriesColorMap(series, palette, theme.palette.mode, chartType),
+    [series, palette, theme.palette.mode, chartType],
   );
-  const colorFor = (name) =>
-    getSeriesColorFromMap(seriesColorMap, name, palette);
+  const colorFor = (name) => getSeriesColor(name, seriesColorMap, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
@@ -544,8 +524,7 @@ export default function WidgetChart({
       ),
     [series, palette],
   );
-  const pieColorFor = (name) =>
-    getSeriesColorFromMap(pieColorMap, name, palette);
+  const pieColorFor = (name) => getSeriesColor(name, pieColorMap, palette);
 
   const isDenseSeries = isDenseChartSeries(plottedChartSeries);
   const markerSizes = useMemo(
@@ -647,6 +626,31 @@ export default function WidgetChart({
     );
   }
 
+  const pinnedWindowExcluded =
+    !readUnavailable &&
+    isPinnedWindowExcluded(
+      rawQueryConfig,
+      globalDateRange,
+      renderableMetrics.length === 1
+        ? renderableMetrics[0].metric.derived_context?.run
+        : undefined,
+    );
+  const emptyGuidance = pinnedWindowExcluded ? (
+    <Stack alignItems="center" gap={1}>
+      <Typography variant="body2" color="text.secondary" textAlign="center">
+        This widget pins a saved run. Its saved observation at the run’s end is
+        outside the dashboard date filter.
+      </Typography>
+      {onRestoreSavedWindow ? (
+        <Button onClick={onRestoreSavedWindow}>Restore saved window</Button>
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          Choose Default to restore the saved window.
+        </Typography>
+      )}
+    </Stack>
+  ) : null;
+
   if (!series.length) {
     return (
       <Box
@@ -667,11 +671,12 @@ export default function WidgetChart({
           retryUnavailable={retryUnavailable}
           pollingPaused={pollingPaused}
         />
-        {!readUnavailable && (
-          <Typography variant="body2" color="text.disabled">
-            No output for the selected inputs.
-          </Typography>
-        )}
+        {!readUnavailable &&
+          (emptyGuidance || (
+            <Typography variant="body2" color="text.disabled">
+              No output for the selected inputs.
+            </Typography>
+          ))}
       </Box>
     );
   }
@@ -697,9 +702,12 @@ export default function WidgetChart({
           retryUnavailable={retryUnavailable}
           pollingPaused={pollingPaused}
         />
-        <Typography variant="body2" color="text.disabled">
-          {NO_DATA_FOR_RANGE_MESSAGE}
-        </Typography>
+        {!readUnavailable &&
+          (emptyGuidance || (
+            <Typography variant="body2" color="text.disabled">
+              {NO_DATA_FOR_RANGE_MESSAGE}
+            </Typography>
+          ))}
       </Box>
     );
   }
@@ -707,6 +715,9 @@ export default function WidgetChart({
   // Metric card — also the fallback for a pie with nothing to slice by, where
   // each metric would otherwise render as a meaningless 100%-full circle.
   if (isMetricCard || (isPie && !pieHasBreakdown)) {
+    const hasPinnedMetrics = rawQueryConfig?.metrics?.some(
+      (metric) => metric.type === "derived_metric" && metric.derived_run_id,
+    );
     return (
       <Box
         ref={containerRef}
@@ -728,26 +739,108 @@ export default function WidgetChart({
           direction="row"
           gap={3}
           justifyContent="center"
-          alignItems="center"
-          sx={{ flex: 1, minHeight: 0 }}
+          alignItems={hasPinnedMetrics ? "flex-start" : "center"}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            ...(hasPinnedMetrics
+              ? { overflowY: "auto", flexWrap: "wrap", p: 1 }
+              : {}),
+          }}
         >
           {series.map((s, i) => {
+            const responseMetric = renderableMetrics[s.metricIndex]?.metric;
+            const configMetric =
+              rawQueryConfig?.metrics?.find(
+                (metric) =>
+                  responseMetric?.id &&
+                  (metric.id || metric.derived_run_id) === responseMetric.id,
+              ) ||
+              (rawQueryConfig?.metrics?.length === 1 &&
+              renderableMetrics.length === 1
+                ? rawQueryConfig.metrics[0]
+                : null);
+            const pinnedMetric =
+              configMetric?.type === "derived_metric" &&
+              configMetric.derived_run_id
+                ? configMetric
+                : null;
             const value = getSeriesScalar(s.data, s.aggregation);
             const cellConfig = s.unit
               ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
               : leftAxisFormatConfig;
+            const format = (number) =>
+              formatValueWithConfig(number, cellConfig, {
+                fallbackDecimals: autoDecimals,
+              });
+            // A single persisted derived-metric window can carry its 95%
+            // interval; it is advisory text and never replaces the value.
+            const point = s.data?.length === 1 ? s.data[0] : null;
+            const hasInterval =
+              value != null && point?.ci_low != null && point?.ci_high != null;
             return (
-              <Box key={i} sx={{ textAlign: "center" }}>
-                <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
-                  {value == null
-                    ? "—"
-                    : formatValueWithConfig(value, cellConfig, {
-                        fallbackDecimals: autoDecimals,
-                      })}
+              <Box
+                key={i}
+                sx={{
+                  textAlign: "center",
+                  ...(pinnedMetric
+                    ? { minWidth: 0, width: "100%", maxWidth: 560 }
+                    : {}),
+                }}
+              >
+                <Typography
+                  variant="h3"
+                  sx={
+                    pinnedMetric
+                      ? {
+                          color: "text.primary",
+                          fontVariantNumeric: "tabular-nums",
+                        }
+                      : { color: colorFor(s.name) }
+                  }
+                >
+                  {value == null ? "—" : format(value)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {s.name}
                 </Typography>
+                {hasInterval && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                    data-testid="metric-card-interval"
+                  >
+                    {`95% interval ${format(point.ci_low)} – ${format(point.ci_high)}`}
+                  </Typography>
+                )}
+                {value != null && !hasInterval && pinnedMetric && (
+                  <Typography variant="body2" color="text.secondary">
+                    Point estimate only — 95% interval unavailable.
+                  </Typography>
+                )}
+                {!pinnedMetric && value != null && point?.ci_reason && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                    data-testid="metric-card-interval"
+                  >
+                    {`No 95% interval: ${point.ci_reason.replaceAll("_", " ")}`}
+                  </Typography>
+                )}
+                {pinnedMetric && (
+                  <DerivedMetricCardContext
+                    context={
+                      responseMetric?.series?.length === 1
+                        ? responseMetric.derived_context
+                        : null
+                    }
+                    runId={pinnedMetric.derived_run_id}
+                    point={point}
+                    value={value}
+                  />
+                )}
               </Box>
             );
           })}
@@ -1604,4 +1697,5 @@ WidgetChart.propTypes = {
   }),
   refreshRequestId: PropTypes.number,
   onQuerySettled: PropTypes.func,
+  onRestoreSavedWindow: PropTypes.func,
 };

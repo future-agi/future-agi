@@ -162,6 +162,7 @@ class ConsistencyChecker:
         remaining_ms = min(self.QUERY_TIMEOUT_MS, int((deadline - monotonic()) * 1000))
         if remaining_ms <= 0:
             raise _BudgetSpent("ClickHouse health check deadline exhausted")
+        rows: list[tuple]
         with application_read_context(enabled=False):
             rows, _, _ = probe.client.execute_read(
                 query, params, timeout_ms=remaining_ms
@@ -638,7 +639,7 @@ class ConsistencyChecker:
                     deadline=deadline,
                 )
             )
-        lag = {}
+        lag: dict[str, float] = {}
         values: dict[str, float] = {}
         for table in cdc:
             if checks[table.key] != "ready":

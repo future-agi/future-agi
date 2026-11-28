@@ -25,6 +25,7 @@ def test_socket_uses_authorized_selected_membership_not_first(user, organization
     selected = Organization.objects.create(name="Selected synthetic organization")
     OrganizationMembership.no_workspace_objects.create(user=user, organization=selected)
     first = OrganizationMembership.no_workspace_objects.filter(user=user).first()
+    assert first is not None
     if first.organization_id == selected.id:
         selected = organization
     scope = {"query_string": f"organization_id={selected.id}".encode()}

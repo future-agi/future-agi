@@ -129,8 +129,9 @@ from scripts.update_rehearsal_milestone import (
     INTEGRITY_CASES, label, record, validate_interruption_results,
 )
 from scripts.update_rehearsal_shipping import (
-    ProductWitnesses, copy_retained_files, retain_source_preimages, wire, REDIS_OPERATION,
+    ProductWitnesses, copy_retained_files, retain_source_preimages, wire, DJANGO_PREFIX, REDIS_OPERATION,
 )
+from scripts.update_rehearsal_investigation_reference import verify_investigation_backfill
 from deploy.tests.update_e2e.real_automatic import ProductHarness
 
 # Interim reference workload for the app-data volume role (not a model change).
@@ -211,23 +212,8 @@ class QualificationRehearsal(RestoreMilestone):
         self.descriptor = self.row.release.manifest
 
     def install_and_boot(self):
-        from deploy.update.manifest import parse_image_ref
         super().install_and_boot()
-        actual = []
-        model = self.installation.config(refresh=True)
-        for service in ('postgres', 'clickhouse'):
-            # Retained Compose files use short Hub names (postgres:16); signed
-            # proofs require the canonical tagged reference for the same image.
-            image = parse_image_ref(model['services'][service]['image'])
-            digests = {parse_image_ref(ref).digest for ref in self.image_inspections[service]['RepoDigests']
-                       if parse_image_ref(ref).name == image.name}
-            p.need(len(digests) == 1, 'dependency image digest is ambiguous')
-            actual.append(dict(service=service, image=str(image), digest=digests.pop()))
-        if self.dependencies:
-            p.equal(sorted(actual, key=lambda row: row['service']),
-                    sorted((dict(row, image=str(parse_image_ref(row['image']))) for row in self.dependencies),
-                           key=lambda row: row['service']), 'retained dependency lock differs')
-        self.dependencies = tuple(sorted(actual, key=lambda row: row['service']))
+        self.dependencies = self._checked_dependency_images(self.installation.config(refresh=True), self.dependencies)
         from scripts.update_rehearsal_spool import ObservedSpoolWitness
         self.spool_witness = ObservedSpoolWitness(self)
 
@@ -469,6 +455,13 @@ print(json.dumps({'postgres':schema}))
         p.equal(measured, {(row['engine'], row['table']): row for row in self.sink.reference},
                 'reference inventory differs from the prepared reference')
 
+    def assert_large_volume_migrations(self):
+        self.assert_reference_inventory()
+        # Reference fixtures give the pending migrations real work. This one also
+        # reads, read-only on the migrated target, what the investigation backfill
+        # wrote; it does nothing when that family was not in scope.
+        verify_investigation_backfill(self, prefix=DJANGO_PREFIX, producer=p)
+
     def assert_restored_source_ready(self):
         observed = self.verify_restored_source().facts.runtime_observation
         p.need(observed.ready and observed.stable, 'restored source is not ready and stable')
@@ -527,7 +520,7 @@ print(json.dumps({'postgres':schema}))
         self.check(suite, 'migration_resource_measurements', lambda: p.equal(validate_bootstrap_envelope(
             fields, self.corpus, self.target, references), fields['migration_measurements'],
             'validated bootstrap measurement differs'))
-        self.check(suite, 'large_volume_migrations', self.assert_reference_inventory)
+        self.check(suite, 'large_volume_migrations', self.assert_large_volume_migrations)
         old = self.current_source_witnesses()
         for domain in p.topology_profile('standalone', ()).backup_domains:
             self.check(suite, 'new_reads_old:'+domain,
