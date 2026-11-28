@@ -1834,8 +1834,11 @@ CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger
 # applied no pointer column or trajectory_items reference is emitted.
 #   unset / ""  auto: READY once all six 040 spans columns and the table exist;
 #   true        same probe; refused (logged, NOT_READY) while columns are absent;
-#   false       NOT_READY only while trajectory_items is empty; once items
-#               exist it is ignored (logged), so previews are never served.
+#               READY (uncached) when no probe can run at all;
+#   false       NOT_READY only while trajectory_items is known to be empty; once
+#               items exist it is ignored (logged), so previews are never served.
+# When system.columns/system.tables cannot be read, a second-chance probe
+# (hasColumnInTable on spans) decides without latching.
 FI_TRAJECTORY_STORE_READ_ENABLED = {
     "1": True,
     "true": True,

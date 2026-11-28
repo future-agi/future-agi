@@ -23,6 +23,10 @@ if str(_project_root) not in sys.path:
 # Stub live-service credentials so import-time constructors do not fail during collection.
 os.environ.setdefault("VAPI_API_KEY", "test-api-key-for-testing")
 os.environ.setdefault("VAPI_API_BASE_URL", "https://test.vapi.local")
+# The trajectory read state as CI pins it (backend-ci.yml): test_tfc has the
+# 040 schema applied, so the auto state would be READY locally but not in CI.
+# The read-state tests pin or probe their own databases.
+os.environ.setdefault("FI_TRAJECTORY_STORE_READ_ENABLED", "false")
 
 from tfc.ee_loader import has_ee
 from tfc.logging.config import configure_structlog
@@ -975,6 +979,19 @@ class WorkspaceAwareAPIClient(APIClient):
             APIView.initial = _original_apiview_initial
             _WORKSPACE_INITIAL_PATCH_ACTIVE = False
         self._patcher = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_trajectory_read_state():
+    """The trajectory read state latches READY for the process: forget it
+    after every test, so no test inherits a state another test's database
+    or settings produced."""
+    yield
+    try:
+        from tracer.services.clickhouse.v2 import trajectory_hydration
+    except ImportError:
+        return
+    trajectory_hydration.reset_read_state_cache()
 
 
 @pytest.fixture(autouse=True)

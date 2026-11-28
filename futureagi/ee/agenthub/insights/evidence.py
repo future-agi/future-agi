@@ -2068,11 +2068,7 @@ class EvidenceQueryBuilder:
         inner = derived = outer = ""
         if heavy:
             include_traj = trajectory_read_state().projects_pointers
-            inner = (
-                _CONTENT_HEAVY_INNER + _CONTENT_HEAVY_TRAJ_INNER
-                if include_traj
-                else _CONTENT_HEAVY_INNER
-            )
+            inner = _CONTENT_HEAVY_TRAJ_INNER if include_traj else _CONTENT_HEAVY_INNER
             derived = _CONTENT_HEAVY_DERIVED
             outer = (
                 _CONTENT_HEAVY_OUTER_WITH_TRAJ if include_traj else _CONTENT_HEAVY_OUTER
@@ -2175,14 +2171,42 @@ _CONTENT_HEAVY_INNER = """
                         argMax(attrs_number, _version) AS latest_attrs_number,
                         argMax(attrs_bool, _version) AS latest_attrs_bool,"""
 
+# With pointers, the content columns and the pointers come from ONE argMax
+# over a tuple (as in trace detail): two physical rows with an equal
+# _version (an items_v1 row and its inline copy) can never mix into a
+# preview labelled inline. Replaces _CONTENT_HEAVY_INNER in that case.
 _CONTENT_HEAVY_TRAJ_INNER = """
-                        argMax(input_item_hashes, _version) AS latest_input_item_hashes,
-                        argMax(output_item_hashes, _version) AS latest_output_item_hashes,
-                        argMax(tool_def_hashes, _version) AS latest_tool_def_hashes,
-                        argMax(item_scope_id, _version) AS latest_item_scope_id,
-                        argMax(payload_encoding, _version) AS latest_payload_encoding,
-                        argMax(payload_envelope, _version) AS latest_payload_envelope,
-                        argMax(created_at, _version) AS latest_created_at,"""
+                        argMax(
+                            tuple(
+                                input, output, span_events, attributes_extra,
+                                metadata, attrs_string, attrs_number, attrs_bool,
+                                input_item_hashes, output_item_hashes,
+                                tool_def_hashes, item_scope_id,
+                                payload_encoding, payload_envelope, created_at
+                            ),
+                            _version
+                        ) AS latest_content_tuple,
+                        tupleElement(latest_content_tuple, 1) AS latest_input,
+                        tupleElement(latest_content_tuple, 2) AS latest_output,
+                        tupleElement(latest_content_tuple, 3) AS latest_span_events,
+                        tupleElement(latest_content_tuple, 4)
+                            AS latest_attributes_extra,
+                        tupleElement(latest_content_tuple, 5) AS latest_metadata,
+                        tupleElement(latest_content_tuple, 6) AS latest_attrs_string,
+                        tupleElement(latest_content_tuple, 7) AS latest_attrs_number,
+                        tupleElement(latest_content_tuple, 8) AS latest_attrs_bool,
+                        tupleElement(latest_content_tuple, 9)
+                            AS latest_input_item_hashes,
+                        tupleElement(latest_content_tuple, 10)
+                            AS latest_output_item_hashes,
+                        tupleElement(latest_content_tuple, 11)
+                            AS latest_tool_def_hashes,
+                        tupleElement(latest_content_tuple, 12) AS latest_item_scope_id,
+                        tupleElement(latest_content_tuple, 13)
+                            AS latest_payload_encoding,
+                        tupleElement(latest_content_tuple, 14)
+                            AS latest_payload_envelope,
+                        tupleElement(latest_content_tuple, 15) AS latest_created_at,"""
 
 _CONTENT_HEAVY_DERIVED = f""",
                     {_extra_value_sql("latest_attributes_extra", "input.value")}

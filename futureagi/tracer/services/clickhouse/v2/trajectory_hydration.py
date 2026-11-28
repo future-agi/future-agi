@@ -124,6 +124,13 @@ TRAJECTORY_SPAN_COLUMNS: tuple[str, ...] = (
     "payload_encoding",
     "payload_envelope",
 )
+# What a reader projects to hydrate a row: the pointers plus the span's write
+# time, which tells replica lag (retried) from a lost item (reported).
+TRAJECTORY_FRESHNESS_COLUMN = "created_at"
+TRAJECTORY_HYDRATION_COLUMNS: tuple[str, ...] = (
+    *TRAJECTORY_SPAN_COLUMNS,
+    TRAJECTORY_FRESHNESS_COLUMN,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -307,6 +314,16 @@ _PROBE_CLUSTER_COLUMNS_SQL = (
     "AND name IN %(traj_probe_columns)s"
 )
 _COLUMN_NAMES = ("name", "type", "default_kind", "default_expression")
+# Second-chance probe, run only when the system-table probe fails: it reads
+# no system table (a reader may lack that grant) and needs only the access
+# a reader has on ``spans``. One 0/1 per pointer column, named c0..c5.
+_FALLBACK_COLUMN_NAMES = tuple(f"c{i}" for i in range(len(TRAJECTORY_SPAN_COLUMNS)))
+_PROBE_FALLBACK_COLUMNS_SQL = "SELECT " + ", ".join(
+    f"hasColumnInTable(%(traj_probe_database)s, 'spans', '{column}') AS {alias}"
+    for column, alias in zip(
+        TRAJECTORY_SPAN_COLUMNS, _FALLBACK_COLUMN_NAMES, strict=True
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -403,6 +420,39 @@ def probe_trajectory_schema(probe: ReadStateProbe, *, cluster: str = "") -> Sche
     )
 
 
+def probe_trajectory_schema_fallback(probe: ReadStateProbe) -> SchemaFacts:
+    """The schema facts from ``hasColumnInTable`` on ``spans`` alone.
+
+    Existence only (the types are not read) and no row count
+    (``total_rows`` is None, so a false flag is not honoured). The table is
+    taken as present when all six columns are: 040 creates it before it adds
+    them. Raises whatever the executor raises."""
+    database_rows = probe.run(_PROBE_DATABASE_SQL, {}, ("database",))
+    database = str(database_rows[0][0]) if database_rows else ""
+    if not database:
+        raise RuntimeError("currentDatabase() returned nothing")
+    rows = probe.run(
+        _PROBE_FALLBACK_COLUMNS_SQL,
+        {"traj_probe_database": database},
+        _FALLBACK_COLUMN_NAMES,
+    )
+    if not rows or len(rows[0]) != len(TRAJECTORY_SPAN_COLUMNS):
+        raise RuntimeError("hasColumnInTable probe returned no row")
+    present = frozenset(
+        column
+        for column, flag in zip(TRAJECTORY_SPAN_COLUMNS, rows[0], strict=True)
+        if int(flag or 0) == 1
+    )
+    complete = present == frozenset(TRAJECTORY_SPAN_COLUMNS)
+    return SchemaFacts(
+        exact=present,
+        different=frozenset(),
+        table_present=complete,
+        total_rows=None,
+        lagging_replicas=(),
+    )
+
+
 _state_lock = threading.Lock()
 # (endpoint, flag, cluster) -> (state, expires_at monotonic; None = latched).
 _state_cache: dict[
@@ -467,6 +517,7 @@ def _base_read_state(probe: ReadStateProbe) -> TrajectoryReadState:
         cached = _state_cache.get(key)
     if cached is not None and (cached[1] is None or cached[1] > now):
         return cached[0]
+    latch = True
     try:
         facts = probe_trajectory_schema(probe, cluster=cluster)
     except Exception as exc:
@@ -481,22 +532,54 @@ def _base_read_state(probe: ReadStateProbe) -> TrajectoryReadState:
                 last[0].value,
             )
             return last[0]
-        logger.error(
-            "trajectory_read_state_probe_failed endpoint=%s error=%s",
+        fallback = None if cluster else _fallback_facts(probe)
+        if fallback is None:
+            if flag is True:
+                # The operator asserted 040 is applied: read with pointers
+                # rather than fail (a reader on a broken endpoint fails on
+                # its own query anyway). Not cached.
+                logger.error(
+                    "trajectory_read_state_probe_failed endpoint=%s error=%s "
+                    "assumed=ready flag=true",
+                    probe.endpoint,
+                    type(exc).__name__,
+                )
+                return TrajectoryReadState.READY
+            logger.error(
+                "trajectory_read_state_probe_failed endpoint=%s error=%s",
+                probe.endpoint,
+                type(exc).__name__,
+            )
+            raise TrajectoryHydrationUnavailable("read_state_probe_failed") from exc
+        logger.warning(
+            "trajectory_read_state_probe_fallback endpoint=%s error=%s",
             probe.endpoint,
             type(exc).__name__,
         )
-        raise TrajectoryHydrationUnavailable("read_state_probe_failed") from exc
+        facts, latch = fallback, False
     state = _state_from_facts(facts, flag, probe.endpoint)
     with _state_lock:
         _state_cache[key] = (
             state,
             None
-            if state is TrajectoryReadState.READY
+            if state is TrajectoryReadState.READY and latch
             else now + READ_STATE_NEGATIVE_TTL_S,
         )
         _last_known[key] = (state, now)
     return state
+
+
+def _fallback_facts(probe: ReadStateProbe) -> SchemaFacts | None:
+    """The second-chance probe's facts, or None when it fails too."""
+    try:
+        return probe_trajectory_schema_fallback(probe)
+    except Exception as exc:
+        logger.warning(
+            "trajectory_read_state_probe_fallback_failed endpoint=%s error=%s",
+            probe.endpoint,
+            type(exc).__name__,
+        )
+        return None
 
 
 def trajectory_read_state(source: Any = None) -> TrajectoryReadState:
@@ -506,13 +589,16 @@ def trajectory_read_state(source: Any = None) -> TrajectoryReadState:
     Otherwise the schema is probed on ``source`` (a ``ReadStateProbe``, or an
     object whose ``trajectory_read_probe`` names one), by default the CH25
     endpoint the span readers use. READY latches for the process; a negative
-    result is cached for 15 s; a probe error is never cached and raises
-    ``TrajectoryHydrationUnavailable`` unless a probe succeeded within the
-    last 60 s, whose state is reused.
+    result is cached for 15 s. When the system-table probe fails, the state
+    a probe returned within the last 60 s is reused; otherwise (and with no
+    probe cluster configured) a second-chance probe on ``hasColumnInTable``
+    decides, cached for 15 s and never latched. When that fails too, a true
+    flag reads as READY (not cached) and anything else raises
+    ``TrajectoryHydrationUnavailable``.
 
     ``FI_TRAJECTORY_STORE_READ_ENABLED``: true still probes and stays
     NOT_READY when the columns are absent (logged); false is honoured only
-    while ``trajectory_items`` has no rows; unset is auto.
+    while ``trajectory_items`` is known to have no rows; unset is auto.
     ``FI_TRAJECTORY_HYDRATION_KILL`` turns READY into KILLED.
     """
     pinned = _pinned_state.get()
@@ -889,9 +975,10 @@ def _restore_enabled(enabled: bool | None) -> bool:
         return enabled
     try:
         return trajectory_read_state().projects_pointers
-    except TrajectoryHydrationUnavailable:
+    except TrajectoryHydrationUnavailable as exc:
         # The read itself already resolved (or failed on) the state; leave
-        # attributes as stored rather than guessing.
+        # attributes as stored rather than guessing, and say so.
+        logger.warning("trajectory_promoted_restore_skipped reason=%s", exc.code)
         return False
 
 

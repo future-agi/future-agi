@@ -311,34 +311,252 @@ def test_missing_item_on_fresh_span_is_retryable_unavailable_live(ch):
     assert exc.value.code == "items_not_yet_visible"
 
 
+def _run(analytics, sql, params):
+    return analytics.execute_ch_query(sql, params, timeout_ms=10_000, settings={}).data
+
+
+def _csv_hydrate(analytics, rows, *, project_id, surface):
+    """The CSV branch of the trace/span list views: hydrate, then mark."""
+    hydrate_span_dicts(
+        rows,
+        lambda sql, params: list(_run(analytics, sql, params) or []),
+        project_id_fallback=project_id,
+        attr_key="attributes_extra",
+        state=TrajectoryReadState.READY,
+        surface=surface,
+    )
+    mark_csv_unavailable_previews(rows)
+    return rows
+
+
 @pytest.mark.integration
 @override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=None)
 def test_missing_item_csv_cell_marked(ch):
+    """The span CSV's real content query: an old span with a lost item gets a
+    marked preview cell; a span written just now (replica lag) is retried,
+    never written as a preview. Before, the query did not project
+    created_at, so lag became a permanent marked cell."""
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+
     database, http, native = ch
-    project_id, _row = _orphan_copy(http, created_at=OLD)
-    rows, columns = native.execute(
-        "SELECT id, toString(project_id) AS project_id, input, output, "
-        "input_item_hashes, output_item_hashes, tool_def_hashes, item_scope_id, "
-        "payload_encoding, payload_envelope, created_at FROM spans FINAL "
-        "WHERE project_id = %(pid)s",
-        {"pid": project_id},
-        with_column_types=True,
-    )
-    names = [n for n, _t in columns]
-    dicts = [dict(zip(names, r, strict=True)) for r in rows]
     analytics = _NativeAnalytics(native, database)
-    hydrate_span_dicts(
-        dicts,
-        lambda sql, params: (
-            analytics.execute_ch_query(sql, params, timeout_ms=10_000, settings={}).data
-        ),
-        attr_key="attributes_extra",
-        surface="span_csv",
+    with pinned_read_state(TrajectoryReadState.READY):
+        for created_at in (OLD, None):
+            project_id, row = _orphan_copy(http, created_at=created_at)
+            sql, params = SpanListQueryBuilderV2(
+                project_id=project_id
+            ).build_content_query([row["id"]], include_trajectory=True)
+            rows = _run(analytics, sql, params)
+            assert len(rows) == 1 and "created_at" in rows[0]
+            if created_at is None:
+                with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+                    _csv_hydrate(
+                        analytics, rows, project_id=project_id, surface="span_csv"
+                    )
+                assert exc.value.code == "items_not_yet_visible"
+                continue
+            (cell,) = _csv_hydrate(
+                analytics, rows, project_id=project_id, surface="span_csv"
+            )
+            assert cell["input"].startswith(CSV_UNAVAILABLE_PREFIX)
+            assert cell["input"] != CASE["input"]
+
+
+@pytest.mark.integration
+@override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=None)
+def test_fresh_missing_item_is_retryable_on_session_detail_and_projections(ch):
+    """Session detail and the reader's column projections (list_by_ids,
+    list_root_spans_by_trace_ids) project created_at with the pointers, so a
+    span written just now whose items are not visible is retried (503 /
+    activity retry), and an old one is marked missing."""
+    from tracer.services.clickhouse.v2.query_builders.session_detail import (
+        build_session_detail_traces_query,
     )
-    mark_csv_unavailable_previews(dicts)
-    (row,) = dicts
-    assert row["input"].startswith(CSV_UNAVAILABLE_PREFIX)
-    assert row["input"] != CASE["input"]
+
+    database, http, native = ch
+    analytics = _NativeAnalytics(native, database)
+    reader = _reader(http, database)
+    for created_at in (OLD, None):
+        project_id, row = _orphan_copy(http, created_at=created_at)
+        fresh = created_at is None
+        with pinned_read_state(TrajectoryReadState.READY):
+            sql, params = build_session_detail_traces_query(
+                project_id, [row["trace_session_id"]], limit=10, offset=0
+            )
+            traces = _run(analytics, sql, params)
+            assert len(traces) == 1 and "created_at" in traces[0]
+
+            def hydrate_session(rows=traces, pid=project_id):
+                return hydrate_span_dicts(
+                    rows,
+                    lambda s, p: list(_run(analytics, s, p) or []),
+                    project_id_fallback=pid,
+                    state=TrajectoryReadState.READY,
+                    surface="session_detail",
+                )
+
+            if fresh:
+                with pytest.raises(TrajectoryHydrationUnavailable):
+                    hydrate_session()
+            else:
+                hydrate_session()
+                assert traces[0][CONTENT_STATE_KEY]["input"] == CONTENT_MISSING
+
+        calls = (
+            lambda pid=project_id, sid=row["id"]: reader.list_by_ids(
+                [sid], project_id=pid, columns=["id", "input"]
+            ),
+            lambda pid=project_id, tid=row["trace_id"]: list(
+                reader.list_root_spans_by_trace_ids(
+                    [tid], project_id=pid, columns=["trace_id", "input"]
+                ).values()
+            ),
+        )
+        for call in calls:
+            if fresh:
+                with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+                    call()
+                assert exc.value.code == "items_not_yet_visible"
+            else:
+                (projected,) = call()
+                assert projected[CONTENT_UNAVAILABLE_KEY] == ["input"]
+                assert "created_at" not in projected
+
+
+@pytest.mark.integration
+@override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=None)
+def test_same_version_items_v1_and_inline_twins_resolve_consistently(ch):
+    """Two physical rows of one span with an equal _version, an items_v1 row
+    and its inline copy: the child tree and Insights evidence take content
+    and pointers from ONE row, so the span reads as its full content either
+    way, never as the preview labelled inline."""
+    from ee.agenthub.insights import evidence
+
+    database, http, native = ch
+    project_id = str(uuid.uuid4())
+    items = [{**item, "project_id": project_id} for item in _jsonl("items.jsonl")]
+    http.raw_insert(
+        "trajectory_items",
+        insert_block="".join(json.dumps(i) + "\n" for i in items).encode("utf-8"),
+        fmt="JSONEachRow",
+    )
+    pointer = {**SPANS[CASE["span_id"]], "project_id": project_id, "created_at": OLD}
+    inline = {
+        **pointer,
+        "input": CASE["input"],
+        "output": CASE["output"],
+        "input_item_hashes": [],
+        "output_item_hashes": [],
+        "tool_def_hashes": [],
+        "item_scope_id": "",
+        "payload_encoding": "inline",
+        "payload_envelope": "",
+        "attributes_extra": "{}",
+    }
+    # One part holding both twins, in each order, for two span ids.
+    twins = [
+        {**pointer, "id": "twin-pointer-first"},
+        {**inline, "id": "twin-pointer-first"},
+        {**inline, "id": "twin-inline-first"},
+        {**pointer, "id": "twin-inline-first"},
+    ]
+    for block in (twins, list(reversed(twins))):
+        http.raw_insert(
+            "spans",
+            insert_block="".join(json.dumps(r) + "\n" for r in block).encode("utf-8"),
+            fmt="JSONEachRow",
+        )
+
+    reader = _reader(http, database)
+    tree = reader.child_tree_spans_by_trace_ids(
+        [CASE["trace_id"]], project_id=project_id
+    )
+    by_id = {d["id"]: d for d in tree[CASE["trace_id"]]}
+    for span_id in ("twin-pointer-first", "twin-inline-first"):
+        assert by_id[span_id]["input"] == CASE["input"], span_id
+        assert content_unavailable_sides(by_id[span_id]) == []
+
+    class _EvidenceReader:
+        def rows(self, statement, *, max_rows):
+            query, params = statement
+            return _run(_NativeAnalytics(native, database), query, params)
+
+    start = datetime.fromisoformat(pointer["start_time"]).replace(tzinfo=UTC)
+    nodes = [
+        evidence._Node(
+            trace_id=CASE["trace_id"],
+            span_id=span_id,
+            start=start,
+            parent_id="",
+            kind="llm",
+            status="OK",
+            version=1,
+            raw_chars=len(CASE["input"]) + len(CASE["output"]),
+            order=i,
+        )
+        for i, span_id in enumerate(("twin-pointer-first", "twin-inline-first"))
+    ]
+    with pinned_read_state(TrajectoryReadState.READY):
+        content = evidence._read_content(
+            _EvidenceReader(),
+            builder=evidence.EvidenceQueryBuilder(project_id=project_id),
+            kept=nodes,
+            full={id(n) for n in nodes},
+            status_only=set(),
+            partial={},
+            limits=evidence.EvidenceLimits(),
+        )
+    assert len(content) == 2
+    for row in content.values():
+        assert row["input"] != pointer["input"], "a preview read as content"
+        assert content_unavailable_sides(row) == []
+
+
+@pytest.mark.unit
+def test_child_tree_and_evidence_read_one_packed_argmax(settings):
+    """SQL shape of the equal-_version fix: with pointers, one argMax over a
+    tuple and no per-column argMax of content or pointers; flag-off SQL
+    keeps the per-column projections."""
+    from ee.agenthub.insights import evidence
+
+    sent: list[str] = []
+
+    class _Client:
+        def query(self, sql, parameters=None, settings=None):
+            sent.append(sql)
+            return SimpleNamespace(result_rows=[])
+
+    reader = span_reader.CHSpanReader.__new__(span_reader.CHSpanReader)
+    reader._client = _Client()
+    for state in (TrajectoryReadState.NOT_READY, TrajectoryReadState.READY):
+        with pinned_read_state(state):
+            reader.child_tree_spans_by_trace_ids(["t"], project_id="p")
+    off, on = sent
+    assert "argMax(input, _version) AS input" in off
+    assert "latest_child_row" not in off
+    assert "AS latest_child_row" in on
+    for col in ("input", "output", "attributes_extra", "payload_encoding"):
+        assert f"argMax({col}, _version)" not in on
+
+    assert "argMax(" not in evidence._CONTENT_HEAVY_TRAJ_INNER.replace(
+        "argMax(\n                            tuple(", "", 1
+    )
+    assert "AS latest_content_tuple" in evidence._CONTENT_HEAVY_TRAJ_INNER
+    for name in (
+        "latest_input",
+        "latest_output",
+        "latest_attributes_extra",
+        "latest_payload_encoding",
+        "latest_created_at",
+    ):
+        assert f"AS {name}" in evidence._CONTENT_HEAVY_TRAJ_INNER
+        assert f"AS {name}" in evidence._CONTENT_HEAVY_INNER or name not in (
+            "latest_input",
+            "latest_output",
+            "latest_attributes_extra",
+        )
 
 
 @pytest.mark.unit
@@ -483,6 +701,30 @@ def test_views_return_503_on_hydration_failure():
         raise TrajectoryHydrationUnavailable("items_query_failed")
 
     response = _retrieve_span(failing)
+    assert response.status_code == 503
+    assert "service_unavailable" in json.dumps(response.data, default=str)
+
+
+@pytest.mark.unit
+def test_session_detail_returns_503_on_hydration_failure():
+    from tracer.views.trace_session import TraceSessionView
+
+    view = TraceSessionView()
+    view.kwargs = {"pk": "S1"}
+    request = SimpleNamespace(validated_query_data={}, query_params={})
+    with (
+        patch.object(TraceSessionView, "get_queryset") as queryset,
+        patch("tracer.views.trace_session.V2AnalyticsQueryService"),
+        patch.object(
+            TraceSessionView,
+            "_retrieve_clickhouse",
+            side_effect=TrajectoryHydrationUnavailable("items_not_yet_visible"),
+        ),
+    ):
+        queryset.return_value.get.return_value = SimpleNamespace(
+            project=SimpleNamespace(id="P1")
+        )
+        response = unwrap(TraceSessionView.retrieve)(view, request)
     assert response.status_code == 503
     assert "service_unavailable" in json.dumps(response.data, default=str)
 

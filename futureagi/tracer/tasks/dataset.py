@@ -16,7 +16,6 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     TrajectoryContentUnavailable,
     TrajectoryHydrationUnavailable,
     content_unavailable_sides,
-    raise_if_content_unavailable,
 )
 
 logger = structlog.get_logger(__name__)
@@ -292,7 +291,7 @@ def _org_project_ids(org_id) -> list[str]:
 
 
 def _serialize_span_trees_batch(
-    span_ids, project_id=None, org_id=None
+    span_ids, project_id=None, org_id=None, rejected: set[str] | None = None
 ) -> dict[str, list]:
     """Batch-serialize child trees for multiple span IDs in minimal CH queries.
 
@@ -306,6 +305,10 @@ def _serialize_span_trees_batch(
 
     The trace reads are pinned to ``project_id``, or to ``org_id``'s projects
     for an org-wide export: the same trace id can exist in another tenant.
+
+    A subtree holding a child span whose full content is unavailable raises
+    ``TrajectoryContentUnavailable``; with ``rejected`` given, that span id
+    is added to it instead and left out of the result.
     """
     from tracer.services.clickhouse.v2 import get_reader
 
@@ -355,7 +358,12 @@ def _serialize_span_trees_batch(
             continue
 
         children_map = trace_children_maps.get(trace_id, {})
-        result[str_span_id] = _build_subtree_from_dicts(children_map, str_span_id)
+        try:
+            result[str_span_id] = _build_subtree_from_dicts(children_map, str_span_id)
+        except TrajectoryContentUnavailable:
+            if rejected is None:
+                raise
+            rejected.add(str_span_id)
 
     return result
 
@@ -453,17 +461,14 @@ def process_spans_chunk_task(
                 )
         observation_spans = [by_id[str(s)] for s in span_ids if str(s) in by_id]
         # A span whose full input/output is unavailable would be written as
-        # its preview: refuse the rows instead (never a silent preview).
-        try:
-            raise_if_content_unavailable(observation_spans, surface="dataset")
-        except TrajectoryContentUnavailable as exc:
-            logger.error(
-                "dataset_chunk_span_content_unavailable",
-                dataset_id=str(dataset_id),
-                span_ids=list(exc.span_ids[:10]),
-                count=len(exc.span_ids),
-            )
-            raise
+        # its preview: that row is refused (never a silent preview), and the
+        # chunk's other rows are still created. The condition is permanent,
+        # so it is not raised for a retry.
+        rejected_ids: set[str] = {
+            str(span["id"])
+            for span in observation_spans
+            if content_unavailable_sides(span)
+        }
 
         # Codex consolidated review P0 (2026-05-26): silently dropping
         # missing-CH spans is data loss. Caller derived span_ids from a
@@ -514,8 +519,24 @@ def process_spans_chunk_task(
         child_spans_cache = {}
         if needs_child_spans:
             child_spans_cache = _serialize_span_trees_batch(
-                span_ids, project_id=project_id, org_id=org_id
+                span_ids,
+                project_id=project_id,
+                org_id=org_id,
+                rejected=rejected_ids,
             )
+        if rejected_ids:
+            logger.error(
+                "dataset_chunk_span_content_unavailable",
+                dataset_id=str(dataset_id),
+                span_ids=sorted(rejected_ids)[:10],
+                count=len(rejected_ids),
+                surface="dataset",
+            )
+            observation_spans = [
+                span
+                for span in observation_spans
+                if str(span["id"]) not in rejected_ids
+            ]
 
         # Pre-fetch eval metrics (EvalLogger) if needed — single bulk query, no N+1
         from collections import defaultdict
@@ -649,10 +670,13 @@ def process_spans_chunk_task(
                 "emit_dataset_storage_event_failed", dataset_id=str(dataset_id)
             )
 
-        return {
+        summary = {
             "rows_created": len(created_rows),
             "cells_created": len(cells_to_create),
         }
+        if rejected_ids:
+            summary["rows_rejected"] = len(rejected_ids)
+        return summary
 
     except Exception as exc:
         logger.exception(

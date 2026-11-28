@@ -204,7 +204,7 @@ def _hydrate_rca_rows(
     from tracer.services.clickhouse.v2.trajectory_hydration import (
         CONTENT_STATE_KEY,
         ENCODING_ITEMS_V1,
-        TRAJECTORY_SPAN_COLUMNS,
+        TRAJECTORY_HYDRATION_COLUMNS,
         hydrate_span_dicts,
         raise_if_content_unavailable,
     )
@@ -229,7 +229,7 @@ def _hydrate_rca_rows(
         )
         raise_if_content_unavailable(rows, surface="cluster_rca")
     for r in rows:
-        for col in TRAJECTORY_SPAN_COLUMNS:
+        for col in TRAJECTORY_HYDRATION_COLUMNS:
             r.pop(col, None)
         r.pop(CONTENT_STATE_KEY, None)
     return rows
@@ -244,7 +244,7 @@ def list_spans_in_traces(
 ) -> tuple[list[dict[str, Any]], int]:
     """Paginated span list across a trace set. Returns (page, total_distinct)."""
     from tracer.services.clickhouse.v2.trajectory_hydration import (
-        TRAJECTORY_SPAN_COLUMNS,
+        TRAJECTORY_HYDRATION_COLUMNS,
         trajectory_read_state,
     )
 
@@ -253,7 +253,9 @@ def list_spans_in_traces(
         return [], 0
     read_state = trajectory_read_state()
     include_traj = read_state.projects_pointers
-    query_cols = _SPAN_COLS + TRAJECTORY_SPAN_COLUMNS if include_traj else _SPAN_COLS
+    query_cols = (
+        _SPAN_COLS + TRAJECTORY_HYDRATION_COLUMNS if include_traj else _SPAN_COLS
+    )
     cols = ", ".join(query_cols)
     base = (
         "FROM spans WHERE project_id = %(pid)s AND is_deleted = 0 "
@@ -284,7 +286,7 @@ def search_spans_in_traces(
     """Case-insensitive substring search over span input/output/name/
     status_message within a trace set."""
     from tracer.services.clickhouse.v2.trajectory_hydration import (
-        TRAJECTORY_SPAN_COLUMNS,
+        TRAJECTORY_HYDRATION_COLUMNS,
         trajectory_read_state,
     )
 
@@ -293,7 +295,9 @@ def search_spans_in_traces(
         return []
     read_state = trajectory_read_state()
     include_traj = read_state.projects_pointers
-    query_cols = _SPAN_COLS + TRAJECTORY_SPAN_COLUMNS if include_traj else _SPAN_COLS
+    query_cols = (
+        _SPAN_COLS + TRAJECTORY_HYDRATION_COLUMNS if include_traj else _SPAN_COLS
+    )
     cols = ", ".join(query_cols)
     text_pred = (
         "(positionCaseInsensitive(input, %(q)s) > 0 "

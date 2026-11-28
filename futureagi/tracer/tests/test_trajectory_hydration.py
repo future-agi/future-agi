@@ -1467,6 +1467,31 @@ def test_bounded_export_content_queries_gate_trajectory_columns(settings):
     for col in ("input_item_hashes", "output_item_hashes", "payload_encoding"):
         assert col in sql_span_exp
         assert col in sql_trace_exp
+    # With the pointers, each CSV read projects the span's write time, so a
+    # missing item on a span written moments ago is retried, not marked.
+    assert "payload_envelope, created_at" in sql_span_exp
+    assert "AS created_at" in sql_trace_exp
+
+
+@pytest.mark.unit
+def test_rca_reads_project_created_at_with_pointers_and_strip_it(monkeypatch):
+    from tracer.services.clickhouse import cluster_rca_spans
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        cluster_rca_spans,
+        "_execute_read",
+        lambda q, _p: sent.append(q) or [],
+    )
+    with trajectory_hydration.pinned_read_state(READY):
+        cluster_rca_spans.list_spans_in_traces(PROJECT_ID, [TRACE_ID])
+        cluster_rca_spans.search_spans_in_traces(PROJECT_ID, [TRACE_ID], "needle")
+    assert sent and all("payload_envelope, created_at" in q for q in sent[:1])
+    assert any("created_at" in q for q in sent[1:])
+    rows = [_one_side_row("rca", _h("rca"), created_at=datetime.now(UTC))]
+    rows[0]["payload_encoding"] = ENCODING_INLINE
+    cluster_rca_spans._hydrate_rca_rows(PROJECT_ID, rows, READY)
+    assert "created_at" not in rows[0]
 
 
 @pytest.mark.unit
@@ -1613,14 +1638,16 @@ def test_read_state_cache_positive_latched_negative_15s_errors_uncached(
     assert trajectory_read_state(source) is READY
     assert len(absent.statements) == 4
 
-    # A probe error is never cached: with no recent state it raises, every
-    # call probes again, and it never falls back to NOT_READY.
+    # A probe error is never cached: with no recent state, and the
+    # second-chance probe failing too, it raises, every call probes again
+    # (system.columns, then currentDatabase()), and it never falls back to
+    # NOT_READY.
     failing = SchemaProbe(error=RuntimeError("boom"), endpoint="db-b")
     for _ in range(2):
         with pytest.raises(TrajectoryHydrationUnavailable) as exc:
             trajectory_read_state(failing.probe)
         assert exc.value.code == "read_state_probe_failed"
-    assert len(failing.statements) == 2
+    assert len(failing.statements) == 4
 
     # Within 60 s of a successful probe, an error reuses that state.
     flaky = SchemaProbe(columns=(), table=False, endpoint="db-c")
@@ -1639,6 +1666,97 @@ def test_read_state_cache_positive_latched_negative_15s_errors_uncached(
         )
         is NOT_READY
     )
+
+
+@pytest.mark.unit
+def test_system_table_probe_failure_uses_has_column_fallback(settings, clock):
+    """A reader that cannot read system.columns/system.tables (a missing
+    grant, a cold process) decides from hasColumnInTable on spans instead of
+    failing every read: absent columns are NOT_READY (dev SQL), all six are
+    READY. A fallback READY is not latched, so the full probe runs again."""
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    denied = PermissionError("no grant on system tables")
+
+    pre = SchemaProbe(columns=(), table=False, system_error=denied, endpoint="fb-pre")
+    assert trajectory_read_state(pre.probe) is NOT_READY
+    assert any("hasColumnInTable" in s for s in pre.statements)
+    assert not any("hasColumnInTable" in s and "system." in s for s in pre.statements)
+
+    post = SchemaProbe(system_error=denied, endpoint="fb-post")
+    assert trajectory_read_state(post.probe) is READY
+    probed = len(post.statements)
+    clock.now += 1.0
+    assert trajectory_read_state(post.probe) is READY
+    assert len(post.statements) == probed  # cached for 15 s ...
+    clock.now += 15.0
+    post.system_error = None
+    assert trajectory_read_state(post.probe) is READY
+    assert len(post.statements) > probed  # ... then the full probe again
+    latched = len(post.statements)
+    clock.now += 10_000.0
+    assert trajectory_read_state(post.probe) is READY
+    assert len(post.statements) == latched  # the full probe latches
+
+    # A false flag needs a known-empty trajectory_items, which the fallback
+    # cannot read: it is not honoured (never a preview served as content).
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = False
+    assert (
+        trajectory_read_state(SchemaProbe(system_error=denied, endpoint="fb-f").probe)
+        is READY
+    )
+
+    # With a probe cluster configured the fallback is not used.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    settings.FI_TRAJECTORY_READ_PROBE_CLUSTER = "cluster"
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        trajectory_read_state(SchemaProbe(system_error=denied, endpoint="fb-c").probe)
+
+
+@pytest.mark.unit
+def test_flag_true_with_failing_probe_reads_as_ready_uncached(settings):
+    """FI_TRAJECTORY_STORE_READ_ENABLED=true is the operator's statement that
+    040 is applied: when no probe can run, reads use pointers instead of
+    failing. Each call probes again (nothing cached)."""
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    down = SchemaProbe(error=ConnectionError("down"), endpoint="true-down")
+    assert trajectory_read_state(down.probe) is READY
+    first = len(down.statements)
+    assert trajectory_read_state(down.probe) is READY
+    assert len(down.statements) == 2 * first
+    # Unset: the same failure raises.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        trajectory_read_state(
+            SchemaProbe(error=ConnectionError("down"), endpoint="unset-down").probe
+        )
+
+
+@pytest.mark.unit
+def test_content_free_reader_call_runs_when_the_state_is_unavailable(settings):
+    """A reader call projecting no content column needs no read state: when
+    the probe fails it runs the dev SQL instead of raising; a call that
+    reads content still raises."""
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    sent: list[str] = []
+
+    class _Client:
+        def query(self, sql, parameters=None, settings=None):
+            sent.append(sql)
+            return SimpleNamespace(result_rows=[("s1", "t1")])
+
+    reader = span_reader.CHSpanReader.__new__(span_reader.CHSpanReader)
+    reader._client = _Client()
+    reader._read_state_probe = SchemaProbe(
+        error=ConnectionError("down"), endpoint="content-free"
+    ).probe
+    rows = reader.list_by_ids(["s1"], project_id=PROJECT_ID, columns=["id", "trace_id"])
+    assert rows == [{"id": "s1", "trace_id": "t1"}]
+    for col in trajectory_hydration.TRAJECTORY_SPAN_COLUMNS:
+        assert col not in sent[-1]
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        reader.list_by_ids(["s1"], project_id=PROJECT_ID, columns=["id", "input"])
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        reader.get("s1", project_id=PROJECT_ID)
 
 
 @pytest.mark.unit
@@ -2161,6 +2279,104 @@ def test_dataset_rows_refuse_unavailable_content():
         )
 
 
+@pytest.mark.django_db
+def test_dataset_chunk_rejects_only_the_unavailable_rows(
+    monkeypatch, organization, workspace, user
+):
+    """One span (or one child span) without its full content refuses that
+    row; the chunk still creates every other row and is not raised for a
+    retry, since the condition is permanent."""
+    import uuid
+
+    import tracer.services.clickhouse.v2 as ch_v2
+    from model_hub.models.choices import (
+        DatasetSourceChoices,
+        DataTypeChoices,
+        ModelTypes,
+        SourceChoices,
+    )
+    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+    from tracer.tasks import dataset as dataset_tasks
+
+    missing = {"input": CONTENT_MISSING, "output": CONTENT_INLINE}
+    rows = {
+        "s-ok": {"id": "s-ok", "input": "full ok"},
+        "s-missing": {
+            "id": "s-missing",
+            "input": "preview",
+            CONTENT_STATE_KEY: missing,
+        },
+        "s-child-missing": {"id": "s-child-missing", "input": "parent full"},
+    }
+    monkeypatch.setattr(
+        dataset_tasks,
+        "_export_span_rows",
+        lambda reader, span_ids, fields, project_id=None, org_id=None: {
+            str(i): dict(rows[str(i)]) for i in span_ids
+        },
+    )
+
+    class _TreeReader:
+        def trace_ids_for_span_ids(self, ids, **_kw):
+            return {i: "t-" + i for i in ids}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _child_tree(reader, trace_ids, **_kw):
+        out = {}
+        for tid in trace_ids:
+            parent = tid[2:]
+            child = {"id": "c-" + parent, "parent_span_id": parent, "input": "c"}
+            if parent == "s-child-missing":
+                child[CONTENT_STATE_KEY] = missing
+            out[tid] = [child]
+        return out
+
+    monkeypatch.setattr(ch_v2, "get_reader", lambda: _TreeReader())
+    monkeypatch.setattr(dataset_tasks, "_child_tree_spans_by_trace_ids", _child_tree)
+
+    dataset = Dataset.objects.create(
+        id=uuid.uuid4(),
+        name="from spans " + uuid.uuid4().hex[:6],
+        organization=organization,
+        workspace=workspace,
+        model_type=ModelTypes.GENERATIVE_LLM.value,
+        source=DatasetSourceChoices.OBSERVE.value,
+        user=user,
+    )
+    columns = [
+        Column.objects.create(
+            id=uuid.uuid4(),
+            name=name,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+            dataset=dataset,
+        )
+        for name in ("input", "child_spans")
+    ]
+    mapping = [
+        {"column_id": str(c.id), "span_field": c.name, "column_name": c.name}
+        for c in columns
+    ]
+
+    result = dataset_tasks.process_spans_chunk_task._original_func(
+        list(rows), str(dataset.id), mapping, PROJECT_ID, str(organization.id)
+    )
+
+    assert result == {"rows_created": 1, "cells_created": 2, "rows_rejected": 2}
+    assert Row.objects.filter(dataset=dataset).count() == 1
+    values = set(
+        Cell.objects.filter(dataset=dataset, column=columns[0]).values_list(
+            "value", flat=True
+        )
+    )
+    assert values == {"full ok"}  # never a preview
+
+
 @pytest.mark.unit
 def test_trace_detail_hydration_failure_is_typed_unavailable(settings):
     """read_trace_detail turns an items failure into its typed 503 code and
@@ -2205,7 +2421,10 @@ def test_trace_detail_hydration_failure_is_typed_unavailable(settings):
         )
     assert exc.value.code == "trajectory_hydration_unavailable"
 
-    # A probe failure is the same typed 503, never a preview.
+    # A probe failure (flag unset: true would read as READY) is the same
+    # typed 503, never a preview.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+
     class _Probe(_Analytics):
         trajectory_read_probe = SchemaProbe(
             error=RuntimeError("down"), endpoint="td"

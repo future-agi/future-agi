@@ -1381,6 +1381,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     state=read_state,
                     surface="session_detail",
                 )
+                for row in traces_data:
+                    # Projected only so hydration can tell replica lag from a
+                    # lost item; not part of the response.
+                    row.pop("created_at", None)
 
         if not traces_data:
             next_session_id, previous_session_id = get_session_navigation(

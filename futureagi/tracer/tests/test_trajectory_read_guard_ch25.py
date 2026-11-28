@@ -179,8 +179,71 @@ def _reader(http, database) -> span_reader.CHSpanReader:
     return reader
 
 
+# dev's span_reader._READ_COLUMNS, frozen (origin/dev, 28 Nov 2026): the
+# flag-off SELECT list is compared with this copy, not with the module's own
+# constant, so a change to the reader's columns cannot pass unnoticed.
+_DEV_READ_COLUMNS = (
+    "id",
+    "toString(project_id) AS project_id_str",
+    "trace_id",
+    "parent_span_id",
+    "name",
+    "observation_type",
+    "operation_name",
+    "start_time",
+    "end_time",
+    "latency_ms",
+    "model",
+    "provider",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cost",
+    "status",
+    "status_message",
+    "toString(org_id) AS org_id_str",
+    "toString(project_version_id) AS project_version_id_str",
+    "toString(end_user_id) AS end_user_id_str",
+    "toString(trace_session_id) AS trace_session_id_str",
+    "toString(prompt_version_id) AS prompt_version_id_str",
+    "toString(prompt_label_id) AS prompt_label_id_str",
+    "toString(custom_eval_config_id) AS custom_eval_config_id_str",
+    "input",
+    "output",
+    "tags",
+    "span_events",
+    "toJSONString(metadata) AS metadata",
+    "toJSONString(resource_attrs) AS resource_attrs",
+    "attributes_extra",
+    "attrs_string",
+    "attrs_number",
+    "attrs_bool",
+    "llm_request_model",
+    "llm_response_model",
+    "embedding_model",
+    "streaming",
+    "temperature",
+    "top_p",
+    "max_tokens",
+    "eval_status",
+    "semconv_source",
+    "is_deleted",
+    "trace_name",
+    "created_at",
+)
+_DEV_HEAVY_COLUMNS = {
+    "span_events",
+    "toJSONString(resource_attrs) AS resource_attrs",
+    "attributes_extra",
+}
+_DEV_SELECT_SQL = ", ".join(_DEV_READ_COLUMNS)
+_DEV_LEAN_SELECT_SQL = ", ".join(
+    "''" if col in _DEV_HEAVY_COLUMNS else col for col in _DEV_READ_COLUMNS
+)
+
+
 def _dev_select(include_heavy: bool) -> str:
-    return span_reader._SELECT_SQL if include_heavy else span_reader._LEAN_SELECT_SQL
+    return _DEV_SELECT_SQL if include_heavy else _DEV_LEAN_SELECT_SQL
 
 
 @override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=None)
@@ -211,6 +274,8 @@ def test_pre040_state_not_ready_and_sql_identical_to_dev(ch):
             assert column not in sql, sql
     # The SELECT list is dev's, byte for byte.
     assert any(_dev_select(True) in sql for sql in reads)
+    assert span_reader._SELECT_SQL == _dev_select(True)
+    assert span_reader._LEAN_SELECT_SQL == _dev_select(False)
 
     analytics = _NativeAnalytics(native, database)
     builder = trace_detail_reads.TraceDetailReadBuilder(
@@ -420,3 +485,74 @@ def test_state_flip_mid_request_is_consistent(ch):
     assert not any("FROM trajectory_items" in s for s in sent)
     assert not any("payload_envelope" in s for s in sent)
     assert detail.spans[0]["input"] != case["input"]
+
+
+class _SystemTablesDenied:
+    """A probe that cannot read system tables (a reader without that grant):
+    every ``system.`` statement raises, anything else runs on ``inner``."""
+
+    def __init__(self, inner: trajectory_hydration.ReadStateProbe):
+        self.inner = inner
+        self.statements: list[str] = []
+        self.probe = trajectory_hydration.ReadStateProbe(
+            f"denied:{inner.endpoint}", self.run
+        )
+
+    def run(self, sql, params, names):
+        self.statements.append(sql)
+        if "system." in sql:
+            raise PermissionError("ACCESS_DENIED: system tables")
+        return self.inner.run(sql, params, names)
+
+
+@override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=None)
+def test_probe_without_system_table_access_decides_from_spans(ch):
+    """Without SELECT on system.columns/system.tables, both executors decide
+    the state from hasColumnInTable on spans: NOT_READY before 040 (and the
+    dev SQL runs), READY with it (and items_v1 rows hydrate byte-exact)."""
+    for schema, expected in (
+        ("pre040", TrajectoryReadState.NOT_READY),
+        ("040", TrajectoryReadState.READY),
+    ):
+        database, http, native = ch(schema, items=schema == "040")
+        for inner in (
+            client_read_state_probe(http, endpoint=f"http:{database}"),
+            _NativeAnalytics(native, database).trajectory_read_probe,
+        ):
+            trajectory_hydration.reset_read_state_cache()
+            denied = _SystemTablesDenied(inner)
+            assert trajectory_read_state(denied.probe) is expected, (schema, inner)
+            assert any("hasColumnInTable" in s for s in denied.statements)
+
+        reader = _reader(http, database)
+        reader._read_state_probe = _SystemTablesDenied(
+            client_read_state_probe(http, endpoint=f"reader:{database}")
+        ).probe
+        trajectory_hydration.reset_read_state_cache()
+        if schema == "pre040":
+            assert reader.list_by_trace(str(uuid.uuid4()), project_id=PROJECT_ID) == []
+        else:
+            case = LONG
+            (span,) = reader.list_by_trace(case["trace_id"], project_id=PROJECT_ID)
+            assert span.input.encode("utf-8") == case["input"].encode("utf-8")
+
+
+@override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=None)
+def test_probe_failure_still_serves_content_free_reads(ch):
+    """A failing probe fails only the calls that read content: an id-only
+    projection runs the dev SQL, which is valid with or without 040."""
+    database, http, _native = ch("040", items=True)
+    reader = _reader(http, database)
+    reader._read_state_probe = SchemaProbe(
+        error=ConnectionError("endpoint down for the probe"),
+        endpoint=f"down:{database}",
+    ).probe
+    case = EXTRACTED[0]
+    rows = reader.list_by_ids(
+        [case["span_id"]], project_id=PROJECT_ID, columns=["id", "trace_id"]
+    )
+    assert [r["id"] for r in rows] == [case["span_id"]]
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        reader.list_by_ids(
+            [case["span_id"]], project_id=PROJECT_ID, columns=["id", "input"]
+        )

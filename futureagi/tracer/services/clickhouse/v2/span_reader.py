@@ -36,7 +36,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -57,13 +57,15 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     CONTENT_UNAVAILABLE_KEY,
     ENCODING_INLINE,
     ENCODING_ITEMS_V1,
+    TRAJECTORY_HYDRATION_COLUMNS,
     TRAJECTORY_SPAN_COLUMNS,
+    TrajectoryHydrationUnavailable,
     TrajectoryReadState,
     content_unavailable_sides,
     hydrate_chspans,
     hydrate_span_dicts,
     items_query_settings,
-    read_state_snapshot,
+    pinned_read_state,
     restore_promoted_attributes,
     restore_promoted_in_attributes_extra,
     trajectory_read_state,
@@ -1073,9 +1075,10 @@ class CHSpanReader:
 
         Only rows inside ``scope`` (the tenant scope the read's SQL applied)
         are hydrated. A row outside it cannot come back from a scoped read;
-        if one does, it is returned as read and logged as
-        ``trajectory_hydration_scope_violation``, never filled from another
-        tenant's items. Order and length are preserved.
+        if one does, it is logged as ``trajectory_hydration_scope_violation``
+        and never filled from another tenant's items: its extracted sides
+        are marked missing (as under the kill switch, with no fetch), so the
+        preview is never labelled inline. Order and length are preserved.
         """
         if not spans:
             return spans
@@ -1092,8 +1095,6 @@ class CHSpanReader:
             for i, span in enumerate(spans):
                 if i not in kept:
                     self._log_scope_violation(scope, span.project_id, span.id)
-            if not allowed:
-                return spans
 
         def _query(sql: str, params: dict[str, Any]):
             return self._client.query(
@@ -1102,9 +1103,20 @@ class CHSpanReader:
 
         if len(allowed) == len(spans):
             return hydrate_chspans(spans, _query, state=state)
-        hydrated = hydrate_chspans([spans[i] for i in allowed], _query, state=state)
+        hydrated = (
+            hydrate_chspans([spans[i] for i in allowed], _query, state=state)
+            if allowed
+            else []
+        )
+        kept = set(allowed)
+        outside = [i for i in range(len(spans)) if i not in kept]
+        unfetched = hydrate_chspans(
+            [spans[i] for i in outside], _query, state=TrajectoryReadState.KILLED
+        )
         out = list(spans)
         for i, span in zip(allowed, hydrated, strict=True):
+            out[i] = span
+        for i, span in zip(outside, unfetched, strict=True):
             out[i] = span
         return out
 
@@ -1125,12 +1137,25 @@ class CHSpanReader:
         if not state.projects_pointers:
             return rows
         in_scope = []
+        outside = []
         for row in rows:
             row_pid = row.get("project_id") or project_id_fallback
             if scope.allows(row_pid, row.get("org_id")):
                 in_scope.append(row)
             else:
                 self._log_scope_violation(scope, row_pid, row.get("id", ""))
+                outside.append(row)
+        if outside:
+            # Never filled from another tenant's items, and never labelled
+            # inline: extracted sides are marked missing, nothing is fetched.
+            hydrate_span_dicts(
+                outside,
+                lambda _sql, _params: [],
+                project_id_fallback=project_id_fallback,
+                attr_key=attr_key,
+                state=TrajectoryReadState.KILLED,
+                surface="span_reader_scope_violation",
+            )
         if not in_scope:
             return rows
 
@@ -2025,7 +2050,7 @@ class CHSpanReader:
             col_set = set(effective_columns)
             if include_traj and (col_set & {"input", "output", "attributes_extra"}):
                 needs_hydration = True
-                extras = ["project_id", *TRAJECTORY_SPAN_COLUMNS]
+                extras = ["project_id", *TRAJECTORY_HYDRATION_COLUMNS]
                 if "attributes_extra" in col_set:
                     extras.extend(["input", "output"])
                 for col in extras:
@@ -2427,6 +2452,32 @@ class CHSpanReader:
         "created_at",
     )
 
+    @staticmethod
+    def _child_tree_packed_sql(
+        cols: Sequence[tuple[str, str]], where: Sequence[str]
+    ) -> str:
+        """The child-tree read with pointers: every column comes from ONE
+        ``argMax`` over a tuple, so two physical rows with an equal
+        ``_version`` (an items_v1 row and its inline copy) never mix into a
+        preview labelled inline. The tuple is unpacked in an outer SELECT,
+        so the output columns stay ``id, trace_id, *cols`` in order."""
+        packed = ", ".join(expr for expr, _alias in cols)
+        unpacked = ", ".join(
+            f"tupleElement(latest_child_row, {i}) AS {alias}"
+            for i, (_expr, alias) in enumerate(cols, start=1)
+        )
+        return (
+            f"SELECT child_id AS id, child_trace_id AS trace_id, {unpacked} "
+            "FROM ("
+            "SELECT id AS child_id, trace_id AS child_trace_id, "
+            f"argMax(tuple({packed}), _version) AS latest_child_row "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id, trace_id "
+            "HAVING argMax(is_deleted, _version) = 0"
+            ") AS latest_child_spans"
+        )
+
     def child_tree_spans_by_trace_ids(
         self,
         trace_ids: list[str],
@@ -2461,10 +2512,6 @@ class CHSpanReader:
         aliases = (
             self._CHILD_TREE_TRAJ_ALIASES if include_traj else self._CHILD_TREE_ALIASES
         )
-        select_exprs = ["id", "trace_id"]
-        for expr, alias in cols:
-            select_exprs.append(f"argMax({expr}, _version) AS {alias}")
-
         where = ["trace_id IN %(tids)s"]
         params: dict[str, Any] = {"tids": tuple(trace_ids)}
         if project_id:
@@ -2474,12 +2521,22 @@ class CHSpanReader:
             where.append("project_id IN %(pids)s")
             params["pids"] = pids
 
+        if include_traj:
+            sql = self._child_tree_packed_sql(cols, where)
+        else:
+            select_exprs = ["id", "trace_id"]
+            for expr, alias in cols:
+                select_exprs.append(f"argMax({expr}, _version) AS {alias}")
+            sql = (
+                f"SELECT {', '.join(select_exprs)} "
+                "FROM spans "
+                f"PREWHERE {' AND '.join(where)} "
+                "GROUP BY id, trace_id "
+                "HAVING argMax(is_deleted, _version) = 0"
+            )
+
         rows = self._client.query(
-            f"SELECT {', '.join(select_exprs)} "
-            "FROM spans "
-            f"PREWHERE {' AND '.join(where)} "
-            "GROUP BY id, trace_id "
-            "HAVING argMax(is_deleted, _version) = 0",
+            sql,
             parameters=params,
             settings={
                 "max_threads": 2,
@@ -3904,7 +3961,7 @@ class CHSpanReader:
             col_set = set(effective_columns)
             if include_traj and (col_set & {"input", "output", "attributes_extra"}):
                 needs_hydration = True
-                extras = ["project_id", *TRAJECTORY_SPAN_COLUMNS]
+                extras = ["project_id", *TRAJECTORY_HYDRATION_COLUMNS]
                 if "attributes_extra" in col_set:
                     extras.extend(["input", "output"])
                 for col in extras:
@@ -4449,13 +4506,35 @@ def _unavailable_marker(obj: Any) -> dict[str, list[str]]:
     return {CONTENT_UNAVAILABLE_KEY: sides} if sides else {}
 
 
+# A projection naming none of these reads no content: its SQL does not
+# depend on 040 beyond the state it is built under.
+_CONTENT_PROJECTION_COLUMNS = frozenset({"input", "output", "attributes_extra"})
+
+
+def _content_free_call(kwargs: dict[str, Any]) -> bool:
+    """The call projects explicit ``columns`` and none of them is content."""
+    columns = kwargs.get("columns")
+    return columns is not None and not (set(columns) & _CONTENT_PROJECTION_COLUMNS)
+
+
 def _with_read_snapshot(method):
     """Resolve the read state once per call and pin it, so the SQL a method
-    builds and the rows it decodes and hydrates see one state."""
+    builds and the rows it decodes and hydrates see one state.
+
+    When the state cannot be resolved (``TrajectoryHydrationUnavailable``),
+    a call whose ``columns`` name no content column still runs, under
+    NOT_READY: that SQL is the dev SQL, valid in every schema state, and
+    carries no preview. Every other call raises."""
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        with read_state_snapshot(self):
+        try:
+            state = trajectory_read_state(self)
+        except TrajectoryHydrationUnavailable:
+            if not _content_free_call(kwargs):
+                raise
+            state = TrajectoryReadState.NOT_READY
+        with pinned_read_state(state):
             return method(self, *args, **kwargs)
 
     return wrapper

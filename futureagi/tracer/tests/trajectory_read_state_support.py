@@ -26,7 +26,9 @@ def _column_row(name: str) -> tuple[str, str, str, str]:
 
 class SchemaProbe:
     """A scripted probe: the columns, the ``trajectory_items`` row count, and
-    optionally an exception, with every statement it was asked recorded."""
+    optionally an exception (``error`` for every statement, ``system_error``
+    for the system-table statements only), with every statement it was
+    asked recorded."""
 
     def __init__(
         self,
@@ -35,12 +37,14 @@ class SchemaProbe:
         table: bool = True,
         total_rows: int | None = 0,
         error: BaseException | None = None,
+        system_error: BaseException | None = None,
         endpoint: str = "fake-probe",
     ):
         self.columns = tuple(columns or ())
         self.table = table
         self.total_rows = total_rows
         self.error = error
+        self.system_error = system_error
         self.endpoint = endpoint
         self.statements: list[str] = []
 
@@ -51,6 +55,17 @@ class SchemaProbe:
         self.statements.append(sql)
         if self.error is not None:
             raise self.error
+        if "system." in sql and self.system_error is not None:
+            raise self.system_error
+        if "currentDatabase()" in sql:
+            return [("fake_db",)]
+        if "hasColumnInTable" in sql:
+            return [
+                tuple(
+                    int(c in self.columns)
+                    for c in trajectory_hydration.TRAJECTORY_SPAN_COLUMNS
+                )
+            ]
         if "system.columns" in sql:
             return [_column_row(name) for name in self.columns]
         if "system.tables" in sql:

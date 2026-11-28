@@ -26,7 +26,7 @@ _TRACES_SPAN_COLUMNS = (
 
 _TRACES_SPAN_COLUMNS_WITH_TRAJ = (
     _TRACES_SPAN_COLUMNS + ", input_item_hashes, output_item_hashes, tool_def_hashes, "
-    "item_scope_id, payload_encoding, payload_envelope"
+    "item_scope_id, payload_encoding, payload_envelope, created_at"
 )
 
 
@@ -157,13 +157,15 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
             trace_messages.5 AS tool_def_hashes,
             trace_messages.6 AS item_scope_id,
             trace_messages.7 AS payload_encoding,
-            trace_messages.8 AS payload_envelope"""
+            trace_messages.8 AS payload_envelope,
+            trace_messages.9 AS created_at"""
         if include_traj
         else ""
     )
     msg_tuple = (
         "tuple(input, output, input_item_hashes, output_item_hashes, "
-        "tool_def_hashes, item_scope_id, payload_encoding, payload_envelope)"
+        "tool_def_hashes, item_scope_id, payload_encoding, payload_envelope, "
+        "created_at)"
         if include_traj
         else "tuple(input, output)"
     )

@@ -33,6 +33,7 @@ from tracer.services.clickhouse.v2.span_reader import (
 )
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_ITEMS_V1,
+    content_unavailable_sides,
     payload_checksum,
 )
 from tracer.tests.trajectory_read_state_support import install_default_schema_probe
@@ -300,6 +301,8 @@ def test_hydration_never_fills_a_row_outside_the_read_scope(settings, caplog):
     assert [s.id for s in spans] == ["own", "foreign"]  # order and length kept
     assert json.loads(spans[0].input) == [{"role": "user", "content": "own question"}]
     assert spans[1].input == "preview..."
+    # The foreign row's preview is marked, never labelled inline.
+    assert "input" in content_unavailable_sides(spans[1])
     item_reads = [p for sql, p, _ in client.calls if "FROM trajectory_items" in sql]
     assert [p["traj_project_id"] for p in item_reads] == [OWN]
     assert "trajectory_hydration_scope_violation" in caplog.text
@@ -342,6 +345,7 @@ def test_child_tree_rows_outside_the_scope_are_not_hydrated(settings, caplog):
         {"role": "user", "content": "own question"}
     ]
     assert by_id["foreign"]["input"] == "preview..."
+    assert "input" in content_unavailable_sides(by_id["foreign"])
     item_reads = [p for sql, p, _ in client.calls if "FROM trajectory_items" in sql]
     assert [p["traj_project_id"] for p in item_reads] == [OWN]
     assert "trajectory_hydration_scope_violation" in caplog.text

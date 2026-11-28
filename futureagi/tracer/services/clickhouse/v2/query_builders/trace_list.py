@@ -739,12 +739,12 @@ class _TraceRootReplayV2:
             fields += self._root_replay_content_fields()
             if include_trajectory:
                 from tracer.services.clickhouse.v2.trajectory_hydration import (
-                    TRAJECTORY_SPAN_COLUMNS,
+                    TRAJECTORY_HYDRATION_COLUMNS,
                     trajectory_read_state,
                 )
 
                 if trajectory_read_state().projects_pointers:
-                    fields += [(col, col) for col in TRAJECTORY_SPAN_COLUMNS]
+                    fields += [(col, col) for col in TRAJECTORY_HYDRATION_COLUMNS]
         else:
             fields += [
                 ("trace_name", "trace_name"),

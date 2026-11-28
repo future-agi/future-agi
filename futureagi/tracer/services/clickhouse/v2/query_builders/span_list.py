@@ -1006,13 +1006,13 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         )
         if include_trajectory:
             from tracer.services.clickhouse.v2.trajectory_hydration import (
-                TRAJECTORY_SPAN_COLUMNS,
+                TRAJECTORY_HYDRATION_COLUMNS,
                 trajectory_read_state,
             )
 
             if trajectory_read_state().projects_pointers:
                 content_columns_sql = (
-                    f"{content_columns_sql}, {', '.join(TRAJECTORY_SPAN_COLUMNS)}"
+                    f"{content_columns_sql}, {', '.join(TRAJECTORY_HYDRATION_COLUMNS)}"
                 )
         source = self._filter_match_source_sql(
             scope, consumer_sql=f"{content_columns_sql} {project_version}"
