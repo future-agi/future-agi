@@ -9,11 +9,15 @@ import asyncio
 import json
 import re
 import time
+import uuid
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
+from asgiref.sync import sync_to_async
+from django.core import signing
 from livekit.api import (  # type: ignore[attr-defined]
     CreateAgentDispatchRequest,
     ListRoomsRequest,
@@ -39,6 +43,7 @@ from ee.voice.services.types.voice import (
     TranscriptMessage,
 )
 from ee.voice.services.voice_engine import VoiceServiceBlueprint
+from tfc.utils.media_tools import find_media_tool_unavailable
 from tracer.models.observability_provider import ProviderChoices
 
 if TYPE_CHECKING:
@@ -53,6 +58,173 @@ _THREAD_POOL_TIMEOUT = 120  # seconds
 
 AGENT_NAME = "voice-simulator"
 PROVIDER_KEY = ProviderChoices.LIVEKIT.value  # "livekit"
+
+
+RECORDING_SPLIT_FAILED = "recording_split_failed"
+
+
+class _RecordingSource(TypedDict):
+    call_id: str
+    egress_id: str
+
+
+class _TrackReceipt(_RecordingSource):
+    url: str
+
+
+class _CleanupConfirmation(_RecordingSource):
+    recording: dict[str, str]
+
+
+def _verified_tracks(
+    lk: dict[str, Any], identity: _RecordingSource, kinds: Iterable[str]
+) -> dict[str, str]:
+    """Read verified outputs, never infer identity from a playback URL."""
+    visible = lk.get("recording")
+    source = lk.get("recording_source")
+    if not isinstance(visible, dict) or (source is not None and source != identity):
+        return {}
+    receipts = lk.get("verified_recording_tracks")
+    tracks = {}
+    for kind in kinds:
+        url = visible.get(kind)
+        if not isinstance(url, str) or not url.strip():
+            continue
+        if isinstance(receipts, dict):
+            if receipts.get(kind) == _TrackReceipt(**identity, url=url):
+                tracks[kind] = url
+        elif receipts is None and source == identity:
+            # Previous whole-map format proves track origin, not column authorship.
+            tracks[kind] = url
+    return tracks
+
+
+def _source_for_call(value, call_id: str) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"call_id", "egress_id"}
+        and value["call_id"] == call_id
+        and isinstance(value["egress_id"], str)
+        and bool(value["egress_id"].strip())
+    )
+
+
+@sync_to_async
+def _recording_tenant(call):
+    run = call.test_execution.run_test
+    return {
+        "organization_id": str(run.organization_id),
+        "workspace_id": str(run.workspace_id) if run.workspace_id else None,
+    }
+
+
+def _source_tracks(lk, tenant, identity, fields):
+    history = lk.get("recording_history")
+    egress = identity["egress_id"]
+    if not isinstance(egress, str):
+        return {}
+    entry = history.get(egress) if isinstance(history, dict) else None
+    binding = {**tenant, **identity}
+    archived = {}
+    if isinstance(entry, dict) and entry.get("source") == binding:
+        urls = entry.get("tracks")
+        if isinstance(urls, dict):
+            archived = {
+                k: v
+                for k, v in urls.items()
+                if k in fields and isinstance(v, str) and v.strip()
+            }
+    return {**archived, **_verified_tracks(lk, identity, fields)}
+
+
+def _merge_track_view(lk, tenant, identity, fields, merged):
+    """Archive verified origins independently of the last visible URL per kind."""
+    updated = lk.copy()
+    original = lk.get("recording")
+    visible = original.copy() if isinstance(original, dict) else {}
+    source = lk.get("recording_source")
+    prior = lk.get("verified_recording_tracks")
+    receipts = prior.copy() if isinstance(prior, dict) else {}
+    history = lk.get("recording_history")
+    history = history.copy() if isinstance(history, dict) else {}
+    origins = [source]
+    if isinstance(prior, dict):
+        origins.extend(
+            {k: receipt.get(k) for k in ("call_id", "egress_id")}
+            for receipt in prior.values()
+            if isinstance(receipt, dict)
+        )
+    for origin in origins:
+        # Upgrade only explicitly bound whole maps or matching per-kind receipts.
+        if not _source_for_call(origin, identity["call_id"]):
+            continue
+        previous = _verified_tracks(lk, origin, fields)
+        if previous:
+            history[origin["egress_id"]] = {
+                "source": {**tenant, **origin},
+                "tracks": _source_tracks(lk, tenant, origin, fields),
+            }
+            receipts.update(
+                {k: _TrackReceipt(**origin, url=v) for k, v in previous.items()}
+            )
+    if merged:
+        history[identity["egress_id"]] = {
+            "source": {**tenant, **identity},
+            "tracks": merged,
+        }
+    if history:
+        updated["recording_history"] = history
+        updated["recording_scope"] = {**tenant, "call_id": identity["call_id"]}
+    visible.update(merged)
+    updated["recording"] = visible
+    receipts.update({k: _TrackReceipt(**identity, url=v) for k, v in merged.items()})
+    if receipts:
+        updated["verified_recording_tracks"] = receipts
+    else:
+        updated.pop("verified_recording_tracks", None)
+    if visible == merged and merged:
+        updated["recording_source"] = identity
+    elif merged:
+        updated.pop("recording_source", None)
+    for kind in ("assistant", "customer"):
+        if kind in merged:
+            updated[fields[kind]] = merged[kind]
+    return updated
+
+
+def _owns_playback(owner, tracks, name, call_id, url) -> bool:
+    # A produced track need never have been installed in the playback column.
+    # Require both the actual column-write receipt and its matching track.
+    return (
+        isinstance(owner, dict)
+        and owner.get("call_id") == call_id
+        and isinstance(owner.get("egress_id"), str)
+        and bool(owner["egress_id"].strip())
+        and owner.get("url") == url
+        and isinstance(tracks, dict)
+        and owner == tracks.get(name)
+    )
+
+
+def _recording_error(failures: dict[str, Exception]) -> dict[str, Any]:
+    """What provider_call_data records when recording tracks failed.
+
+    A missing ffmpeg keeps its named message and code. Other errors (storage,
+    an ffmpeg exit) get a fixed message: their text can carry bucket paths
+    or ffmpeg output, which stay in the logs."""
+    for exc in failures.values():
+        missing = find_media_tool_unavailable(exc)
+        if missing is not None:
+            return {
+                "code": missing.code,
+                "message": str(missing),
+                "tracks": sorted(failures),
+            }
+    return {
+        "code": RECORDING_SPLIT_FAILED,
+        "message": "Some call recording tracks could not be created.",
+        "tracks": sorted(failures),
+    }
 
 
 def _room_name(call_id: str) -> str:
@@ -626,7 +798,6 @@ class LivekitService(VoiceServiceBlueprint):
         utterance end times, we estimate speech duration from word count
         and the persona's conversation_speed (stored in call_metadata).
         """
-        from asgiref.sync import sync_to_async
 
         from simulate.models.test_execution import CallExecution, CallTranscript
 
@@ -723,16 +894,16 @@ class LivekitService(VoiceServiceBlueprint):
           4. Store assistant/customer URLs in provider_call_data
           5. Clean up raw egress file from S3
         """
+        from livekit.api import ListEgressRequest
         from livekit.protocol.egress import EgressStatus
 
-        from simulate.models.test_execution import CallExecution
         from ee.voice.services.livekit.recording import (
             delete_egress_recording,
             poll_egress_completion,
             stream_egress_to_s3,
         )
+        from simulate.models.test_execution import CallExecution
 
-        result = RecordingUrls()
         call_id_str = str(call_execution_id)
 
         call = await CallExecution.objects.aget(id=call_execution_id)
@@ -743,9 +914,420 @@ class LivekitService(VoiceServiceBlueprint):
         )
         egress_id = provider_data.get("egress_id")
 
-        if not egress_id:
+        # fetch_and_store_call_data may already have replaced egress_id. Bind
+        # the outputs to their source independently of that mutable field.
+        identity = _RecordingSource(call_id=call_id_str, egress_id=egress_id)
+        fields = {
+            "stereo": "stereo_recording_url",
+            "combined": "recording_url",
+            "assistant": "assistant_recording_url",
+            "customer": "customer_recording_url",
+        }
+        saved = provider_data.get("recording")
+        source = provider_data.get("recording_source")
+        valid_source = _source_for_call(source, call_id_str)
+        playback_fields = (
+            "recording_url",
+            "stereo_recording_url",
+            "recording_available",
+        )
+        # Snapshot before any external I/O. A CAS retry may refresh its SQL
+        # predicate, but must never adopt a peer's playback change as our baseline.
+        initial_playback = {key: getattr(call, key) for key in playback_fields}
+        tenant = await _recording_tenant(call)
+        scope = {**tenant, "call_id": call_id_str}
+        if provider_data.get("recording_scope", scope) != scope:
+            return RecordingUrls(
+                recording_fields_persisted=True,
+                error={
+                    "code": "recording_source_changed",
+                    "message": "Recording scope changed.",
+                    "tracks": [],
+                },
+            )
+        tracks = _source_tracks(provider_data, tenant, identity, fields)
+        if (
+            not valid_source
+            and not tracks
+            and (call.recording_url or call.stereo_recording_url)
+            and isinstance(saved, dict)
+            and all(isinstance(saved.get(k), str) and saved[k].strip() for k in fields)
+        ):
+            # Legacy object keys include the call ID but not the egress ID. The
+            # egress-ended webhook can replace egress_id before the feeder even
+            # reads this row. Neither its current value nor room_name proves
+            # which egress produced these four tracks. Leave the completed call
+            # visible; return no URLs or metadata update for the activity to save.
+            return RecordingUrls(
+                recording_fields_persisted=True,
+                error={
+                    "code": "recording_source_unverified",
+                    "message": "Existing call recordings were kept; their egress could not be verified.",
+                    "tracks": [],  # no split was attempted
+                },
+            )
+        if not isinstance(egress_id, str) or not egress_id.strip():
             logger.warning("livekit_no_egress_id", call_id=call_id_str)
-            return result
+            return RecordingUrls(recording_fields_persisted=True)
+        # Bridges can expose a customer-side display ID; egress still runs
+        # in call_<id>. SIP outbound can instead use the persisted SIP room.
+        call_rooms = {_room_name(call_id_str)}
+        if call.service_provider_call_id and call.service_provider_call_id.startswith(
+            "sip_"
+        ):
+            call_rooms.add(call.service_provider_call_id)
+
+        def source_key(info):
+            if (
+                info
+                and info.egress_id == egress_id
+                and info.room_name in call_rooms
+                and info.status == EgressStatus.EGRESS_COMPLETE
+                and info.file_results
+            ):
+                key = info.file_results[0].filename
+                return key if isinstance(key, str) and key.strip() else None
+            return None
+
+        uploaded: dict[str, str] = {}
+        upload_keys: dict[str, str] = {}
+        failures: dict[str, Exception] = {}
+
+        signer = signing.Signer(salt="livekit.raw-cleanup.v1")
+        intent_field = "recording_cleanup_intent"
+
+        def intent_binding(complete):
+            return {
+                **tenant,
+                **identity,
+                "version": 1,
+                "recording": complete,
+                "room": call.service_provider_call_id,
+                "bucket": str(self.config.egress_bucket),
+            }
+
+        def verified_intent_key(token, complete):
+            if not isinstance(token, str) or complete.keys() != fields.keys():
+                return None
+            try:
+                payload = signer.unsign_object(token)
+            except signing.BadSignature:
+                return None
+            if not isinstance(payload, dict):
+                return None
+            key = payload.pop("key", None)
+            if (
+                payload == intent_binding(complete)
+                and isinstance(key, str)
+                and key.strip()
+            ):
+                return key
+            return None
+
+        async def persist(
+            *,
+            cleanup_tracks=None,
+            cleanup_error=None,
+            reuse_confirmation=False,
+            prepare_key=None,
+            expected_intent=None,
+            discovery_failed=False,
+        ):
+            # Only the read/compare/update is retried. Never hold a row lock
+            # over LiveKit, S3, or the activity's subsequent cost lookup.
+            cas_misses = 0
+            while True:
+                current = await CallExecution.objects.aget(id=call_execution_id)
+                data = current.provider_call_data or {}
+                lk = data.get(PROVIDER_KEY, {})
+                source = lk.get("recording_source")
+                current_map = lk.get("recording")
+                verified = _source_tracks(lk, tenant, identity, fields)
+                bound = source == identity or bool(verified)
+                if (
+                    current.service_provider_call_id != call.service_provider_call_id
+                    or lk.get("egress_id") != egress_id
+                    or lk.get("recording_scope", scope) != scope
+                    or current.test_execution_id != call.test_execution_id
+                    or await _recording_tenant(current) != tenant
+                    or (
+                        cleanup_tracks is not None
+                        and (
+                            _verified_tracks(lk, identity, fields) != cleanup_tracks
+                            or current_map != cleanup_tracks
+                            or (
+                                expected_intent is not None
+                                and lk.get(intent_field) != expected_intent
+                            )
+                            or (
+                                reuse_confirmation
+                                and lk.get("recording_cleanup_success")
+                                != _CleanupConfirmation(
+                                    **identity, recording=cleanup_tracks
+                                )
+                            )
+                        )
+                    )
+                ):
+                    logger.warning(
+                        "livekit_superseded_recording_retained",
+                        call_id=call_id_str,
+                        egress_id=egress_id,
+                        retained_output_keys=list(upload_keys.values()),
+                    )
+                    return RecordingUrls(
+                        provider_call_data=data,
+                        recording_fields_persisted=True,
+                        error={
+                            "code": "recording_source_changed",
+                            "message": "Source changed; current recordings were kept.",
+                            "tracks": [],
+                        },
+                    )
+
+                merged = {**uploaded, **verified}
+                updated = lk.copy()
+                confirmation = _CleanupConfirmation(**identity, recording=merged)
+                confirmed = (
+                    merged.keys() == fields.keys()
+                    and current_map == merged
+                    and _verified_tracks(lk, identity, fields) == merged
+                    and lk.get("recording_cleanup_success") == confirmation
+                )
+                error = cleanup_error
+                if cleanup_tracks is None:
+                    updated = _merge_track_view(lk, tenant, identity, fields, merged)
+                    if (
+                        not confirmed
+                        and merged.keys() == fields.keys()
+                        and object_key
+                        and not verified_intent_key(lk.get(intent_field), merged)
+                    ):
+                        updated[intent_field] = signer.sign_object(
+                            {**intent_binding(merged), "key": object_key}
+                        )
+                    if not confirmed:
+                        updated.pop("recording_cleanup_success", None)
+                    missing = {
+                        name: failures.get(name, ValueError("Missing recording track"))
+                        for name in ("mono", "stereo", "assistant", "customer")
+                        if ("combined" if name == "mono" else name) not in merged
+                    }
+                    error = _recording_error(missing) if missing else None
+                    prior_error = lk.get("recording_error")
+                    if (
+                        not missing
+                        and bound
+                        and current_map == merged
+                        and not confirmed
+                        and isinstance(prior_error, dict)
+                        and prior_error.get("code") == "recording_cleanup_failed"
+                    ):
+                        error = prior_error
+                elif confirmed:
+                    error = None  # A later timeout cannot undo a confirmed deletion.
+                elif discovery_failed and verified_intent_key(
+                    lk.get(intent_field), cleanup_tracks
+                ):
+                    # Discovery raced a peer's prepare. Return its verified token
+                    # for one delete, not a confirmation or a stale lookup error.
+                    return RecordingUrls(
+                        provider_call_data=data, recording_fields_persisted=True
+                    )
+                elif prepare_key is not None:
+                    updated["recording_scope"] = scope
+                    if not verified_intent_key(lk.get(intent_field), merged):
+                        updated[intent_field] = signer.sign_object(
+                            {**intent_binding(merged), "key": prepare_key}
+                        )
+                elif cleanup_error is None:
+                    updated["recording_cleanup_success"] = confirmation
+                else:
+                    updated.pop("recording_cleanup_success", None)
+                if error:
+                    updated["recording_error"] = error
+                else:
+                    updated.pop("recording_error", None)
+
+                result = RecordingUrls(
+                    **{field: merged.get(name) for name, field in fields.items()},
+                    recording_fields_persisted=True,
+                    error=error,
+                )
+                changes: dict[str, Any] = {}
+                predicate = {
+                    "id": call_execution_id,
+                    "test_execution_id": call.test_execution_id,
+                    "provider_call_data": current.provider_call_data,
+                    "service_provider_call_id": current.service_provider_call_id,
+                }
+                if cleanup_tracks is None:
+                    observed = {key: getattr(current, key) for key in playback_fields}
+                    predicate.update(observed, call_metadata=current.call_metadata)
+                    metadata = current.call_metadata
+                    artifacts = (
+                        metadata.get("alk_recording_artifacts")
+                        if isinstance(metadata, dict)
+                        else None
+                    )
+                    # Merge the source-bound map independently of playback.
+                    # A peer's column wins even if it never touched provider JSON.
+                    owners = lk.get("recording_playback_writes")
+                    owners = owners.copy() if isinstance(owners, dict) else {}
+                    for name in ("combined", "stereo"):
+                        field = fields[name]
+                        # An ALK upload can predate this attempt. Its per-kind
+                        # receipt owns only the matching URL on this call.
+                        artifact = (
+                            artifacts.get(name) if isinstance(artifacts, dict) else None
+                        )
+                        owner = owners.get(name)
+                        if not _owns_playback(
+                            owner,
+                            lk.get("verified_recording_tracks"),
+                            name,
+                            call_id_str,
+                            observed[field],
+                        ):
+                            owners.pop(name, None)
+                        if (
+                            isinstance(artifact, dict)
+                            and artifact.get("sha256")
+                            and artifact.get("object_key")
+                            and observed[field]
+                            and artifact.get("recording_url") == observed[field]
+                        ):
+                            owners.pop(name, None)
+                            continue
+                        value = merged.get(name)
+                        if (
+                            value
+                            and observed[field] == initial_playback[field] != value
+                            and (not observed[field] or name in owners)
+                        ):
+                            changes[field] = value
+                            owners[name] = _TrackReceipt(**identity, url=value)
+                    if owners:
+                        updated["recording_playback_writes"] = owners
+                    else:
+                        updated.pop("recording_playback_writes", None)
+                    available = any(
+                        changes.get(field, observed[field])
+                        for field in playback_fields[:2]
+                    )
+                    if observed["recording_available"] != available:
+                        changes["recording_available"] = available
+                if updated != lk:
+                    changes["provider_call_data"] = {**data, PROVIDER_KEY: updated}
+                if changes and cleanup_tracks is not None and cas_misses >= 3:
+                    # A continuously changing row wins. Do not keep retrying its
+                    # error/receipt write, or claim the proposed write succeeded.
+                    result.provider_call_data = data
+                    result.error = {
+                        "code": "recording_source_changed",
+                        "message": "Recording state changed; current recordings were kept.",
+                        "tracks": [],
+                    }
+                    return result
+                if changes and not await CallExecution.objects.filter(
+                    **predicate
+                ).aupdate(**changes):
+                    cas_misses += 1
+                    continue
+                if cleanup_tracks is None:
+                    unused = [
+                        upload_keys[k] for k in uploaded if uploaded[k] != merged[k]
+                    ]
+                    if unused:
+                        logger.warning(
+                            "livekit_duplicate_recording_retained",
+                            call_id=call_id_str,
+                            egress_id=egress_id,
+                            retained_output_keys=unused,
+                        )
+                result.provider_call_data = changes.get("provider_call_data", data)
+                return result
+
+        async def cleanup(snapshot, object_key=None):
+            complete = snapshot["recording"]
+            if snapshot.get("recording_cleanup_success") == _CleanupConfirmation(
+                **identity, recording=complete
+            ):
+                return await persist(cleanup_tracks=complete, reuse_confirmation=True)
+            token = snapshot.get(intent_field)
+            durable_key = verified_intent_key(token, complete)
+            failure = {
+                "code": "recording_cleanup_failed",
+                "message": "Tracks are available; raw recording cleanup could not be confirmed.",
+                "tracks": [],
+            }
+            if durable_key is None:
+                if object_key is None:
+                    # A pre-intent map needs either verified provider evidence
+                    # or an exact-map intent installed while discovery awaited.
+                    try:
+                        api = self._create_api()
+                        try:
+                            response = await api.egress.list_egress(
+                                ListEgressRequest(egress_id=egress_id)
+                            )
+                            for info in response.items:
+                                object_key = source_key(info)
+                                if object_key:
+                                    break
+                        finally:
+                            await api.aclose()
+                    except Exception:  # noqa: BLE001 - recheck durable evidence after provider failure
+                        object_key = None
+                prepared = await persist(
+                    cleanup_tracks=complete,
+                    prepare_key=object_key,
+                    discovery_failed=not object_key,
+                    cleanup_error=None if object_key else failure,
+                )
+                if prepared.error:
+                    return prepared
+                pending = prepared.provider_call_data[PROVIDER_KEY]
+                if pending.get("recording_cleanup_success") == _CleanupConfirmation(
+                    **identity, recording=complete
+                ):
+                    return prepared
+                token = pending.get(intent_field)
+                durable_key = verified_intent_key(token, complete)
+                if not durable_key:
+                    # No valid authority: never delete or report success.
+                    prepared.error = failure
+                    return prepared
+            error = None
+            try:
+                # S3 DeleteObject succeeds for a missing key. No HEAD/GET race.
+                await asyncio.to_thread(
+                    delete_egress_recording, self.config, durable_key
+                )
+            except Exception:  # noqa: BLE001 - cleanup must not discard completed tracks
+                logger.warning(
+                    "livekit_egress_cleanup_failed",
+                    call_id=call_id_str,
+                    egress_id=egress_id,
+                )
+                error = failure
+            return await persist(
+                cleanup_tracks=complete,
+                cleanup_error=error,
+                expected_intent=token,
+            )
+
+        if tracks.keys() == fields.keys():
+            if (
+                saved == tracks
+                and _verified_tracks(provider_data, identity, fields) == tracks
+            ):
+                return await cleanup(provider_data)
+            object_key = None
+            restored = await persist()
+            if restored.error:
+                return restored
+            return await cleanup(restored.provider_call_data[PROVIDER_KEY])
 
         # 1. Stop egress (it stays ACTIVE until explicitly stopped), then poll
         lkapi = self._create_api()
@@ -783,9 +1365,8 @@ class LivekitService(VoiceServiceBlueprint):
                     getattr(egress_info, "error_code", None) if egress_info else None
                 ),
             )
-            return result
-
-        if not egress_info.file_results:
+            object_key = None
+        elif not egress_info.file_results:
             logger.warning(
                 "livekit_egress_no_file_results",
                 call_id=call_id_str,
@@ -793,14 +1374,14 @@ class LivekitService(VoiceServiceBlueprint):
                 status=egress_info.status,
                 error=str(egress_info.error),
             )
-            return result
-
-        object_key = egress_info.file_results[0].filename
+            object_key = None
+        else:
+            object_key = source_key(egress_info)
         loop = asyncio.get_running_loop()
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        s3_prefix = f"call-recordings/{call_id_str}/{ts}"
+        s3_prefix = f"call-recordings/{call_id_str}/{egress_id}/{ts}-{uuid.uuid4().hex}"
 
-        # 2. Stream all 4 tracks concurrently (each reads from S3 independently).
+        # 2. Stream missing tracks concurrently (each reads from S3 independently).
         #    return_exceptions=True so one failure doesn't cancel the others.
         track_specs = [
             ("stereo", f"{s3_prefix}_stereo_recording.mp3", None),
@@ -821,71 +1402,76 @@ class LivekitService(VoiceServiceBlueprint):
             ),
         ]
 
-        results = await asyncio.gather(
-            *(
-                loop.run_in_executor(
-                    None, stream_egress_to_s3, self.config, object_key, s3_key, ffargs
-                )
-                for _, s3_key, ffargs in track_specs
-            ),
-            return_exceptions=True,
-        )
-
-        for (track_name, _, _), outcome in zip(track_specs, results):
-            if isinstance(outcome, Exception):
-                logger.exception(
-                    "livekit_stream_failed",
-                    call_id=call_id_str,
-                    track=track_name,
-                    exc_info=outcome,
-                )
-                continue
-            if track_name == "stereo":
-                result.stereo_recording_url = outcome
-            elif track_name == "mono":
-                result.recording_url = outcome
-            elif track_name == "assistant":
-                result.assistant_recording_url = outcome
-            elif track_name == "customer":
-                result.customer_recording_url = outcome
-
-        # 6. Store recording URLs in provider_call_data.
-        # Individual keys for internal use, plus a "recording" dict with the
-        # standard keys (stereo/assistant/customer/combined) that the
-        # CallExecutionDetailSerializer.get_recordings() returns to the frontend.
-        existing_data = call.provider_call_data or {}
-        lk_data = existing_data.get(PROVIDER_KEY, {})
-        if result.assistant_recording_url:
-            lk_data["assistant_recording_url"] = result.assistant_recording_url
-        if result.customer_recording_url:
-            lk_data["customer_recording_url"] = result.customer_recording_url
-
-        recording_dict: dict[str, str] = {}
-        if result.stereo_recording_url:
-            recording_dict["stereo"] = result.stereo_recording_url
-        if result.assistant_recording_url:
-            recording_dict["assistant"] = result.assistant_recording_url
-        if result.customer_recording_url:
-            recording_dict["customer"] = result.customer_recording_url
-        if result.recording_url:
-            recording_dict["combined"] = result.recording_url
-        lk_data["recording"] = recording_dict
-
-        existing_data[PROVIDER_KEY] = lk_data
-        call.provider_call_data = existing_data
-        await call.asave(update_fields=["provider_call_data"])
-
-        # 7. Cleanup: delete raw egress file from S3
-        try:
-            await loop.run_in_executor(
-                None, delete_egress_recording, self.config, object_key
+        track_specs = [
+            spec
+            for spec in track_specs
+            if ("combined" if spec[0] == "mono" else spec[0]) not in tracks
+        ]
+        if object_key:
+            results = await asyncio.gather(
+                *(
+                    loop.run_in_executor(
+                        None,
+                        stream_egress_to_s3,
+                        self.config,
+                        object_key,
+                        s3_key,
+                        ffargs,
+                    )
+                    for _, s3_key, ffargs in track_specs
+                ),
+                return_exceptions=True,
             )
-        except Exception:
+        else:
+            results = [ValueError("No completed egress source") for _ in track_specs]
+
+        for (track_name, destination, _), outcome in zip(
+            track_specs, results, strict=True
+        ):
+            if isinstance(outcome, BaseException) and not isinstance(
+                outcome, Exception
+            ):
+                raise outcome
+            if not isinstance(outcome, Exception) and not (
+                isinstance(outcome, str) and outcome.strip()
+            ):
+                outcome = ValueError("Recording upload returned no URL")
+            if isinstance(outcome, Exception):
+                failures[track_name] = outcome
+                missing = find_media_tool_unavailable(outcome)
+                if missing is not None:
+                    # The named message is the whole story; no traceback.
+                    logger.error(
+                        "livekit_stream_failed",
+                        call_id=call_id_str,
+                        track=track_name,
+                        code=missing.code,
+                        missing_tool=missing.tool,
+                        error=str(missing),
+                    )
+                else:
+                    logger.exception(
+                        "livekit_stream_failed",
+                        call_id=call_id_str,
+                        track=track_name,
+                        exc_info=outcome,
+                    )
+                continue
+            name = "combined" if track_name == "mono" else track_name
+            uploaded[name] = outcome
+            upload_keys[name] = destination
+
+        result = await persist()
+        if result.error and result.error["code"] != "recording_cleanup_failed":
             logger.warning(
-                "livekit_egress_cleanup_failed",
+                "livekit_egress_cleanup_skipped",
                 call_id=call_id_str,
                 object_key=object_key,
+                failed_tracks=result.error["tracks"],
+                code=result.error["code"],
             )
+        else:
+            result = await cleanup(result.provider_call_data[PROVIDER_KEY], object_key)
 
         logger.info(
             "livekit_recordings_processed",
@@ -894,6 +1480,7 @@ class LivekitService(VoiceServiceBlueprint):
             stereo_recording_url=bool(result.stereo_recording_url),
             assistant_recording_url=bool(result.assistant_recording_url),
             customer_recording_url=bool(result.customer_recording_url),
+            recording_error=result.error["code"] if result.error else None,
         )
 
         return result
@@ -905,8 +1492,8 @@ class LivekitService(VoiceServiceBlueprint):
         pricing rates.  LLM rates come from litellm; STT/TTS/storage rates
         are configured in ``simulate.services.livekit.pricing.RATES``.
         """
-        from simulate.models.test_execution import CallExecution
         from ee.voice.services.livekit.pricing import calculate_call_costs
+        from simulate.models.test_execution import CallExecution
 
         call = await CallExecution.objects.aget(id=call_execution_id)
         provider_data = (
@@ -953,7 +1540,6 @@ class LivekitService(VoiceServiceBlueprint):
 
         Returns (message_count, has_agent_message, has_customer_message).
         """
-        from asgiref.sync import sync_to_async
 
         from simulate.models.test_execution import CallExecution, CallTranscript
 

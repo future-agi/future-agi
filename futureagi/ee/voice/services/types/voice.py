@@ -215,3 +215,9 @@ class RecordingUrls:
     assistant_recording_url: str | None = None
     customer_recording_url: str | None = None
     provider_call_data: dict[str, Any] | None = None
+    # Set when some tracks could not be made: {"code", "message", "tracks"}.
+    # ``code`` is "ffmpeg_unavailable" when ffmpeg is missing from the image.
+    error: dict[str, Any] | None = None
+    # When true, URLs above describe engine tracks, NOT a request to replace
+    # authoritative playback columns. The engine already merged or preserved them.
+    recording_fields_persisted: bool = False

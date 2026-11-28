@@ -20,6 +20,16 @@ _PAYLOAD_PROVIDER_ORDER = (
 )
 
 
+def public_provider_call_data(data):
+    """Project LiveKit retention state without changing the stored provider payload."""
+    key = ProviderChoices.LIVEKIT.value
+    livekit = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(livekit, dict):
+        return data
+    private = {"recording_cleanup_intent", "recording_history", "recording_scope"}
+    return {**data, key: {k: v for k, v in livekit.items() if k not in private}}
+
+
 def record_hosted_voice_target(calls, version, provider: str) -> None:
     """Stamp only this dispatch's precreated rows. /batch adopts them in place."""
     calls.update(
