@@ -922,9 +922,13 @@ class TestEvalScoreMaterialization:
         """One eval, three widgets: the time series, the breakdown label and the
         filter have to reach the same verdict on the same row.
         """
+        from tracer.services.clickhouse.eval_expressions import (
+            eval_output_presence_expr,
+        )
         from tracer.services.clickhouse.query_builders.dashboard import (
             DashboardQueryBuilder,
         )
+        from tracer.services.clickhouse.schema import EVAL_OUTPUT_JSON_ARGS
 
         client = ch_eval_output_rows["client"]
         source_id = ch_eval_output_rows["all_shapes_source_id"]
@@ -957,10 +961,19 @@ class TestEvalScoreMaterialization:
         time_series_passes = sum(row[1] for row in _run(sql, params))
 
         label_expr = builder._resolve_all_breakdowns({})[0]["expr"]
+        # The label reads the election's verdict flag (TH-10545), so stand in
+        # for the elected relation with the columns it reads, by name:
+        # SELECT * would leave out the MATERIALIZED eval columns.
+        has_verdict = eval_output_presence_expr(EVAL_OUTPUT_JSON_ARGS, "PASS_FAIL")
+        elected = (
+            "SELECT id, reference_id, source_id, eval_trace_id, eval_score, "
+            f"eval_output_str, {has_verdict} AS eval_has_verdict "
+            "FROM usage_apicalllog"
+        )
         breakdown_passes = {
             label
             for label, verdict in _run(
-                f"SELECT reference_id, {label_expr} FROM usage_apicalllog AS ev0 "
+                f"SELECT reference_id, {label_expr} FROM ({elected}) AS ev0 "
                 f"WHERE source_id = '{source_id}'"
             )
             if verdict == "Passed"
