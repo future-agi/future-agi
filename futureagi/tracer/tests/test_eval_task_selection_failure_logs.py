@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from asgiref.sync import async_to_sync
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, TimeoutType
+from temporalio.exceptions import TimeoutError as ActivityTimeoutError
 from temporalio.testing import ActivityEnvironment
 
 from tfc.temporal.eval_tasks import activities, workflows
@@ -39,8 +40,20 @@ BUDGET_REASON = (
         ),
         (
             RunType.HISTORICAL,
-            ApplicationError("private query text", type="UnknownReconcileFailure"),
-            GENERIC_REASON,
+            ApplicationError(BUDGET_REASON, type="EvalTaskDatabaseUnavailable"),
+            None,
+        ),
+        (
+            RunType.HISTORICAL,
+            ApplicationError("lease in use", type="SamplingReconcileBusy"),
+            None,
+        ),
+        (
+            RunType.HISTORICAL,
+            ActivityTimeoutError(
+                "worker timed out", type=TimeoutType.HEARTBEAT, last_heartbeat_details=[]
+            ),
+            None,
         ),
     ],
 )
@@ -67,7 +80,7 @@ def test_failed_selection_reason_in_empty_logs(
         assert name == "reconcile_eval_task_activity"
         try:
             return await env.run(activities.reconcile_eval_task_activity, arg)
-        except ApplicationError as exc:
+        except (ApplicationError, ActivityTimeoutError) as exc:
             raise ActivityError(
                 "Activity failed",
                 scheduled_event_id=1,
@@ -96,10 +109,13 @@ def test_failed_selection_reason_in_empty_logs(
             async_to_sync(workflows.ContinuousEvalTaskWorkflow().run)(
                 ContinuousDrainState(task_id)
             )
-    assert isinstance(caught.value.cause, ApplicationError)
-    assert caught.value.cause.type == (
-        error.type if isinstance(error, ApplicationError) else type(error).__name__
-    )
+    if isinstance(error, ActivityTimeoutError):
+        assert isinstance(caught.value.cause, ActivityTimeoutError)
+    else:
+        assert isinstance(caught.value.cause, ApplicationError)
+        assert caught.value.cause.type == (
+            error.type if isinstance(error, ApplicationError) else type(error).__name__
+        )
 
     def logs():
         response = auth_client.get(

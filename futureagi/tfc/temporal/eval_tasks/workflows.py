@@ -326,8 +326,6 @@ async def _fail_task(task_id: str, exc: Exception | None = None) -> None:
                 reason = SelectionFailure(cause.message).value
             except ValueError:
                 reason = SelectionFailure.OTHER.value
-        else:
-            reason = SelectionFailure.OTHER.value
     _set_status(STATUS_FAILED)
     await _set_db_status(task_id, STATUS_FAILED, failure_reason=reason)
 
