@@ -161,6 +161,10 @@ class TestExecutionUtils:
             return queryset
 
         def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
+            if op == "is_null":
+                return queryset.filter(**{f"{field}__isnull": True})
+            if op == "is_not_null":
+                return queryset.filter(**{f"{field}__isnull": False})
             values = as_list(value)
             if op == "equals":
                 return queryset.filter(**{field: transform(values[0])})
@@ -192,6 +196,16 @@ class TestExecutionUtils:
         def apply_number_any_field_filter(
             queryset, fields, op, value, transform=lambda v: v
         ):
+            if op == "is_null":
+                condition = models.Q()
+                for field in fields:
+                    condition &= models.Q(**{f"{field}__isnull": True})
+                return queryset.filter(condition)
+            if op == "is_not_null":
+                condition = models.Q()
+                for field in fields:
+                    condition |= models.Q(**{f"{field}__isnull": False})
+                return queryset.filter(condition)
             values = as_list(value)
 
             def q_for(field, lookup, val):
@@ -494,29 +508,38 @@ class TestExecutionUtils:
                 elif column_id in ["responseTime", "response_time"]:
                     # Filter by response time (convert to milliseconds for database comparison)
                     if filter_type == "number":
-                        filter_value = float(filter_value)
-                        # Convert seconds to milliseconds for database comparison
-                        filter_value_ms = filter_value * 1000
-                        if filter_op == "greater_than":
+                        if filter_op == "is_null":
                             call_executions = call_executions.filter(
-                                response_time_ms__gt=filter_value_ms
+                                response_time_ms__isnull=True
                             )
-                        elif filter_op == "less_than":
+                        elif filter_op == "is_not_null":
                             call_executions = call_executions.filter(
-                                response_time_ms__lt=filter_value_ms
+                                response_time_ms__isnull=False
                             )
-                        elif filter_op == "equals":
-                            call_executions = call_executions.filter(
-                                response_time_ms=filter_value_ms
-                            )
-                        elif filter_op == "greater_than_or_equal":
-                            call_executions = call_executions.filter(
-                                response_time_ms__gte=filter_value_ms
-                            )
-                        elif filter_op == "less_than_or_equal":
-                            call_executions = call_executions.filter(
-                                response_time_ms__lte=filter_value_ms
-                            )
+                        else:
+                            filter_value = float(filter_value)
+                            # Convert seconds to milliseconds for database comparison
+                            filter_value_ms = filter_value * 1000
+                            if filter_op == "greater_than":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__gt=filter_value_ms
+                                )
+                            elif filter_op == "less_than":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__lt=filter_value_ms
+                                )
+                            elif filter_op == "equals":
+                                call_executions = call_executions.filter(
+                                    response_time_ms=filter_value_ms
+                                )
+                            elif filter_op == "greater_than_or_equal":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__gte=filter_value_ms
+                                )
+                            elif filter_op == "less_than_or_equal":
+                                call_executions = call_executions.filter(
+                                    response_time_ms__lte=filter_value_ms
+                                )
 
                 elif column_id == "status":
                     # Filter by status
