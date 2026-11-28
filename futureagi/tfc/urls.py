@@ -15,6 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+from functools import wraps
+
 from django.apps import apps
 from django.conf import settings
 from django.conf.urls.static import static
@@ -28,12 +30,12 @@ from drf_yasg.views import get_schema_view
 from tfc.capabilities.views import CapabilitiesView
 from tfc.ee_loader import has_ee
 from tfc.views.deployment import DeploymentInfoView
-from tfc.views.host_update_status import HostUpdateStatusView
 from tfc.views.health import (
     AuthenticatedHealthView,
     HealthCheckView,
     LangfuseCompatTracesView,
 )
+from tfc.views.host_update_status import HostUpdateStatusView
 from tfc.views.setup_checks import SetupChecksView
 from tfc.views.socket import CallWebsocketView
 from tracer.views.clickhouse_health import ClickHouseHealthView
@@ -58,6 +60,27 @@ info_api = openapi.Info(
 SWAGGER_URL = "http://localhost:8000"
 schema_view = get_schema_view(info_api, public=True, url=SWAGGER_URL)
 
+
+def _cache_public_schema(view_factory, *args):
+    view = view_factory(*args)
+    cached = view_factory(
+        *args, cache_timeout=24 * 60 * 60, cache_kwargs={"cache": "openapi"}
+    )
+
+    @wraps(view)
+    def serve_schema(request, *args, **kwargs):
+        # A page-cache hit runs before DRF authentication. Requests supplying
+        # credentials must still have them checked on every call.
+        if "Authorization" in request.headers or "X-Api-Key" in request.headers:
+            return view(request, *args, **kwargs)
+        # Settings without the schema cache (e.g. tests) serve uncached.
+        if "openapi" not in settings.CACHES:
+            return view(request, *args, **kwargs)
+        return cached(request, *args, **kwargs)
+
+    return serve_schema
+
+
 urlpatterns = [
     path("", RedirectView.as_view(url="/docs/", permanent=False), name="root"),
     # ===========================================
@@ -77,10 +100,10 @@ urlpatterns = [
     path("agent-playground/", include("agent_playground.urls")),
     re_path(
         r"^swagger(?P<format>\.json|\.yaml)$",
-        schema_view.without_ui(cache_timeout=0),
+        _cache_public_schema(schema_view.without_ui),
         name="schema-json",
     ),
-    path("docs/", schema_view.with_ui("swagger", cache_timeout=0), name="swagger"),
+    path("docs/", _cache_public_schema(schema_view.with_ui, "swagger"), name="swagger"),
     path("sdk/", include("sdk.urls")),
     path("tracer/", include("tracer.urls")),
     # Langfuse SDK compat: the SDK defaults to /api/public/otel/v1/traces
