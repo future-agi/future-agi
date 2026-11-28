@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "b11df0bceba6f54653baf62791a8ac390d51d001d24a543e0c50df7bad05b04b",
-  "tool_count": 130,
+  "tool_names_sha256": "d3d1be714baf014eca75f726a2a148c27ec16810bd25b72d9a30cd9c7b8cc89e",
+  "tool_count": 163,
   "tools": [
     {
       "name": "whoami",
@@ -9924,6 +9924,3213 @@
       },
       "source": {
         "operationId": "simulate_run-tests_create_create"
+      }
+    },
+    {
+      "name": "list_harness_environments",
+      "description": "List simulation environments in the current workspace, optionally for one agent definition. Each environment ID is the `id` the other environment tools take.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "agent_definition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "search": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "awaiting_approval",
+              "building",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "agent_type": {
+            "type": "string",
+            "enum": [
+              "voice",
+              "chat"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "limit",
+            "agent_definition_id",
+            "search",
+            "status",
+            "agent_type"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_list"
+      }
+    },
+    {
+      "name": "get_harness_environment",
+      "description": "Return one simulation environment with its overview, contract, world, scenarios, evaluations and actors. A section still being built is null.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_read"
+      }
+    },
+    {
+      "name": "list_environment_actors",
+      "description": "List an environment's actors (the people, systems and tools the agent works with) and its actor limits, as the next run would use them, the draft's when there is one.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/actors/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_actors"
+      }
+    },
+    {
+      "name": "get_environment_actor",
+      "description": "Return what one actor sees and may do, optionally in one scenario (scenario_key), and what it never sees.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "scenario_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "actor_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/actors/{actor_id}/",
+        "parameters": {
+          "path": [
+            "id",
+            "actor_id"
+          ],
+          "query": [
+            "scenario_key"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_actor_view"
+      }
+    },
+    {
+      "name": "validate_environment_actor",
+      "description": "Check a create, replace or removal of one actor without writing anything. Returns its problems, the actions it would share that share_actions does not confirm, and the id a create would get. environment_id is the environment's ID.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "environment_id": {
+            "type": "string"
+          },
+          "op": {
+            "title": "Op",
+            "type": "string",
+            "enum": [
+              "create",
+              "replace",
+              "delete"
+            ]
+          },
+          "actor_id": {
+            "title": "Actor id",
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "changes": {
+            "$ref": "#/definitions/HarnessActorChangesCheck"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string",
+            "minLength": 1
+          },
+          "share_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1
+            },
+            "maxItems": 100
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "environment_id",
+          "op"
+        ],
+        "definitions": {
+          "HarnessActorChangesCheck": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "side": {
+                "title": "Side",
+                "type": "string",
+                "minLength": 1
+              },
+              "channel": {
+                "anyOf": [
+                  {
+                    "title": "Channel",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "gender": {
+                "title": "Gender",
+                "type": "string"
+              },
+              "age_group": {
+                "title": "Age group",
+                "type": "string"
+              },
+              "accent": {
+                "title": "Accent",
+                "type": "string"
+              },
+              "loudness_ratio": {
+                "anyOf": [
+                  {
+                    "title": "Loudness ratio",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "minLength": 1
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "title": "Parent",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goal": {
+                "title": "Goal",
+                "type": "string"
+              },
+              "may_agree": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "private": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "escalate_when": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "stop_when": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "records": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/HarnessActorRecordSourceCheck"
+                }
+              },
+              "style": {
+                "title": "Style",
+                "type": "string"
+              },
+              "response_timing": {
+                "$ref": "#/definitions/HarnessActorResponseTimingChangeCheck"
+              },
+              "permitted_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "play": {
+                "title": "Play",
+                "type": "string",
+                "minLength": 1
+              },
+              "trigger": {
+                "$ref": "#/definitions/HarnessActorTriggerCheck"
+              },
+              "timeout_seconds": {
+                "anyOf": [
+                  {
+                    "title": "Timeout seconds",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fallback": {
+                "title": "Fallback",
+                "type": "string",
+                "minLength": 1
+              },
+              "fallback_arguments": {
+                "anyOf": [
+                  {
+                    "title": "Fallback arguments",
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "title": "Model",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_turns": {
+                "anyOf": [
+                  {
+                    "title": "Max turns",
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_lines": {
+                "anyOf": [
+                  {
+                    "title": "Max lines",
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "HarnessActorRecordSourceCheck": {
+            "required": [
+              "store",
+              "collection"
+            ],
+            "type": "object",
+            "properties": {
+              "store": {
+                "title": "Store",
+                "type": "string"
+              },
+              "collection": {
+                "title": "Collection",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "HarnessActorResponseTimingChangeCheck": {
+            "required": [
+              "kind"
+            ],
+            "type": "object",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "minLength": 1
+              },
+              "seconds": {
+                "anyOf": [
+                  {
+                    "title": "Seconds",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "HarnessActorTriggerCheck": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "minLength": 1
+              },
+              "seconds": {
+                "title": "Seconds",
+                "type": "number"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              },
+              "on_call": {
+                "title": "On call",
+                "type": "integer"
+              },
+              "p": {
+                "title": "P",
+                "type": "number"
+              },
+              "turn": {
+                "title": "Turn",
+                "type": "integer"
+              },
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "collection": {
+                "title": "Collection",
+                "type": "string"
+              },
+              "where": {
+                "title": "Where",
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{environment_id}/actor-validation/",
+        "parameters": {
+          "path": [
+            "environment_id"
+          ],
+          "query": [],
+          "body": [
+            "op",
+            "actor_id",
+            "changes",
+            "id",
+            "share_actions"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_validate_actor"
+      }
+    },
+    {
+      "name": "create_environment_actor",
+      "description": "Add one actor to the environment's draft. Runs keep using the saved version until save_environment_drafts saves the draft. Check the actor first with validate_environment_actor. environment_id is the environment's ID.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "environment_id": {
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "object",
+            "additionalProperties": true
+          },
+          "changes": {
+            "$ref": "#/definitions/HarnessActorChanges"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "title": "Expected revision",
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "share_actions": {
+            "description": "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1
+            },
+            "maxItems": 100
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "environment_id"
+        ],
+        "definitions": {
+          "HarnessActorChanges": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 500
+              },
+              "role": {
+                "title": "Role",
+                "type": "string",
+                "maxLength": 1000
+              },
+              "side": {
+                "title": "Side",
+                "type": "string",
+                "enum": [
+                  "caller",
+                  "world"
+                ]
+              },
+              "channel": {
+                "anyOf": [
+                  {
+                    "title": "Channel",
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "gender": {
+                "title": "Gender",
+                "type": "string",
+                "maxLength": 100
+              },
+              "age_group": {
+                "title": "Age group",
+                "type": "string",
+                "maxLength": 100
+              },
+              "accent": {
+                "title": "Accent",
+                "type": "string",
+                "maxLength": 100
+              },
+              "loudness_ratio": {
+                "anyOf": [
+                  {
+                    "title": "Loudness ratio",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "title": "Parent",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goal": {
+                "title": "Goal",
+                "type": "string"
+              },
+              "may_agree": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "private": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "escalate_when": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "stop_when": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 500
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 500,
+                  "minLength": 1
+                },
+                "maxItems": 200
+              },
+              "records": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/HarnessActorRecordSource"
+                }
+              },
+              "style": {
+                "title": "Style",
+                "type": "string"
+              },
+              "response_timing": {
+                "$ref": "#/definitions/HarnessActorResponseTimingChange"
+              },
+              "permitted_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "maxItems": 200
+              },
+              "play": {
+                "title": "Play",
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "trigger": {
+                "$ref": "#/definitions/HarnessActorTrigger"
+              },
+              "timeout_seconds": {
+                "anyOf": [
+                  {
+                    "title": "Timeout seconds",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fallback": {
+                "title": "Fallback",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "fallback_arguments": {
+                "anyOf": [
+                  {
+                    "title": "Fallback arguments",
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_turns": {
+                "anyOf": [
+                  {
+                    "title": "Max turns",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_lines": {
+                "anyOf": [
+                  {
+                    "title": "Max lines",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "HarnessActorRecordSource": {
+            "required": [
+              "store",
+              "collection"
+            ],
+            "type": "object",
+            "properties": {
+              "store": {
+                "title": "Store",
+                "type": "string"
+              },
+              "collection": {
+                "title": "Collection",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "HarnessActorResponseTimingChange": {
+            "required": [
+              "kind"
+            ],
+            "type": "object",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "enum": [
+                  "immediate",
+                  "delayed"
+                ]
+              },
+              "seconds": {
+                "anyOf": [
+                  {
+                    "title": "Seconds",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "HarnessActorTrigger": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "enum": [
+                  "always",
+                  "after_seconds",
+                  "on_tool",
+                  "contacted",
+                  "probability",
+                  "mid_journey",
+                  "on_keyword",
+                  "conditional"
+                ]
+              },
+              "seconds": {
+                "title": "Seconds",
+                "type": "number",
+                "minimum": 0
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string",
+                "maxLength": 200
+              },
+              "on_call": {
+                "title": "On call",
+                "type": "integer",
+                "minimum": 1
+              },
+              "p": {
+                "title": "P",
+                "type": "number",
+                "maximum": 1,
+                "minimum": 0
+              },
+              "turn": {
+                "title": "Turn",
+                "type": "integer",
+                "minimum": 0
+              },
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "maxItems": 50
+              },
+              "collection": {
+                "title": "Collection",
+                "type": "string",
+                "maxLength": 200
+              },
+              "where": {
+                "title": "Where",
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{environment_id}/actors/",
+        "parameters": {
+          "path": [
+            "environment_id"
+          ],
+          "query": [],
+          "body": [
+            "actor",
+            "changes",
+            "id",
+            "expected_revision",
+            "share_actions"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_create_actor"
+      }
+    },
+    {
+      "name": "update_environment_actor",
+      "description": "Replace one actor in the environment's draft, as a whole record (actor) or as changes to it (changes); its id never changes. Runs keep using the saved version until save_environment_drafts saves the draft. environment_id is the environment's ID.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "environment_id": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "object",
+            "additionalProperties": true
+          },
+          "changes": {
+            "$ref": "#/definitions/HarnessActorChanges"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "title": "Expected revision",
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "share_actions": {
+            "description": "Actions the edit gives that only one other actor holds today, confirmed as shared; without it such an edit is refused with permission_conflict (409) and each conflict.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200,
+              "minLength": 1
+            },
+            "maxItems": 100
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "environment_id",
+          "actor_id"
+        ],
+        "definitions": {
+          "HarnessActorChanges": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 500
+              },
+              "role": {
+                "title": "Role",
+                "type": "string",
+                "maxLength": 1000
+              },
+              "side": {
+                "title": "Side",
+                "type": "string",
+                "enum": [
+                  "caller",
+                  "world"
+                ]
+              },
+              "channel": {
+                "anyOf": [
+                  {
+                    "title": "Channel",
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "gender": {
+                "title": "Gender",
+                "type": "string",
+                "maxLength": 100
+              },
+              "age_group": {
+                "title": "Age group",
+                "type": "string",
+                "maxLength": 100
+              },
+              "accent": {
+                "title": "Accent",
+                "type": "string",
+                "maxLength": 100
+              },
+              "loudness_ratio": {
+                "anyOf": [
+                  {
+                    "title": "Loudness ratio",
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "title": "Parent",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goal": {
+                "title": "Goal",
+                "type": "string"
+              },
+              "may_agree": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "private": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "escalate_when": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "stop_when": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 500
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 500,
+                  "minLength": 1
+                },
+                "maxItems": 200
+              },
+              "records": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/HarnessActorRecordSource"
+                }
+              },
+              "style": {
+                "title": "Style",
+                "type": "string"
+              },
+              "response_timing": {
+                "$ref": "#/definitions/HarnessActorResponseTimingChange"
+              },
+              "permitted_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "maxItems": 200
+              },
+              "play": {
+                "title": "Play",
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "trigger": {
+                "$ref": "#/definitions/HarnessActorTrigger"
+              },
+              "timeout_seconds": {
+                "anyOf": [
+                  {
+                    "title": "Timeout seconds",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fallback": {
+                "title": "Fallback",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "fallback_arguments": {
+                "anyOf": [
+                  {
+                    "title": "Fallback arguments",
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_turns": {
+                "anyOf": [
+                  {
+                    "title": "Max turns",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_lines": {
+                "anyOf": [
+                  {
+                    "title": "Max lines",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "HarnessActorRecordSource": {
+            "required": [
+              "store",
+              "collection"
+            ],
+            "type": "object",
+            "properties": {
+              "store": {
+                "title": "Store",
+                "type": "string"
+              },
+              "collection": {
+                "title": "Collection",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "HarnessActorResponseTimingChange": {
+            "required": [
+              "kind"
+            ],
+            "type": "object",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "enum": [
+                  "immediate",
+                  "delayed"
+                ]
+              },
+              "seconds": {
+                "anyOf": [
+                  {
+                    "title": "Seconds",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "HarnessActorTrigger": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string",
+                "enum": [
+                  "always",
+                  "after_seconds",
+                  "on_tool",
+                  "contacted",
+                  "probability",
+                  "mid_journey",
+                  "on_keyword",
+                  "conditional"
+                ]
+              },
+              "seconds": {
+                "title": "Seconds",
+                "type": "number",
+                "minimum": 0
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string",
+                "maxLength": 200
+              },
+              "on_call": {
+                "title": "On call",
+                "type": "integer",
+                "minimum": 1
+              },
+              "p": {
+                "title": "P",
+                "type": "number",
+                "maximum": 1,
+                "minimum": 0
+              },
+              "turn": {
+                "title": "Turn",
+                "type": "integer",
+                "minimum": 0
+              },
+              "words": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "maxItems": 50
+              },
+              "collection": {
+                "title": "Collection",
+                "type": "string",
+                "maxLength": 200
+              },
+              "where": {
+                "title": "Where",
+                "type": "object",
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/simulate/api/harness-environments/{environment_id}/actors/{actor_id}/",
+        "parameters": {
+          "path": [
+            "environment_id",
+            "actor_id"
+          ],
+          "query": [],
+          "body": [
+            "actor",
+            "changes",
+            "id",
+            "expected_revision",
+            "share_actions"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_replace_actor"
+      }
+    },
+    {
+      "name": "delete_environment_actor",
+      "description": "Take one actor out of the environment's draft; refused while a scenario includes it. Pass expected_revision from list_environment_actors to refuse a draft that changed since. Runs keep using the saved version until save_environment_drafts saves the draft.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "actor_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/simulate/api/harness-environments/{id}/actors/{actor_id}/",
+        "parameters": {
+          "path": [
+            "id",
+            "actor_id"
+          ],
+          "query": [
+            "expected_revision"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_delete_actor"
+      }
+    },
+    {
+      "name": "set_environment_actor_limits",
+      "description": "Replace the environment's actor limits in its draft (each a positive number, or null for no limit) and its actors' model; a limit left out takes the channel's default. Runs keep using the saved version until save_environment_drafts saves the draft.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/definitions/HarnessActorLimits"
+          },
+          "expected_revision": {
+            "title": "Expected revision",
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "limits"
+        ],
+        "definitions": {
+          "HarnessActorLimits": {
+            "description": "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
+            "type": "object",
+            "properties": {
+              "max_active": {
+                "anyOf": [
+                  {
+                    "title": "Max active",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "caller_takes_back_after_turns": {
+                "anyOf": [
+                  {
+                    "title": "Caller takes back after turns",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "actor_seconds_per_call": {
+                "anyOf": [
+                  {
+                    "title": "Actor seconds per call",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_messages": {
+                "anyOf": [
+                  {
+                    "title": "Max messages",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "live_turns_per_actor": {
+                "anyOf": [
+                  {
+                    "title": "Live turns per actor",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "live_turns_per_trial": {
+                "anyOf": [
+                  {
+                    "title": "Live turns per trial",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/simulate/api/harness-environments/{id}/actor-limits/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "limits",
+            "expected_revision"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_actor_limits"
+      }
+    },
+    {
+      "name": "accept_environment_actor_unresolved",
+      "description": "Accept the cast as written for one policy point the builder could not model (policy, exactly as list_environment_actors lists it under unresolved), in the environment's draft.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "policy": {
+            "title": "Policy",
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1
+          },
+          "expected_revision": {
+            "title": "Expected revision",
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "policy"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/actor-unresolved/accept/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "policy",
+            "expected_revision"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_accept_unresolved"
+      }
+    },
+    {
+      "name": "list_environment_drafts",
+      "description": "List the environment's unsaved changes (drafts), with the piece, parent and revision of each that save_environment_drafts takes. validation_required says a save must go through validate_environment_drafts first; validation says where that validation stands, and candidates are the versions it built.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/drafts/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_drafts"
+      }
+    },
+    {
+      "name": "save_environment_drafts",
+      "description": "Save the environment's changes as its next versions, which become the defaults. Where list_environment_drafts says validation_required, pass candidates (from list_environment_drafts, once validation is ready), expected_review_digest and a name; a plain save is refused with validation_required. Otherwise pass drafts, each with the piece, expected_parent_id and expected_revision from list_environment_drafts; a draft that moved since is refused. Reuse the same idempotency_key to repeat a call safely.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "drafts": {
+            "description": "Save the drafts as they are.",
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/HarnessDraftSaveItem"
+            }
+          },
+          "candidates": {
+            "$ref": "#/definitions/HarnessCandidates"
+          },
+          "expected_review_digest": {
+            "title": "Expected review digest",
+            "description": "The review digest the person saw; Save refuses a review that moved since.",
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "title": "Name",
+            "description": "A name for the new version; never an identity.",
+            "type": "string",
+            "maxLength": 80
+          },
+          "idempotency_key": {
+            "title": "Idempotency key",
+            "description": "Repeating a Save with the same key repeats its answer.",
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "maxLength": 128,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "idempotency_key"
+        ],
+        "definitions": {
+          "HarnessCandidates": {
+            "anyOf": [
+              {
+                "description": "The versions Validate built; send them to Save once validation is ready.",
+                "required": [
+                  "environment_version_id",
+                  "suite_version_id"
+                ],
+                "type": "object",
+                "properties": {
+                  "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "HarnessDraftSaveItem": {
+            "description": "Save the drafts as they are.",
+            "required": [
+              "piece",
+              "expected_parent_id"
+            ],
+            "type": "object",
+            "properties": {
+              "piece": {
+                "title": "Piece",
+                "type": "string",
+                "enum": [
+                  "environment",
+                  "suite"
+                ]
+              },
+              "expected_parent_id": {
+                "anyOf": [
+                  {
+                    "title": "Expected parent id",
+                    "description": "The draft's parent the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected_revision": {
+                "title": "Expected revision",
+                "description": "The draft's revision the caller saw.",
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/drafts/save/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "drafts",
+            "candidates",
+            "expected_review_digest",
+            "name",
+            "idempotency_key"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_drafts_save_drafts"
+      }
+    },
+    {
+      "name": "review_environment_drafts",
+      "description": "List every change the environment's drafts make, with the decision on each, and the review_digest that validate_environment_drafts and save_environment_drafts take. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/drafts/review/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_drafts_drafts_review"
+      }
+    },
+    {
+      "name": "validate_environment_drafts",
+      "description": "Build candidate versions from the environment's reviewed drafts and validate them against the agent before they are saved. Pass expected_revisions (per piece, the revision from list_environment_drafts) and the review_digest from review_environment_drafts. It runs in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Poll list_environment_drafts while validation is validating. On ready or check_unavailable, save the candidates with save_environment_drafts; on retry, outdated or superseded, validate again; failed means the agent failed the check; unavailable means this environment cannot validate, so save the drafts themselves.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "expected_revisions": {
+            "title": "Expected revisions",
+            "description": "Per piece, the draft revision the person reviewed.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "expected_review_digest": {
+            "title": "Expected review digest",
+            "description": "The review digest the person saw; required once any change is decided.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "expected_revisions"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/drafts/validate/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "expected_revisions",
+            "expected_review_digest"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_drafts_validate_drafts"
+      }
+    },
+    {
+      "name": "get_environment_run_plan",
+      "description": "Show the agent, environment and suite versions a run would use, what to warn about and whether it would start. Starts nothing; an absent version is the environment's default.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scenario_keys": {
+            "type": "string",
+            "description": "The scenarios the run would select, comma-separated; absent or blank selects every scenario."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/run-plan/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "scenario_keys"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_run_plan"
+      }
+    },
+    {
+      "name": "run_environment",
+      "description": "Start one run of an environment against its agent for the chosen scenarios (scenario_ids) and trials. Pass seed (a whole number as text) to draw the same personas and variations again. It runs the agent and simulated people, so it may incur usage charges. Reuse the same idempotency_key to get the same run back instead of starting another. Check get_environment_run_plan first; read each trial with get_call_execution.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scenario_ids": {
+            "description": "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "maxItems": 1000
+          },
+          "trials": {
+            "title": "Trials",
+            "type": "integer",
+            "default": 1,
+            "maximum": 20,
+            "minimum": 1
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "title": "Seed",
+                "description": "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "agent_version_id": {
+            "anyOf": [
+              {
+                "title": "Agent version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment_version_id": {
+            "anyOf": [
+              {
+                "title": "Environment version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suite_version_id": {
+            "anyOf": [
+              {
+                "title": "Suite version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Any unique value; reuse it to repeat this call safely."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "idempotency_key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/run/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "scenario_ids",
+            "trials",
+            "seed",
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id"
+          ],
+          "headers": {
+            "idempotency_key": "Idempotency-Key"
+          }
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_run"
+      }
+    },
+    {
+      "name": "get_call_execution",
+      "description": "Return one trial (call) of a run with its transcript, tool calls, checks and the World changes it made.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "call_execution_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "call_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/v3/call-executions/{call_execution_id}/",
+        "parameters": {
+          "path": [
+            "call_execution_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_v3_call_execution_detail"
+      }
+    },
+    {
+      "name": "get_call_workers",
+      "description": "For a trial (call) of a multi-agent app, return which of the app's participants (workers) did what, read from the traces the app sent. While the traces are still being collected it returns only pending and next_read_at, so read it again then; it returns nothing when the trial handed nothing to another agent.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "call_execution_id": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "string",
+            "format": "uuid",
+            "description": "An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "call_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/v3/call-executions/{call_execution_id}/workers/",
+        "parameters": {
+          "path": [
+            "call_execution_id"
+          ],
+          "query": [
+            "attempt"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_v3_call_execution_workers"
+      }
+    },
+    {
+      "name": "list_harness_scenarios",
+      "description": "List one page of an environment's scenarios with the lifecycle of each (draft, validated, active, archived, source changed, kept as written) and how many are in each state. The id is the environment's ID. lifecycle keeps one state; group_by defaults to goal, so pass an empty group_by for a flat list.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "last"
+                ]
+              }
+            ],
+            "description": "A page number from 1, or last for the last page."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Scenarios per page; any other value takes the default.",
+            "maximum": 100
+          },
+          "search": {
+            "type": "string",
+            "description": "Every word must match."
+          },
+          "ordering": {
+            "type": "string",
+            "description": "number, name or use_case; prefix - to reverse."
+          },
+          "group_by": {
+            "type": "string",
+            "description": "goal (the default), sub_goal, accent, age, attack or task; empty for a flat list."
+          },
+          "lifecycle": {
+            "type": "string",
+            "description": "Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written."
+          },
+          "agent_version_id": {
+            "type": "string",
+            "description": "Absent or empty: the environment's default."
+          },
+          "environment_version_id": {
+            "type": "string",
+            "description": "Absent or empty: the environment's default."
+          },
+          "suite_version_id": {
+            "type": "string",
+            "description": "Absent or empty: the environment's default."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-jobs/{id}/scenarios/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "page",
+            "limit",
+            "search",
+            "ordering",
+            "group_by",
+            "lifecycle",
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-jobs_scenarios"
+      }
+    },
+    {
+      "name": "list_environment_versions",
+      "description": "List an environment's saved agent, environment and suite versions, and which of each is the default.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/versions/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_versions"
+      }
+    },
+    {
+      "name": "get_environment_source_changes",
+      "description": "Return the rules and files an environment version changed that scenarios cite, with the scenarios citing each, so a person can recheck them.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/",
+        "parameters": {
+          "path": [
+            "id",
+            "version_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_source_changes"
+      }
+    },
+    {
+      "name": "validate_environment_scenarios",
+      "description": "Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Returns a job_id while it runs; poll get_scenario_validation.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "anyOf": [
+              {
+                "title": "Agent version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment_version_id": {
+            "anyOf": [
+              {
+                "title": "Environment version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suite_version_id": {
+            "anyOf": [
+              {
+                "title": "Suite version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "if_fresh": {
+            "title": "If fresh",
+            "description": "Answer ready without a new job when the newest proving finished after the pair's last change.",
+            "type": "boolean",
+            "default": false
+          },
+          "keys": {
+            "description": "Prove only these scenario keys; the other cases keep their proofs.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "maxItems": 50
+          },
+          "reprove_all": {
+            "title": "Reprove all",
+            "description": "Prove every case again. Without it, only the cases with no proof of their own on these versions for this agent version are proved, so a validation the window stopped carries on.",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/validate/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "if_fresh",
+            "keys",
+            "reprove_all"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_validate_scenarios"
+      }
+    },
+    {
+      "name": "get_scenario_validation",
+      "description": "Return where one scenario validation (job_id from validate_environment_scenarios) got to, and whether it recorded its proofs.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "job_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/validate/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "job_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_validation_status"
+      }
+    },
+    {
+      "name": "get_running_scenario_validation",
+      "description": "Return the validation still running for the environment's default versions, if any, and how many scenarios a validation of those not yet proved would prove.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/validate/running/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_running_validation"
+      }
+    },
+    {
+      "name": "archive_environment_scenario",
+      "description": "Take one scenario (key) out of future runs, with an optional reason. Its identity, runs and evidence are kept, and restore_environment_scenario brings it back.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string",
+            "default": "",
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [],
+          "body": [
+            "reason"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_archive_scenario"
+      }
+    },
+    {
+      "name": "restore_environment_scenario",
+      "description": "Bring an archived scenario (key) back, at once when the saved suite still holds it, otherwise as a draft to save.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_restore_scenario"
+      }
+    },
+    {
+      "name": "get_scenario_records",
+      "description": "Return the seeded rows of one table (table) of the world, to pick a real record for a scenario (key) whose starting record is missing. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key",
+          "table"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/records/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [
+            "table"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_scenario_records"
+      }
+    },
+    {
+      "name": "list_scenario_revisions",
+      "description": "List each distinct content of one scenario (key) across the environment's saved suite versions, newest first.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_scenario_revisions"
+      }
+    },
+    {
+      "name": "get_environment_readiness",
+      "description": "Return the run readiness of a pairing of agent, environment and suite versions (absent ones are the defaults), computed now, with its blockers and the selected scenarios it holds back. keys narrows the selection; trials is the trial count planned. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 255,
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scenario keys; more than 200 go in the POST body as scenario_ids."
+          },
+          "trials": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "keys",
+            "trials"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capabilities"
+      }
+    },
+    {
+      "name": "get_environment_readiness_for_scenarios",
+      "description": "Return the same run readiness report as get_environment_readiness for a selection of scenarios too long for a query string (scenario_ids, more than 200 keys). Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "title": "Agent version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "title": "Environment version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "title": "Suite version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "maxItems": 1000
+          },
+          "trials": {
+            "title": "Trials",
+            "type": "integer",
+            "default": 1,
+            "maximum": 20,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "scenario_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "scenario_ids",
+            "trials"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_select_capabilities"
+      }
+    },
+    {
+      "name": "list_environment_readiness_cases",
+      "description": "List one page, by scenario number, of the selected scenarios in one readiness bucket (eligible, blocked, stale or untested) or held back by one readiness row. Pass the previous page's next as cursor. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 255,
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scenario keys; more than 200 go in the POST body as scenario_ids."
+          },
+          "trials": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "eligible",
+              "blocked",
+              "stale",
+              "untested"
+            ]
+          },
+          "row": {
+            "type": "string",
+            "enum": [
+              "start",
+              "message",
+              "continuity",
+              "streaming",
+              "tool_discovery",
+              "tool_routing",
+              "state",
+              "audio",
+              "files",
+              "browser",
+              "children",
+              "hidden_material",
+              "reset",
+              "resume",
+              "cancel",
+              "cost"
+            ]
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The previous page's next: the number it ended on."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/cases/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "keys",
+            "trials",
+            "bucket",
+            "row",
+            "cursor"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capability_cases"
+      }
+    },
+    {
+      "name": "recheck_environment_readiness",
+      "description": "Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Read the result with get_environment_readiness.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "title": "Agent version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "title": "Environment version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "title": "Suite version id",
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/recheck/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capabilities_recheck_capabilities"
+      }
+    },
+    {
+      "name": "list_certified_pairings",
+      "description": "List the version pairings certified on an environment, newest first, with the exact agent, environment and suite versions of each.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The previous page's next."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/history/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "cursor"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capability_history"
       }
     },
     {

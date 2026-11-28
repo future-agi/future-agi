@@ -143,6 +143,11 @@ class DjangoAPIExecutor:
                 str(context.workspace.id) if context.workspace is not None else ""
             ),
         }
+        for name, header in parameter_map.get("headers", {}).items():
+            if arguments.get(name) is not None:
+                request_kwargs["HTTP_" + header.upper().replace("-", "_")] = str(
+                    arguments[name]
+                )
         if body:
             request = self._request_factory.generic(
                 method,
@@ -281,7 +286,8 @@ class DjangoAPIExecutor:
     ) -> str:
         path = path_template
         for name in path_parameters:
-            if name not in arguments or arguments[name] is None:
+            # An empty value would drop a path segment and reach another route, or none.
+            if name not in arguments or not str(arguments[name] or "").strip():
                 raise APIExecutionError(
                     f"Missing required path parameter: {name}", status_code=400
                 )

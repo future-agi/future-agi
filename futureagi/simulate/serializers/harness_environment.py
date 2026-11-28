@@ -1376,6 +1376,73 @@ class HarnessRestoredCaseSerializer(serializers.Serializer):
     )
 
 
+class _PageNumberField(serializers.IntegerField):
+    """A page number from 1, or `last`, as the list's paginator reads it."""
+
+    def run_validation(self, data=serializers.empty):
+        if data == "last":
+            return data
+        return super().run_validation(data)
+
+
+class _PageSizeField(serializers.IntegerField):
+    """Scenarios per page; anything but a whole number from 1 takes the default page size, as the paginator does."""
+
+    def run_validation(self, data=serializers.empty):
+        try:
+            return super().run_validation(data)
+        except serializers.ValidationError:
+            return None
+
+
+class HarnessScenarioListQuerySerializer(serializers.Serializer):
+    """The scenario list's query. Filters on a scenario field (FIELD=VALUE, FIELD_not=VALUE) are read as given."""
+
+    page = _PageNumberField(
+        min_value=1,
+        required=False,
+        help_text="A page number from 1, or last for the last page.",
+    )
+    limit = _PageSizeField(
+        min_value=1,
+        required=False,
+        help_text="Scenarios per page; any other value takes the default.",
+    )
+    search = serializers.CharField(
+        required=False, allow_blank=True, help_text="Every word must match."
+    )
+    ordering = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="number, name or use_case; prefix - to reverse.",
+    )
+    group_by = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="goal (the default), sub_goal, accent, age, attack or task; empty for a flat list.",
+    )
+    lifecycle = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.",
+    )
+    agent_version_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Absent or empty: the environment's default.",
+    )
+    environment_version_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Absent or empty: the environment's default.",
+    )
+    suite_version_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Absent or empty: the environment's default.",
+    )
+
+
 class HarnessScenarioListResponseSerializer(serializers.Serializer):
     """One page of an environment's authored scenarios, with what the list filters and groups by."""
 

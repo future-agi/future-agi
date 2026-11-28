@@ -11,7 +11,7 @@ from mcp_server.generated_registry import (
 def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    assert registry.count() == 130
+    assert registry.count() == 163
     for name in ("run_sql", "get_sql_result", "cancel_sql", "get_sql_catalog"):
         assert registry.get(name).group == "observability"
     assert registry.get("list_datasets").group == "datasets"
@@ -79,6 +79,39 @@ def test_agents_group_matches_legacy_agents_category():
         "list_simulation_tests",
         "get_simulation_test",
         "create_simulation_test",
+        "list_harness_environments",
+        "get_harness_environment",
+        "list_environment_actors",
+        "get_environment_actor",
+        "validate_environment_actor",
+        "create_environment_actor",
+        "update_environment_actor",
+        "delete_environment_actor",
+        "set_environment_actor_limits",
+        "accept_environment_actor_unresolved",
+        "list_environment_drafts",
+        "save_environment_drafts",
+        "review_environment_drafts",
+        "validate_environment_drafts",
+        "get_environment_run_plan",
+        "run_environment",
+        "get_call_execution",
+        "get_call_workers",
+        "list_harness_scenarios",
+        "list_environment_versions",
+        "get_environment_source_changes",
+        "validate_environment_scenarios",
+        "get_scenario_validation",
+        "get_running_scenario_validation",
+        "archive_environment_scenario",
+        "restore_environment_scenario",
+        "list_scenario_revisions",
+        "get_scenario_records",
+        "get_environment_readiness_for_scenarios",
+        "list_environment_readiness_cases",
+        "get_environment_readiness",
+        "recheck_environment_readiness",
+        "list_certified_pairings",
     }
     assert not {tool.name for tool in registry.list_by_groups(["agents"])} & {
         tool.name for tool in registry.list_by_groups(["simulation"])

@@ -34,13 +34,26 @@ def _apply_pagination_policy(
     Only a ceiling is applied. The policy deliberately cannot set a default:
     every one of these endpoints already applies its own default page size when
     the parameter is omitted, so injecting one here would silently resize pages
-    for MCP callers while claiming the REST contract is untouched.
+    for MCP callers while claiming the REST contract is untouched. A page number
+    marked `{last: true}` also takes `last`, which the paginator reads as the
+    last page and Swagger 2.0 cannot spell as a union.
     """
     policy = entry.get("pagination", {})
     if not isinstance(policy, dict):
         raise ToolGenerationError(f"Invalid pagination policy for {entry['name']}")
     for field, bounds in policy.items():
         schema = input_schema["properties"].get(field, {})
+        if (
+            bounds == {"last": True}
+            and field in request_mapping["query"]
+            and schema.get("type") == "integer"
+        ):
+            description = schema.pop("description", None)
+            input_schema["properties"][field] = {
+                "anyOf": [schema, {"type": "string", "enum": ["last"]}],
+                **({"description": description} if description else {}),
+            }
+            continue
         if (
             field not in request_mapping["query"] + request_mapping["body"]
             or schema.get("type") != "integer"
@@ -264,7 +277,7 @@ def _build_input_schema(
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
     properties: dict[str, Any] = {}
     required: list[str] = []
-    request_mapping = {"path": [], "query": [], "body": []}
+    request_mapping: dict[str, list[str]] = {"path": [], "query": [], "body": []}
 
     def add_property(name: str, schema: dict[str, Any], is_required: bool) -> None:
         if name in properties:
@@ -382,10 +395,44 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             )
 
         parameters = _operation_parameters(path_item, operation, contract)
+        # A path parameter can take another name in the tool when the body has a
+        # field of the same name, such as an environment `{id}` beside an actor `id`.
+        for old, new in (entry.get("path_names") or {}).items():
+            if not isinstance(new, str) or not new.isidentifier():
+                raise ToolGenerationError(f"Invalid path name for {name}: {new!r}")
+            index = next(
+                (
+                    i
+                    for i, parameter in enumerate(parameters)
+                    if parameter.get("in") == "path" and parameter.get("name") == old
+                ),
+                None,
+            )
+            if index is None:
+                raise ToolGenerationError(f"Unknown path parameter for {name}: {old}")
+            parameters[index] = {**parameters[index], "name": new}
+            path = path.replace("{" + old + "}", "{" + new + "}")
         input_schema, request_mapping = _build_input_schema(
             parameters, contract, method=method
         )
         _apply_pagination_policy(entry, input_schema, request_mapping)
+        headers: dict[str, str] = {}
+        # A view that requires an Idempotency-Key header gets it as a required argument, so a
+        # client's retry with the same key returns the first answer instead of repeating the work.
+        if entry.get("idempotency_header"):
+            if (
+                entry["idempotency_header"] is not True
+                or "idempotency_key" in input_schema["properties"]
+            ):
+                raise ToolGenerationError(f"Invalid idempotency_header for {name}")
+            input_schema["properties"]["idempotency_key"] = {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255,
+                "description": "Any unique value; reuse it to repeat this call safely.",
+            }
+            input_schema.setdefault("required", []).append("idempotency_key")
+            headers["idempotency_key"] = "Idempotency-Key"
         annotations = _annotations(method, access)
         if "idempotent" in entry:
             if not isinstance(entry["idempotent"], bool):
@@ -411,7 +458,10 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             "request": {
                 "method": method.upper(),
                 "path": path,
-                "parameters": request_mapping,
+                "parameters": {
+                    **request_mapping,
+                    **({"headers": headers} if headers else {}),
+                },
             },
             "response": _response_policy(entry, operation, contract),
             "source": {"operationId": operation.get("operationId")},

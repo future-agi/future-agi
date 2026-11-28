@@ -31698,10 +31698,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/harness-jobs/{id}/scenarios/": {
       get: {
         operationId: "simulate_api_harness-jobs_scenarios",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          ordering: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          group_by: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          lifecycle: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          agent_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          environment_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          suite_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/HarnessScenarioListResponse",

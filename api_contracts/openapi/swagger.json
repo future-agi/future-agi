@@ -57651,7 +57651,73 @@
                 "operationId": "simulate_api_harness-jobs_scenarios",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
                 "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "description": "A page number from 1, or last for the last page.",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "description": "Scenarios per page; any other value takes the default.",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "description": "Every word must match.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "ordering",
+                        "in": "query",
+                        "description": "number, name or use_case; prefix - to reverse.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "group_by",
+                        "in": "query",
+                        "description": "goal (the default), sub_goal, accent, age, attack or task; empty for a flat list.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "lifecycle",
+                        "in": "query",
+                        "description": "Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "agent_version_id",
+                        "in": "query",
+                        "description": "Absent or empty: the environment's default.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "environment_version_id",
+                        "in": "query",
+                        "description": "Absent or empty: the environment's default.",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "suite_version_id",
+                        "in": "query",
+                        "description": "Absent or empty: the environment's default.",
+                        "required": false,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -57669,6 +57735,7 @@
                 "tags": [
                     "simulate"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": [
