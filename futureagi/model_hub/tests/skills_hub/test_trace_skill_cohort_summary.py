@@ -2,9 +2,11 @@
 
 from datetime import timedelta
 from types import SimpleNamespace
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from django.conf import settings
 
 from model_hub.models.skills_hub import HubSkillVersion
 from model_hub.tests.skills_hub import test_trace_projections_http as projections
@@ -13,9 +15,12 @@ from tracer.services.clickhouse.runtime_cohorts import cohort_filter
 from tracer.tests._ch_seed import seed_ch_spans
 from tracer.tests.test_skill_filters import skill
 
+INTERACTIVE_WALL_MS = int(cast(Any, settings).INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS)
+
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 ch, project = projections.ch, projections.project
 http, seeded = projections.http, projections.seeded
+server_caps = projections.server_caps
 START = projections.START
 
 
@@ -31,7 +36,8 @@ def native_summary(http, ch, monkeypatch, request):
             def execute_ch_query(
                 self, sql, params, *, settings=None, server_execution_cap_ms, **kwargs
             ):
-                assert 0 < server_execution_cap_ms <= 3000
+                # The cohort summary gets the trace list's interactive wall.
+                assert 0 < server_execution_cap_ms <= INTERACTIVE_WALL_MS
                 if not (settings or {}).get("server_side_params"):
                     rendered = client.substitute_params(
                         sql, params, client.connection.context

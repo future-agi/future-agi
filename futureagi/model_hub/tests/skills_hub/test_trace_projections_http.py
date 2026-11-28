@@ -2,9 +2,11 @@
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from django.conf import settings
 from django.urls import resolve
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -13,6 +15,8 @@ from tracer.models.project import Project
 from tracer.services import trace_skills
 from tracer.tests._ch_seed import seed_ch_spans
 from tracer.tests.test_skill_filters import skill
+
+INTERACTIVE_WALL_MS = int(cast(Any, settings).INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS)
 
 pytestmark = pytest.mark.django_db
 URL = "/tracer/trace/skill-projection/"
@@ -48,10 +52,20 @@ def project(organization, workspace):
 
 
 @pytest.fixture
-def http(user, organization, workspace, project, ch, monkeypatch):
+def server_caps():
+    """The server execution cap of every ClickHouse statement a request sent."""
+    return []
+
+
+@pytest.fixture
+def http(user, organization, workspace, project, ch, monkeypatch, server_caps):
+    caps = server_caps
+
     class Service:
         def execute_ch_query(self, sql, params, **kwargs):
-            assert 0 < kwargs["server_execution_cap_ms"] <= 3000
+            cap = kwargs["server_execution_cap_ms"]
+            assert 0 < cap <= INTERACTIVE_WALL_MS
+            caps.append(cap)
             data = list(ch.query(sql, parameters=params).named_results())
             return SimpleNamespace(row_count=len(data), data=data)
 
@@ -175,6 +189,28 @@ def test_cohort_uses_canonical_root_and_whole_trace_cost(http, seeded):
     assert summary["traces"] == 1 and summary["incomplete"] == 0
     assert summary["failed_requests"] == {"count": 0, "rate": 0.0}
     assert summary["cost"]["per_trace_mean"] == 13
+
+
+def test_cohort_gets_the_trace_list_wall_and_trace_reads_stay_tight(
+    http, seeded, server_caps
+):
+    server_caps.clear()
+    response = http(
+        projection="cohort",
+        filters=[skill("version_id", str(seeded.version.pk))],
+        **{"from": START.isoformat(), "to": (START + timedelta(hours=1)).isoformat()},
+    )
+    assert response.status_code == 200, response.data
+    assert 3000 < max(server_caps) <= INTERACTIVE_WALL_MS
+    for body in (
+        {"projection": "page", "trace_ids": [seeded.trace]},
+        {"projection": "detail", "trace_id": seeded.trace},
+    ):
+        server_caps.clear()
+        assert http(**body).status_code == 200
+        assert (
+            server_caps and max(server_caps) <= trace_skills.TRACE_READ_WALL_MS == 3000
+        )
 
 
 def test_cohort_respects_every_filter_and_empty_state(http, seeded):

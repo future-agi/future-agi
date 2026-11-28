@@ -2,7 +2,10 @@
 
 import json
 from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID
+
+from django.conf import settings
 
 from model_hub.models.skills_hub import HubSkillVersion
 from model_hub.selectors.skills_hub_v12 import resources_for_scope
@@ -120,6 +123,18 @@ def _skill_rows(rows, catalog, project_id):
     return list(groups.values())
 
 
+# Per-trace reads (page cells, the detail drawer) stay within a tight wall. The
+# cohort summary covers the same filtered population as the trace list beside
+# it, so it gets the trace list's interactive wall rather than failing first.
+TRACE_READ_WALL_MS = 3000
+
+
+def projection_wall_ms(projection):
+    if projection == "cohort":
+        return int(cast(Any, settings).INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS)
+    return TRACE_READ_WALL_MS
+
+
 def trace_skills_projection(*, principal, workspace, query):
     project = (
         projects_in_scope(principal=principal, workspace=workspace)
@@ -143,7 +158,8 @@ def trace_skills_projection(*, principal, workspace, query):
             "invalid_runtime_query", "Restart this trace read.", status=400
         ) from exc
     session = _TraceProjectionSession(
-        V2AnalyticsQueryService(), deadline=ReadDeadline.start(3000)
+        V2AnalyticsQueryService(),
+        deadline=ReadDeadline.start(projection_wall_ms(query["projection"])),
     )
     if query["projection"] == "cohort":
         builder = TraceSkillsQueryBuilder(
