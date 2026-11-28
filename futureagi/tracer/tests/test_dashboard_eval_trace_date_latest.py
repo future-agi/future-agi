@@ -1203,9 +1203,7 @@ def test_a_sub_second_custom_window_keeps_its_fraction_for_every_metric(
     assert _points(result, "trace_count") == {day0: 1}
 
 
-def test_single_project_joins_are_unchanged_by_project_matching(
-    observe_project, seed
-):
+def test_single_project_joins_are_unchanged_by_project_matching(observe_project, seed):
     """Regression guard; passes at the parent commit too. Item 1 made the
     cross-eval, span-root and system-breakdown joins match on the project as
     well as the trace. With one selected project and no shared UUIDs they
