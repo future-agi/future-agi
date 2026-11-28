@@ -29,6 +29,9 @@ type checkpoint struct {
 	// checkpoint; an older binary can ignore and drop the field when rewriting.
 	PolicyExclusionSpans uint64 `json:"recorded_policy_exclusion_spans,omitempty"`
 	QuarantinedSpans     uint64 `json:"recorded_quarantined_spans,omitempty"`
+	// Trajectory spans catalogued without their promoted attribute (items
+	// gone); their identities are in the quarantine receipt.
+	ContentUnavailableSpans uint64 `json:"recorded_trajectory_content_unavailable_spans,omitempty"`
 }
 
 func lockCheckpoint(path string) (*os.File, error) {

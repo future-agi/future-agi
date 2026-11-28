@@ -19,6 +19,10 @@ type quarantinedSpan struct {
 type pageReport struct {
 	PolicyExclusions uint64
 	Quarantined      []quarantinedSpan
+	// ContentUnavailable are trajectory spans catalogued without their
+	// promoted input/output attribute because its items are gone. Unlike
+	// Quarantined spans, their other attributes are catalogued.
+	ContentUnavailable []quarantinedSpan
 }
 
 // Write ahead of publishing/checkpointing. Retries may repeat an identity, but

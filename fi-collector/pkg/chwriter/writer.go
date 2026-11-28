@@ -204,7 +204,7 @@ func New(cfg Config) (*Writer, error) {
 // dead-letter is preferable to blocking the receiver loop indefinitely.
 func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
 	// Hot path: use the pre-built URL (no per-batch string-concat).
-	return w.insert(ctx, w.url, rows, nil, nil)
+	return w.insert(ctx, w.url, rows, nil, nil, nil)
 }
 
 // InsertConfirmed has Insert's retry/dead-letter semantics, and additionally
@@ -233,6 +233,11 @@ type InsertOptions struct {
 	// InsertConfirmed, which dead-letters them if that fails too). Any other
 	// failure is dead-lettered as usual.
 	HoldSchemaRefusals bool
+	// DeadLetterRow, when set, gives the form each row is written to the
+	// dead-letter file in, instead of the row itself. It must not change its
+	// argument and may be called from concurrent inserts. The spans drain
+	// uses it so the file holds self-contained inline rows.
+	DeadLetterRow func(map[string]any) map[string]any
 }
 
 // InsertConfirmedWith is InsertConfirmed with options. held is nil unless
@@ -247,7 +252,7 @@ func (w *Writer) InsertConfirmedWith(ctx context.Context, rows []map[string]any,
 	if opts.HoldSchemaRefusals {
 		held = make([]bool, len(rows))
 	}
-	err = w.insert(ctx, target, rows, confirmed, held)
+	err = w.insert(ctx, target, rows, confirmed, held, opts.DeadLetterRow)
 	return confirmed, held, err
 }
 
@@ -424,12 +429,12 @@ func (w *Writer) insertTableChunk(ctx context.Context, table, insertURL string, 
 // uses InsertBestEffort instead — single POST, no retry, no dead-letter — so
 // it deliberately does NOT share this. A non-nil held holds schema refusals
 // (InsertOptions.HoldSchemaRefusals).
-func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, confirmed, held []bool) error {
+func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, confirmed, held []bool, dl func(map[string]any) map[string]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	if w.inserts != nil {
-		return w.insertConcurrently(ctx, url, rows, confirmed, held)
+		return w.insertConcurrently(ctx, url, rows, confirmed, held, dl)
 	}
 	limit := w.maxInsertBytes
 	// Estimate ~512 B/row so we avoid 5+ buffer-grow re-allocs; with chunks,
@@ -450,7 +455,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, 
 			return errors.Join(firstErr, err)
 		}
 		if i == len(rows)-1 || (limit > 0 && buf.Len() >= limit) {
-			unavailable, refused, err := w.insertChunk(ctx, url, buf.Bytes(), rows[start:i+1], held != nil)
+			unavailable, refused, err := w.insertChunk(ctx, url, buf.Bytes(), rows[start:i+1], held != nil, dl)
 			if err == nil {
 				w.confirm(confirmed, start, i+1)
 			}
@@ -469,7 +474,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, 
 				// (or the drain was cancelled): each remaining insert
 				// would wait as long. Dead-letter the rest of the batch
 				// now, so the drain ends and its rows' memory is freed.
-				return errors.Join(firstErr, w.deadLetterUnsent(rows[i+1:]))
+				return errors.Join(firstErr, w.deadLetterUnsent(rows[i+1:], dl))
 			}
 			// A new buffer, not Reset: when ClickHouse answers before it has
 			// read a whole body, the HTTP transport may still be reading
@@ -492,7 +497,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, 
 // fails). Once an insert is refused because of the table's columns (with a
 // non-nil held), the rows not sent yet are held instead. It returns only
 // when every insert it started has ended.
-func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[string]any, confirmed, held []bool) error {
+func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[string]any, confirmed, held []bool, dl func(map[string]any) map[string]any) error {
 	limit := w.maxInsertBytes
 	size := len(rows) * 512
 	if limit > 0 {
@@ -548,7 +553,7 @@ func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[
 			// ClickHouse did not take an earlier insert of the batch after
 			// every retry, or the drain was cancelled: dead-letter what is
 			// left, this insert's rows included, so the drain ends.
-			return errors.Join(firstErr, w.deadLetterUnsent(rows[start:]))
+			return errors.Join(firstErr, w.deadLetterUnsent(rows[start:], dl))
 		}
 		body := buf.Bytes()
 		first, end := start, i+1
@@ -556,7 +561,7 @@ func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[
 		go func() {
 			defer wg.Done()
 			defer w.inserts.Release(1)
-			gaveUp, wasRefused, err := w.insertChunk(ctx, url, body, part, held != nil)
+			gaveUp, wasRefused, err := w.insertChunk(ctx, url, body, part, held != nil, dl)
 			if err != nil {
 				fail(err)
 			} else {
@@ -584,8 +589,8 @@ func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[
 }
 
 // deadLetterUnsent dead-letters rows that were never sent.
-func (w *Writer) deadLetterUnsent(rows []map[string]any) error {
-	if err := w.appendDeadLetter(rows); err != nil {
+func (w *Writer) deadLetterUnsent(rows []map[string]any, dl func(map[string]any) map[string]any) error {
+	if err := w.appendDeadLetter(rows, dl); err != nil {
 		return fmt.Errorf("chwriter: dead-letter write failed for %d unsent rows: %w", len(rows), err)
 	}
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
@@ -599,7 +604,7 @@ func (w *Writer) deadLetterUnsent(rows []map[string]any) error {
 // context ended, not because of this body. With hold, a refusal because of
 // the table's columns (IsSchemaMismatch) is not dead-lettered: refused
 // reports it and the caller owns the rows.
-func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows []map[string]any, hold bool) (unavailable, refused bool, err error) {
+func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows []map[string]any, hold bool, dl func(map[string]any) map[string]any) (unavailable, refused bool, err error) {
 	var lastErr error
 	attempts := 0
 	unavailable = true
@@ -640,7 +645,7 @@ func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows 
 
 	// Exhausted retries — persist verbatim and surface error so the caller
 	// (and any /healthz reader) sees the failure.
-	if dlErr := w.appendDeadLetter(rows); dlErr != nil {
+	if dlErr := w.appendDeadLetter(rows, dl); dlErr != nil {
 		return unavailable, false, fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)
 	}
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
@@ -746,7 +751,8 @@ func (w *Writer) sleepBackoff(ctx context.Context, attempt int) error {
 // dead-letter file. Atomicity is per-line; concurrent batches are serialized
 // behind dlMu so two batches' rows don't interleave mid-line. On disk we
 // keep this file uncompressed for grep-ability; rotation is left to logrotate.
-func (w *Writer) appendDeadLetter(rows []map[string]any) error {
+// A non-nil dl gives the form each row is written in.
+func (w *Writer) appendDeadLetter(rows []map[string]any, dl func(map[string]any) map[string]any) error {
 	w.dlMu.Lock()
 	defer w.dlMu.Unlock()
 
@@ -761,6 +767,9 @@ func (w *Writer) appendDeadLetter(rows []map[string]any) error {
 
 	enc := json.NewEncoder(w.dlFile)
 	for _, r := range rows {
+		if dl != nil {
+			r = dl(r)
+		}
 		if err := enc.Encode(r); err != nil {
 			return err
 		}

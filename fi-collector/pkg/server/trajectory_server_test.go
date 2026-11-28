@@ -56,6 +56,10 @@ type fakeTrajectoryCH struct {
 	// failInlineSpans answers every spans insert without
 	// input_format_skip_unknown_fields=0 with HTTP 500.
 	failInlineSpans bool
+	// failStrictSpans answers every spans insert with
+	// input_format_skip_unknown_fields=0 with HTTP 500 (not a schema
+	// refusal), so the writer dead-letters the pointer batch.
+	failStrictSpans bool
 }
 
 func (f *fakeTrajectoryCH) handler() http.Handler {
@@ -88,6 +92,7 @@ func (f *fakeTrajectoryCH) handler() http.Handler {
 		strictErr := ""
 		if table == "spans" && r.URL.Query().Get("input_format_skip_unknown_fields") == "0" {
 			strictErr = f.strictSpansError
+			fail = fail || f.failStrictSpans
 		} else if table == "spans" && f.failInlineSpans {
 			fail = true
 		}
@@ -714,21 +719,16 @@ func insertsInto(inserts []recordedCHInsert, table string) []recordedCHInsert {
 	return out
 }
 
-// requireNoPointerKeys checks rows carry no pointer column. With
-// convertedClosed (the gate was closed at conversion) it also checks no
-// compaction sentinel was written. A row restored inline at drain time keeps
-// its sentinel: undoing conversion-time compaction is not part of
-// RestoreInline yet.
-func requireNoPointerKeys(t *testing.T, rows []map[string]any, convertedClosed bool) {
+// requireNoPointerKeys checks rows carry no pointer column and no
+// compaction sentinel: a row converted with the gate closed was never
+// compacted, and a row restored inline at drain time is the dedup-off row.
+func requireNoPointerKeys(t *testing.T, rows []map[string]any) {
 	t.Helper()
 	for _, row := range rows {
 		for _, col := range trajectory.SpansPointerColumns {
 			if _, ok := row[col.Name]; ok {
 				t.Fatalf("row carries pointer column %s: %v", col.Name, row[col.Name])
 			}
-		}
-		if !convertedClosed {
-			continue
 		}
 		for k := range row["attributes_extra"].(map[string]any) {
 			if strings.HasPrefix(k, "__fi_promoted_") {
@@ -788,7 +788,7 @@ func TestServerDedupInactiveUntilSchemaReady(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("spans inserts %d", len(spans))
 	}
-	requireNoPointerKeys(t, spans[0].Rows, true)
+	requireNoPointerKeys(t, spans[0].Rows)
 	if strings.Contains(spans[0].RawQuery, "input_format_skip_unknown_fields") {
 		t.Fatal("an inline batch must use dev's insert URL")
 	}
@@ -836,7 +836,7 @@ func TestDrainRestoresInlineWhenGateFlipsMissing(t *testing.T) {
 		t.Fatal("closed gate at drain: no items insert")
 	}
 	spans := insertsInto(inserts, "spans")
-	requireNoPointerKeys(t, spans[0].Rows, false)
+	requireNoPointerKeys(t, spans[0].Rows)
 	if !strings.Contains(spans[0].Rows[0]["input"].(string), "Question 1") {
 		t.Fatal("the full input must be restored")
 	}
@@ -881,7 +881,7 @@ func TestItemsV1BatchUnknownColumnClosesGate(t *testing.T) {
 	if len(resent) != 2 {
 		t.Fatalf("both projects' rows must be resent, got %d", len(resent))
 	}
-	requireNoPointerKeys(t, resent, false)
+	requireNoPointerKeys(t, resent)
 	var gotDedup, gotOther bool
 	for _, row := range resent {
 		in, _ := row["input"].(string)
@@ -922,7 +922,7 @@ func TestItemsV1BatchUnknownColumnClosesGate(t *testing.T) {
 	postTrajOTLP(t, f.srv, trajTestOID, trajTestPID, agentTurn(t, 2))
 	f.srv.drainNow(context.Background())
 	spans = insertsInto(ch.snapshot(), "spans")
-	requireNoPointerKeys(t, spans[0].Rows, true)
+	requireNoPointerKeys(t, spans[0].Rows)
 	if strings.Contains(spans[0].RawQuery, "input_format_skip_unknown_fields") {
 		t.Fatal("inline batches must use dev's URL")
 	}
@@ -955,7 +955,7 @@ func TestItemsV1BatchRefusedResendFailureDeadLettersInline(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("dead-lettered rows %d, want the span once (not the refused pointer row too)", len(rows))
 	}
-	requireNoPointerKeys(t, rows, false)
+	requireNoPointerKeys(t, rows)
 	if in, _ := rows[0]["input"].(string); !strings.Contains(in, "Question 1 "+strings.Repeat("q", 300)) {
 		t.Fatal("the dead-lettered row must carry the full input")
 	}
@@ -976,7 +976,7 @@ func TestDrainItemsFailureUsesOneShortBudget(t *testing.T) {
 		t.Fatalf("trajectory_items attempts %d, want 2", attempts)
 	}
 	spans := insertsInto(ch.snapshot(), "spans")
-	requireNoPointerKeys(t, spans[0].Rows, false)
+	requireNoPointerKeys(t, spans[0].Rows)
 	if !strings.Contains(f.logs.String(), `"event":"trajectory_items_fallback_inline"`) {
 		t.Fatal("fallback not logged")
 	}
@@ -1019,7 +1019,7 @@ func TestTrajectoryBreakerSkipsExtractionAfterFailure(t *testing.T) {
 	if _, attempts := ch.counts(); attempts != 0 {
 		t.Fatal("no items POST while the breaker is open")
 	}
-	requireNoPointerKeys(t, insertsInto(inserts, "spans")[0].Rows, true)
+	requireNoPointerKeys(t, insertsInto(inserts, "spans")[0].Rows)
 
 	ch.reset()
 	f.clock.Advance(2 * time.Second)

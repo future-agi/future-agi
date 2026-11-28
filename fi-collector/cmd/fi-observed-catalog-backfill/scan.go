@@ -29,6 +29,11 @@ var parameterEscaper = strings.NewReplacer(
 type sourceReader struct {
 	url, database, username, password string
 	client                            *http.Client
+	// trajectory caches a source that has the trajectory pointer columns.
+	trajectory sourceSchema
+	// contentUnavailable counts trajectory rows whose promoted attribute
+	// could not be rebuilt (their items are gone).
+	contentUnavailable int
 }
 
 func newSourceReader(origin, database, username, password string) (*sourceReader, error) {
@@ -40,7 +45,7 @@ func newSourceReader(origin, database, username, password string) (*sourceReader
 	if !identifier.MatchString(database) || username == "" {
 		return nil, errors.New("source database identifier and read-only username are required")
 	}
-	return &sourceReader{origin, database, username, password, &http.Client{
+	return &sourceReader{url: origin, database: database, username: username, password: password, client: &http.Client{
 		Timeout:       35 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
@@ -201,15 +206,33 @@ func (s *sourceReader) payloadPage(ctx context.Context, project string, hour tim
 			params.Set("param_"+prefix+suffix, value)
 		}
 	}
+	schema, err := s.schema(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Without the trajectory pointer columns the SELECT is unchanged.
+	columns := ""
+	if schema.pointers {
+		columns = ", " + strings.Join(trajectoryColumns, ", ")
+	}
 	rows, err := s.selectRows(ctx, `SELECT project_id, org_id, observation_type, service_name, trace_id, id,
  start_time, attrs_string, attrs_number, attrs_bool,
- attributes_extra, model, _version, is_deleted
+ attributes_extra, model, _version, is_deleted`+columns+`
  FROM spans PREWHERE`+sourceWhere+`
  AND tuple(toString(observation_type), toString(service_name), trace_id, id) IN (`+strings.Join(conditions, ",")+`)`, params)
 	if err != nil {
 		return nil, err
 	}
-	return latestRows(rows, keys)
+	latest, err := latestRows(rows, keys)
+	if err != nil {
+		return nil, err
+	}
+	logical, unavailable, err := s.logicalRows(ctx, project, latest, schema)
+	if err != nil {
+		return nil, err
+	}
+	s.contentUnavailable += unavailable
+	return logical, nil
 }
 
 // Resolve all versions before applying tombstones or the caller's time range.

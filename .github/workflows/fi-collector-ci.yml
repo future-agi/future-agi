@@ -192,7 +192,10 @@ jobs:
               TestRoutingColumnStateIsSharedThroughNew \
               TestEnsureSimulationProject \
               TestClickHouseTrajectoryByteExactRoundTrip \
-              TestClickHouseTrajectoryRefreshWritesFreshCopy
+              TestClickHouseTrajectoryRefreshWritesFreshCopy \
+              TestClickHouseTrajectoryAttrsMatchDedupOff \
+              TestClickHouseDeadLetterReplayNeedsNoItems \
+              TestClickHouseTrajectoryBackfillCatalogEqualsDedupOffTwin
       - name: Collect isolated fixture logs
         if: always()
         timeout-minutes: 1

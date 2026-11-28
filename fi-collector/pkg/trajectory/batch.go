@@ -6,17 +6,100 @@ import (
 	"unsafe"
 )
 
+// PromotedAttr is the attributes_extra copy of one extracted side that the
+// converter replaced with sentinels: the attribute's key and its original Go
+// value, exactly as the dedup-off row holds it.
+type PromotedAttr struct {
+	Key   string
+	Value any
+}
+
 // SpanFallback holds a direct reference to a compacted span row and its
 // original inline fields so that if inserting `trajectory_items` into
 // ClickHouse fails after retries, `drainNow` can atomically restore the row to
 // `payload_encoding = 'inline'` before inserting `spans` — guaranteeing zero
 // orphaned hashes or data loss, even when rows are split across parcels.
+//
+// PromotedInput / PromotedOutput are set only for a side whose attributes_extra
+// copy was removed (the side was extracted and its content came from the
+// overflow tier). Restoring puts that key back with its original value and
+// deletes the sentinels, so a restored row deep-equals the dedup-off row.
 type SpanFallback struct {
-	Row                 map[string]any
-	OrigInput           string
-	OrigOutput          string
-	StrippedAttrs       map[string]any
-	StrippedStringAttrs map[string]string
+	Row            map[string]any
+	OrigInput      string
+	OrigOutput     string
+	PromotedInput  *PromotedAttr
+	PromotedOutput *PromotedAttr
+}
+
+// SentinelKeys are the four attributes_extra keys a compacted side writes.
+var SentinelKeys = [...]string{
+	SentinelPromotedInputKey, SentinelPromotedInputJSON,
+	SentinelPromotedOutputKey, SentinelPromotedOutputJSON,
+}
+
+// HasSentinelKey reports whether m already holds one of the sentinel keys,
+// for example because the producer sent an attribute with that name.
+func HasSentinelKey[V any](m map[string]V) bool {
+	for _, k := range SentinelKeys {
+		if _, ok := m[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// CompactPromoted removes the attributes_extra copy of one extracted side and
+// writes that side's sentinels. key is the attribute the side's content came
+// from and wasJSON reports that its value is not a string (the column holds
+// its JSON encoding). It returns what restoring needs, or nil when extra does
+// not hold key.
+func CompactPromoted(extra map[string]any, key string, wasJSON, input bool) *PromotedAttr {
+	v, ok := extra[key]
+	if !ok || extra == nil {
+		return nil
+	}
+	keySentinel, jsonSentinel := SentinelPromotedOutputKey, SentinelPromotedOutputJSON
+	if input {
+		keySentinel, jsonSentinel = SentinelPromotedInputKey, SentinelPromotedInputJSON
+	}
+	delete(extra, key)
+	extra[keySentinel] = key
+	if wasJSON {
+		extra[jsonSentinel] = true
+	}
+	return &PromotedAttr{Key: key, Value: v}
+}
+
+// logicalExtra returns a copy of a compacted row's attributes_extra with the
+// promoted keys restored and no sentinel: the dedup-off attributes_extra.
+func (fb SpanFallback) logicalExtra(extra map[string]any) map[string]any {
+	out := make(map[string]any, len(extra)+1)
+	for k, v := range extra {
+		out[k] = v
+	}
+	restorePromoted(out, fb.PromotedInput, fb.PromotedOutput)
+	return out
+}
+
+// restorePromoted deletes the sentinels from extra and puts the promoted
+// keys back.
+func restorePromoted(extra map[string]any, in, out *PromotedAttr) {
+	if extra == nil {
+		return
+	}
+	for _, k := range SentinelKeys {
+		delete(extra, k)
+	}
+	for _, p := range []*PromotedAttr{in, out} {
+		if p != nil {
+			extra[p.Key] = p.Value
+		}
+	}
+}
+
+func (fb SpanFallback) compacted() bool {
+	return fb.PromotedInput != nil || fb.PromotedOutput != nil
 }
 
 // UsageReport tracks exact byte & item counts for dedup-aware billing and
@@ -78,12 +161,15 @@ type Batch struct {
 	items     []Item
 	seen      map[ItemKey]struct{}
 	fallbacks []SpanFallback
+	// byRow finds a row's fallback by the row map's identity.
+	byRow map[unsafe.Pointer]int
 }
 
 // NewBatch creates an empty trajectory Batch.
 func NewBatch() *Batch {
 	return &Batch{
-		seen: make(map[ItemKey]struct{}),
+		seen:  make(map[ItemKey]struct{}),
+		byRow: make(map[unsafe.Pointer]int),
 	}
 }
 
@@ -105,7 +191,19 @@ func (b *Batch) AddFallback(fb SpanFallback) {
 	if fb.Row == nil {
 		return
 	}
+	b.addFallback(fb)
+}
+
+func (b *Batch) addFallback(fb SpanFallback) {
+	if b.byRow == nil {
+		b.byRow = make(map[unsafe.Pointer]int)
+	}
+	b.byRow[rowKey(fb.Row)] = len(b.fallbacks)
 	b.fallbacks = append(b.fallbacks, fb)
+}
+
+func rowKey(row map[string]any) unsafe.Pointer {
+	return reflect.ValueOf(row).UnsafePointer()
 }
 
 // Merge appends another Batch into b, deduplicating items by ItemKey.
@@ -116,7 +214,9 @@ func (b *Batch) Merge(other *Batch) {
 	for _, it := range other.items {
 		b.AddItem(it)
 	}
-	b.fallbacks = append(b.fallbacks, other.fallbacks...)
+	for _, fb := range other.fallbacks {
+		b.addFallback(fb)
+	}
 }
 
 // Items returns the distinct new items collected in this batch.
@@ -139,11 +239,81 @@ func (b *Batch) ToRows(now time.Time) []map[string]any {
 	return rows
 }
 
+// fallbackFor returns the fallback recorded for row (by map identity).
+func (b *Batch) fallbackFor(row map[string]any) (SpanFallback, bool) {
+	if b == nil || row == nil || len(b.byRow) == 0 {
+		return SpanFallback{}, false
+	}
+	i, ok := b.byRow[rowKey(row)]
+	if !ok {
+		return SpanFallback{}, false
+	}
+	return b.fallbacks[i], true
+}
+
+// CatalogRow returns the row the observed catalog must see for row: for a
+// compacted row a shallow copy whose attributes_extra is a copy of the
+// dedup-off one (promoted keys present, no sentinel); any other row as it
+// is. The catalog then records the same attributes with dedup on or off.
+// The copy is built on each call, so only a server with an observed catalog
+// pays for it; it shares no attributes_extra map with the row, so a later
+// RestoreInline does not change it.
+func (b *Batch) CatalogRow(row map[string]any) map[string]any {
+	fb, ok := b.fallbackFor(row)
+	if !ok || !fb.compacted() {
+		return row
+	}
+	extra, ok := row["attributes_extra"].(map[string]any)
+	if !ok {
+		return row
+	}
+	view := make(map[string]any, len(row))
+	for k, v := range row {
+		view[k] = v
+	}
+	view["attributes_extra"] = fb.logicalExtra(extra)
+	return view
+}
+
+// InlineCopy returns the self-contained inline form of a row that still
+// carries trajectory pointers: a copy with the original input and output,
+// the dedup-off attributes_extra, no pointer column and _version one higher,
+// so that a replayed copy deterministically supersedes a pointer row that may
+// have been stored by the same insert. The row itself is not changed. Any
+// other row (no fallback, or already restored inline) is returned as is with
+// ok false.
+//
+// InlineCopy only reads the batch, so it may be called from concurrent
+// goroutines once the batch is no longer being added to.
+func (b *Batch) InlineCopy(row map[string]any) (map[string]any, bool) {
+	fb, ok := b.fallbackFor(row)
+	if !ok || row["payload_encoding"] != EncodingItemsV1 {
+		return row, false
+	}
+	out := make(map[string]any, len(row))
+	for k, v := range row {
+		out[k] = v
+	}
+	if extra, ok := row["attributes_extra"].(map[string]any); ok && fb.compacted() {
+		out["attributes_extra"] = fb.logicalExtra(extra)
+	}
+	out["input"] = fb.OrigInput
+	out["output"] = fb.OrigOutput
+	for _, col := range SpansPointerColumns {
+		delete(out, col.Name)
+	}
+	if v, ok := row["_version"].(uint64); ok && v < ^uint64(0) {
+		out["_version"] = v + 1
+	}
+	return out, true
+}
+
 // RestoreInline reverts every compacted span row in this batch back to
-// `payload_encoding = 'inline'` with its full original input/output and any
-// stripped flattened attributes. Called if inserting `trajectory_items` into
-// ClickHouse fails after retries. Removes the additive Phase 1 columns so
-// fallback rows remain compatible even if ClickHouse lacks 040_trajectory_items.sql.
+// `payload_encoding = 'inline'`: its full original input/output, the promoted
+// attributes_extra keys back with their original values and no sentinel, and
+// no pointer column, so the row deep-equals the dedup-off row. Called when
+// the gate closed since conversion or inserting `trajectory_items` failed;
+// the restored rows need no 040 column.
 func (b *Batch) RestoreInline() {
 	for _, fb := range b.fallbacks {
 		fb.restore()
@@ -155,50 +325,26 @@ func (b *Batch) RestoreInline() {
 // The spans drain uses it after ClickHouse refused part of a pointer batch,
 // so rows already stored with their pointers keep matching what was stored.
 func (b *Batch) RestoreInlineRows(rows []map[string]any) {
-	if len(rows) == 0 || len(b.fallbacks) == 0 {
-		return
-	}
-	want := make(map[unsafe.Pointer]struct{}, len(rows))
 	for _, r := range rows {
-		if r != nil {
-			want[reflect.ValueOf(r).UnsafePointer()] = struct{}{}
-		}
-	}
-	for _, fb := range b.fallbacks {
-		if fb.Row == nil {
-			continue
-		}
-		if _, ok := want[reflect.ValueOf(fb.Row).UnsafePointer()]; ok {
+		if fb, ok := b.fallbackFor(r); ok {
 			fb.restore()
 		}
 	}
 }
 
-// restore reverts one compacted row to inline.
+// restore reverts one compacted row to inline. It is idempotent.
 func (fb SpanFallback) restore() {
 	if fb.Row == nil {
 		return
 	}
 	fb.Row["input"] = fb.OrigInput
 	fb.Row["output"] = fb.OrigOutput
-	if len(fb.StrippedAttrs) > 0 {
-		if of, ok := fb.Row["attributes_extra"].(map[string]any); ok && of != nil {
-			for k, v := range fb.StrippedAttrs {
-				of[k] = v
-			}
+	if fb.compacted() {
+		if extra, ok := fb.Row["attributes_extra"].(map[string]any); ok {
+			restorePromoted(extra, fb.PromotedInput, fb.PromotedOutput)
 		}
 	}
-	if len(fb.StrippedStringAttrs) > 0 {
-		if as, ok := fb.Row["attrs_string"].(map[string]string); ok && as != nil {
-			for k, v := range fb.StrippedStringAttrs {
-				as[k] = v
-			}
-		}
+	for _, col := range SpansPointerColumns {
+		delete(fb.Row, col.Name)
 	}
-	delete(fb.Row, "input_item_hashes")
-	delete(fb.Row, "output_item_hashes")
-	delete(fb.Row, "tool_def_hashes")
-	delete(fb.Row, "item_scope_id")
-	delete(fb.Row, "payload_encoding")
-	delete(fb.Row, "payload_envelope")
 }

@@ -203,6 +203,8 @@ func buildPage(rows []map[string]any, scope observedcatalog.Scope, since, until 
 	var batches []observedcatalog.Batch
 	var result pageReport
 	for _, row := range rows {
+		_, contentUnavailable := row[contentUnavailableMarker]
+		delete(row, contentUnavailableMarker)
 		if fmt.Sprint(row["is_deleted"]) == "1" {
 			continue
 		}
@@ -246,6 +248,16 @@ func buildPage(rows []map[string]any, scope observedcatalog.Scope, since, until 
 			return observedcatalog.Batch{}, pageReport{}, err
 		}
 		result.PolicyExclusions += excluded
+		if contentUnavailable {
+			key, err := rowKey(row)
+			if err != nil {
+				return observedcatalog.Batch{}, pageReport{}, err
+			}
+			result.ContentUnavailable = append(result.ContentUnavailable, quarantinedSpan{
+				Project: scope.ProjectID, Seen: seen.Format(observedcatalog.TimeLayout), Key: key,
+				Reason: contentUnavailableReason,
+			})
+		}
 		batches = append(batches, batch)
 	}
 	return observedcatalog.Merge(batches...), result, nil
@@ -352,7 +364,8 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 		if err != nil {
 			return err
 		}
-		if report.PolicyExclusions > ^uint64(0)-progress.PolicyExclusionSpans || uint64(len(report.Quarantined)) > ^uint64(0)-progress.QuarantinedSpans {
+		if report.PolicyExclusions > ^uint64(0)-progress.PolicyExclusionSpans || uint64(len(report.Quarantined)) > ^uint64(0)-progress.QuarantinedSpans ||
+			uint64(len(report.ContentUnavailable)) > ^uint64(0)-progress.ContentUnavailableSpans {
 			return errors.New("checkpoint policy exclusion count would overflow; page not published")
 		}
 		current, err := scopes.Scope(ctx, cfg.project)
@@ -360,7 +373,10 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 			return errors.New("project ownership changed during scan; page not published")
 		}
 		if cfg.apply {
-			if err := recordQuarantine(cfg.checkpointPath+".quarantine.jsonl", report.Quarantined); err != nil {
+			// Content gaps are recorded with their own reason, ahead of the
+			// publish and the checkpoint, like rejected identities.
+			receipts := append(append([]quarantinedSpan{}, report.Quarantined...), report.ContentUnavailable...)
+			if err := recordQuarantine(cfg.checkpointPath+".quarantine.jsonl", receipts); err != nil {
 				return fmt.Errorf("record rejected source identities: %w", err)
 			}
 		}
@@ -373,6 +389,7 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 		progress.Rows += uint64(len(rows))
 		progress.PolicyExclusionSpans += report.PolicyExclusions
 		progress.QuarantinedSpans += uint64(len(report.Quarantined))
+		progress.ContentUnavailableSpans += uint64(len(report.ContentUnavailable))
 		if len(keys) < cfg.pageSize {
 			progress.Hour = progress.Hour.Add(-time.Hour)
 			progress.After = physicalKey{}
@@ -386,6 +403,18 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 			}
 		}
 		receipt := map[string]any{"preview": !cfg.apply, "source_rows": len(rows), "keys": len(batch.Keys), "values": len(batch.Values), "scan_complete": progress.Complete, "pages_read": progress.Pages, "consumer_visibility_verified": false, "policy_exclusion_spans": report.PolicyExclusions, "quarantined_spans": len(report.Quarantined)}
+		if len(report.ContentUnavailable) > 0 || progress.ContentUnavailableSpans > 0 {
+			// Trajectory spans whose items are gone: catalogued without the
+			// promoted attribute rather than with its preview. The catalog
+			// of these spans is not the dedup-off one, so the gap is named.
+			receipt["trajectory_content_unavailable_spans"] = len(report.ContentUnavailable)
+			if len(report.ContentUnavailable) > 0 {
+				receipt["gap_reasons"] = []string{contentUnavailableReason}
+			}
+			if cfg.apply {
+				receipt["recorded_trajectory_content_unavailable_spans"] = progress.ContentUnavailableSpans
+			}
+		}
 		if cfg.apply {
 			receipt["recorded_policy_exclusion_spans"] = progress.PolicyExclusionSpans
 			receipt["recorded_quarantined_spans"] = progress.QuarantinedSpans
