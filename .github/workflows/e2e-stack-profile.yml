@@ -191,6 +191,9 @@ jobs:
     # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
     timeout-minutes: 155
     env:
+      # The ordinary legs run the complement of the Skills cohorts' cases
+      # (playwright.config.ts, scripts/skills-coverage.py ordinary).
+      SKILLS_COHORT: ordinary
       # bin/e2e and lib/managed-mock.ts pick the stack from this.
       E2E_STACK: ${{ matrix.stack }}
       # The Buildx container is fresh per leg. Disabling external imports keeps
@@ -680,7 +683,12 @@ jobs:
           python -m pip install --quiet -e ./python pytest pyyaml
           # Writes futureagi-sdk/.env.local, which both suites read. :8100 is
           # BACKEND_PORT in both e2e/stack/e2e.env and standalone-e2e.env.
-          python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
+          # Skills resources refuse an org system key; SDK checkouts whose helper can
+          # mint a user-bound workspace key use one (the SDK's own e2e.yml does too).
+          # Older SDK refs do not know the flag, so pass it only when supported.
+          key_flag=()
+          if grep -q -- '--workspace-user-key' sdkgen/local_api_key.py; then key_flag=(--workspace-user-key); fi
+          python sdkgen/local_api_key.py --signup "${key_flag[@]}" --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
         id: sdk-python
@@ -836,6 +844,8 @@ jobs:
       run:
         working-directory: e2e
     env:
+      # Lists exactly what the ordinary legs ran (playwright.config.ts).
+      SKILLS_COHORT: ordinary
       E2E_STACK: ${{ matrix.stack }}
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
     steps:

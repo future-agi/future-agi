@@ -49,6 +49,9 @@ def upsert_langfuse_trace(
     org,
     workspace,
     org_id,
+    *,
+    source_origin: str | None = None,
+    source_project_id: str | None = None,
 ):
     """Upsert a single assembled Langfuse trace with observations and scores.
 
@@ -137,8 +140,13 @@ def upsert_langfuse_trace(
             )
 
         # Transform observations
+        lineage = (
+            {"source_origin": source_origin, "source_project_id": source_project_id}
+            if source_origin is not None and source_project_id is not None
+            else {}
+        )
         obs_dicts = transformer.transform_observations(
-            assembled_trace, trace_id, project_id
+            assembled_trace, trace_id, project_id, **lineage
         )
 
         # Fix orphan parent_span_ids: Langfuse OTEL integration sometimes

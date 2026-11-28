@@ -1,0 +1,168 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { getSkillErrorCode, useSaveSkillDraft } from "src/api/skills";
+
+function sessionState(draft) {
+  return { ...draft, savedFiles: draft.files, editSequence: 0, savedSequence: 0, pendingMutations: 0, mutationError: null, status: "saved", error: null };
+}
+
+function skillSaveInput(draft, revision) {
+  return { files: draft.files, note: draft.note, baseVersion: draft.baseVersion, revision };
+}
+
+/** One owner for authored fields and server-owned dependency mutations. */
+export default function useDraftSession(skillId, initialDraft, paused = false, resourceApi = null) {
+  const [state, setState] = useState(() => sessionState(initialDraft));
+  const latest = useRef(state);
+  const inFlight = useRef(null);
+  const flushing = useRef(null);
+  const mutations = useRef(Promise.resolve());
+  const retainedMutation = useRef(null);
+  const generation = useRef(0);
+  const mounted = useRef(true);
+  const { mutateAsync } = useSaveSkillDraft(skillId);
+  const saveDraft = resourceApi ? resourceApi.saveDraft : mutateAsync;
+  const saveInput = resourceApi ? resourceApi.saveInput : skillSaveInput;
+  const dirty = state.editSequence !== state.savedSequence || state.pendingMutations > 0 || Boolean(state.mutationError);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; generation.current += 1; };
+  }, []);
+  const update = useCallback((next) => {
+    latest.current = next;
+    if (mounted.current) setState(next);
+  }, []);
+
+  const save = useCallback(async (revision) => {
+    if (!mounted.current || (latest.current.mutationError && retainedMutation.current?.acknowledged)) return null;
+    if (inFlight.current) return inFlight.current;
+    const snapshot = latest.current;
+    if (snapshot.status === "conflict" && revision === undefined) return null;
+    if (revision === undefined && snapshot.status === "saved" && snapshot.editSequence === snapshot.savedSequence && snapshot.revision > 0) return snapshot;
+    const epoch = generation.current;
+    update({ ...snapshot, status: "saving", error: null });
+    const request = (async () => saveDraft(saveInput(snapshot, revision ?? snapshot.revision)))()
+      .then((draft) => {
+        if (!mounted.current || epoch !== generation.current) return null;
+        if (!Array.isArray(draft?.files) || !Number.isSafeInteger(draft.revision)) throw new Error("The draft acknowledgment is incomplete. Reload the exact saved revision before continuing.");
+        if (draft.baseVersion !== snapshot.baseVersion || (snapshot.resolvedLock && JSON.stringify(draft.resolvedLock) !== JSON.stringify(snapshot.resolvedLock))) {
+          throw new Error("An ordinary save changed the content origin or accepted dependencies. Reload and review before continuing.");
+        }
+        const local = latest.current;
+        const authored = local.editSequence === snapshot.editSequence ? {} : { files: local.files, note: local.note, description: local.description };
+        // Retain the server's compiled/recovery identity and head preconditions,
+        // but never replace edits typed while that snapshot was being saved.
+        update({ ...local, ...draft, ...authored, editSequence: local.editSequence, pendingMutations: local.pendingMutations, mutationError: local.mutationError, savedFiles: draft.files, savedSequence: snapshot.editSequence, status: local.mutationError ? "error" : "saved", error: local.mutationError });
+        return draft;
+      }).catch((error) => {
+        if (mounted.current && epoch === generation.current) update({ ...latest.current, status: getSkillErrorCode(error) === "draft_conflict" ? "conflict" : "error", error });
+        return null;
+      }).finally(() => { if (inFlight.current === request) inFlight.current = null; });
+    inFlight.current = request;
+    return request;
+  }, [saveDraft, saveInput, update]);
+
+  const flushLocal = useCallback(async () => {
+    if (!mounted.current || latest.current.status === "conflict") return null;
+    // The safe resource adapter must not resave a clean acknowledgment: that
+    // advances revision and invalidates its head-review token. Keep the legacy
+    // leaf flow's explicit save/revalidation behavior unchanged.
+    let acknowledged = inFlight.current ? await inFlight.current : await save(resourceApi ? undefined : latest.current.revision);
+    if (!acknowledged) return null;
+    while (mounted.current && latest.current.editSequence !== latest.current.savedSequence) {
+      if (latest.current.status === "conflict") return null;
+      acknowledged = await save();
+      if (!acknowledged) return null;
+    }
+    return mounted.current ? acknowledged : null;
+  }, [save, resourceApi]);
+
+  const flush = useCallback(async () => {
+    if (flushing.current) return flushing.current;
+    const request = (async () => {
+      let tail;
+      let acknowledged;
+      do {
+        tail = mutations.current;
+        if (latest.current.pendingMutations) await tail;
+        if (latest.current.mutationError) return null;
+        acknowledged = await flushLocal();
+        if (!acknowledged) return null;
+      } while (tail !== mutations.current || latest.current.editSequence !== latest.current.savedSequence);
+      return acknowledged;
+    })().finally(() => { flushing.current = null; });
+    flushing.current = request;
+    return request;
+  }, [flushLocal]);
+
+  const mutateDraft = useCallback((operation, { operationKey } = {}) => {
+    const retained = retainedMutation.current;
+    const recovering = Boolean(retained && latest.current.mutationError);
+    // Once dispatched, only the original operation may recover. Never save
+    // local edits against a revision that the unknown write may have advanced.
+    if (retained && latest.current.mutationError && (operationKey ? retained.key !== operationKey : retained.operation !== operation)) return Promise.resolve(null);
+    const epoch = generation.current;
+    update({ ...latest.current, pendingMutations: latest.current.pendingMutations + 1, mutationError: null });
+    const request = mutations.current.then(async () => {
+      if (!mounted.current || epoch !== generation.current) return null;
+      if (latest.current.mutationError && !recovering) return null;
+      const recovery = recovering ? retained : null;
+      const acknowledged = recovery?.acknowledged || await flushLocal();
+      if (!mounted.current || epoch !== generation.current) return null;
+      if (!acknowledged) {
+        // A failed prerequisite save means the requested server mutation never
+        // ran. A later ordinary save must not acknowledge that omitted intent.
+        const error = latest.current.error ?? new Error("Save failed before the draft operation. Retry the operation or reload the draft.");
+        retainedMutation.current = { operation, key: operationKey };
+        update({ ...latest.current, mutationError: error });
+        return null;
+      }
+      const snapshot = recovery?.snapshot || latest.current;
+      const ticket = recovery?.acknowledged ? recovery : { operation, key: operationKey, acknowledged, snapshot };
+      retainedMutation.current = ticket;
+      update({ ...latest.current, status: "saving" });
+      const mutation = Promise.resolve().then(() => ticket.operation(acknowledged)).then((draft) => {
+        if (!mounted.current || epoch !== generation.current) return null;
+        if (!Array.isArray(draft?.files) || !Number.isSafeInteger(draft.revision)) throw new Error("This operation returned a receipt, not the acknowledged draft. Recover that exact revision before editing.");
+        // Files/purpose typed during dependency Apply remain local and are saved
+        // against its new revision; only the server can replace the accepted lock.
+        const local = latest.current;
+        const authored = local.editSequence === snapshot.editSequence ? {} : { files: local.files, note: local.note, description: local.description };
+        retainedMutation.current = null;
+        update({ ...local, ...draft, ...authored, editSequence: local.editSequence, pendingMutations: local.pendingMutations, mutationError: null, savedFiles: draft.files, savedSequence: snapshot.editSequence, status: "saved", error: null });
+        return draft;
+      }).catch((error) => {
+        if (mounted.current && epoch === generation.current) update({ ...latest.current, mutationError: error, status: getSkillErrorCode(error) === "draft_conflict" ? "conflict" : "error", error });
+        return null;
+      }).finally(() => { if (inFlight.current === mutation) inFlight.current = null; });
+      inFlight.current = mutation;
+      return mutation;
+    }).finally(() => {
+      if (mounted.current && epoch === generation.current) update({ ...latest.current, pendingMutations: latest.current.pendingMutations - 1 });
+    });
+    mutations.current = request;
+    return request;
+  }, [flushLocal, update]);
+
+  const editFields = useCallback((fields) => {
+    const allowed = ["files", "note", "description"];
+    if (Object.keys(fields).some((field) => !allowed.includes(field))) throw new Error("Use mutateDraft for server-owned draft state.");
+    update({ ...latest.current, ...fields, editSequence: latest.current.editSequence + 1 });
+  }, [update]);
+
+  useEffect(() => {
+    if (paused || !dirty || state.pendingMutations || ["saving", "error", "conflict"].includes(state.status)) return undefined;
+    const timer = setTimeout(() => { save(); }, 1000);
+    return () => clearTimeout(timer);
+  }, [dirty, state.editSequence, state.pendingMutations, state.status, save, paused]);
+
+  return {
+    ...state, dirty, save, flush, editFields, mutateDraft,
+    edit: (files) => editFields({ files }),
+    reload: (draft) => {
+      generation.current += 1;
+      retainedMutation.current = null;
+      update(sessionState(draft));
+    },
+  };
+}

@@ -1,0 +1,140 @@
+import type { Page } from '@playwright/test';
+import { test, expect } from '../../lib/skill-trace-scenario';
+import { POLL } from '../../lib/state-probe';
+import { flowAnnotation } from '../../lib/flow-meta';
+import { OBSERVATION_TYPE, cohortObservationLine, isSkillCohortRequest } from '../../lib/skill-cohort-request';
+
+const item = (field:string, value:string, group = 0) => ({ column_id:`skill.${field}`, group,
+  filter_config:{ col_type:'SKILL', filter_type:'text', filter_op:'equals', filter_value:value } });
+
+/** Wait for the actual filtered response, not an empty grid during navigation. */
+async function list(page: Page, project:string, filters: ReturnType<typeof item>[]) {
+  const pending = page.waitForResponse(r => {
+    if (!r.url().includes('/tracer/trace/list_traces_of_session/') || r.request().method() === 'OPTIONS') return false;
+    const body = r.request().method() === 'POST' ? r.request().postDataJSON()?.filters : new URL(r.url()).searchParams.get('filters');
+    const items = typeof body === 'string' ? JSON.parse(body) : body;
+    return Array.isArray(items) && filters.every(f => items.some(i => i.column_id === f.column_id && i.filter_config?.filter_value === f.filter_config.filter_value));
+  });
+  await page.goto(`/dashboard/observe/${project}/llm-tracing?tab=traces&observeLinkFilter=${encodeURIComponent(JSON.stringify(filters))}`);
+  const res = await pending;
+  expect(res.status()).toBe(200);
+  return (await res.json()).result.table.map((row: { trace_id: string }) => row.trace_id);
+}
+
+test('OBS-E2E-069: F2 correlate the skill and agent within one load', { tag:['@flow'], annotation:flowAnnotation({
+  id:'OBS-E2E-069', area:'observe', userGoal:'Find traces where the chosen agent loaded the chosen skill',
+  steps:['Serve one trace with independent agent scopes A and B', 'Filter first for A, then B, then a separate also-loaded group'],
+  backendChecks:['The two SDK loads belong to different agents', 'The real list response rejects a cross-agent match but accepts the separate load group'],
+}) }, async ({ scenario:s, probe, page }) => {
+  test.setTimeout(180000);
+  const t = s.emit('python', [s.agent('agent-a',[s.refund],false),s.agent('agent-b',[s.tone],false)])!;
+  const rows = () => probe.ch<{ project_id:string; agent_name:string; skill_id:string }>(`
+    SELECT project_id, argMax(if(attrs_string['gen_ai.agent.name'] != '',
+             attrs_string['gen_ai.agent.name'], attrs_string['fi.context.name']), _version) AS agent_name,
+           argMax(attrs_string['fi.skill.id'], _version) AS skill_id
+    FROM spans WHERE trace_id={t:String}
+    GROUP BY project_id, trace_id, id
+    HAVING argMax(is_deleted, _version) = 0 AND argMax(name, _version) = 'skill.load'
+       AND argMax(attrs_string['fi.skill.version_id'], _version) != ''
+    ORDER BY agent_name`, {t});
+  await expect.poll(async () => (await rows()).map(r => [r.agent_name,r.skill_id]), POLL.SPAN_VISIBLE).toEqual([['agent-a',s.refund.id],['agent-b',s.tone.id]]);
+  const p = (await rows())[0].project_id;
+  expect(await list(page,p,[item('version_id',s.refund.version.id),item('agent','agent-a')])).toEqual([t]);
+  expect(await list(page,p,[item('version_id',s.refund.version.id),item('agent','agent-b')])).toEqual([]);
+  expect(await list(page,p,[item('version_id',s.refund.version.id),item('version_id',s.tone.version.id,1)])).toEqual([t]);
+});
+
+test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@flow'], annotation:flowAnnotation({
+  id:'OBS-E2E-070',area:'observe',userGoal:'Tell which spans ran after a skill was loaded, and inspect the overlapping version cohorts',
+  steps:['Run requests for two agents that load different versions', 'Open the filtered span list and compare it with storage', 'Switch to the trace cohort and split the graph by version'],
+  backendChecks:['Only spans stamped with the selected version are in the scoped span list','The version trace filter, cohort strip and split graph identify the same application request'],
+}) }, async ({scenario:s,page,probe}) => {
+  test.setTimeout(180000); page.setDefaultTimeout(30000);
+  const t = s.emit('python',[s.agent('support',[s.refund],false)])!;
+  const other = s.emit('python',[s.agent('writing',[s.tone],false)])!;
+  const [project] = await probe.pg<{id:string}>('SELECT id FROM tracer_project WHERE name=$1',[s.project]);
+  const params = {t,v:s.refund.version.id};
+  const read = () => probe.ch<{id:string;name:string}>("SELECT id,name FROM spans FINAL WHERE trace_id={t:String} AND has(JSONExtract(attributes_extra,'fi.skills.version_ids','Array(String)'),{v:String}) ORDER BY id",params);
+  await expect.poll(async () => (await read()).map(r=>r.name),POLL.SPAN_VISIBLE).toContain('prepare answer');
+  const filter = [item('in_scope',s.refund.version.id)];
+  const versionFilter = [item('version_id',s.refund.version.id)];
+  const path = '/tracer/observation-span/list_spans_observe/';
+  const pending = page.waitForResponse(r => r.url().includes(path) && r.request().method()!=='OPTIONS' && (r.request().postData()||r.url()).includes(s.refund.version.id));
+  await page.goto(`/dashboard/observe/${project.id}/llm-tracing?tab=traces&selectedTab=spans&observeLinkFilter=${encodeURIComponent(JSON.stringify(filter))}`);
+  const res = await pending;
+  expect(res.status()).toBe(200);
+  const rows = (await res.json()).result.table as {span_id:string;trace_id:string}[];
+  expect(rows.map(row=>row.span_id).sort()).toEqual((await read()).map(row=>row.id));
+  expect(rows.some(row=>row.trace_id===other)).toBe(false);
+  type CohortObservation = | { observed: false } | { observed: true; status: number; complete: boolean; traces: number | null; code?: unknown; elapsedMs: number | null };
+  const cohortObservation = page.waitForResponse((response) => {
+    let pathname: string;
+    let body: unknown;
+    try {
+      pathname = new URL(response.url()).pathname;
+      body = response.request().postDataJSON();
+    } catch {
+      return false;
+    }
+    return isSkillCohortRequest(response.request().method(), pathname, body,
+      {projectId: project.id, versionId: s.refund.version.id});
+  }, {timeout: 0}).then(async (response): Promise<CohortObservation> => {
+    const status = response.status();
+    const timing = response.request().timing();
+    const elapsedMs = timing.responseEnd > 0 ? timing.responseEnd : timing.responseStart > 0 ? timing.responseStart : null;
+    if (status !== 200) {
+      const code = await response.json().then((body: {code?: unknown}) => body?.code, () => undefined);
+      return {observed: true, status, complete: false, traces: null, code, elapsedMs};
+    }
+    const completionError = await response.finished().catch(() => new Error('incomplete'));
+    if (completionError) return {observed: true, status, complete: false, traces: null, elapsedMs};
+    try {
+      const payload = await response.json() as {result?: {summary?: {traces?: unknown}}};
+      const value = payload?.result?.summary?.traces;
+      const traces = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+      return {observed: true, status, complete: true, traces, elapsedMs};
+    } catch {
+      return {observed: true, status, complete: false, traces: null, elapsedMs};
+    }
+  }).catch((): CohortObservation => ({observed: false}));
+
+  expect(await list(page,project.id,versionFilter)).toEqual([t]);
+  // Keep API evidence and the original UI check within one configured expect
+  // deadline. The response is observed passively before navigation; it is not
+  // reissued, and a slow API cannot give the locator a fresh timeout.
+  const uiDeadline = Date.now() + 10_000; // playwright.config.ts expect.timeout
+  const remainingMs = () => Math.max(1, uiDeadline - Date.now());
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const observationByDeadline = Promise.race([cohortObservation,
+      new Promise<null>((resolve) => { deadlineTimer = setTimeout(() => resolve(null), remainingMs()); })]);
+    const region = page.getByRole('region',{name:'Traces matching these filters'});
+    const tracesMetric = region.getByText('Traces',{exact:true}).locator('..');
+    const [apiResult, uiResult] = await Promise.allSettled([observationByDeadline,
+      expect(tracesMetric).toHaveText('Traces1',{timeout:remainingMs()})]);
+    if (apiResult.status === 'rejected') throw new Error('OBS-E2E-070 cohort response observation failed');
+    const api = apiResult.value;
+    // Recorded before any assertion, so CI shows what the projection answered, pass or fail.
+    test.info().annotations.push({type: OBSERVATION_TYPE, description: api?.observed
+      ? cohortObservationLine(api.status, api.code, api.elapsedMs) : cohortObservationLine(null, 'not_observed', null)});
+    expect(api?.observed, 'OBS-E2E-070 matching cohort POST was observed').toBe(true);
+    if (!api?.observed) throw new Error('OBS-E2E-070 matching cohort POST was not observed');
+    expect(api.status, 'OBS-E2E-070 cohort response status').toBe(200);
+    expect(api.complete, 'OBS-E2E-070 cohort response completed').toBe(true);
+    expect(typeof api.traces, 'OBS-E2E-070 cohort summary count is numeric').toBe('number');
+    expect(api.traces, 'OBS-E2E-070 cohort summary trace count').toBe(1);
+    if (uiResult.status === 'rejected') throw uiResult.reason;
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+  }
+  const split = page.getByLabel('Split by skill version',{exact:true});
+  if (!await split.isVisible()) {
+    await page.getByTestId('graph-metric-picker-trigger').first().click();
+    await page.getByPlaceholder('Search metrics...').fill('Latency');
+    await page.getByRole('button',{name:'Latency',exact:true}).click();
+  }
+  await split.check();
+  await expect(page.getByText('Cohorts overlap; not additive.',{exact:false})).toBeVisible({timeout:45000});
+  await page.getByText('View values and sample counts',{exact:true}).click();
+  await expect(page.getByRole('table',{name:/by skill version/})).toContainText(s.refund.name);
+});

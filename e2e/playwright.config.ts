@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 import { E2E } from './lib/env';
 import { grepInvertPattern } from './lib/quarantine';
@@ -8,6 +10,19 @@ import { SPEC_GLOBS, parseShard, shardTestMatch } from './lib/shard';
 // name, because the report job merges all of them from one directory.
 const shard = parseShard(process.env.E2E_SHARD);
 const blobName = shard ? `report-${shard.index}-of-${shard.total}.zip` : 'report.zip';
+
+// SKILLS_COHORT=ordinary (CI's ordinary legs and their report job) runs the exact
+// complement of the cases the Skills cohorts own, so the shard parity proof lists
+// what those legs ran. Cohort jobs set their own name and select their cases with
+// --grep; the flow catalog and local runs leave it unset and see every test.
+function ordinaryGrep(): RegExp | undefined {
+  if (process.env.SKILLS_COHORT !== 'ordinary') return undefined;
+  const script = fileURLToPath(new URL('./scripts/skills-coverage.py', import.meta.url));
+  const run = spawnSync('python3', ['-I', script, 'ordinary'], { encoding: 'utf8' });
+  const pattern = run.stdout?.trim();
+  if (run.status !== 0 || !pattern) throw new Error(`skills-coverage.py ordinary failed (${run.status}): ${run.stderr}`);
+  return new RegExp(pattern);
+}
 
 // These specs need the entitled Error Feed stack (E2E_STACK=error-feed bin/e2e);
 // other stacks leave them out of the listing instead of skipping them at run time.
@@ -26,9 +41,15 @@ const ERROR_FEED_STACK_ONLY = [
 
 export default defineConfig({
   testDir: '.',
+  globalSetup: process.env.SKILLS_CAMPAIGN_PREFLIGHT === '1' ? './stack/check-skills-capabilities.ts' : undefined,
   testMatch: shardTestMatch() ?? SPEC_GLOBS,
-  testIgnore: process.env.E2E_STACK === 'error-feed' || process.env.E2E_INCLUDE_ERROR_FEED_STACK
-    ? undefined : ERROR_FEED_STACK_ONLY,
+  testIgnore: [
+    // Native flows require their separate, fail-closed cloud qualification setup.
+    '**/*.native.spec.ts',
+    ...(process.env.E2E_STACK === 'error-feed' || process.env.E2E_INCLUDE_ERROR_FEED_STACK
+      ? [] : ERROR_FEED_STACK_ONLY),
+  ],
+  grep: ordinaryGrep(),
   grepInvert: grepInvertPattern(),
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

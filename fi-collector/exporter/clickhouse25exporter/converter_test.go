@@ -2,6 +2,7 @@ package clickhouse25exporter
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -123,6 +124,94 @@ func TestConvertMinimalGenAISpan(t *testing.T) {
 	// _version is non-zero (used by ReplacingMergeTree).
 	if r["_version"].(uint64) == 0 {
 		t.Errorf("_version must be non-zero (used for dedup)")
+	}
+}
+
+// Pin the runtime skill schema without introducing a new observation type.
+// chwriter serializes these maps directly as JSONEachRow; dotted list keys
+// must stay flat even after that JSON round trip (migration 013 stores text).
+func TestConvertSkillAttributes(t *testing.T) {
+	const version = "11111111-1111-4111-8111-111111111111"
+	const second = "22222222-2222-4222-8222-222222222222"
+	for _, cached := range []bool{false, true} {
+		traces := buildOTLPSpan()
+		sp := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		sp.SetName("skill.load")
+		sp.SetKind(ptrace.SpanKindInternal)
+		a := sp.Attributes()
+		a.Clear()
+		a.PutStr("fi.skill.version_id", version)
+		a.PutInt("fi.skill.version", 3)
+		a.PutInt("fi.skill.requested_version", 3)
+		a.PutBool("fi.skill.load.cached", cached)
+		a.PutBool("fi.skill.load.root_file", !cached)
+		versions := a.PutEmptySlice("fi.skills.version_ids")
+		versions.AppendEmpty().SetStr(version)
+		versions.AppendEmpty().SetStr(second)
+		rows, err := Convert(traces)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("convert skill load: rows=%d err=%v", len(rows), err)
+		}
+		r := rows[0]
+		if r["name"] != "skill.load" || r["observation_type"] != "unknown" {
+			t.Fatalf("skill.load must keep the existing observation type: %#v", r)
+		}
+		if got := r["attrs_string"].(map[string]string); !reflect.DeepEqual(got, map[string]string{"fi.skill.version_id": version}) {
+			t.Fatalf("skill strings: %#v", got)
+		}
+		if got := r["attrs_number"].(map[string]float64); !reflect.DeepEqual(got, map[string]float64{"fi.skill.version": 3, "fi.skill.requested_version": 3}) {
+			t.Fatalf("skill numbers: %#v", got)
+		}
+		var cachedByte uint8
+		if cached {
+			cachedByte = 1
+		}
+		if got := r["attrs_bool"].(map[string]uint8); !reflect.DeepEqual(got, map[string]uint8{"fi.skill.load.cached": cachedByte, "fi.skill.load.root_file": 1 - cachedByte}) {
+			t.Fatalf("skill booleans: %#v", got)
+		}
+		encoded, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal(encoded, &wire); err != nil {
+			t.Fatal(err)
+		}
+		extra := wire["attributes_extra"].(map[string]any)
+		if !reflect.DeepEqual(extra["fi.skills.version_ids"], []any{version, second}) {
+			t.Fatalf("flat dotted array did not survive JSONEachRow encoding: %#v", extra)
+		}
+		if _, nested := extra["fi"]; nested {
+			t.Fatal("skill attribute names must not become nested JSON paths")
+		}
+	}
+}
+
+func TestConvertFailedSkillAttributes(t *testing.T) {
+	traces := buildOTLPSpan()
+	sp := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	sp.SetName("skill.load")
+	sp.Status().SetCode(ptrace.StatusCodeError)
+	a := sp.Attributes()
+	a.Clear()
+	want := map[string]string{
+		"fi.skill.name":            "policy",
+		"fi.skill.requested_label": "production",
+		"fi.skill.load.via":        "sdk.read_file",
+		"error.type":               "integrity",
+		"gen_ai.agent.name":        "reviewer",
+		"fi.context.id":            "11111111-1111-4111-8111-111111111111",
+		"fi.context.version_id":    "22222222-2222-4222-8222-222222222222",
+	}
+	for key, value := range want {
+		a.PutStr(key, value)
+	}
+	rows, err := Convert(traces)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("convert failed load: rows=%d err=%v", len(rows), err)
+	}
+	if rows[0]["status"] != "ERROR" || !reflect.DeepEqual(rows[0]["attrs_string"], want) {
+		t.Fatalf("failure must preserve scope without manufacturing verified identity: %#v", rows[0])
 	}
 }
 

@@ -1,0 +1,990 @@
+{
+  "schema": 1,
+  "protocol": "context-hub-complete-jobs-r3.2",
+  "generated_at": "2026-11-08T23:08:26.648Z",
+  "evidence_kind": "documentation_and_unavailable_product_runs",
+  "documented_baselines": {
+    "schema": 1,
+    "audit_date": "2026-11-07",
+    "source_file": "flows-and-agent-contexts.json",
+    "source_sha256": "7ec4e10cf402245c1fc5d6cc4817e4fcc95751b7fb65c0d77199a70530ffd90e",
+    "methodology": "Count each competitor_steps array entry once, without splitting combined steps or summing overlapping/alternative routes. These are documentation bullets, not operator actions or authenticated transactions.",
+    "comparator_validation": "not_conducted",
+    "jobs": [
+      {
+        "job": "J1",
+        "candidate_flow_refs": [
+          "LF06",
+          "LF07",
+          "LF20",
+          "LF21",
+          "LF22",
+          "LF23",
+          "O44",
+          "O47",
+          "LS-S24",
+          "LS-S25"
+        ],
+        "best_applicable_measured_actions": null,
+        "strongest_configured_route": "requires_independent_customer_workflow_review"
+      },
+      {
+        "job": "J2",
+        "candidate_flow_refs": [
+          "LF42",
+          "LF47",
+          "O51",
+          "O10",
+          "O11",
+          "O12",
+          "O13",
+          "O14"
+        ],
+        "best_applicable_measured_actions": null,
+        "strongest_configured_route": "requires_independent_customer_workflow_review"
+      },
+      {
+        "job": "J3",
+        "candidate_flow_refs": [
+          "CH10",
+          "CH11",
+          "CH12",
+          "LS-S08",
+          "LS-S09",
+          "O04",
+          "LS-S34",
+          "LS-S35",
+          "LS-S42",
+          "LS-S43"
+        ],
+        "best_applicable_measured_actions": null,
+        "strongest_configured_route": "requires_independent_customer_workflow_review"
+      },
+      {
+        "job": "J4",
+        "candidate_flow_refs": [
+          "LF46",
+          "O40",
+          "CH22"
+        ],
+        "best_applicable_measured_actions": null,
+        "strongest_configured_route": "requires_independent_customer_workflow_review"
+      },
+      {
+        "job": "J5",
+        "candidate_flow_refs": [
+          "O16",
+          "LF23",
+          "LS-S24",
+          "LS-S25"
+        ],
+        "best_applicable_measured_actions": null,
+        "strongest_configured_route": "requires_independent_customer_workflow_review"
+      },
+      {
+        "job": "J6",
+        "candidate_flow_refs": [
+          "CH23",
+          "LF14",
+          "LF23",
+          "LF16",
+          "LF17",
+          "LF18",
+          "LF19",
+          "LS-S34",
+          "LS-S35",
+          "LS-S43",
+          "LF49",
+          "LF50"
+        ],
+        "best_applicable_measured_actions": null,
+        "strongest_configured_route": "requires_independent_customer_workflow_review"
+      }
+    ],
+    "flows": [
+      {
+        "ref": "LF06",
+        "name": "06 — Import loose skill files",
+        "source_pointer": "/flows:4/flows/5",
+        "documented_step_count": 4,
+        "steps": [
+          "New skill → Import skills → Upload.",
+          "Select files containing SKILL.md and supporting resources.",
+          "Review detected skills and import statuses; select the intended subset.",
+          "Import creates versions for changes, marks identical content Already up to date and preserves existing production labels."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/version-control",
+          "https://github.com/langfuse/langfuse/pull/18378"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF07",
+        "name": "07 — Import folders and multi-skill ZIP archives",
+        "source_pointer": "/flows:4/flows/6",
+        "documented_step_count": 4,
+        "steps": [
+          "New skill → Import skills → Upload and choose a folder or ZIP.",
+          "Review discovered SKILL.md roots and file counts; search/select the skills to import.",
+          "Confirm changed/new packages and skip Already up to date entries.",
+          "Respect the documented 3 MiB compressed ZIP limit and per-version limits of 200 files and 1,000,000 UTF-8 bytes."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/overview",
+          "https://langfuse.com/docs/skill-management/version-control",
+          "https://github.com/langfuse/langfuse/pull/18378"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF20",
+        "name": "20 — Push a local skill from the CLI",
+        "source_pointer": "/flows:4/flows/19",
+        "documented_step_count": 5,
+        "steps": [
+          "Install @langfuse/cli and configure project credentials/host.",
+          "Run langfuse skills push <folder> --dry-run --json to inspect included/excluded paths.",
+          "Add literal --exclude paths as needed; review tracked files because ignore rules do not exclude already-tracked files.",
+          "Push with an optional commit message and explicit label.",
+          "Matching latest files reuse the version; Git inspection failure stops publication."
+        ],
+        "citations": [
+          "https://github.com/langfuse/langfuse-cli/blob/main/README.md",
+          "https://langfuse.com/docs/skill-management/version-control"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF21",
+        "name": "21 — Recursively push a repository's skill collection",
+        "source_pointer": "/flows:4/flows/20",
+        "documented_step_count": 4,
+        "steps": [
+          "Run skills push <directory> --recursive.",
+          "Use --update-only to restrict the operation to existing skills when desired.",
+          "Inspect --dry-run --json output and per-skill exclusions.",
+          "Optionally use --no-lockfile, then perform the push."
+        ],
+        "citations": [
+          "https://github.com/langfuse/langfuse-cli/blob/main/README.md"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF22",
+        "name": "22 — Install a skill, pinned version, tag or complete project catalog",
+        "source_pointer": "/flows:4/flows/21",
+        "documented_step_count": 4,
+        "steps": [
+          "Use skill → Install with CLI → Configure install command.",
+          "Choose one skill, a tag or all project skills; choose a label/version and installation directory.",
+          "Copy/run skills install <name>, <name>@staging, <name>@3, --tag or --all.",
+          "Default output is .agents/skills/<name>; configure the agent to read it."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/get-started",
+          "https://github.com/langfuse/langfuse-cli/blob/main/README.md"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF23",
+        "name": "23 — Restore from lock, update followers and preserve pins",
+        "source_pointer": "/flows:4/flows/22",
+        "documented_step_count": 5,
+        "steps": [
+          "Keep langfuse-skills.lock from installation.",
+          "Run skills install with no arguments to restore locked versions.",
+          "Run skills update to refresh already-locked label followers; exact pins stay fixed.",
+          "Re-run install --tag or --all to discover newly added skills.",
+          "The CLI rejects manifests inconsistent with requested selectors; --force does not bypass that validation."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/get-started",
+          "https://github.com/langfuse/langfuse-cli/blob/main/README.md"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O44",
+        "name": "PromptLayer Skill Collections — author/import a multi-skill context folder",
+        "source_pointer": "/flows:5/flows/43",
+        "documented_step_count": 6,
+        "steps": [
+          "Create/edit a Skill Collection or ask Wrangler to create one.",
+          "Choose Claude Code, OpenAI/Codex, OpenClaw or Universal layout.",
+          "Add skill subfolders, provider core files and supporting files.",
+          "Import folders or ZIPs; the changelog also documents binary-file upload/preview.",
+          "Edit links/frontmatter, review the file/provider diff and save with a commit message.",
+          "Use version history to compare or restore and labels to mark the intended release."
+        ],
+        "citations": [
+          "https://docs.promptlayer.com/features/skill-collections/overview",
+          "https://docs.promptlayer.com/features/skill-collections/tuning-skills",
+          "https://docs.promptlayer.com/changelog",
+          "https://mintcdn.com/promptlayer/aKQsKdqK312I4T8x/images/skill-collections/overview-editor.png"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O47",
+        "name": "PromptLayer Skill Collections — pull via SDK/REST and author via MCP/API",
+        "source_pointer": "/flows:5/flows/46",
+        "documented_step_count": 6,
+        "steps": [
+          "Open Pull via SDK to generate collection-specific instructions.",
+          "Set the API key in the environment and call client.skills.pull by collection identifier.",
+          "Choose latest, exact version or release label; request a file map or ZIP.",
+          "Write/extract files to the intended project layout.",
+          "Use GET /api/public/v2/skill-collections/{identifier} for REST retrieval.",
+          "Save new versions through JSON file_updates/moves/deletes or multipart ZIP; MCP exposes list/create/get/update/save-version tools."
+        ],
+        "citations": [
+          "https://docs.promptlayer.com/features/skill-collections/pulling-skills",
+          "https://docs.promptlayer.com/features/skill-collections/overview",
+          "https://docs.promptlayer.com/reference/get-skill-collection",
+          "https://docs.promptlayer.com/reference/save-skill-collection-version",
+          "https://docs.promptlayer.com/agents/overview"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S24",
+        "name": "Reconcile Git/project context with Hub edits during deployment",
+        "source_pointer": "/flows:2/flows/23",
+        "documented_step_count": 4,
+        "steps": [
+          "Modify instructions.md or skills locally, or edit those files in Context Hub after the last deploy.",
+          "Run mda deploy; if Hub changed since last sync, interactive CLI asks whether to overwrite, defaulting to keeping Hub and skipping that section.",
+          "In noninteractive CI, conflict causes an error until rerun with --context-strategy overwrite or --context-strategy keep-hub.",
+          "Overwrite replaces the changed section from project files; keep-hub skips syncing it. A concurrent change during sync causes a commit conflict and requires another deploy."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/python/managed-deep-agents-context-hub",
+          "https://docs.langchain.com/langsmith/python/managed-deep-agents-cli"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S25",
+        "name": "Remove stale deployed skills and apply Hub-only hotfixes",
+        "source_pointer": "/flows:2/flows/24",
+        "documented_step_count": 4,
+        "steps": [
+          "For a lasting removal, delete the local skill files and run mda deploy; deploy removes previously deployed skill files that no longer exist locally.",
+          "For a quick change, open deployment Details → Context Hub and edit instructions or skills.",
+          "The Hub edit can apply without a code redeploy.",
+          "Before the next deploy, reconcile that change into project source or explicitly choose the Hub copy when conflict handling appears."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/python/managed-deep-agents-skills",
+          "https://docs.langchain.com/langsmith/python/managed-deep-agents-context-hub",
+          "https://docs.langchain.com/oss/python/deepagents/skills#reload-skills"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF42",
+        "name": "42 — Replay a traced generation in Playground",
+        "source_pointer": "/flows:4/flows/41",
+        "documented_step_count": 4,
+        "steps": [
+          "Select a generation inside a trace.",
+          "Add to → Playground → Fresh playground.",
+          "The Playground receives generation messages and model settings.",
+          "Submit to rerun, edit and compare outputs."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/prompt-management/features/playground.md"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF47",
+        "name": "47 — Run full-application experiments and CI regression gates",
+        "source_pointer": "/flows:4/flows/46",
+        "documented_step_count": 5,
+        "steps": [
+          "Implement a Python or JavaScript task and item/run evaluators using the experiment SDK.",
+          "Use hosted or local data, pin dataset version where needed and configure concurrency.",
+          "Run in CI; raise RegressionError when policy thresholds or approved-case checks fail.",
+          "Configure langfuse/experiment-action to publish results/PR comments and fail the job.",
+          "Optionally configure a signed remote trigger so the UI can start an external SDK experiment."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk",
+          "https://langfuse.com/docs/evaluation/experiments/experiments-ci-cd",
+          "https://langfuse.com/resources/engineering/prompt-cicd"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O51",
+        "name": "Opik — run the actual agent with unsaved prompt overrides",
+        "source_pointer": "/flows:5/flows/50",
+        "documented_step_count": 6,
+        "steps": [
+          "Mark the agent entrypoint with the SDK and load Prompt Library prompts inside it.",
+          "Start opik endpoint --project … -- python3 my_agent.py and keep the process alive.",
+          "Pair with the browser and open the connected Agent Playground.",
+          "Fill generated parameter inputs and Run; inspect the result/full live trace.",
+          "Edit a prompt or choose another version in the Prompts panel; rerun using unsaved overrides.",
+          "Save a satisfactory edit as a new prompt version."
+        ],
+        "citations": [
+          "https://www.comet.com/docs/opik/development/agent-playground",
+          "https://www.comet.com/docs/opik/development/overview",
+          "https://www.comet.com/docs/opik/_fern-files/_img/1f2899c8ecbf0af6bb78832312fb8773fddd2138fb4691f6532b5d9638ed3eb6.webp"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O10",
+        "name": "Tessl — generate or author scenarios, including repository-history tasks",
+        "source_pointer": "/flows:5/flows/9",
+        "documented_step_count": 6,
+        "steps": [
+          "Create/link a Tessl project and ensure Publisher access.",
+          "Run tessl scenario generate on a plugin, optionally choosing a target count.",
+          "Wait or inspect the generation ID; download it to that plugin's evals directory.",
+          "Review/edit task.md, criteria.json and optional scenario.json, or write those files manually.",
+          "Alternatively generate from repository commits or PRs after connecting GitHub/GitLab.",
+          "Match runtime context globs to the context stripped from the fixture; bound commit fixture includes."
+        ],
+        "citations": [
+          "https://docs.tessl.io/improving-your-skills/evaluate-skill-quality-using-scenarios",
+          "https://docs.tessl.io/tutorials/improving-a-skill"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O11",
+        "name": "Tessl — compare with-skill and without-skill outcomes",
+        "source_pointer": "/flows:5/flows/10",
+        "documented_step_count": 6,
+        "steps": [
+          "Prepare reviewed scenarios in the plugin's evals directory.",
+          "Run tessl eval run on the plugin root.",
+          "By default Tessl solves each scenario with and without the context, with context activation forced in the with-context arm.",
+          "Score both arms against the same per-scenario rubric.",
+          "Inspect per-scenario outcomes as well as the average delta.",
+          "Repeat scenarios and rerun after edits to assess variability."
+        ],
+        "citations": [
+          "https://docs.tessl.io/improving-your-skills/evaluate-skill-quality-using-scenarios"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O12",
+        "name": "Tessl — test activation and description boundaries",
+        "source_pointer": "/flows:5/flows/11",
+        "documented_step_count": 6,
+        "steps": [
+          "Prepare positive, ambiguous and near-miss tasks.",
+          "Create description variants while keeping the body fixed.",
+          "Run with --skip-forced-context-activation and do not set agentMustRead.",
+          "Optionally add --skip-scoring for activation-only evaluation.",
+          "Inspect the transcript-derived activation evidence and per-solution records.",
+          "For the Claude agent Tessl counts Skill-tool events; other agents currently report activation as not measured."
+        ],
+        "citations": [
+          "https://docs.tessl.io/improving-your-skills/comparing-with-test-variants",
+          "https://docs.tessl.io/improving-your-skills/evaluate-skill-quality-using-scenarios"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O13",
+        "name": "Tessl — compare models, agents, rewrites and ablations",
+        "source_pointer": "/flows:5/flows/12",
+        "documented_step_count": 6,
+        "steps": [
+          "List available agents/models and prepare the same scenarios and judge.",
+          "Declare uniquely labeled configurations with --variant-json.",
+          "Vary only the model for model comparisons, or disclose combined agent/model changes when a common model is unavailable.",
+          "Swap the context fixture to compare rewrites; set context to null for a no-skill baseline.",
+          "Add codebase fixtures for neither/source-only/skill-only/both comparisons.",
+          "Prepare reduced plugin directories for leave-one-skill-out ablations; repeat and inspect score, variability, cost, time, tokens and turns."
+        ],
+        "citations": [
+          "https://docs.tessl.io/improving-your-skills/comparing-with-test-variants"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O14",
+        "name": "Tessl — monitor, compare, retry and gate asynchronous evaluations",
+        "source_pointer": "/flows:5/flows/13",
+        "documented_step_count": 6,
+        "steps": [
+          "Submit an eval and retain its run ID.",
+          "In an interactive terminal the CLI waits; in CI/piped/JSON mode it normally submits and exits.",
+          "Use --wait and optionally --wait-timeout for terminal-result gating.",
+          "If waiting expires or Ctrl+C detaches, inspect the same server-side run rather than assuming cancellation.",
+          "Use eval list/view, --full statistics and eval compare for separate runs.",
+          "Use eval retry for failed runs; review resulting evidence before release."
+        ],
+        "citations": [
+          "https://docs.tessl.io/tutorials/improving-a-skill",
+          "https://docs.tessl.io/improving-your-skills/evaluate-skill-quality-using-scenarios"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "CH10",
+        "name": "10. Link an existing skill repository into an agent",
+        "source_pointer": "/flows:1/flows/9",
+        "documented_step_count": 5,
+        "steps": [
+          "Choose a skill repository to reuse.",
+          "Author a files entry at a path such as skills/research with type skill and repo_handle.",
+          "Choose a current selector or omit it for LATEST, then create the parent commit.",
+          "Read the parent directory to inspect the linked repository and resolved commit.",
+          "These steps are documented through SDK/REST; an exact Context Hub UI Add linked skill picker sequence is not documented in the reviewed material."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/context-engineering-concepts",
+          "https://docs.langchain.com/langsmith/manage-contexts-sdk",
+          "https://docs.langchain.com/langsmith/smith-api/directories/create-directory-commit",
+          "https://docs.langchain.com/langsmith/smith-api/directories/get-directory-contents"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "CH11",
+        "name": "11. Link another agent repository as a subagent",
+        "source_pointer": "/flows:1/flows/10",
+        "documented_step_count": 5,
+        "steps": [
+          "Choose another agent repository.",
+          "Create an entry such as agents/scheduler with type agent and repo_handle.",
+          "Select LATEST or COMMIT using the directory API contract and commit the parent.",
+          "Inspect the resolved linked agent through directory reads.",
+          "The official screenshot shows a collapsed subagents tree node, but it does not expose a link-creation or selector dialog."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/context-engineering-concepts",
+          "https://docs.langchain.com/langsmith/manage-contexts-sdk",
+          "https://docs.langchain.com/langsmith/smith-api/directories/create-directory-commit",
+          "https://mintcdn.com/langchain-5e9cc07a/VMau0Ih_5sR7Yf36/langsmith/images/context-hub-agent-view.png?fit=max&auto=format&n=VMau0Ih_5sR7Yf36&q=85&s=a333c5d93ad3532eb10c30053f53c267"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "CH12",
+        "name": "12. Choose pinned versus latest dependencies and handle upstream propagation",
+        "source_pointer": "/flows:1/flows/11",
+        "documented_step_count": 5,
+        "steps": [
+          "For a linked agent/skill, author selector {\"type\":\"COMMIT\",\"commit_id\":\"<uuid>\"} to pin.",
+          "Use selector {\"type\":\"LATEST\"} or omit selector to follow latest.",
+          "Create the parent directory commit.",
+          "Read the directory response to inspect the authored selector plus resolved owner, repository handle and commit hash.",
+          "The concepts/SDK guide says linked updates propagate to referencing parents. The SDK prose suggests legacy commit_id pinning, but current REST explicitly says that legacy top-level field is accepted and ignored for selection, resolving as LATEST; selector and legacy commit_id are mutually exclusive."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/smith-api/directories/create-directory-commit",
+          "https://docs.langchain.com/langsmith/smith-api/directories/get-directory-contents",
+          "https://docs.langchain.com/langsmith/manage-contexts-sdk",
+          "https://docs.langchain.com/langsmith/self-hosted-changelog"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S08",
+        "name": "Compose shared skills and subagents with following links",
+        "source_pointer": "/flows:2/flows/7",
+        "documented_step_count": 4,
+        "steps": [
+          "Publish reusable skill or agent repos.",
+          "In the parent files map add an entry such as skills/research with type skill and repo_handle, or agents/scheduler with type agent.",
+          "Omit selection or use REST selector {type:LATEST} for following behavior.",
+          "Commit the parent; the SDK guide says later linked-repo updates propagate to referencing parents."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/manage-contexts-sdk",
+          "https://docs.langchain.com/langsmith/context-engineering-concepts",
+          "https://docs.langchain.com/langsmith/smith-api/directories/create-directory-commit"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S09",
+        "name": "Pin linked dependencies and detect misleading legacy selectors",
+        "source_pointer": "/flows:2/flows/8",
+        "documented_step_count": 4,
+        "steps": [
+          "Resolve the desired dependency commit UUID.",
+          "In current REST, write selector {type:COMMIT,commit_id:<uuid>} on the linked entry.",
+          "Read back the authored selector and resolved owner/repo_handle/commit_hash.",
+          "Do not rely on legacy top-level commit_id: the REST contract says it is accepted but ignored for selection and resolves as LATEST; it cannot coexist with selector."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/smith-api/directories/create-directory-commit",
+          "https://docs.langchain.com/langsmith/smith-api/directories/get-directory-contents",
+          "https://docs.langchain.com/langsmith/manage-contexts-sdk",
+          "https://github.com/langchain-ai/langsmith-python/blob/main/src/langsmith/schemas.py"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O04",
+        "name": "Agenta — publish once, reuse across agents, pin or follow latest",
+        "source_pointer": "/flows:5/flows/3",
+        "documented_step_count": 6,
+        "steps": [
+          "Open project Skills and create or import a skill.",
+          "Publish the skill.",
+          "Open each agent's Skills section and add the stored skill.",
+          "Choose an exact revision or Latest; API configurations may use @ag.embed references.",
+          "When a pinned reference shows Update available, re-add it pinned to the new version or switch to Latest.",
+          "For repository imports, choose Check for updates in the skill menu."
+        ],
+        "citations": [
+          "https://agenta.ai/docs/changelog/reuse-skills-across-agents",
+          "https://agenta.ai/docs/reference/agents/agent-configuration",
+          "https://agenta.ai/docs/reference/agents/skills"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S34",
+        "name": "Refresh checkpointed skill metadata after changes",
+        "source_pointer": "/flows:2/flows/33",
+        "documented_step_count": 5,
+        "steps": [
+          "With a checkpointer, Deep Agents stores skills_metadata once per thread.",
+          "For deepagents>=0.7.16, pass skills_metadata=None in the next run input or call update_state with that value.",
+          "Do not use an empty list: that means discovery completed with no skills.",
+          "A middleware reset should happen in after_agent, not after_model; loading occurs at the next run start.",
+          "Changed discovery metadata changes the system prompt and invalidates its prompt cache."
+        ],
+        "citations": [
+          "https://docs.langchain.com/oss/python/deepagents/skills#reload-skills",
+          "https://docs.langchain.com/oss/python/deepagents/backends#contexthubbackend"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S35",
+        "name": "Force a selected skill into a run with pinned_skills",
+        "source_pointer": "/flows:2/flows/34",
+        "documented_step_count": 5,
+        "steps": [
+          "For deepagents>=0.7.23, pass skill names in pinned_skills with run input.",
+          "Middleware reads each named SKILL.md and appends its body, without frontmatter, as a HumanMessage in the specified order.",
+          "The app may parse slash references or menu selection and pass the names; Deep Agents does not parse message syntax itself.",
+          "Unknown or unreadable skills are skipped with debug logging.",
+          "Pinned messages remain unchanged; repinning appends current text and makes associated skill tools available."
+        ],
+        "citations": [
+          "https://docs.langchain.com/oss/python/deepagents/skills#pin-skills"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S42",
+        "name": "Diagnose discovered, activated, delivered and successful skill behavior",
+        "source_pointer": "/flows:2/flows/41",
+        "documented_step_count": 5,
+        "steps": [
+          "Use LangSmith traces to inspect discovery, read_file calls on SKILL.md and supporting-resource access.",
+          "For missing startup skills, check backend paths, parent source level, frontmatter, the 10 MB discovery skip and source shadowing.",
+          "For nonactivation, improve descriptions, reduce overlap, verify source configuration or explicitly pin the skill.",
+          "For missing resources/tools, inspect references, sandbox transfer, include_tools formatting/names and summarization state.",
+          "For stale skills, reset checkpointed metadata; for custom subagents, configure their sources explicitly."
+        ],
+        "citations": [
+          "https://docs.langchain.com/oss/python/deepagents/skills#troubleshooting",
+          "https://docs.langchain.com/langsmith/python/managed-deep-agents-cli#evaluate-projects"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LS-S43",
+        "name": "Verify adoption after a release or rollback rather than assuming it",
+        "source_pointer": "/flows:2/flows/42",
+        "documented_step_count": 4,
+        "steps": [
+          "Move the production/staging tag to the intended commit.",
+          "Applications resolving that tag can subsequently pull the selected context; exact pins do not move.",
+          "Disk installations require another pull; persistent Deep Agents threads may require metadata refresh.",
+          "Inspect runtime traces/receipts to determine the context actually used rather than treating tag movement as delivery."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/manage-contexts-sdk",
+          "https://docs.langchain.com/oss/python/deepagents/skills#reload-skills",
+          "https://github.com/langchain-ai/langsmith-cli/blob/main/internal/cmd/hub_pull.go"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF46",
+        "name": "46 — Compare experiment runs and hand evidence to reviewers",
+        "source_pointer": "/flows:4/flows/45",
+        "documented_step_count": 5,
+        "steps": [
+          "Open Experiments and select comparable runs.",
+          "Choose the reviewed release run as baseline; use the same dataset version and evaluator definitions.",
+          "Filter by score thresholds, inspect outputs and open traces for regressions.",
+          "Send reviewers run links, baseline/candidate identities, filters and release policy.",
+          "Maintain the approved baseline artifact and gate policy separately in the repository."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/evaluation/experiments/compare-experiments",
+          "https://langfuse.com/docs/evaluation/experiments/experiments-ci-cd"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O40",
+        "name": "PromptLayer — release labels and protected approval requests",
+        "source_pointer": "/flows:5/flows/39",
+        "documented_step_count": 6,
+        "steps": [
+          "Open a prompt version and add a release label.",
+          "Retrieve the intended version with label in the SDK/run call.",
+          "For protected labels, request the label change rather than treating ordinary author access as promotion authority.",
+          "An authorized approval or denial resolves the pending change.",
+          "Observe requested/approved/denied events through documented webhook types.",
+          "Exact protected-label configuration/approval-button placement was not established from the retrieved pages; no click path is invented."
+        ],
+        "citations": [
+          "https://docs.promptlayer.com/features/prompt-registry/overview",
+          "https://docs.promptlayer.com/features/prompt-registry/release-labels",
+          "https://docs.promptlayer.com/features/prompt-registry/webhook-events"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "CH22",
+        "name": "22. Promote to production with a defensible release decision",
+        "source_pointer": "/flows:1/flows/21",
+        "documented_step_count": 5,
+        "steps": [
+          "Select the target commit.",
+          "Click Promote → Promote to Production.",
+          "The production tag moves to the selected commit.",
+          "Runtimes resolving :production subsequently pull that commit.",
+          "The core Context Hub guide does not document an integrated candidate/baseline evidence review, mandatory evaluation gate or approval inbox."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/use-the-context-hub",
+          "https://docs.langchain.com/langsmith/context-engineering-concepts"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "O16",
+        "name": "Tessl — CI review/publish and multi-repository rollout",
+        "source_pointer": "/flows:5/flows/15",
+        "documented_step_count": 6,
+        "steps": [
+          "Configure setup-tessl in a GitHub Actions workflow.",
+          "Create a workspace API key and store it as the repository TESSL_TOKEN secret.",
+          "Run review with explicit workspace, JSON output and threshold to fail CI below the configured bar.",
+          "For distribution, open the workspace plugin and click Rollout.",
+          "Choose destination workspace/repositories and Create a rollout PR.",
+          "Review and merge generated dependency changes through the repository's own process."
+        ],
+        "citations": [
+          "https://docs.tessl.io/distribute/review-and-publish-with-github-actions",
+          "https://docs.tessl.io/guides/distribute/rollout-to-your-repositories/distribute-plugins-across-multiple-repositories",
+          "https://docs.tessl.io/guides/distribute/repository-plugins"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "CH23",
+        "name": "23. Roll an environment back to a historical commit",
+        "source_pointer": "/flows:1/flows/22",
+        "documented_step_count": 5,
+        "steps": [
+          "Select the prior commit in history.",
+          "Choose Promote → Staging or Production.",
+          "The environment tag moves to the historical commit.",
+          "Latest files do not change and no revert commit is created.",
+          "The screenshot's curved-arrow control is visible, but the Context Hub guide does not describe its separate dialog; the documented rollback path is historical promotion."
+        ],
+        "citations": [
+          "https://docs.langchain.com/langsmith/use-the-context-hub"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF14",
+        "name": "14 — Roll back and verify post-rollback consumption",
+        "source_pointer": "/flows:4/flows/13",
+        "documented_step_count": 4,
+        "steps": [
+          "Select the earlier good version and move production back to it.",
+          "API clients receive the new target on subsequent manifest retrieval, subject to application caching.",
+          "Run langfuse skills update for local installations following labels.",
+          "Exact version pins stay fixed; inspect traces/Usage to see observed versions."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/version-control",
+          "https://langfuse.com/docs/skill-management/get-started",
+          "https://langfuse.com/docs/skill-management/tracing"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF16",
+        "name": "16 — Review a skill's Usage tab",
+        "source_pointer": "/flows:4/flows/15",
+        "documented_step_count": 4,
+        "steps": [
+          "Open a particular skill version → Usage.",
+          "Choose a date range containing the relevant runs.",
+          "Read Available and Loaded observation counts and per-file loads.",
+          "Filter Any/Available/Loaded, click a file to filter matching loads, then open a linked observation."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/tracing",
+          "https://langfuse.com/images/changelog/2026-11-03-skill-management-usage.png"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF17",
+        "name": "17 — Report available skills through Python, JavaScript or raw OpenTelemetry",
+        "source_pointer": "/flows:4/flows/16",
+        "documented_step_count": 5,
+        "steps": [
+          "Configure tracing before agent observations start.",
+          "Raw OTel: set langfuse.observation.skills_available to a JSON string of name/version entries on each relevant span before it ends.",
+          "Python installed path: discover_skills, configure Langfuse skills.available, run inside propagate_attributes(attach_skills=True); fetched path supplies skills_available directly.",
+          "JavaScript installed path: await discoverSkills, configure LangfuseSpanProcessor, then propagateAttributes({attachSkills:true}); fetched path supplies skillsAvailable.",
+          "Flush/shutdown the exporter for a short-lived process."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/tracing.md"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF18",
+        "name": "18 — Instrument actual skill and supporting-file loads",
+        "source_pointer": "/flows:4/flows/17",
+        "documented_step_count": 4,
+        "steps": [
+          "Attach available skills to the loading-tool observation.",
+          "Trace input/output using recognized tools: loadSkill/skill/Skill with name or skill; skill_read with skillName/path; readFile/Read with path/file_path containing the skill directory.",
+          "The tool must succeed and return non-null output to be recognized as a load.",
+          "For a different loader shape, the docs direct users to request support."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/tracing.md",
+          "https://langfuse.com/faq/all/skill-management-limits-and-troubleshooting"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF19",
+        "name": "19 — Inspect available/requested/loaded context inside a trace",
+        "source_pointer": "/flows:4/flows/18",
+        "documented_step_count": 4,
+        "steps": [
+          "Select a generation → Preview → Skills.",
+          "Expand available skills and follow saved-version links; inspect Requested/Not requested.",
+          "Select the associated successful loading tool → Preview → Skills.",
+          "Expand the loaded skill and file count to see paths; inspect the tool result to confirm load."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/skill-management/tracing.md",
+          "https://langfuse.com/changelog/2026-11-03-skill-management"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF49",
+        "name": "49 — Configure prompt caching and skill content reuse",
+        "source_pointer": "/flows:4/flows/48",
+        "documented_step_count": 4,
+        "steps": [
+          "Use the high-level prompt SDK retrieval method.",
+          "Fresh cached prompts return immediately; expired entries are served while background revalidation runs.",
+          "Adjust the default 60-second TTL, or use TTL 0 for uncached fetches.",
+          "For skills, cache content by hash yourself or use locally installed files; SDK skill fetches are not automatically cached."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/prompt-management/features/caching",
+          "https://langfuse.com/docs/prompt-and-skill-management/overview"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      },
+      {
+        "ref": "LF50",
+        "name": "50 — Prewarm prompts and use explicit offline fallback",
+        "source_pointer": "/flows:4/flows/49",
+        "documented_step_count": 4,
+        "steps": [
+          "Prefetch prompts at startup and fail readiness if required prompts cannot be loaded.",
+          "Alternatively supply a text/chat fallback to the SDK retrieval method.",
+          "Inspect is_fallback/isFallback to distinguish fallback execution.",
+          "Without fresh/stale cache or fallback, a failed first fetch raises an error."
+        ],
+        "citations": [
+          "https://langfuse.com/docs/prompt-management/features/guaranteed-availability",
+          "https://langfuse.com/docs/prompt-management/features/link-to-traces"
+        ],
+        "evidence_kind": "documented_not_exercised",
+        "measured_operator_actions": null
+      }
+    ]
+  },
+  "jobs": [
+    {
+      "schema": 1,
+      "job": "J1",
+      "phase": "P",
+      "status": "not_measured",
+      "reason": "F12b consumption/auth interfaces exist; complete authoring/review/native/session public-interface journeys, released packages, customer environment and independent comparator access remain unavailable",
+      "operator_actions": null,
+      "screen_transitions": null,
+      "handoffs": null,
+      "reconciliations": null,
+      "action_ratio": null,
+      "ten_x_actions": null,
+      "human_time_study": "not_conducted",
+      "claim": "Not qualified"
+    },
+    {
+      "schema": 1,
+      "job": "J2",
+      "phase": "P",
+      "status": "not_measured",
+      "reason": "F12b consumption/auth interfaces exist; complete authoring/review/native/session public-interface journeys, released packages, customer environment and independent comparator access remain unavailable",
+      "operator_actions": null,
+      "screen_transitions": null,
+      "handoffs": null,
+      "reconciliations": null,
+      "action_ratio": null,
+      "ten_x_actions": null,
+      "human_time_study": "not_conducted",
+      "claim": "Not qualified"
+    },
+    {
+      "schema": 1,
+      "job": "J3",
+      "phase": "P",
+      "status": "not_measured",
+      "reason": "F12b consumption/auth interfaces exist; complete authoring/review/native/session public-interface journeys, released packages, customer environment and independent comparator access remain unavailable",
+      "operator_actions": null,
+      "screen_transitions": null,
+      "handoffs": null,
+      "reconciliations": null,
+      "action_ratio": null,
+      "ten_x_actions": null,
+      "human_time_study": "not_conducted",
+      "claim": "Not qualified"
+    },
+    {
+      "schema": 1,
+      "job": "J4",
+      "phase": "P",
+      "status": "not_measured",
+      "reason": "F12b consumption/auth interfaces exist; complete authoring/review/native/session public-interface journeys, released packages, customer environment and independent comparator access remain unavailable",
+      "operator_actions": null,
+      "screen_transitions": null,
+      "handoffs": null,
+      "reconciliations": null,
+      "action_ratio": null,
+      "ten_x_actions": null,
+      "human_time_study": "not_conducted",
+      "claim": "Not qualified"
+    },
+    {
+      "schema": 1,
+      "job": "J5",
+      "phase": "E",
+      "status": "not_measured",
+      "reason": "E-only campaign; Checkpoint P and authorized real-GitHub conformance not supplied",
+      "operator_actions": null,
+      "screen_transitions": null,
+      "handoffs": null,
+      "reconciliations": null,
+      "action_ratio": null,
+      "ten_x_actions": null,
+      "human_time_study": "not_conducted",
+      "claim": "Not qualified",
+      "components": {
+        "cold_adoption": {
+          "status": "not_measured",
+          "action_ratio": null,
+          "ten_x_actions": null
+        },
+        "recurring_rollout": {
+          "status": "not_measured",
+          "action_ratio": null,
+          "ten_x_actions": null
+        },
+        "recovery": {
+          "status": "not_measured",
+          "action_ratio": null,
+          "ten_x_actions": null
+        }
+      }
+    },
+    {
+      "schema": 1,
+      "job": "J6",
+      "phase": "P",
+      "status": "not_measured",
+      "reason": "F12b consumption/auth interfaces exist; complete authoring/review/native/session public-interface journeys, released packages, customer environment and independent comparator access remain unavailable",
+      "operator_actions": null,
+      "screen_transitions": null,
+      "handoffs": null,
+      "reconciliations": null,
+      "action_ratio": null,
+      "ten_x_actions": null,
+      "human_time_study": "not_conducted",
+      "claim": "Not qualified"
+    }
+  ],
+  "checkpoint_P": "blocked",
+  "general_10x_launch": "not_established",
+  "human_study": "not_conducted"
+}

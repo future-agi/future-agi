@@ -1918,7 +1918,8 @@ def test_from_source_builds_every_image_in_order_and_never_pulls_them(
     assert builds[:4] == [
         "build -t futureagi/future-agi:local -f futureagi/Dockerfile.oss "
         "--build-arg IMAGE_VARIANT=slim futureagi",
-        "build -t futureagi/frontend:local frontend",
+        # The Skills trace UI stays off unless a local builder opts in.
+        "build -t futureagi/frontend:local --build-arg VITE_SKILL_TRACES=off frontend",
         "build -t futureagi/fi-collector:local fi-collector",
         "build -t futureagi/agentcc-gateway:local agentcc-gateway",
     ]

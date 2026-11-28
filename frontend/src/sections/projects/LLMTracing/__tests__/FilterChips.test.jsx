@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
-import FilterChips from "../FilterChips";
+import FilterChips, { buildFilterChips } from "../FilterChips";
 
 describe("FilterChips", () => {
   it("renders nothing when no filters are active", () => {
@@ -270,6 +270,96 @@ describe("FilterChips", () => {
         />,
       );
       expect(screen.getByText("Total Cost")).toBeInTheDocument();
+    });
+  });
+
+  describe("Skill chips (SKILL-TRACES §7.1)", () => {
+    const SKILL = "11111111-1111-4111-8111-111111111111";
+    const V3 = "33333333-3333-4333-8333-333333333333";
+    const skillItem = (column, op, value, extra = {}) => ({
+      column_id: column,
+      ...extra,
+      filter_config: {
+        col_type: "SKILL",
+        filter_type: "text",
+        filter_op: op,
+        filter_value: value,
+      },
+    });
+    const labels = {
+      "skill.id": { [SKILL]: "refund-policy" },
+      "skill.version_id": { [V3]: "v3" },
+    };
+    const latency = {
+      column_id: "latency",
+      filter_config: { filter_op: "greater_than", filter_value: 100 },
+    };
+
+    it("shows one chip per correlation group, the second as and also loaded", () => {
+      const chips = buildFilterChips(
+        [
+          skillItem("skill.id", "equals", SKILL),
+          latency,
+          skillItem("skill.version_id", "equals", V3),
+          skillItem("skill.id", "equals", SKILL, { group: 1 }),
+          skillItem("skill.load_result", "equals", "failed", { group: 1 }),
+        ],
+        labels,
+      );
+      expect(chips.map((chip) => [chip.kind, chip.indices, chip.parts.field, chip.parts.value])).toEqual([
+        ["skill", [0, 2], "Skill", "refund-policy v3"],
+        ["filter", [1], "Latency", "100"],
+        ["skill", [3, 4], "and also loaded…", "refund-policy · load failed"],
+      ]);
+    });
+
+    it("reads a not_in chip as No recorded load of, with its tooltip", () => {
+      const [chip] = buildFilterChips(
+        [skillItem("skill.id", "equals", SKILL), skillItem("skill.version_id", "not_in", [V3])],
+        labels,
+      );
+      expect(chip.parts.value).toBe("No recorded load of refund-policy v3");
+      expect(chip.tooltip).toContain("can't record loads");
+    });
+
+    it("removes the whole group at once", async () => {
+      const onRemoveFilters = vi.fn();
+      const onRemoveFilter = vi.fn();
+      const { container } = render(
+        <FilterChips
+          extraFilters={[
+            skillItem("skill.id", "equals", SKILL),
+            latency,
+            skillItem("skill.version_id", "equals", V3),
+          ]}
+          fieldLabelMap={labels}
+          onRemoveFilter={onRemoveFilter}
+          onRemoveFilters={onRemoveFilters}
+          onClearAll={vi.fn()}
+        />,
+      );
+      expect(screen.getByText("refund-policy v3")).toBeInTheDocument();
+      const skillChip = container.querySelector('[data-filter-chip-kind="skill"]');
+      await userEvent.click(skillChip.querySelector(".MuiChip-deleteIcon"));
+      expect(onRemoveFilters).toHaveBeenCalledWith([0, 2]);
+      expect(onRemoveFilter).not.toHaveBeenCalled();
+    });
+
+    it("falls back to removing the highest index first", async () => {
+      const onRemoveFilter = vi.fn();
+      const { container } = render(
+        <FilterChips
+          extraFilters={[
+            skillItem("skill.id", "equals", SKILL),
+            skillItem("skill.version_id", "equals", V3),
+          ]}
+          onRemoveFilter={onRemoveFilter}
+          onClearAll={vi.fn()}
+        />,
+      );
+      const skillChip = container.querySelector('[data-filter-chip-kind="skill"]');
+      await userEvent.click(skillChip.querySelector(".MuiChip-deleteIcon"));
+      expect(onRemoveFilter.mock.calls).toEqual([[1], [0]]);
     });
   });
 });

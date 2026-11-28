@@ -144,7 +144,11 @@ test('profiling is a separate dispatch, not an alternative required check', () =
   // The dispatch copy must still run the ordinary suite, fallibility proof,
   // SDK tests and parity checks. A new gate must enter the comparison too.
   assert.deepEqual(workflow.jobs.report.steps, baseline.jobs.report.steps);
-  assert.deepEqual(workflow.jobs['e2e-tests'].steps, baseline.jobs['e2e-tests'].steps);
+  // The dispatch measures the ordinary suite only, so it has no Skills cohorts and
+  // no Skills receipts step; every other gate step must match.
+  assert.deepEqual(workflow.jobs['e2e-tests'].steps,
+    baseline.jobs['e2e-tests'].steps.filter(step => !step.env?.SKILLS));
+  assert.equal(baseline.jobs['e2e-tests'].steps.filter(step => step.env?.SKILLS).length, 1);
   const baseSteps = baseline.jobs.e2e.steps;
   const baseSuite = baseSteps.findIndex(step => step.id === 'suite');
   const suite = steps.findIndex(step => step.id === 'suite');

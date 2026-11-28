@@ -1,3 +1,10 @@
+import { NON_ATTRIBUTE_CUSTOM_COLUMN_IDS } from "./defaultColumns";
+
+// The Skills column (SKILL-TRACES §7.1) is hydrated per page from the
+// trace-skills read, never as a latest-value attribute key: that path keeps
+// one value per key per trace and cannot show every skill a trace loaded.
+const NON_ATTRIBUTE_IDS = new Set(NON_ATTRIBUTE_CUSTOM_COLUMN_IDS);
+
 export const getRequestedTraceAttributeKeys = (columns = []) =>
   Array.from(
     new Set(
@@ -7,7 +14,7 @@ export const getRequestedTraceAttributeKeys = (columns = []) =>
             column?.groupBy === "Custom Columns" && column?.isVisible !== false,
         )
         .map((column) => column?.id)
-        .filter(Boolean),
+        .filter((id) => Boolean(id) && !NON_ATTRIBUTE_IDS.has(id)),
     ),
   );
 

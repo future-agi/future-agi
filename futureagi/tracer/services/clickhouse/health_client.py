@@ -123,6 +123,7 @@ class HealthCheckClient(ClickHouseClient):
                 query_settings=query_settings,
                 started_at=started_at,
                 timeout_ms=timeout_ms,
+                retained_until=retained_until,
             )
             remaining()
             return result

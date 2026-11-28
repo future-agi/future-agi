@@ -25,6 +25,11 @@ const traceGraphResponse = TracerTraceGetGraphMethodsResponse.extend({
   result: TracerTraceGetGraphMethodsResponse.shape.result.extend({
     data: z.array(nullableGraphPoint),
     metric_statistic: z.string().optional(),
+    series: z.array(z.object({
+      version_id: z.string().uuid(),
+      label: z.string(),
+      data: z.array(nullableGraphPoint.extend({ traces: z.number(), incomplete: z.number() })),
+    })).optional(),
   }),
 });
 

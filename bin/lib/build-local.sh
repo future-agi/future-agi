@@ -33,7 +33,7 @@ build_local_images() { # standalone|distributed, [what], [tag]
       ${backend_variant[@]+"${backend_variant[@]}"} futureagi
   fi
   if [[ "$what" == all || "$what" == frontend ]]; then
-    build_local_image "futureagi/frontend:$tag" frontend
+    build_local_image "futureagi/frontend:$tag" --build-arg "VITE_SKILL_TRACES=${VITE_SKILL_TRACES:-off}" frontend
   fi
   if [[ "$what" == all || "$what" == collector ]]; then
     build_local_image "futureagi/fi-collector:$tag" fi-collector

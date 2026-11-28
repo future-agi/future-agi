@@ -32,14 +32,22 @@ def user_runs(path: str = "") -> Q:
     ``simulation_runs__`` from an environment). Anything else uses the selectors
     above.
     """
-    return Q(
-        **{
-            f"{path}fix_run__isnull": True,
-            f"{path}verify_of__isnull": True,
-            # An evidence import's drafting job holds a chat turn only, never a run.
-            f"{path}evidence_drafting__isnull": True,
-        }
-    ) & ~validation_jobs(path)
+    from model_hub.services.skills_hub.r3.native_evidence import (
+        ordinary_simulation_jobs,
+    )
+
+    return (
+        Q(
+            **{
+                f"{path}fix_run__isnull": True,
+                f"{path}verify_of__isnull": True,
+                # An evidence import's drafting job holds a chat turn only, never a run.
+                f"{path}evidence_drafting__isnull": True,
+            }
+        )
+        & ordinary_simulation_jobs(path)
+        & ~validation_jobs(path)
+    )
 
 
 def validation_jobs(path: str = "") -> Q:

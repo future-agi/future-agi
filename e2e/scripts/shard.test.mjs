@@ -1052,7 +1052,7 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     jobs.report.if,
     "${{ !cancelled() && needs.changes.outputs.any == 'true' }}",
   );
-  assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
+  assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report", "skills-receipts"]);
   // Edits and labels start no run: a run would become this workflow's newest
   // suite for the head commit and hide the required check (#4332). So the
   // check's name and condition are fixed, and no job reads such an event.
@@ -1328,6 +1328,54 @@ test("the E2E gate passes only on a green suite with its report, or when nothing
       passes,
       `${CHANGES}/${E2E_NEEDED}/${E2E}/${REPORT}: ${run.stdout}`,
     );
+  }
+});
+
+test("the E2E gate also requires the Skills receipts, or nothing needed to run", () => {
+  const gate = workflow().jobs["e2e-tests"].steps[1];
+  assert.equal(gate.if, undefined);
+  assert.deepEqual(gate.env, {
+    E2E_NEEDED: "${{ needs.changes.outputs.any }}",
+    SKILLS: "${{ needs.skills-receipts.result }}",
+  });
+  const receipts = workflow().jobs["skills-receipts"];
+  assert.equal(receipts.if, "${{ !cancelled() && needs.changes.outputs.any == 'true' }}");
+  assert.deepEqual(receipts.needs, ["changes", "skill-packages", "application-wheels", "skills", "campaign-executor", "skills-journeys"]);
+  const cases = [
+    // e2e needed, Skills receipts, passes
+    ["true", "success", true],
+    ["false", "skipped", true],
+    ["true", "failure", false],
+    ["true", "skipped", false],
+    ["true", "cancelled", false],
+    ["false", "success", false],
+    ["", "skipped", false],
+  ];
+  for (const [E2E_NEEDED, SKILLS, passes] of cases) {
+    const run = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-eo", "pipefail", "-c", gate.run],
+      { encoding: "utf8", env: { PATH: process.env.PATH, E2E_NEEDED, SKILLS } },
+    );
+    assert.equal(run.status === 0, passes, `${E2E_NEEDED}/${SKILLS}: ${run.stdout}`);
+  }
+  // Every Skills job must pass; the registered journeys only when this run selected any.
+  const check = receipts.steps[0];
+  const result = (overrides, journeys) => {
+    const needs = Object.fromEntries(receipts.needs.map((id) => [id, { result: "success" }]));
+    needs.changes.outputs = { any: "true", journeys };
+    Object.assign(needs, overrides);
+    return spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", check.run],
+      { encoding: "utf8", env: { PATH: process.env.PATH, NEEDS: JSON.stringify(needs) } }).status === 0;
+  };
+  assert.equal(result({}, '["j3"]'), true);
+  assert.equal(result({ "skills-journeys": { result: "skipped" } }, "[]"), true);
+  assert.equal(result({ "skills-journeys": { result: "skipped" } }, '["j3"]'), false);
+  assert.equal(result({}, "[]"), false);
+  for (const id of ["skill-packages", "application-wheels", "skills", "campaign-executor"]) {
+    for (const outcome of ["failure", "skipped", "cancelled"]) {
+      assert.equal(result({ [id]: { result: outcome } }, '["j3"]'), false, `${id} ${outcome}`);
+    }
   }
 });
 

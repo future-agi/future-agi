@@ -1,0 +1,24 @@
+meta {
+  name: Import selected
+  type: http
+  seq: 28
+}
+
+post {
+  url: {{backend_url}}/model-hub/skills/import/
+  body: multipart-form
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:multipart-form {
+  files: @file({{skills_zip_path}})
+  selected: {{selected_bundle_keys_json}}
+  labels: []
+  acknowledge_warnings: false
+}

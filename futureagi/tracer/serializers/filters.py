@@ -1,5 +1,6 @@
 import json
 import math
+from copy import deepcopy
 from typing import Any
 
 from rest_framework import serializers
@@ -59,7 +60,7 @@ FILTER_CONFIG_SCHEMA = {
         },
         "col_type": {
             "type": "string",
-            "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
+            "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, SKILL, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
         },
         "attribute_value_types": {
             "type": "array",
@@ -99,16 +100,33 @@ FILTER_ITEM_SCHEMA = {
             "type": "string",
             "description": "Optional metric output type metadata used by eval and annotation filters.",
         },
+        "group": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+        },
         "filter_config": FILTER_CONFIG_SCHEMA,
     },
     "required": ["column_id", "filter_config"],
     "additionalProperties": False,
 }
 
-FILTER_LIST_SCHEMA = {
+FILTER_LIST_SCHEMA: dict[str, Any] = {
     "type": "array",
     "items": FILTER_ITEM_SCHEMA,
 }
+# The ordinary shared factory predates Runtime cohort correlation. Opt-in
+# readers get the extended field above; other consumers retain the old schema
+# and validation, rather than acquiring new operators just by importing it.
+STANDARD_FILTER_LIST_SCHEMA = deepcopy(FILTER_LIST_SCHEMA)
+_standard_item = STANDARD_FILTER_LIST_SCHEMA["items"]["properties"]
+del _standard_item["group"]
+_standard_item["filter_config"]["properties"]["col_type"]["description"] = (
+    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, "
+    "ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an "
+    "authorized native-list context."
+)
 FILTER_LIST_QUERY_PARAM_SCHEMA = {
     "type": "string",
     "description": "JSON-encoded canonical filter list.",
@@ -582,6 +600,8 @@ class FilterItemField(serializers.JSONField):
         swagger_schema_fields = FILTER_ITEM_SCHEMA
 
     allow_session_numeric_membership = False
+    supports_skill_groups = True
+    allowed_item_keys = FILTER_ITEM_ALLOWED_KEYS
 
     def to_internal_value(self, data):
         value = super().to_internal_value(data)
@@ -595,7 +615,7 @@ class FilterItemField(serializers.JSONField):
                 f"Missing filter item keys: {', '.join(missing_keys)}"
             )
 
-        extra_keys = sorted(set(value) - FILTER_ITEM_ALLOWED_KEYS)
+        extra_keys = sorted(set(value) - self.allowed_item_keys)
         if extra_keys:
             raise serializers.ValidationError(
                 f"Unknown filter item keys: {', '.join(extra_keys)}"
@@ -629,6 +649,16 @@ class FilterItemField(serializers.JSONField):
             for key in ("column_id", "property_id")
         )
         if is_metric or has_metric_identity:
+            # Correlation groups and the SKILL family are Skills-only; a metric
+            # identity must not ride on either, stored or live.
+            if "group" in value:
+                raise serializers.ValidationError(
+                    "group is supported only for SKILL filters."
+                )
+            if config.get("col_type") == "SKILL":
+                raise serializers.ValidationError(
+                    "SKILL filters cannot carry a metric field identity."
+                )
             from tracer.services.derived_metrics.predicates import (
                 MetricFilterError,
                 validate_metric_filter_structure,
@@ -661,6 +691,21 @@ class FilterItemField(serializers.JSONField):
                 )
             except ValueError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
+
+        if self.supports_skill_groups and config.get("col_type") == "SKILL":
+            from tracer.services.clickhouse.query_builders.filters import (
+                validate_skill_filter_item,
+            )
+
+            try:
+                validate_skill_filter_item(value)
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
+            return value
+        if "group" in value:
+            raise serializers.ValidationError(
+                "group is supported only for SKILL filters."
+            )
 
         filter_value = config.get("filter_value")
         attribute_value_types = config.get("attribute_value_types")
@@ -973,6 +1018,15 @@ class FilterListField(serializers.ListField):
         parsed = parse_filter_list_payload(data)
         validate_filter_list_complexity(parsed)
         validated = super().to_internal_value(parsed)
+        if self.child.supports_skill_groups:
+            from tracer.services.clickhouse.query_builders.filters import (
+                validate_skill_filter_groups,
+            )
+
+            try:
+                validate_skill_filter_groups(validated)
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
         _check_filter_json_size(
             json.dumps(validated, ensure_ascii=False, separators=(",", ":"))
         )
@@ -1236,11 +1290,30 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
     cost_coverage = CostCoverageSerializer(required=False)
 
 
+class SkillVersionGraphPointSerializer(ObserveGraphDataPointSerializer):
+    traces = serializers.IntegerField()
+    incomplete = serializers.IntegerField()
+
+
+class SkillVersionGraphSeriesSerializer(serializers.Serializer):
+    version_id = serializers.UUIDField()
+
+    def get_fields(self):
+        return {
+            **super().get_fields(),
+            "label": serializers.CharField(),
+            "data": SkillVersionGraphPointSerializer(many=True),
+        }
+
+
 class ObserveGraphDataResultSerializer(serializers.Serializer):
+    split_by = serializers.ChoiceField(choices=("skill_version",), required=False)
+    series = SkillVersionGraphSeriesSerializer(many=True, required=False)
+    totals_note = serializers.CharField(required=False)
     metric_name = serializers.CharField(allow_blank=True)
     name = serializers.CharField(required=False, allow_blank=True)
     metric_statistic = serializers.ChoiceField(
-        choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+        choices=(*OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES, "p95"),
         required=False,
         help_text=(
             "Statistic of the published system-metric series per bucket. "
@@ -1485,7 +1558,26 @@ class EvalTaskFiltersField(serializers.JSONField):
         return value
 
 
+class StandardFilterItemField(FilterItemField):
+    supports_skill_groups = False
+    allowed_item_keys = FILTER_ITEM_ALLOWED_KEYS - {"group"}
+
+    class Meta:
+        swagger_schema_fields = STANDARD_FILTER_LIST_SCHEMA["items"]
+
+
+class StandardFilterListField(FilterListField):
+    child = StandardFilterItemField()
+
+    class Meta:
+        swagger_schema_fields = STANDARD_FILTER_LIST_SCHEMA
+
+
 def filter_list_field(**kwargs):
+    return StandardFilterListField(**kwargs)
+
+
+def skill_filter_list_field(**kwargs):
     return FilterListField(**kwargs)
 
 

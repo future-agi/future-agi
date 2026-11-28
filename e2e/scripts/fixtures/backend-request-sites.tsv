@@ -1,5 +1,15 @@
 # e2e-relative file<TAB>expression<TAB>exact multiplicity<TAB>dispatch/exception category
 # Collector-only helpers and public test doubles do not create another backend context.
+benchmarks/context-hub/drivers/j1.mjs	attached route.fetch(	1	firstHopOptions
+benchmarks/context-hub/drivers/j1.mjs	factory context=browser	1	browser; not an API context
+benchmarks/context-hub/drivers/j2.mjs	factory context=browser	1	browser; not an API context
+benchmarks/context-hub/drivers/j3.mjs	factory context=browser	1	browser; not an API context
+benchmarks/context-hub/drivers/j4.mjs	factory context=browser	1	browser; not an API context
+benchmarks/context-hub/drivers/j6.mjs	factory ctx=browser	1	browser; not an API context
+demo/explore.demo.ts	factory context=browser	1	browser; not an API context
+demo/walkthrough.demo.ts	binding browser,request	1	collector + backend via backendRequestContext
+demo/walkthrough.demo.ts	factory context=browser	1	browser; not an API context
+demo/walkthrough.demo.ts	send request.fetch `${E2E.apiUrl}${S}${path}`	1	backendRequestContext
 flows/agents/call-log-eval-columns.spec.ts	factory req=request	1	collector
 flows/alerts/view-trace-scoping.spec.ts	factory req=request	1	collector
 flows/annotations/catalog-score-lifecycle.spec.ts	binding page,request,actor,probe	1	backendRequestContext
@@ -121,6 +131,47 @@ flows/settings/host-update-status.spec.ts	send request.fetch `${E2E.apiUrl}${STA
 flows/settings/host-update-status.spec.ts	send request.get `${E2E.apiUrl}${STATUS_PATH}`	4	reviewed first-hop expression
 flows/simulate/evidence-import-from-observe.spec.ts	attached page.request	1	collector
 flows/simulate/evidence-import-tenant-scope.spec.ts	binding browser,request,scopeActors,scopeProbe	1	backendRequestContext
+flows/skills/archived-restore.spec.ts	binding browser,request,scopeActors	1	backendRequestContext
+flows/skills/archived-restore.spec.ts	send request.fetch `${E2E.apiUrl}${SKILLS}${path}`	1	backendRequestContext
+flows/skills/install-turn.spec.ts	binding actor,request,page,probe	1	backendRequestContext
+flows/skills/install-turn.spec.ts	send request.fetch E2E.apiUrl + base + path	1	backendRequestContext
+flows/skills/j1-packet-context.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j1-retained-subset.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j1-reviewed-set.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j1-second-update.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j2-captured-source.spec.ts	binding page,actor,probe,request	1	collector + backend via backendRequestContext
+flows/skills/j2-captured-source.spec.ts	send request.get `${E2E.apiUrl}/model-hub/skills/${created.context_id}/tests/`	1	backendRequestContext
+flows/skills/j2-captured-source.spec.ts	send request.post `${E2E.apiUrl}${path}`	1	backendRequestContext
+flows/skills/j2-historical-draft.spec.ts	binding browser,request,scopeActors,scopeProbe	1	backendRequestContext
+flows/skills/j2-historical-draft.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j2-historical-draft.spec.ts	send request.post `${E2E.apiUrl}${path}`	1	backendRequestContext
+flows/skills/j2-native-verification.spec.ts	binding page,actor,probe,request,nativeNamespace	1	collector + backend via backendRequestContext
+flows/skills/j2-native-verification.spec.ts	send request.fetch `${E2E.apiUrl}${API}${path}`	1	backendRequestContext
+flows/skills/j3-accepted-dependency.spec.ts	binding browser,request,scopeActors,scopeProbe	1	backendRequestContext
+flows/skills/j3-accepted-dependency.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j3-accepted-dependency.spec.ts	factory reviewerContext=browser	1	browser; not an API context
+flows/skills/j3-accepted-dependency.spec.ts	send request.fetch `${E2E.apiUrl}${API}${path}`	3	backendRequestContext
+flows/skills/j4-race-renewal.spec.ts	binding scopeActors,browser,request,scopeProbe:probe	1	backendRequestContext
+flows/skills/j4-race-renewal.spec.ts	send request.fetch `${E2E.apiUrl}${base}${path}`	1	backendRequestContext
+flows/skills/j4-reviewer-receipt.spec.ts	binding scopeActors,browser,request,scopeProbe:probe	1	backendRequestContext
+flows/skills/j4-reviewer-receipt.spec.ts	factory authorContext=browser	1	browser; not an API context
+flows/skills/j4-reviewer-receipt.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j4-reviewer-receipt.spec.ts	send request.fetch `${E2E.apiUrl}${B}${path}`	1	backendRequestContext
+flows/skills/j5-campaign-executor.spec.ts	binding page,actor,request,probe	1	backendRequestContext
+flows/skills/j5-campaign-executor.spec.ts	send request.fetch `${E2E.apiUrl}${path}`	1	backendRequestContext
+flows/skills/j5-sdk-campaign-lifecycle.spec.ts	binding page,actor,request,probe	1	backendRequestContext
+flows/skills/j5-sdk-campaign-lifecycle.spec.ts	send request.fetch `${E2E.apiUrl}${path}`	1	backendRequestContext
+flows/skills/j6-application-recovery.spec.ts	binding page,actor,request,probe	1	backendRequestContext
+flows/skills/j6-application-recovery.spec.ts	send request.fetch `${E2E.apiUrl}${API}${path}`	1	backendRequestContext
+flows/skills/j6-application-recovery.spec.ts	send request.post `${E2E.apiUrl}${API}contexts/bindings/${bindings[0].id}/receipts/`	1	backendRequestContext
+flows/skills/j6-application-recovery.spec.ts	send request.post `${E2E.apiUrl}${API}contexts/bindings/${bindings[0].id}/sessions/${receipt.paused.session_id}/access-check/`	1	backendRequestContext
+flows/skills/j6-recovery-coverage.spec.ts	binding page,actor,request,probe	1	ApiClient
+flows/skills/j6-reviewed-rollback.spec.ts	binding scopeActors,browser,request,scopeProbe:probe	1	backendRequestContext
+flows/skills/j6-reviewed-rollback.spec.ts	factory context=browser	1	browser; not an API context
+flows/skills/j6-reviewed-rollback.spec.ts	send request.fetch `${E2E.apiUrl}${API}${path}`	1	backendRequestContext
+flows/skills/runtime-bootstrap.spec.ts	binding actor,request,probe	1	collector
+flows/skills/skill-traces.spec.ts	binding actor,request,page,probe,mockModel	1	raw; backendRequestContext
+flows/skills/skill-traces.spec.ts	binding scopeActors,browser,request	1	backendRequestContext
 harness/alert-webhook-boundaries.spec.ts	binding scopeActors:actors,scopeProbe:probe,request	1	backendRequestContext
 harness/alert-webhook-boundaries.spec.ts	send request.patch `${E2E.apiUrl}${target}`	1	reviewed first-hop expression
 harness/catalog-backfill.spec.ts	binding actor,probe,request,lifecycle:h5	1	backendRequestContext
@@ -148,6 +199,21 @@ harness/otlp-shapes.spec.ts	binding request,actor,probe	2	backendRequestContext
 harness/otlp-tree.spec.ts	binding request,actor,probe	1	backendRequestContext
 harness/otlp.spec.ts	factory req=request	1	collector
 harness/provisioning.spec.ts	factory req=request	1	ApiClient
+harness/skills-r3/j3-driver-fixture.spec.ts	binding request,scopeActors	1	backendRequestContext
+harness/skills-r3/j3-driver-fixture.spec.ts	send request.fetch `${E2E.apiUrl}/accounts/key/generate_secret_key/`	1	backendRequestContext
+harness/skills-r3/j3-driver-fixture.spec.ts	send request.fetch `${E2E.apiUrl}/model-hub/skills/${path}`	1	backendRequestContext
+harness/skills-r3/j4-binding.spec.ts	binding scopeActors,request,scopeProbe	1	backendRequestContext
+harness/skills-r3/j4-binding.spec.ts	send request.fetch `${E2E.apiUrl}/model-hub/skills/${path}`	1	backendRequestContext
+harness/skills-r3/j4-driver.spec.ts	binding scopeActors,request	1	backendRequestContext
+harness/skills-r3/j4-driver.spec.ts	send request.fetch `${E2E.apiUrl}${base}${path}`	1	backendRequestContext
+harness/skills-r3/r7-contexts-capture.spec.ts	binding browser,request,scopeActors	1	backendRequestContext
+harness/skills-r3/r7-contexts-capture.spec.ts	factory adminContext=browser	1	browser; not an API context
+harness/skills-r3/r7-contexts-capture.spec.ts	factory context=browser	1	browser; not an API context
+harness/skills-r3/r7-contexts-capture.spec.ts	send request.fetch `${E2E.apiUrl}/model-hub/skills/${path}`	1	backendRequestContext
+harness/skills-v11-transport.spec.ts	binding scopeActors,request	2	backendRequestContext
+harness/skills-v11-transport.spec.ts	binding scopeActors,scopeProbe,request	1	backendRequestContext
+harness/skills-v11-transport.spec.ts	send request.post `${E2E.apiUrl}${SKILLS}${id}/test-runs/`	1	backendRequestContext
+harness/skills-v11-transport.spec.ts	send request.post `${E2E.apiUrl}${SKILLS}github/previews/`	2	backendRequestContext
 lib/backend-request.ts	attached route.fetch(	1	firstHopOptions
 lib/backend-request.ts	binding request,baseURL	1	backendRequestContext
 lib/backend-request.ts	factory -=request	1	backendRequestContext
@@ -164,5 +230,7 @@ lib/otlp-delivery.ts	send req.post url	1	reviewed first-hop expression
 lib/scope-actors.ts	factory context=browser	1	browser; not an API context
 lib/scope-actors.ts	factory req=pwRequest	1	ApiClient + ScopeActors.headers
 lib/scope-actors.ts	send req.fetch `${E2E.apiUrl}${path}`	1	reviewed first-hop expression
+lib/skill-trace-scenario.ts	binding actor,request	1	backendRequestContext
 scripts/api-client.test.mjs	factory context=request	1	isolated self-test listener
 scripts/api-client.test.mjs	factory raw=request	1	isolated self-test listener
+stack/check-skills-capabilities.ts	factory req=request	1	ApiClient

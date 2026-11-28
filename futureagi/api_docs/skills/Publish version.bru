@@ -1,0 +1,21 @@
+meta {
+  name: Publish version
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/versions/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {"files":[{"path":"SKILL.md","content":"---\nname: help-desk\ndescription: Use when a support request needs a clear and verifiable next step.\n---\n\nRead the request and explain the next safe step.\n"}],"base_version":{{base_version}},"labels":[],"acknowledge_warnings":false}
+}

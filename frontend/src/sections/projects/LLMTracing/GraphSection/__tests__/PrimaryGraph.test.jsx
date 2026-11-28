@@ -171,6 +171,16 @@ describe("PrimaryGraph", () => {
     expect(chart.getAttribute("data-primary-series-name")).toContain("Cost coverage incomplete");
   });
 
+  it("requests the version split on the active trace graph only after the operator chooses it", async () => {
+    const filter = { column_id: "skill.version_id", filter_config: { col_type: "SKILL", filter_op: "equals",
+      filter_type: "text", filter_value: "33333333-3333-4333-8333-333333333333" } };
+    renderWithQueryClient(<PrimaryGraph observeIdOverride="project-override" allowSkillSplit extraFilters={[filter]} />);
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1]).not.toHaveProperty("split_by");
+    fireEvent.click(screen.getByLabelText("Split by skill version"));
+    await waitFor(() => expect(axios.post.mock.calls.at(-1)[1].split_by).toBe("skill_version"));
+  });
+
   it("uses observeIdOverride as the graph project id", async () => {
     renderWithQueryClient(
       <PrimaryGraph observeIdOverride="project-override" />,

@@ -1,0 +1,17 @@
+meta {
+  name: Download skills
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{backend_url}}/model-hub/skills/download/?names={{skill_name}}&label=production
+  body: none
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}

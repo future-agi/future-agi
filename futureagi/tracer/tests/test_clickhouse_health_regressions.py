@@ -284,44 +284,136 @@ def test_health_reads_clamp_and_restore_native_ping_timeout(fails):
 
 
 @pytest.mark.unit
-def test_health_read_accepts_retained_deadline_and_never_extends_budget():
-    from tracer.services.clickhouse.health_client import HealthCheckClient
+def test_health_client_forwards_and_enforces_retained_read_deadline(monkeypatch):
+    from tracer.services.clickhouse import health_client
+    from tracer.services.clickhouse.client import ClickHouseClient
 
+    clock = [10.0]
+    monkeypatch.setattr(health_client, "monotonic", lambda: clock[0])
+    observed: dict[str, object] = {}
+
+    def receive_packet():
+        # Two progress packets take 110 ms each. The retained deadline is 200 ms.
+        clock[0] += 0.11
+        return object()
+
+    socket = Mock()
+    socket.gettimeout.return_value = 300
     connection = SimpleNamespace(
         sync_request_timeout=5,
         send_receive_timeout=300,
         connect_timeout=10,
-        socket=Mock(),
-        receive_packet=Mock(),
-        ping=Mock(return_value=True),
+        socket=socket,
+        receive_packet=receive_packet,
     )
     driver = Mock(connection=connection)
-    driver.execute.return_value = ([(1,)], [])
-    started = monotonic()
 
-    # A retained deadline already in the past exhausts the budget at once.
-    with pytest.raises(TimeoutError):
+    def delegate(client, query, params, **kwargs):
+        observed.update(kwargs)
+        return client.execute(query, params)
+
+    def execute(*_args, **_kwargs):
+        connection.receive_packet()
+        connection.receive_packet()
+        pytest.fail("The health client extended the retained deadline")
+
+    driver.execute.side_effect = execute
+    monkeypatch.setattr(
+        ClickHouseClient,
+        "_execute_native_read_with_remaining_timeout",
+        staticmethod(delegate),
+    )
+    retained_until = clock[0] + 0.2
+    with pytest.raises(TimeoutError, match="health check deadline"):
+        health_client.HealthCheckClient._execute_native_read_with_remaining_timeout(
+            driver,
+            "SELECT 1",
+            {},
+            query_settings={"max_execution_time": 1},
+            started_at=clock[0],
+            timeout_ms=1000,
+            retained_until=retained_until,
+        )
+
+    assert observed["retained_until"] == retained_until
+    assert connection.sync_request_timeout == 5
+    assert connection.receive_packet is receive_packet
+    # The packet guard bounds the first socket wait by the retained deadline.
+    # The base read (replaced by the delegate here) restores the socket's own
+    # timeout, so this wrapper is not expected to.
+    first_wait = socket.settimeout.call_args_list[0].args[0]
+    assert 0 < first_wait <= 0.2
+
+
+@pytest.mark.unit
+def test_health_read_clamps_an_expired_retained_deadline():
+    from tracer.services.clickhouse.health_client import HealthCheckClient
+
+    socket = Mock()
+    connection = SimpleNamespace(
+        connected=True,
+        sync_request_timeout=5,
+        send_receive_timeout=300,
+        connect_timeout=10,
+        socket=socket,
+        receive_packet=Mock(),
+    )
+    driver = Mock(connection=connection)
+    started = monotonic()
+    with pytest.raises(TimeoutError, match="deadline"):
         HealthCheckClient._execute_native_read_with_remaining_timeout(
             driver,
             "SELECT 1",
             {},
-            query_settings=None,
+            query_settings={"max_execution_time": 1},
             started_at=started,
             timeout_ms=1000,
             retained_until=started - 1,
         )
-    # A later retained deadline leaves the health budget in charge.
-    assert HealthCheckClient._execute_native_read_with_remaining_timeout(
-        driver,
-        "SELECT 1",
-        {},
-        query_settings=None,
-        started_at=monotonic(),
-        timeout_ms=1000,
-        retained_until=monotonic() + 3600,
-    ) == ([(1,)], [])
+    driver.execute.assert_not_called()
+    assert connection.sync_request_timeout == 5
+    assert connection.connect_timeout == 10
+    assert connection.send_receive_timeout == 300
 
 
+@pytest.mark.unit
+def test_health_read_does_not_extend_later_retained_deadline(monkeypatch):
+    from tracer.services.clickhouse import health_client
+    from tracer.services.clickhouse.client import ClickHouseClient
+
+    clock = [10.0]
+    monkeypatch.setattr(health_client, "monotonic", lambda: clock[0])
+    observed: dict[str, object] = {}
+    connection = SimpleNamespace(sync_request_timeout=5, receive_packet=lambda: None)
+    driver = Mock(connection=connection)
+
+    def delegate(client, query, params, **kwargs):
+        observed.update(kwargs)
+        assert connection.sync_request_timeout <= 1.0
+        return ([(1,)], [])
+
+    monkeypatch.setattr(
+        ClickHouseClient,
+        "_execute_native_read_with_remaining_timeout",
+        staticmethod(delegate),
+    )
+    result = (
+        health_client.HealthCheckClient._execute_native_read_with_remaining_timeout(
+            driver,
+            "SELECT 1",
+            {},
+            query_settings={"max_execution_time": 1},
+            started_at=clock[0],
+            timeout_ms=1000,
+            retained_until=clock[0] + 3600,
+        )
+    )
+    assert result == ([(1,)], [])
+    assert observed["retained_until"] == clock[0] + 3600
+    assert connection.sync_request_timeout == 5
+
+
+@pytest.mark.unit
 def test_health_progress_packets_share_one_deadline(monkeypatch):
     from tracer.services.clickhouse import health_client
 

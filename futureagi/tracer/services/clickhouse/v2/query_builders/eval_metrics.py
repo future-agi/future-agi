@@ -91,6 +91,16 @@ class EvalMetricsQueryBuilderV2(V2RewriteMixin, EvalMetricsQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
         )
         self.params.update(extra_params)
+        if self.observe_type == "span" and any(
+            self.is_datetime_complement_filter(item) for item in self.filters
+        ):
+            # Select the scored span by its start time. The logger's created_at
+            # determines the output bucket, not whether the span was excluded.
+            exclusion, exclusion_params = self.bounded_datetime_exclusion_sql(
+                self.filters, param_prefix="eval_span_time_exclusion"
+            )
+            self.params.update(exclusion_params)
+            extra_where = " AND ".join(filter(None, (extra_where, exclusion)))
         if not extra_where:
             return ""
         # The outer eval window may be split on output-bucket boundaries by

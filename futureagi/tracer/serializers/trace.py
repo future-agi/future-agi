@@ -20,6 +20,7 @@ from tracer.serializers.filters import (
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
+    parse_filter_list_payload,
 )
 from tracer.serializers.usage_coverage import (
     CaptureCoverageSerializer,
@@ -216,6 +217,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListQuerySerializer(StrictInputSerializer):
+    include_skill_links = serializers.BooleanField(required=False)
     sort_params = SortParamListQueryParamField(required=False, default=list)
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
@@ -278,10 +280,40 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
             from tracer.services.clickhouse.query_builders.trace_usage import (
                 USAGE_COLUMNS,
             )
+            from tracer.services.clickhouse.runtime_cohorts import (
+                LATENCY_DESC,
+                latency_cohort_token,
+            )
             from tracer.services.clickhouse.v2.query_builders.observe_usage import (
                 usage_column,
             )
 
+            if attrs["sort_params"] == LATENCY_DESC:
+                if (
+                    not attrs.get("project_id")
+                    or any(
+                        attrs.get(k)
+                        for k in (
+                            "project_version_id",
+                            "session_id",
+                            "cursor",
+                            "cursor_mode",
+                        )
+                    )
+                    or parse_filter_list_payload(self.initial_data["sort_params"])
+                    != LATENCY_DESC
+                    or not latency_cohort_token(attrs["sort_params"], attrs["filters"])
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "sort_params": (
+                                "Slowest-first ordering requires a dated Runtime cohort in one project and numbered pages."
+                            )
+                        }
+                    )
+                return validate_cursor_exclusivity(
+                    self, attrs, page_field="page_number"
+                )
             if (
                 not attrs.get("project_id")
                 or attrs.get("project_version_id")
@@ -308,6 +340,7 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListMetadataSerializer(serializers.Serializer):
+    skill_links_exist = serializers.BooleanField(required=False)
     total_rows = serializers.IntegerField()
     total_rows_exact = serializers.IntegerField(required=False, allow_null=True)
     total_rows_is_lower_bound = serializers.BooleanField(required=False)
@@ -889,6 +922,7 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
 
 
 class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
+    split_by = serializers.ChoiceField(choices=("skill_version",), required=False)
     observe_type = serializers.ChoiceField(
         choices=["trace", "voice"],
         required=False,
@@ -910,6 +944,32 @@ class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if attrs.get("split_by"):
+            from datetime import timedelta
+
+            from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+            from tracer.services.clickhouse.query_builders.filters import (
+                is_skill_filter,
+            )
+            from tracer.services.clickhouse.skill_graph import METRICS
+
+            window = BaseQueryBuilder.analyze_bounded_datetime_filters(attrs["filters"])
+            if window.end - window.start > timedelta(days=90, microseconds=1):
+                raise serializers.ValidationError(
+                    {"split_by": "Choose a window of at most 90 days."}
+                )
+            config = attrs["req_data_config"]
+            if (
+                attrs.get("observe_type") != "trace"
+                or config.get("type") != "SYSTEM_METRIC"
+                or str(config.get("id", "")).lower() not in METRICS
+                or not any(is_skill_filter(item) for item in attrs["filters"])
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "split_by": "Requires a supported trace system metric and SKILL filter."
+                    }
+                )
         is_voice = attrs.get("observe_type") == "voice"
         if attrs.get("remove_simulation_calls") and not is_voice:
             raise serializers.ValidationError(

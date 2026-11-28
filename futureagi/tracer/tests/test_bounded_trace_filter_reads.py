@@ -22,7 +22,10 @@ from tracer.selectors.trace_filter_reads import (
     read_bounded_filter_page,
 )
 from tracer.services.clickhouse.page_dedup import paginate_deduped
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    _unix_microseconds,
+)
 from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
@@ -105,6 +108,27 @@ def _time_filter(start: datetime = START, end: datetime = END) -> dict[str, Any]
 
 def _short_time_filter() -> dict[str, Any]:
     return _time_filter(start=END - timedelta(minutes=30), end=END)
+
+
+@pytest.mark.parametrize("seconds", [12, 300, 301])
+def test_runtime_cohort_slice_hints_fit_the_bounded_reader(seconds):
+    width = timedelta(seconds=seconds)
+    filters = [
+        _time_filter(start=END - width, end=END),
+        {
+            "column_id": "skill.trace_cohort",
+            "filter_config": {
+                "col_type": "SKILL",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "a" * 64,
+            },
+        },
+    ]
+    builder = TraceListQueryBuilderV2(project_id=PROJECT_ID, filters=filters)
+    expected = width if seconds >= 300 else None
+    assert builder.recommended_filter_initial_slice_width() == expected
+    assert builder.recommended_filter_max_slice_width() == expected
 
 
 @pytest.mark.parametrize(
@@ -3470,7 +3494,7 @@ def test_span_match_compiles_typed_map_json_and_multi_filter_at_latest_state() -
     assert params["latest_filter_key_2"] == "quality"
     assert params["latest_filter_key_3"] == "reviewed"
     assert "JSONExtractString(span_attributes_raw, 'raw_log', 'type')" in sql
-    assert "argMax(is_deleted, _peerdb_version)" in sql
+    assert "argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted" in sql
     assert "latest_column_value_0" in sql
     assert "latest_attr_exists_1" in sql
     assert "latest_attr_exists_2" in sql
@@ -5063,8 +5087,17 @@ def test_observe_trace_list_uses_v2_builder_when_routing_is_disabled() -> None:
 )
 @pytest.mark.parametrize("row_count", [1, 201])
 def test_trace_list_nonempty_page_enrichments_share_wall_budget(
-    row_count: int,
+    row_count: int, monkeypatch
 ) -> None:
+    _check_page_enrichments(
+        row_count, monkeypatch=monkeypatch, expect_offer=row_count == 1
+    )
+
+
+def _check_page_enrichments(
+    row_count, *, monkeypatch, expect_offer, offer_query=None, time_filters=None
+):
+    from tracer.tests.test_skill_probe_deadline import _record_native_probe
     from tracer.views.trace import (
         TRACE_LIST_CANDIDATE_DEADLINE_MS,
         TRACE_LIST_ENRICHMENT_CHUNK_SIZE,
@@ -5075,6 +5108,8 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
         TraceView,
     )
 
+    time_filters = [_short_time_filter()] if time_filters is None else time_filters
+    lower, upper = BaseQueryBuilder.parse_time_range(time_filters, strict=True)
     started = END - timedelta(minutes=1)
     rows = [
         {
@@ -5107,8 +5142,62 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
     )
 
     class RecordingAnalytics:
+        supports_per_query_read_settings = True
+
         def __init__(self):
             self.calls = []
+            self.ch_client = _record_native_probe(
+                monkeypatch, self.send_probe
+            ).ch_client
+            # Record the same caller-side settings and timeout as the ordinary
+            # enrichments; the native client separately clamps the packet cap.
+            dispatch = self.ch_client.execute_read_with_progress
+
+            def record(query, params, **kwargs):
+                self.calls.append((params, kwargs["timeout_ms"], kwargs["settings"]))
+                return dispatch(query, params, **kwargs)
+
+            monkeypatch.setattr(self.ch_client, "execute_read_with_progress", record)
+
+        def send_probe(self, query, params, server_cap_seconds):
+            assert 0 < server_cap_seconds * 1000 <= TRACE_LIST_ENRICHMENT_TIMEOUT_MS
+            if "skill_page_size" in params:
+                assert params["skill_window_start_us"] == _unix_microseconds(lower)
+                assert params["skill_window_end_us"] == _unix_microseconds(upper)
+                data = (
+                    offer_query(query, params, server_cap_seconds)
+                    if offer_query
+                    else (
+                        [
+                            {
+                                "project_id": PROJECT_ID,
+                                "trace_id": "trace-0",
+                                "id": "load",
+                            }
+                        ]
+                        if expect_offer
+                        else []
+                    )
+                )
+            elif query.startswith("SELECT 1 FROM ("):
+                from tracer.tests.test_skill_filters import assert_skill_span_source
+
+                if "skill_replay_keys" not in params:
+                    assert_skill_span_source(query)
+                else:
+                    assert "skill_load_days AS" in query
+                assert params["project_id"] == PROJECT_ID
+                assert params["skill_window_start_us"] == _unix_microseconds(lower)
+                assert params["skill_window_end_us"] == _unix_microseconds(upper)
+                assert "LIMIT 1" in query
+                data = (
+                    offer_query(query, params, server_cap_seconds)
+                    if offer_query
+                    else ([{"1": 1}] if expect_offer else [])
+                )
+            else:
+                raise AssertionError("Unexpected skill probe statement")
+            return data
 
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             self.calls.append((params, timeout_ms, settings))
@@ -5163,12 +5252,13 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
             project_id=PROJECT_ID,
             validated_data={
                 "filters": [
-                    _short_time_filter(),
+                    *time_filters,
                     _attribute_filter("final_status", "Rejected"),
                 ],
                 "page_number": 0,
                 "page_size": row_count,
                 "allow_sampled": True,
+                "include_skill_links": True,
             },
             analytics=analytics,
             org_project_ids=None,
@@ -5182,7 +5272,12 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
     expected_chunks = (
         row_count + TRACE_LIST_ENRICHMENT_CHUNK_SIZE - 1
     ) // TRACE_LIST_ENRICHMENT_CHUNK_SIZE
-    assert payload["metadata"]["query_count"] == 2 * expected_chunks + 2
+    probe_calls = sum(
+        "skill_window_start_us" in params for params, _, _ in analytics.calls
+    )
+    assert probe_calls >= 1
+    assert payload["metadata"]["query_count"] == 2 * expected_chunks + 2 + probe_calls
+    assert payload["metadata"]["skill_links_exist"] is expect_offer
     assert 0 <= payload["metadata"]["query_elapsed_ms"] < 3_000
     assert (
         bounded_read.call_args.kwargs["deadline_ms"] <= TRACE_LIST_CANDIDATE_DEADLINE_MS
@@ -5193,7 +5288,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
         == settings.INTERACTIVE_READ_DEFAULT_WALL_MS
     )
     assert TRACE_LIST_ENRICHMENT_MAX_WORKERS == 2
-    assert len(analytics.calls) == 2 * expected_chunks + 1
+    assert len(analytics.calls) == 2 * expected_chunks + 1 + probe_calls
     content_chunks = [
         params["content_trace_ids"]
         for params, _timeout_ms, _settings in analytics.calls

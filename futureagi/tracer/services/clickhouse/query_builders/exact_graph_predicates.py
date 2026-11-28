@@ -21,10 +21,12 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
+    SkillEvidenceWindow,
     boolean_meta_presence_condition,
     build_annotation_value_predicate,
     normalize_filter_op,
@@ -624,6 +626,8 @@ def compile_exact_graph_row_predicates(
     project_id: str,
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+    skill_window: SkillEvidenceWindow | None = None,
+    skill_window_bounds: tuple[datetime, datetime] | None = None,
 ) -> ExactGraphRowPredicatePlan:
     """Compile graph filters without adding another physical ``spans`` read.
 
@@ -652,7 +656,37 @@ def compile_exact_graph_row_predicates(
     contribution_predicates: list[str] = []
     root_contribution = False
     bound_params: dict[str, Any] = {}
+    from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+
+    # Compile ALL skill leaves together before the ordinary per-leaf path.
+    # Splitting them here would turn same-load correlation into sibling matches.
+    skill_filters = [item for item in filters or [] if is_skill_filter(item)]
+    if skill_filters:
+        # Only SKILL leaves belong to the correlated predicate. Admission still
+        # uses the enclosing graph's frozen endpoints and every time exclusion.
+        if skill_window is None and skill_window_bounds is not None:
+            skill_window = SkillEvidenceWindow.from_bounds(
+                *skill_window_bounds, filters
+            )
+        skill_builder = ClickHouseFilterBuilderV2(
+            project_id=project_id,
+            query_mode=normalized_observe_type,
+            skill_window=skill_window,
+        )
+        skill_predicate, skill_params = skill_builder.translate(skill_filters)
+        skill_predicate, skill_params = _namespace_params(
+            skill_predicate,
+            skill_params,
+            filter_index="skills",
+        )
+        predicates.append(skill_predicate)
+        output_window_only.append(False)
+        required_matches.append(True)
+        match_condition_groups.append(((0, True),))
+        bound_params.update(skill_params)
     for filter_index, original_item in enumerate(filters or []):
+        if is_skill_filter(original_item):
+            continue
         column_id, config_key, config = _filter_parts(original_item)
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
         if BaseQueryBuilder.is_datetime_filter(original_item) and filter_type in {

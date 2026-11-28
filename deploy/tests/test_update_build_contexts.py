@@ -26,7 +26,11 @@ PRIVATE_RULE = '**/.futureagi-updates/'
 # the overlay's own .dockerignore must carry the private rule too.
 CONTEXTS = ('.', 'futureagi', 'frontend', 'agentcc-gateway', 'fi-collector',
             'futureagi/model_serving', 'futureagi/code-executor', 'deploy/standalone',
-            'deploy/tests/update_e2e/fakeapp', 'futureagi/ee/cloud')
+            'deploy/tests/update_e2e/fakeapp', 'futureagi/ee/cloud',
+            # Skills E2E images: the J6 guest fixture and the native and TypeScript
+            # runtimes, each built from its own directory by the Skills harness.
+            'e2e/fixtures/skills-r3/j6-guest', 'e2e/stack/native-runtime',
+            'e2e/stack/skills-ts-runtime')
 CONTEXT_OVERRIDES = {'e2e/stack/backend/Dockerfile': '.',
                      'e2e/stack/frontend/Dockerfile': '.'}
 

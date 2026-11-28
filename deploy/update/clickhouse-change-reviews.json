@@ -30,8 +30,8 @@
     },
     {
       "path": "futureagi/tracer/services/clickhouse/client.py",
-      "before_sha256": "bb9ca329c5e3562b8995ac97c157249d5b22707811b75a5e424fb864294f9793",
-      "after_sha256": "23074785f6f2ef0e97d5a014625335cb6d6359af7d10e336de59db8c12732880",
+      "before_sha256": "23074785f6f2ef0e97d5a014625335cb6d6359af7d10e336de59db8c12732880",
+      "after_sha256": "b694323ba50d17a4da386a2406f2c7ab4385724c789909a039ba9e4c8a24a9f9",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -43,8 +43,8 @@
           "clickhouse:tracer_eval_logger",
           "clickhouse:tracer_trace"
         ],
-        "mitigation": "The unchanged CREATE DATABASE IF NOT EXISTS is database-level and repeatable; it creates an empty namespace and changes no table. This PR changes read admission only: the optional retained-window metadata read gets a bounded budget and is skipped rather than starving the page read, native driver logs for these reads are quieted, and the send guard restores pooled policy after ping/reconnect. The named table reads remain metadata and CDC lag checks. Roll back the client code if needed; no stored state changes.",
-        "review": "https://github.com/future-agi/future-agi/pull/4231#discussion_r4688933888",
+        "mitigation": "No DDL, mutation or new statement; the unchanged CREATE DATABASE IF NOT EXISTS is database-level and repeatable. Read paths only: bind_outer_skill_bounds adds integer skill-window bounds only when a statement uses %(skill_window_start_us)s and the caller did not bind them (all other queries unchanged); retained-lookup dispatch uses min(remaining wall, explicit cap) for max_execution_time, so it can only tighten; retained lookups inside an application read context use the standard application read settings (only caller: the Skills page-zero probe). Roll back the client code if needed; no stored state changes.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4703913261",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }

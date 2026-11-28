@@ -1,0 +1,687 @@
+"""Bounded runtime read building blocks for the shared usage/load API.
+
+Load evidence comes from the winning physical span, including key-only deletes.
+Project permissions and catalogue identities are resolved by the caller.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime
+from itertools import product
+from operator import itemgetter
+from typing import Any
+from uuid import UUID
+
+from model_hub.services.skills_hub.errors import SkillsHubError
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.query_builders.filters import (
+    SKILL_REPLAY_BATCH_SIZE,
+    SKILL_VERSION_IDS_SQL,
+    SkillEvidenceWindow,
+)
+from tracer.services.clickhouse.query_service import QueryResult
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    ReadDeadlineExceeded,
+    WallCappedAnalytics,
+)
+from tracer.services.clickhouse.skill_replay_errors import is_skill_replay_overflow
+from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+    _append_v2_settings,
+)
+
+# A runtime fact statement returns this extra row solely to signal overflow.
+_FACT_SENTINEL = 20_001
+_TRACE_LOAD_SENTINEL = 10_001
+# The native driver renders %(...)s before sending the SQL, even for an array.
+# At most two arrays per replay, leaving 64 KiB of the 256 KiB query budget
+# for the fixed statement, settings, and up to 50 authorized project IDs.
+_ARRAY_SQL_BYTES = 96 * 1024
+
+
+class _FactPages(dict):
+    """Ordinary statement binds, plus disjoint pages for RuntimeReadSession."""
+
+    def __init__(self, values, statements, *, sentinel=_FACT_SENTINEL, order_key=None):
+        super().__init__(values)
+        self.statements = statements
+        self.sentinel = sentinel
+        self.order_key = order_key
+
+    @classmethod
+    def for_arrays(cls, params, *names):
+        def statements(sql, _read_keys):
+            for batches in product(*(_array_batches(params[n]) for n in names)):
+                yield sql, {**params, **dict(zip(names, batches, strict=True))}
+
+        return cls(params, statements)
+
+
+def _array_batches(values):
+    """Disjoint input sets bounded by *escaped bytes*, not by row count."""
+    batch: list[Any] = []
+    size = 2  # the array brackets
+    for key in dict.fromkeys(values):
+        fields = key if isinstance(key, tuple) else (key,)
+        # Each UTF-8 byte can at most double under native string escaping.
+        # Include quotes, tuple parentheses, commas and spaces in the bound.
+        cost = 4 + sum(4 + 2 * len(s.encode("utf-8")) for s in fields)
+        if cost + 2 > _ARRAY_SQL_BYTES:
+            raise ReadDeadlineExceeded(
+                "Runtime identity exceeds the replay byte budget"
+            )
+        if size + cost > _ARRAY_SQL_BYTES:
+            yield batch
+            batch, size = [], 2
+        batch.append(key)
+        size += cost
+    if batch:
+        yield batch
+
+
+def iter_runtime_load_replays(
+    compiler, read_keys, *, skill_window, failed=False, max_keys=SKILL_REPLAY_BATCH_SIZE
+):
+    """Bound both the number of discovered keys and their native SQL bytes."""
+    for source, binds in compiler.iter_skill_load_replays(
+        read_keys,
+        skill_window=skill_window,
+        failed=failed,
+        batch_size=min(max_keys, SKILL_REPLAY_BATCH_SIZE),
+    ):
+        for keys in _array_batches(binds["skill_replay_keys"]):
+            yield source, {**binds, "skill_replay_keys": keys}
+
+
+class RuntimeDependencyUnavailable(RuntimeError):
+    """The shared filter compiler has not acquired its runtime source yet."""
+
+
+class SkillRuntimeQueryBuilder(V2RewriteMixin):
+    def __init__(self, *, project_ids, start: datetime, end: datetime):
+        projects = tuple(sorted({str(UUID(str(value))) for value in project_ids}))
+        if not projects or len(projects) > 50:
+            raise ValueError("Runtime reads require one to fifty authorized projects")
+        if start.utcoffset() is None or end.utcoffset() is None or start >= end:
+            raise ValueError("Runtime reads require a nonempty timezone-aware window")
+        self.project_ids = projects
+        self.start, self.end = start, end
+        self.skill_window = SkillEvidenceWindow.from_bounds(start, end)
+        self.params = {
+            "project_ids": projects,
+            "start_date": start,
+            "end_date": end,
+            **self.skill_window.params,
+        }
+        self.compiler = ClickHouseFilterBuilderV2(
+            project_ids=list(projects), skill_window=self.skill_window
+        )
+
+    def _live_source(
+        self, *, failed=False, skill_window=None, verified_identities_param=None
+    ):
+        method = getattr(self.compiler, "skill_live_rows_sql", None)
+        if method is None:
+            raise RuntimeDependencyUnavailable(
+                "Runtime reads require the shared SKILL filter compiler"
+            )
+        return method(
+            failed=failed,
+            skill_window=skill_window,
+            verified_identities_param=verified_identities_param,
+        )
+
+    def build_filter_values(
+        self,
+        *,
+        field,
+        verified_identities,
+        context_ids=(),
+        failed=False,
+        skill_name=None,
+        search="",
+        after=None,
+        limit=100,
+    ):
+        """Keyset-paged picker values from live evidence, never raw name identity.
+
+        The caller resolves all catalogue IDs in Postgres before this query.
+        Failed names remain unverified strings, not navigable skill identities.
+        """
+        columns = {
+            "skill.name": "skill_name" if failed else "toString(skill_id)",
+            "skill.version_id": "toString(skill_version_id)",
+            "skill.agent": "agent_name",
+            "skill.service": "service_name",
+            "skill.requested_label": "requested_label",
+            "skill.context_id": "toString(context_id)",
+        }
+        if field not in columns or (failed and field == "skill.version_id"):
+            raise ValueError("Unsupported filter-value field")
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid filter-value page size")
+        params = {
+            **self.params,
+            "verified_identities": tuple(verified_identities),
+            "context_ids": tuple(context_ids),
+            "search": search,
+            "after": after,
+            "page_limit": limit + 1,
+            "skill_name": skill_name,
+        }
+        # Failures have no verified identity. For successes the compiler uses
+        # the same catalogue to nominate keys and to recheck the elected row.
+        # Preserve the existing tuple bind for callers inspecting the statement;
+        # only the array bind is rendered into the SQL, once.
+        identity_param = None
+        if not failed:
+            identity_param = "picker_identities"
+            params[identity_param] = list(params["verified_identities"])
+        # The raw attribute can nominate a key, but never restrict its replay:
+        # a newer revision can change that attribute or delete the span.
+        window = self.skill_window
+        candidate, scope = [], []
+        context_cte = ""
+        if failed and skill_name is not None:
+            candidate.append("attrs_string['fi.skill.name'] = %(skill_name)s")
+            scope.append("skill_name = %(skill_name)s")
+        if field == "skill.context_id":
+            # Bind even an empty shortlist once (no IN (), no duplicate array
+            # on the wire alongside a potentially full identity catalogue).
+            params["picker_context_ids"] = list(params["context_ids"])
+            context_cte = "WITH picker_contexts AS (SELECT arrayJoin(CAST(%(picker_context_ids)s AS Array(String))) AS context_key)"
+            in_contexts = " IN (SELECT context_key FROM picker_contexts)"
+            candidate.append("attrs_string['fi.context.id']" + in_contexts)
+            scope.append("context_id" + in_contexts)
+        if candidate:
+            window = replace(window, bounds=" AND ".join([window.bounds, *candidate]))
+        source = self._live_source(
+            failed=failed, skill_window=window, verified_identities_param=identity_param
+        )
+        # Only the allowlisted column expression is interpolated. All values,
+        # including blank agent names, are bound; no SQL is accepted from HTTP.
+        expression = columns[field]
+        cursor = " AND value > %(after)s" if after is not None else ""
+        return (
+            f"""
+            {context_cte}
+            SELECT DISTINCT {expression} AS value
+            FROM ({source})
+            WHERE {" AND ".join(scope) or "1 = 1"} AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 {cursor}
+            ORDER BY value LIMIT %(page_limit)s
+        """,
+            params,
+        )
+
+    def build_usage_loads(
+        self,
+        *,
+        identities,
+        skill_names,
+        label=None,
+        context_id=None,
+        agent=None,
+        failed=False,
+        mismatch=False,
+    ):
+        """Bounded facts for exact overlapping cohorts; never return a prefix."""
+        params = {
+            **self.params,
+            "identities": tuple(identities),
+            "skill_names": tuple(skill_names),
+        }
+        # Use the same request scope on the physical witness and on the elected
+        # load, never on the intervening revisions. Bind the catalogue only
+        # once per native statement (including the unpaged compatibility SQL).
+        if failed:
+            params["usage_catalogue"] = list(params["skill_names"])
+            catalogue = "WITH usage_names AS (SELECT arrayJoin(CAST(%(usage_catalogue)s AS Array(String))) AS reported_name) "
+            membership = " IN (SELECT reported_name FROM usage_names)"
+            candidate = ["attrs_string['fi.skill.name']" + membership]
+            winner = ["skill_name" + membership]
+        else:
+            params["usage_catalogue"] = list(params["identities"])
+            catalogue = self.compiler._skill_identity_cte("usage_catalogue")
+            membership = (
+                " NOT IN " if mismatch else " IN "
+            ) + "(SELECT identity.1, identity.2, identity.3 FROM skill_identity_set)"
+            candidate = [
+                "(attrs_string['fi.skill.id'], attrs_string['fi.skill.version_id'], attrs_string['fi.skill.digest'])"
+                + membership
+            ]
+            winner = ["(skill_id, skill_version_id, skill_digest)" + membership]
+            if mismatch:
+                requested = " IN (SELECT identity.1 FROM skill_identity_set)"
+                candidate.append("attrs_string['fi.skill.id']" + requested)
+                winner.append("skill_id" + requested)
+        if label is not None:
+            params["label"] = label
+            candidate.append("attrs_string['fi.skill.requested_label'] = %(label)s")
+            winner.append("requested_label = %(label)s")
+        if context_id is not None:
+            params["context_id"] = str(context_id)
+            candidate.append("attrs_string['fi.context.id'] = %(context_id)s")
+            winner.append("context_id = %(context_id)s")
+        if agent is not None:
+            params.update(agent_project=str(agent[0]), service=agent[1], agent=agent[2])
+            location = "toString(project_id) = %(agent_project)s AND service_name = %(service)s"
+            candidate.extend(
+                [
+                    location,
+                    "if(attrs_string['gen_ai.agent.name'] != '', attrs_string['gen_ai.agent.name'], attrs_string['fi.context.name']) = %(agent)s",
+                ]
+            )
+            winner.extend([location, "agent_name = %(agent)s"])
+
+        window = replace(
+            self.skill_window,
+            bounds=" AND ".join([self.skill_window.bounds, *candidate]),
+        )
+
+        def facts(source):
+            return f"{catalogue}SELECT * FROM ({source}) WHERE {' AND '.join(winner)} LIMIT {_FACT_SENTINEL}"
+
+        def statements(_sql, read_keys):
+            if not params["usage_catalogue"]:
+                return
+
+            def nominate(sql, binds):
+                return read_keys(catalogue + sql, {**params, **binds})
+
+            for source, binds in iter_runtime_load_replays(
+                self.compiler, nominate, skill_window=window, failed=failed
+            ):
+                yield _append_v2_settings(facts(source)), {**params, **binds}
+
+        return facts(self._live_source(failed=failed, skill_window=window)), _FactPages(
+            params, statements
+        )
+
+    def build_context_members(self, *, resource_id, identities):
+        """Context cohorts include stamped spans even without a leaf skill load.
+
+        The value-index candidate is replayed before testing the final identity,
+        so an attribute removal or attribute-less tombstone cannot resurrect it.
+        """
+        params = {
+            **self.params,
+            "resource_id": str(resource_id),
+            "context_identities": tuple(identities),
+        }
+        return (
+            """
+            SELECT project_id, trace_id, id AS span_id, state.2 AS start_time,
+                   state.5 AS service_name,
+                   if(state.4['gen_ai.agent.name'] != '', state.4['gen_ai.agent.name'], state.4['fi.context.name']) AS agent_name,
+                   state.4['fi.context.id'] AS context_id,
+                   state.4['fi.context.version_id'] AS context_version_id,
+                   context_version_id AS skill_version_id,
+                   state.4['fi.context.requested_label'] AS requested_label,
+                   0 AS requested_version, '' AS via_context_version_id,
+                   NULL AS cached, state.1 = 'context.load' AS is_load
+            FROM (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(name, start_time, status, attrs_string, service_name, is_deleted), _version) AS state
+                FROM spans
+                WHERE project_id IN %(project_ids)s AND (project_id, trace_id, id) IN (
+                    SELECT project_id, trace_id, id FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+                      AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
+                      AND attrs_string['fi.context.id'] = %(resource_id)s
+                )
+                GROUP BY project_id, trace_id, id
+            )
+            WHERE state.6 = 0 AND (state.1 != 'context.load' OR state.3 != 'ERROR')
+              AND state.4['fi.context.id'] = %(resource_id)s
+              AND (state.4['fi.context.id'], state.4['fi.context.version_id'], state.4['fi.context.digest']) IN %(context_identities)s
+              AND state.2 >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+              AND state.2 < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
+            LIMIT 20001
+        """,
+            params,
+        )
+
+    def build_usage_spans(self, *, members):
+        """Replay complete traces, not just spans started in the load window."""
+        params = {
+            **self.params,
+            "project_ids": list(self.project_ids),
+            "members": [(str(project), str(trace)) for project, trace in members],
+        }
+        return (
+            f"""
+            SELECT project_id, trace_id, id, state.1 AS parent_span_id,
+                   state.2 AS status, state.3 AS latency_ms, state.4 AS cost,
+                   state.5 AS total_tokens, state.6 AS skill_version_ids,
+                   state.7 AS start_time, state.8 AS context_version_id
+            FROM (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(parent_span_id, status, latency_ms, cost,
+                                    total_tokens, {SKILL_VERSION_IDS_SQL}, start_time, attrs_string['fi.context.version_id']), _version) AS state
+                FROM spans
+                WHERE project_id IN (SELECT arrayJoin(CAST(%(project_ids)s, 'Array(UUID)')))
+                  AND (project_id, trace_id) IN (
+                      SELECT m.1, m.2 FROM (
+                          SELECT arrayJoin(CAST(%(members)s, 'Array(Tuple(UUID, String))')) AS m
+                      )
+                  )
+                GROUP BY project_id, trace_id, id
+                HAVING argMax(is_deleted, _version) = 0
+            ) LIMIT {_FACT_SENTINEL}
+        """,
+            _FactPages.for_arrays(params, "members"),
+        )
+
+    def build_usage_evals(self, *, config_ids, members):
+        # Config IDs are PG-authorized by project. Trace IDs use the same textual
+        # UUID join as EvalMetricsQueryBuilderV2; results on ANY live span count.
+        params = {
+            **self.params,
+            "config_ids": list(map(str, config_ids)),
+            "trace_ids": sorted({str(trace) for _, trace in members}),
+        }
+        table, live = eval_logger_source(
+            "raw_eval_logger", include_cdc_tombstone_guard=True
+        )
+        return (
+            f"""
+            SELECT toString(raw_eval_logger.trace_id) AS trace_id, observation_span_id,
+                   toString(custom_eval_config_id) AS config_id,
+                   output_float, output_bool, output_str
+            FROM {table} AS raw_eval_logger FINAL
+            WHERE {live} AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+              AND toString(custom_eval_config_id) IN (SELECT arrayJoin(%(config_ids)s))
+              AND toString(raw_eval_logger.trace_id) IN (SELECT arrayJoin(%(trace_ids)s))
+            LIMIT {_FACT_SENTINEL}
+        """,
+            _FactPages.for_arrays(params, "config_ids", "trace_ids"),
+        )
+
+    def build_library_counts(self, *, verified_identities):
+        """One CH read for the page. Identities are (skill, version, digest).
+
+        Counts are trace-grain across projects (the project is part of identity).
+        The caller's window is always the last seven days for this projection.
+        """
+        params = {**self.params, "verified_identities": tuple(verified_identities)}
+        predicate = (
+            "(skill_id, skill_version_id, skill_digest) IN %(verified_identities)s"
+            if verified_identities
+            else "0 = 1"
+        )
+        return (
+            f"""
+            SELECT skill_id, uniqExact(tuple(project_id, trace_id)) AS traces
+            FROM ({self._live_source()})
+            WHERE status != 'ERROR' AND {predicate}
+            GROUP BY skill_id ORDER BY skill_id
+        """,
+            params,
+        )
+
+    def build_mismatch_counts(self, *, skill_id, verified_identities):
+        params = {
+            **self.params,
+            "skill_id": str(skill_id),
+            "verified_identities": tuple(verified_identities),
+        }
+        predicate = (
+            "(skill_id, skill_version_id, skill_digest) NOT IN %(verified_identities)s"
+            if verified_identities
+            else "1 = 1"
+        )
+        return (
+            f"""
+            SELECT count() AS loads, uniqExact(tuple(project_id, trace_id)) AS traces
+            FROM ({self._live_source()})
+            WHERE skill_id = %(skill_id)s AND status != 'ERROR' AND {predicate}
+        """,
+            params,
+        )
+
+    def build_trace_loads(self, *, trace_ids, failed=False):
+        """Bounded page hydration. One project prevents trace-id collisions.
+
+        The row cap is a rejection sentinel, not a partial success. The caller
+        must reject 10001 rows, never publish a misleading prefix as all loads.
+        """
+        trace_ids = tuple(dict.fromkeys(trace_ids))
+        if len(self.project_ids) != 1 or not 1 <= len(trace_ids) <= 100:
+            raise ValueError(
+                "Load hydration requires one project and one to 100 traces"
+            )
+        if any(
+            not isinstance(value, str) or not value or len(value) > 256
+            for value in trace_ids
+        ):
+            raise ValueError("Invalid trace id")
+        fields = (
+            "skill_name, error_type, requested_label, requested_version, context_id, context_version_id"
+            if failed
+            else "skill_id, skill_version_id, skill_digest, requested_label, requested_version, "
+            "evidence, cached, context_id, context_version_id, via_context_version_id, binding_id"
+        )
+        params = {**self.params, "trace_ids": trace_ids}
+        compiler = ClickHouseFilterBuilderV2(
+            project_ids=list(self.project_ids),
+            candidate_ids_param="trace_ids",
+            skill_window=self.skill_window,
+        )
+
+        def loads(source):
+            return f"""
+                SELECT project_id, trace_id, span_id, start_time, service_name, agent_name, {fields}
+                FROM ({source}) ORDER BY start_time, span_id LIMIT {_TRACE_LOAD_SENTINEL}
+            """
+
+        def statements(_sql, read_keys):
+            for source, binds in compiler.iter_skill_load_replays(
+                read_keys, skill_window=self.skill_window, failed=failed, params=params
+            ):
+                yield _append_v2_settings(loads(source)), binds
+
+        return loads(compiler.skill_live_rows_sql(failed=failed)), _FactPages(
+            params,
+            statements,
+            sentinel=_TRACE_LOAD_SENTINEL,
+            order_key=itemgetter("start_time", "span_id"),
+        )
+
+    def build_latest_load(self, *, resource_id, kind, version_ids):
+        """Newest live load, not a fetch, a context link or a stamped child.
+
+        Contexts use spans directly: a context with no skill loads must still
+        be detectable. Replay before filtering attributes so a correction or
+        attribute-less tombstone cannot resurrect an older load.
+        """
+        if kind not in {"skill", "agent_context"}:
+            raise ValueError("Unknown runtime resource kind")
+        params = {
+            **self.params,
+            "resource_id": str(UUID(str(resource_id))),
+            "version_ids": tuple(str(UUID(str(value))) for value in version_ids),
+        }
+        if kind == "skill":
+            return (
+                f"""
+                SELECT project_id, skill_version_id AS version_id, start_time,
+                       service_name, agent_name
+                FROM ({self._live_source()})
+                WHERE skill_id = %(resource_id)s AND status != 'ERROR'
+                  AND skill_version_id IN %(version_ids)s
+                ORDER BY start_time DESC, span_id DESC LIMIT 1
+            """,
+                params,
+            )
+        return (
+            """
+            SELECT project_id, state.4['fi.context.version_id'] AS version_id,
+                   state.2 AS start_time, state.5 AS service_name,
+                   if(state.4['gen_ai.agent.name'] != '', state.4['gen_ai.agent.name'],
+                      state.4['fi.context.name']) AS agent_name
+            FROM (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(name, start_time, status, attrs_string,
+                                    service_name, is_deleted), _version) AS state
+                FROM spans
+                WHERE project_id IN %(project_ids)s
+                  AND (project_id, trace_id, id) IN (
+                      SELECT project_id, trace_id, id FROM spans
+                      WHERE project_id IN %(project_ids)s
+                        AND start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+                        AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
+                        AND name = 'context.load'
+                        AND attrs_string['fi.context.id'] = %(resource_id)s
+                  )
+                GROUP BY project_id, trace_id, id
+            )
+            WHERE state.6 = 0 AND state.1 = 'context.load' AND state.3 != 'ERROR'
+              AND state.4['fi.context.id'] = %(resource_id)s
+              AND state.4['fi.context.version_id'] IN %(version_ids)s
+              AND state.2 >= fromUnixTimestamp64Micro(%(skill_window_start_us)s)
+              AND state.2 < fromUnixTimestamp64Micro(%(skill_window_end_us)s)
+            ORDER BY start_time DESC, id DESC LIMIT 1
+        """,
+            params,
+        )
+
+    def build_cohort_metrics(self, *, skill_id, version_id, digest, agent=None):
+        """Exact core metrics for ONE verified version, optionally one agent.
+
+        Loads select the cohort in the half-open load window; all live spans of
+        those traces contribute cost, including roots started before the load.
+        Observe's skill.root_status uses this same canonical-root rule, without
+        clipping roots to the load window. Eval aggregation remains a separate
+        adapter pending V8's any-span join and per-trace reduction contract.
+        """
+        params = {
+            **self.params,
+            "skill_id": str(skill_id),
+            "version_id": str(version_id),
+            "digest": digest,
+        }
+        agent_where = ""
+        if agent is not None:
+            project_id, service_name, agent_name = agent
+            if str(project_id) not in self.project_ids:
+                raise ValueError("Agent is outside the authorized project scope")
+            params.update(
+                agent_project=str(project_id), service=service_name, agent=agent_name
+            )
+            agent_where = " AND toString(project_id) = %(agent_project)s AND service_name = %(service)s AND agent_name = %(agent)s"
+        return (
+            f"""
+            WITH loads AS (
+                SELECT * FROM ({self._live_source()})
+                WHERE skill_id = %(skill_id)s AND skill_version_id = %(version_id)s
+                  AND skill_digest = %(digest)s AND status != 'ERROR' {agent_where}
+            ), members AS (
+                SELECT DISTINCT project_id, trace_id FROM loads
+            ), span_winners AS (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(parent_span_id, status, latency_ms, cost,
+                                    total_tokens, {SKILL_VERSION_IDS_SQL}, start_time), _version) AS state
+                FROM spans
+                WHERE project_id IN %(project_ids)s
+                  AND (project_id, trace_id) IN (SELECT project_id, trace_id FROM members)
+                GROUP BY project_id, trace_id, id
+                HAVING argMax(is_deleted, _version) = 0
+            ), live_spans AS (
+                SELECT project_id, trace_id, id, state.1 AS parent_span_id,
+                       state.2 AS status, state.3 AS latency_ms, state.4 AS cost,
+                       state.5 AS total_tokens, state.6 AS skill_version_ids,
+                       state.7 AS start_time
+                FROM span_winners
+            ), per_trace AS (
+                SELECT project_id, trace_id,
+                       countIf(parent_span_id = '') AS roots,
+                       argMinIf(tuple(status, latency_ms), tuple(start_time, id), parent_span_id = '') AS root,
+                       countIf(status = 'ERROR') > 0 AS any_error,
+                       sum(cost) AS trace_cost, sum(total_tokens) AS trace_tokens,
+                       sumIf(cost, has(skill_version_ids, %(version_id)s)) AS scope_cost,
+                       countIf(has(skill_version_ids, %(version_id)s)) > 0 AS stamped
+                FROM live_spans GROUP BY project_id, trace_id
+            ), metrics AS (
+                SELECT count() AS traces,
+                       countIf(roots = 0) AS incomplete,
+                       countIf(roots > 0 AND root.1 = 'ERROR') AS failed_count,
+                       failed_count / nullIf(countIf(roots > 0), 0) AS failed_rate,
+                       countIf(any_error) AS errors_any_span,
+                       if(countIf(roots > 0) = 0, NULL, quantileExactIf(0.5)(root.2, roots > 0)) AS latency_p50,
+                       if(countIf(roots > 0) = 0, NULL, quantileExactIf(0.95)(root.2, roots > 0)) AS latency_p95,
+                       sum(trace_cost) AS cost_total,
+                       cost_total / nullIf(count(), 0) AS cost_mean,
+                       if(count() = 0, NULL, quantileExact(0.5)(trace_cost)) AS cost_p50,
+                       sum(trace_tokens) AS tokens_total,
+                       tokens_total / nullIf(count(), 0) AS tokens_mean,
+                       sum(scope_cost) AS scope_cost_total,
+                       countIf(stamped) / nullIf(count(), 0) AS scope_coverage
+                FROM per_trace
+            ), load_metrics AS (
+                SELECT count() AS loads, avg(cached) AS cached_share,
+                       minOrNull(start_time) AS first_seen, maxOrNull(start_time) AS last_seen
+                FROM loads
+            ), overhead AS (
+                SELECT if(count() = 0, NULL, quantileExact(0.5)(latency_ms)) AS load_overhead_ms_p50
+                FROM live_spans
+                WHERE (project_id, trace_id, id) IN (SELECT project_id, trace_id, span_id FROM loads)
+            )
+            SELECT * FROM metrics CROSS JOIN load_metrics CROSS JOIN overhead
+        """,
+            params,
+        )
+
+
+class RuntimeReadSession:
+    """One request-owned wall budget for all statements, never a timer per row."""
+
+    def __init__(self, service, *, deadline: ReadDeadline):
+        self.deadline = deadline
+        self.service = WallCappedAnalytics(service, deadline, floor_ms=25)
+
+    def _read(self, sql, params):
+        return self.service.execute_ch_query(
+            sql, params, timeout_ms=self.deadline.remaining_ms()
+        )
+
+    def execute(self, statement):
+        # This boundary covers both driver calls and refusals from the replay
+        # iterator between calls. Unrelated driver errors retain their type.
+        try:
+            return self._execute(*statement)
+        except Exception as exc:
+            if not is_skill_replay_overflow(exc):
+                raise
+            raise SkillsHubError(
+                "runtime_read_too_large",
+                "Runtime data exceeds this read's limit.",
+                status=503,
+            ) from exc
+
+    def _execute(self, sql, params):
+        if not isinstance(params, _FactPages):
+            return self._read(sql, params)
+
+        # Use byte-bounded client-side binds on both profiles. The pinned native
+        # driver cannot encode nested quoted strings in server-side array binds.
+        def read_keys(query, binds):
+            return self._read(query, binds).data
+
+        rows: list[dict[str, Any]] = []
+        started_ms = self.deadline.elapsed_ms()
+        for page_sql, page_binds in params.statements(sql, read_keys):
+            page = self._read(page_sql, page_binds)
+            rows.extend(page.data[: params.sentinel - len(rows)])
+            if len(rows) == params.sentinel:
+                # The consumer rejects the sentinel; do not start another read.
+                break
+        if len(rows) < params.sentinel and params.order_key is not None:
+            # Physical discovery order is not the public trace load order.
+            rows.sort(key=params.order_key)
+        return QueryResult(
+            rows, len(rows), "clickhouse", self.deadline.elapsed_ms() - started_ms
+        )

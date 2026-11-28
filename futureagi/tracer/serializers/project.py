@@ -7,8 +7,8 @@ from tracer.serializers.filters import (
     MetricSortParamListField,
     ObserveGraphMetricConfigField,
     StrictInputSerializer,
-    filter_list_field,
     filter_list_query_param_field,
+    skill_filter_list_field,
 )
 from tracer.serializers.usage_coverage import CostCoverageBucketSerializer
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
@@ -164,7 +164,7 @@ class ProjectVersionExportSerializer(StrictInputSerializer):
     runs_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, allow_null=True, default=list
     )
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
     sort_params = MetricSortParamListField(required=False, default=list)
 
 
@@ -219,7 +219,7 @@ class ProjectUserMetricsRequestSerializer(StrictInputSerializer):
     end_user_id = serializers.UUIDField()
     project_id = serializers.UUIDField()
     interval = serializers.CharField(required=False, default="day", allow_blank=False)
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
 
     def validate_filters(self, value):
         return validate_users_filter_capabilities(value)
@@ -228,7 +228,7 @@ class ProjectUserMetricsRequestSerializer(StrictInputSerializer):
 class ProjectUsersAggregateGraphDataRequestSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     interval = serializers.CharField(required=False, default="day", allow_blank=False)
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
     property = serializers.CharField(
         required=False, default="average", allow_blank=False
     )
@@ -245,7 +245,7 @@ class ProjectUserGraphDataQuerySerializer(StrictInputSerializer):
 
 class ProjectUserGraphDataRequestSerializer(StrictInputSerializer):
     interval = serializers.CharField(required=False, default="hour", allow_blank=False)
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
 
     def validate_filters(self, value):
         return validate_users_filter_capabilities(value)

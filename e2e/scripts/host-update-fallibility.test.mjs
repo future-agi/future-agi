@@ -1399,9 +1399,29 @@ test("workflow opt-in is dispatch-only, validates before builds, follows the unc
     contents: "read",
     actions: "read",
   });
-  assert.equal(
-    Object.values(workflow.jobs).filter((job) => job.permissions).length,
-    3,
+  // The Skills cohorts read the same build cache as the ordinary legs; the registered
+  // journeys run on Blacksmith runners with read-only source access and no cloud identity.
+  for (const id of ["skills", "campaign-executor"]) {
+    assert.deepEqual(workflow.jobs[id].permissions, {
+      contents: "read",
+      packages: "read",
+    });
+  }
+  assert.deepEqual(workflow.jobs["skills-journeys"].permissions, {
+    contents: "read",
+  });
+  assert.deepEqual(
+    Object.keys(workflow.jobs)
+      .filter((id) => workflow.jobs[id].permissions)
+      .sort(),
+    [
+      "campaign-executor",
+      "changes",
+      "e2e",
+      "report",
+      "skills",
+      "skills-journeys",
+    ],
   );
   // The five stack images build in one bake (e2e/stack/docker-bake.hcl). Each
   // target must load into the local daemon only: never push, never write a cache.
@@ -1435,7 +1455,8 @@ test("workflow opt-in is dispatch-only, validates before builds, follows the unc
     assert.doesNotMatch(body, /cache-to|\bpush\b/, name);
   }
   for (const job of Object.values(workflow.jobs)) {
-    for (const step of job.steps.filter((step) =>
+    // A reusable-workflow job (uses:) has no steps of its own.
+    for (const step of (job.steps ?? []).filter((step) =>
       step.uses?.startsWith("actions/checkout@"),
     )) {
       assert.equal(step.with["persist-credentials"], false);

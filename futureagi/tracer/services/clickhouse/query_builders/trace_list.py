@@ -31,6 +31,8 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 )
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
+    SkillEvidenceWindow,
+    is_skill_filter,
     normalize_filter_op,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -160,6 +162,10 @@ def _unix_microseconds(value: datetime) -> int:
     )
     delta = utc_value - datetime(1970, 1, 1, tzinfo=UTC)
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
+def has_runtime_cohort_filter(filters: list[dict]) -> bool:
+    return any(item.get("column_id") == "skill.trace_cohort" for item in filters)
 
 
 class TraceListQueryBuilder(BaseQueryBuilder):
@@ -333,13 +339,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self._bounded_request_window = BaseQueryBuilder.parse_time_range(
             self.filters, strict=True
         )
+        self._bounded_membership_window = self._bounded_request_window
         if self._bounded_membership_filters is not None:
-            membership_window = BaseQueryBuilder.parse_time_range(
+            self._bounded_membership_window = BaseQueryBuilder.parse_time_range(
                 self._bounded_membership_filters,
                 strict=True,
             )
             seed_start, seed_end = self._bounded_request_window
-            membership_start, membership_end = membership_window
+            membership_start, membership_end = self._bounded_membership_window
             if not (membership_start <= seed_start < seed_end <= membership_end):
                 raise ValueError(
                     "bounded membership window must contain the seed window"
@@ -866,6 +873,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         ) or (self._bounded_identity_only and self._bounded_bulk_scan)
         return bool(
             not self._bounded_internal_scan
+            and not self.has_runtime_cohort()
             and public_list_or_bulk_identity
             and not self._bounded_population_proof
             and not self.sort_params
@@ -979,6 +987,40 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             )
         return None
 
+    def has_runtime_cohort(self) -> bool:
+        """A runtime window selects loads, not the timestamp of the trace root."""
+        return has_runtime_cohort_filter(self.filters)
+
+    @staticmethod
+    def _runtime_root_condition() -> str:
+        return """(
+                latest_parent_span_id IS NULL OR latest_parent_span_id = ''
+                OR (latest_start_time >= fromUnixTimestamp64Micro(%(candidate_start_date_us)s)
+                    AND latest_start_time < fromUnixTimestamp64Micro(%(candidate_end_date_us)s))
+            )"""
+
+    def _runtime_root_order(self) -> str:
+        return (
+            "tuple(if(latest_parent_span_id IS NULL OR latest_parent_span_id = '', 0, 1), "
+            f"{self._filter_classifier_root_order()})"
+        )
+
+    def _runtime_cohort_seed(self) -> tuple[str, dict[str, Any]]:
+        """Keep discovery finite and project-bound; never treat a handle as auth."""
+        filters = [
+            item
+            for item in self.filters
+            if item.get("column_id") == "skill.trace_cohort"
+        ]
+        if not filters:
+            return "", {}
+        return self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        ).translate(filters)
+
     def filter_seed_proves_result_order(self) -> bool:
         """Only root seeds can prove a canonical root-order prefix.
 
@@ -988,7 +1030,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
 
         plans, _ = self._partition_trace_filter_plans(self._bounded_filters())
-        return not any(plan.scope == "any" for plan in plans)
+        return not self.has_runtime_cohort() and not any(
+            plan.scope == "any" for plan in plans
+        )
 
     def filter_seed_proves_population_bound(self) -> bool:
         """Whether the direct seed may prove only exhaustion or an oversize set.
@@ -1006,8 +1050,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         plans, _ = self._partition_trace_filter_plans(self._bounded_filters())
         return any(plan.scope == "any" for plan in plans)
 
-    @staticmethod
-    def filter_cursor_seed_keyset_is_safe() -> bool:
+    def filter_cursor_seed_keyset_is_safe(self) -> bool:
         """Ordered-root seeds may keyset at the public trace cursor.
 
         The cursor predicate is applied to physical roots *before* ``LIMIT 1
@@ -1018,7 +1061,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         must continue to select ``build_filter_ordered_seed_page`` first.
         """
 
-        return True
+        return not self.has_runtime_cohort()
 
     def _filter_anchor_plans(self) -> list[LatestFilterPredicate]:
         """Return directly selective any-span leaves safe for a broad probe.
@@ -1595,6 +1638,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         request_start, request_end = self._bounded_request_window
         request_width = request_end - request_start
+        if self.has_runtime_cohort():
+            # Short post-release windows already fit in the default first slice.
+            return request_width if request_width >= timedelta(minutes=5) else None
         if self._uses_full_window_time_only_bulk_identity_scan():
             return request_width
         if self._public_scalar_candidate_seed_plan() is not None:
@@ -1658,6 +1704,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         request_start, request_end = self._bounded_request_window
         request_width = request_end - request_start
+        if self.has_runtime_cohort():
+            # Short post-release windows already fit in the default first slice.
+            return request_width if request_width >= timedelta(minutes=5) else None
         if self._uses_full_window_time_only_bulk_identity_scan():
             return request_width
         if self._public_scalar_candidate_seed_plan() is not None:
@@ -3331,6 +3380,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         request_start, request_end = self._bounded_request_window
         return bool(
             request_end - request_start > timedelta(hours=1)
+            and not self.has_runtime_cohort()
             and not self._bounded_identity_only
             and not self._bounded_internal_scan
             and not self._bounded_bulk_scan
@@ -3820,12 +3870,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     ) -> tuple[str, dict[str, Any]]:
         """Return a bounded root-order superset for latest-state classification.
 
-        ``_deduplicate_traces`` is reserved for the asynchronous exact graph
-        reader. It collapses sibling-span witnesses to one trace identity per
-        slice before keyset pagination; normal trace-list pagination retains
-        physical witness identities and behavior unchanged.
+        ``_deduplicate_traces`` collapses sibling-span witnesses to one trace
+        identity per slice for exact graphs and finite runtime cohorts. Normal
+        trace-list pagination retains its physical witness identities unchanged.
         """
 
+        _deduplicate_traces = _deduplicate_traces or self.has_runtime_cohort()
         if not self.supports_bounded_filter_scan():
             raise ValueError("unsupported bounded trace filter scan")
         if limit <= 0:
@@ -3918,6 +3968,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         params.update(end_user_seed_params)
         if end_user_seed_predicate:
             seed_predicates.append(end_user_seed_predicate)
+        if self.has_runtime_cohort():
+            # The authoritative set identifies traces with an in-window load.
+            # Other predicates belong to latest-state classification, not to
+            # whichever physical child happens to provide this seed.
+            cohort_predicate, cohort_params = self._runtime_cohort_seed()
+            params.update(cohort_params)
+            seed_predicates = [cohort_predicate]
 
         predicate = " AND ".join(seed_predicates)
         predicate_fragment = f"AND {predicate}" if predicate else ""
@@ -3993,7 +4050,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                   )
               )
             """
-            elif any_span_plans:
+            elif any_span_plans or self.has_runtime_cohort():
                 if not (
                     isinstance(before_id, tuple)
                     and len(before_id) == 3
@@ -4082,7 +4139,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             )
             deduplicated_root_fragment = (
                 ""
-                if any_span_plans
+                if any_span_plans or self.has_runtime_cohort()
                 else "AND (parent_span_id IS NULL OR parent_span_id = '')"
             )
             query = f"""
@@ -4111,7 +4168,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
             return query, params
 
-        if any_span_plans:
+        if any_span_plans or self.has_runtime_cohort():
             select_fragment = "project_id, trace_id, id AS matched_span_id, start_time"
             root_fragment = ""
             order_fragment = (
@@ -4234,9 +4291,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             raise ValueError("unsupported bounded trace filter scan")
 
         match_filters = self._bounded_match_filters()
-        request_start, request_end = BaseQueryBuilder.parse_time_range(
-            match_filters, strict=True
-        )
+        request_start, request_end = self._bounded_membership_window
         self.start_date, self.end_date = request_start, request_end
         self.params.update({"start_date": request_start, "end_date": request_end})
         has_explicit_time_filter = any(
@@ -4362,6 +4417,18 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     latest_parent_span_id IS NULL
                     OR latest_parent_span_id = ''
                 )"""
+        root_aggregate = "argMaxIf"
+        if self.has_runtime_cohort():
+            # Membership belongs to the load window. Prefer the earliest live
+            # root over every child even when it began before that window; if
+            # it has not arrived, retain an in-window span as a replay identity.
+            # This is presentation only: runtime counts/denominators stay in
+            # skill_runtime and never infer a successful request from a load.
+            assert request_start is not None and request_end is not None
+            canonical_root_condition = self._runtime_root_condition()
+            params["candidate_start_date_us"] = _unix_microseconds(request_start)
+            params["candidate_end_date_us"] = _unix_microseconds(request_end)
+            root_aggregate = "argMinIf"
         if self.project_version_id and not self._filter_project_version_is_immutable():
             canonical_root_condition += (
                 " AND _latest_root_project_version = %(project_version_id)s"
@@ -4370,9 +4437,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # complete history before applying this mutable membership field.
             project_version_fragment = ""
         canonical_root_order = self._filter_classifier_root_order()
+        if self.has_runtime_cohort():
+            canonical_root_order = self._runtime_root_order()
         canonical_root_aggregates = [
             (
-                f"argMaxIf(tuple({alias}), {canonical_root_order}, "
+                f"{root_aggregate}(tuple({alias}), {canonical_root_order}, "
                 f"{canonical_root_condition}).1 AS {alias}"
             )
             for alias in root_aggregate_aliases
@@ -4478,6 +4547,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         residual_predicate = "1 = 1"
         if residual_filters:
+            window = None
+            if any(is_skill_filter(item) for item in residual_filters):
+                assert request_start is not None and request_end is not None
+                window = SkillEvidenceWindow.from_bounds(
+                    request_start, request_end, match_filters
+                )
             has_eval_residual = any(
                 (item.get("column_id") or item.get("columnId")) == "has_eval"
                 for item in residual_filters
@@ -4526,6 +4601,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     residual_builder = self._FILTER_BUILDER_CLS(
+                        skill_window=window,
                         eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
@@ -4576,6 +4652,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 residual_predicate = " OR ".join(residual_branches) or "0 = 1"
             else:
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    skill_window=window,
                     eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
@@ -4641,7 +4718,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 else ""
             )
             per_trace_select_fragment = f"""{identity_project_select}grouped_trace_id AS trace_id,
-                argMaxIf(
+                {root_aggregate}(
                     tuple({root_identity_values}),
                     {canonical_root_order},
                     {canonical_root_condition}
@@ -4671,9 +4748,19 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 ("latest_trace_session_id", "trace_session_id"),
                 ("latest_project_id", "project_id"),
             ) + root_identity_fields[2:]
+            if self.has_runtime_cohort():
+                root_fields = tuple(
+                    (
+                        f"if(latest_parent_span_id IS NULL OR latest_parent_span_id = '', {source}, NULL)",
+                        alias,
+                    )
+                    if alias in {"status", "latency_ms"}
+                    else (source, alias)
+                    for source, alias in root_fields
+                )
             canonical_fields = [
                 (
-                    f"argMaxIf(tuple({source}), {canonical_root_order}, "
+                    f"{root_aggregate}(tuple({source}), {canonical_root_order}, "
                     f"{canonical_root_condition}).1 AS {alias}"
                 )
                 for source, alias in root_fields
@@ -4930,10 +5017,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             latest_trace_name AS trace_name,
             latest_name AS span_name,
             latest_observation_type AS observation_type,
-            latest_status AS status,
+            {"if(latest_parent_span_id IS NULL OR latest_parent_span_id = '', latest_status, NULL)" if self.has_runtime_cohort() else "latest_status"} AS status,
             start_time,
             latest_end_time AS end_time,
-            latest_latency_ms AS latency_ms,
+            {"if(latest_parent_span_id IS NULL OR latest_parent_span_id = '', latest_latency_ms, NULL)" if self.has_runtime_cohort() else "latest_latency_ms"} AS latency_ms,
             latest_cost AS cost,
             latest_total_tokens AS total_tokens,
             latest_prompt_tokens AS prompt_tokens,
@@ -4982,7 +5069,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             GROUP BY project_id, trace_id, id, start_time
         ) AS latest_page_roots
         WHERE latest_is_deleted = 0
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+          {"" if self.has_runtime_cohort() else "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"}
           {project_version_fragment}
         ORDER BY {result_order}
         LIMIT {len(normalized_identities)}
@@ -5359,7 +5446,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 "AND latest_project_version_id = %(project_version_id)s"
             )
 
-        span_window = self._span_time_window(params)
+        span_window = (
+            ""
+            if self.has_runtime_cohort() and normalized_identities
+            else self._span_time_window(params)
+        )
         query = f"""
         SELECT
             toString(project_id) AS project_id,
@@ -5400,7 +5491,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         ) AS latest_physical_roots
         {self._trace_tags_join_sql()}
         WHERE latest_is_deleted = 0
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+          {"" if self.has_runtime_cohort() and normalized_identities else "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"}
           {project_version_fragment}
         ORDER BY start_time DESC, root_span_id DESC
         LIMIT 1 BY project_id, trace_id

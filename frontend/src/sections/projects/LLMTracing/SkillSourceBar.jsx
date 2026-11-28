@@ -1,0 +1,292 @@
+import React, { useEffect, useMemo } from "react";
+import PropTypes from "prop-types";
+import { Link as RouterLink } from "react-router-dom";
+import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
+import { useSkill, useSkillVersions } from "src/api/skills";
+import { useContextDetail } from "src/api/skills/context-authoring";
+import { useRuntimeFilterValues, useSkillComparison } from "src/api/skills/runtime";
+import { buildSkillTraceLink, runtimeTabUrl } from "src/sections/skills/utils/traces";
+import { versionName } from "src/sections/skills/runtime/runtimeCopy";
+import {
+  OBSERVE_SKILL_COPY,
+  comparisonMetricKey,
+  isSkillFilterItem,
+  isUuid,
+  sourceMetricPhrase,
+} from "./skillFilters";
+
+// The Observe source bar (SKILL-TRACES §7.1, UX-02, lane ST9). A link from a
+// skill or context surface carries a `skillSource` parameter; this bar says
+// what the list is ("refund-policy v4 · refund-agent · failed requests · 24 h
+// after production moved to v4"), links back, and offers the matching
+// before/after link. It is presentational: it never changes the filters
+// itself (the switch hands the other side's link to the list view), and the
+// list view hides it as soon as the person edits the filters or dates.
+//
+// New runtime links carry the window and a bounded before/after snapshot.
+// Switching preserves the selected project and same-agent cohort even if the
+// comparison changes or its agent rows are on a later page. Older links without
+// a window never guess one; only the legacy windowed shape refetches a move.
+
+const COPY = OBSERVE_SKILL_COPY.sourceBar;
+
+/** "24h" → "24 h", "7d" → "7 days". */
+export const windowWords = (value) => {
+  const match = /^([1-9]\d{0,2})(h|d)$/.exec(String(value || ""));
+  if (!match) return "24 h";
+  const count = Number(match[1]);
+  return match[2] === "h" ? `${count} h` : `${count} ${count === 1 ? "day" : "days"}`;
+};
+
+const agentName = (agentKey) => {
+  if (!Array.isArray(agentKey)) return null;
+  return agentKey[2] || agentKey[1] || null;
+};
+
+/**
+ * Text of the bar from resolved names. Pure, so it can be tested without the
+ * reads. `move` is the endpoint-3 comparison (camelCased) or null.
+ */
+export function sourceBarText({ source, skillName, version, contextName, move }) {
+  const subject = source.skillId
+    ? [skillName || OBSERVE_SKILL_COPY.unknownSkill, version != null ? versionName(version) : null].filter(Boolean).join(" ")
+    : contextName || OBSERVE_SKILL_COPY.context;
+  const parts = [subject, agentName(source.agentKey), sourceMetricPhrase(source.metric)];
+  if (move && source.side) {
+    const words = { label: move.label || "production", toVersion: move.toVersion };
+    if (source.window) {
+      parts.push(source.side === "before"
+        ? COPY.beforeMove({ ...words, window: windowWords(source.window) })
+        : COPY.afterMove({ ...words, window: windowWords(source.window) }));
+    } else {
+      parts.push(source.side === "before" ? COPY.beforeMoveNoWindow(words) : COPY.afterMoveNoWindow(words));
+    }
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** The matching other-side link from the endpoint-3 response, or null. */
+export function otherSideLink({ source, move }) {
+  const snapshot = source?.snapshot;
+  const comparison = snapshot ? { links: snapshot.links, fromVersion: snapshot.from_version, toVersion: snapshot.to_version } : move;
+  if (!comparison || !source?.side || !source.window || !comparison.links) return null;
+  const other = source.side === "after" ? "before" : "after";
+  const key = comparisonMetricKey(source.metric);
+  const target = comparison.links?.[other]?.[key];
+  const link = snapshot && target ? { ...target, source: { ...target.source, snapshot } } : target;
+  if (!link) return null;
+  const href = buildSkillTraceLink({ link, kind: "all" });
+  if (!href) return null;
+  const version = other === "before" ? comparison.fromVersion : comparison.toVersion;
+  return {
+    href,
+    link,
+    label: other === "before" ? COPY.compareBefore(version) : COPY.compareAfter(version),
+  };
+}
+
+const firstSkillId = (filters, source) => {
+  if (source?.skillId) return source.skillId;
+  const item = (filters || []).find(
+    (filter) => isSkillFilterItem(filter) && filter.column_id === "skill.id",
+  );
+  const value = item?.filter_config?.filter_value;
+  const id = Array.isArray(value) ? value[0] : value;
+  return isUuid(id) ? id : null;
+};
+
+/**
+ * Chip labels for `SKILL` filters (FilterChips `fieldLabelMap` shape:
+ * column_id → { value: label }). Resolves the linked skill's name and its
+ * version numbers from the Skills API, in the caller's workspace; ids it
+ * cannot resolve stay short ids. Reads nothing when `enabled` is false.
+ */
+export function useSkillFilterLabels(filters, { source, projectId, from, to, enabled = true } = {}) {
+  const skillId = enabled ? firstSkillId(filters, source) : null;
+  const skill = useSkill(skillId);
+  const versions = useSkillVersions(skillId, { pageSize: 100 });
+  const name = skill.data?.name;
+  const results = versions.data?.results;
+  // A version-only deep link has no skill ID. Resolve the single visible
+  // selection against this project's actual loads in the displayed interval.
+  const selected = [...new Set((filters || []).filter(item => isSkillFilterItem(item) && item.column_id === 'skill.version_id')
+    .flatMap(item => item.filter_config?.filter_value ?? []).filter(isUuid))];
+  // Observe includes the rest of today; the runtime endpoint cannot read
+  // future loads. Bound only this optional label lookup, not the trace filter.
+  // Freeze the cutoff across rerenders so it is a stable query key.
+  const bounds = useMemo(() => {
+    const start = Date.parse(from), stop = Date.parse(to);
+    const end = Math.min(stop, Date.now());
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 30 * 86400000) return null;
+    return { from, to: end === stop ? to : new Date(end).toISOString() };
+  }, [from, to]);
+  const orphan = enabled && !skillId && selected.length === 1 && projectId && bounds ? selected[0] : null;
+  const lookup = useRuntimeFilterValues({ projectId, ...bounds, field: 'skill.version_id', q: orphan, limit: 1, enabled: Boolean(orphan) });
+  const resolved = orphan && !lookup.isError && lookup.data?.values?.find(row => row.versionId === orphan && row.value === orphan)?.label;
+  return useMemo(() => {
+    if (!skillId) return resolved ? { 'skill.version_id': { [orphan]: resolved } } : {};
+    const versionLabels = Object.fromEntries(
+      (results || []).map((version) => [version.id, versionName(version.number)]),
+    );
+    return {
+      "skill.id": name ? { [skillId]: name } : {},
+      "skill.version_id": versionLabels,
+      "skill.in_scope": versionLabels,
+    };
+  }, [skillId, name, results, orphan, resolved]);
+}
+
+/**
+ * Renders nothing; reports `useSkillFilterLabels` to `onChange`. Mounted by
+ * the list view only while `skillTraces` is on and a Skill filter is applied,
+ * so no Skills read runs for anyone else.
+ */
+export function SkillFilterLabelsProbe({ filters, source, projectId, from, to, onChange }) {
+  const labels = useSkillFilterLabels(filters, { source, projectId, from, to });
+  const key = JSON.stringify(labels);
+  useEffect(() => {
+    onChange(JSON.parse(key));
+  }, [key, onChange]);
+  useEffect(() => () => onChange(null), [onChange]);
+  return null;
+}
+
+SkillFilterLabelsProbe.propTypes = {
+  filters: PropTypes.array,
+  source: PropTypes.object,
+  projectId: PropTypes.string,
+  from: PropTypes.string,
+  to: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
+
+export default function SkillSourceBar({ source, sortNotApplied = false, linkUnreadable = false, onSwitch }) {
+  const skillId = source?.skillId ?? null;
+  const contextId = source?.contextId ?? null;
+  const skill = useSkill(skillId);
+  const versions = useSkillVersions(skillId, { pageSize: 100 });
+  const context = useContextDetail(contextId, { enabled: Boolean(contextId && !skillId) });
+  const comparison = useSkillComparison(skillId, {
+    eventId: source?.eventId ?? undefined,
+    window: source?.window || "24h",
+    enabled: Boolean(skillId && source?.eventId && source?.side && source?.window && !source?.snapshot),
+  });
+
+  if (!source && !linkUnreadable) return null;
+
+  const notices = [
+    linkUnreadable ? COPY.linkUnreadable : null,
+    source && sortNotApplied ? COPY.sortNotApplied : null,
+  ].filter(Boolean);
+
+  if (!source) {
+    return (
+      <Box role="status" sx={barSx}>
+        {notices.map((notice) => (
+          <Typography key={notice} variant="caption" color="warning.dark">
+            {notice}
+          </Typography>
+        ))}
+      </Box>
+    );
+  }
+
+  const version = source.versionId
+    ? versions.data?.results?.find((item) => item.id === source.versionId)?.number ?? null
+    : null;
+  const skillName = skill.data?.name ?? null;
+  const contextName = context.data?.context?.name ?? null;
+  const move = source.snapshot
+    ? { label: source.snapshot.label, fromVersion: source.snapshot.from_version, toVersion: source.snapshot.to_version, links: source.snapshot.links }
+    : comparison.isError ? null : comparison.data ?? null;
+  const resolving = (skillId && skill.isPending && skill.fetchStatus !== "idle") ||
+    (contextId && !skillId && context.isPending && context.fetchStatus !== "idle");
+  const text = sourceBarText({ source, skillName, version, contextName, move });
+  const backHref = skillId
+    ? runtimeTabUrl({ kind: "skill", id: skillId, eventId: source.eventId, window: source.window || undefined })
+    : runtimeTabUrl({ kind: "agent_context", id: contextId, eventId: source.eventId, window: source.window || undefined });
+  const backName = skillId ? skillName : contextName;
+  const switchLink = otherSideLink({ source, move });
+
+  return (
+    <Box role="region" aria-label={COPY.label} sx={barSx}>
+      <Stack direction="row" spacing={1} alignItems="center" useFlexGap sx={{ flexWrap: "wrap", minWidth: 0 }}>
+        <Iconify icon="solar:book-bookmark-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
+        {resolving ? (
+          <Skeleton variant="text" width={240} aria-label={COPY.label} />
+        ) : (
+          <Typography variant="s2" sx={{ fontWeight: 500, overflowWrap: "anywhere", minWidth: 0 }}>
+            {text}
+          </Typography>
+        )}
+        <Box sx={{ flex: 1 }} />
+        {switchLink && (
+          onSwitch ? (
+            <Button size="small" variant="outlined" onClick={() => onSwitch(switchLink)}>
+              {switchLink.label}
+            </Button>
+          ) : (
+            <Button size="small" variant="outlined" component={RouterLink} to={switchLink.href}>
+              {switchLink.label}
+            </Button>
+          )
+        )}
+        {backHref && (
+          <Button
+            size="small"
+            variant="text"
+            component={RouterLink}
+            to={backHref}
+            startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+          >
+            {COPY.backTo(backName || (skillId ? OBSERVE_SKILL_COPY.fields["skill.id"].toLowerCase() : OBSERVE_SKILL_COPY.context.toLowerCase()))}
+          </Button>
+        )}
+      </Stack>
+      {notices.map((notice) => (
+        <Typography key={notice} variant="caption" color="warning.dark">
+          {notice}
+        </Typography>
+      ))}
+    </Box>
+  );
+}
+
+const barSx = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 0.5,
+  px: 2,
+  py: 1,
+  borderBottom: "1px solid",
+  borderColor: "divider",
+  bgcolor: "background.neutral",
+  minWidth: 0,
+};
+
+SkillSourceBar.propTypes = {
+  source: PropTypes.shape({
+    skillId: PropTypes.string,
+    versionId: PropTypes.string,
+    contextId: PropTypes.string,
+    bindingId: PropTypes.string,
+    eventId: PropTypes.string,
+    metric: PropTypes.string,
+    side: PropTypes.oneOf(["before", "after", null]),
+    agentKey: PropTypes.array,
+    window: PropTypes.string,
+    snapshot: PropTypes.shape({
+      label: PropTypes.string,
+      from_version: PropTypes.number,
+      to_version: PropTypes.number,
+      links: PropTypes.object,
+    }),
+  }),
+  sortNotApplied: PropTypes.bool,
+  linkUnreadable: PropTypes.bool,
+  // Called with `{ href, link, label }` for the before/after switch. The
+  // list view re-seeds its filters, dates and source from `link`, since a
+  // same-route navigation does not remount it.
+  onSwitch: PropTypes.func,
+};

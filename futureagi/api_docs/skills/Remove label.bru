@@ -1,0 +1,21 @@
+meta {
+  name: Remove label
+  type: http
+  seq: 20
+}
+
+delete {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/labels/{{label}}/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {"expected_version":{{expected_version}}}
+}

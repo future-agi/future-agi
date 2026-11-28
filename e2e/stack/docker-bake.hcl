@@ -14,6 +14,12 @@ variable "E2E_STACK" {
   default = "distributed"
 }
 
+# The Skills cohort jobs set VITE_SKILL_TRACES=on to build the frontend with the Skills
+# trace UI; every other build keeps the Dockerfile's production default (off).
+variable "VITE_SKILL_TRACES" {
+  default = ""
+}
+
 variable "CACHE_REPO" {
   default = "ghcr.io/future-agi/future-agi/e2e-cache"
 }
@@ -66,6 +72,9 @@ target "fi-collector" {
 target "frontend" {
   context    = "frontend"
   dockerfile = "Dockerfile"
+  args = {
+    VITE_SKILL_TRACES = VITE_SKILL_TRACES != "" ? VITE_SKILL_TRACES : null
+  }
   tags       = ["futureagi/frontend:${IMAGE_TAG}"]
   cache-from = ["type=registry,ref=${CACHE_REPO}:frontend"]
   output     = ["type=docker"]

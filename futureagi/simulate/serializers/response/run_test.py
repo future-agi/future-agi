@@ -22,7 +22,7 @@ from simulate.serializers.harness_job import (
 )
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
-from tracer.serializers.filters import filter_list_field, json_object_field
+from tracer.serializers.filters import json_object_field, skill_filter_list_field
 
 
 class SimulateEvalConfigResponseSerializer(serializers.Serializer):
@@ -36,7 +36,7 @@ class SimulateEvalConfigResponseSerializer(serializers.Serializer):
     name = serializers.CharField(read_only=True, allow_null=True)
     config = json_object_field(read_only=True, allow_null=True)
     mapping = json_object_field(read_only=True, allow_null=True)
-    filters = filter_list_field(read_only=True, default=list)
+    filters = skill_filter_list_field(read_only=True, default=list)
     error_localizer = serializers.BooleanField(read_only=True)
     model = serializers.CharField(read_only=True, allow_null=True)
     status = serializers.CharField(read_only=True, allow_null=True)

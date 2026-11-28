@@ -35,7 +35,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_preview,
 )
 from tfc.utils.serializer_fields import JsonValueField
-from tracer.serializers.filters import StrictInputSerializer, filter_list_field
+from tracer.serializers.filters import StrictInputSerializer, skill_filter_list_field
 
 _ROLE_LIST_SCHEMA = serializers.ListField(child=serializers.CharField())
 _COUNT_SCHEMA = serializers.IntegerField()
@@ -690,7 +690,7 @@ class SelectionSerializer(StrictInputSerializer):
         choices=sorted(SUPPORTED_SELECTION_SOURCE_TYPES)
     )
     project_id = serializers.UUIDField()
-    filter = filter_list_field(required=False, default=list)
+    filter = skill_filter_list_field(required=False, default=list)
     # exclude_ids are compared against the resolver's string-cast IDs, so
     # accept any string (UUIDs for trace/session/call_execution, hex for
     # observation_span).
@@ -1484,7 +1484,7 @@ class AutomationRuleScopeSerializer(StrictInputSerializer):
 
 class AutomationRuleConditionsSerializer(StrictInputSerializer):
     operator = serializers.ChoiceField(choices=["and"], required=False, default="and")
-    filter = filter_list_field(required=False)
+    filter = skill_filter_list_field(required=False)
     scope = AutomationRuleScopeSerializer(required=False)
     # `rules` is the deprecated ORM-field rule shape. Keep it typed for
     # existing saved rules while new UI/API writes use `filter`.

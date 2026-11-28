@@ -2957,7 +2957,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             analytics = V2AnalyticsQueryService()
             workspace_id = getattr(getattr(request, "workspace", None), "id", None)
             try:
-                if metric_type == "SYSTEM_METRIC":
+                if body.get("split_by") == "skill_version":
+                    from tracer.services.clickhouse.skill_graph import (
+                        fetch_skill_version_graph,
+                    )
+
+                    graph = fetch_skill_version_graph(
+                        analytics=analytics,
+                        project_id=project_id,
+                        filters=filters,
+                        interval=interval,
+                        metric_id=metric_id,
+                        refresh=refresh,
+                        organization_id=str(project.organization_id),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
+                    )
+                elif metric_type == "SYSTEM_METRIC":
                     graph = fetch_system_metric_graph_ch(
                         analytics=analytics,
                         project_id=project_id,
@@ -3029,6 +3045,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     )
                 return finish(self._gm.success_response(graph))
             except Exception as exc:
+                if (
+                    isinstance(exc, BoundedGraphReadError)
+                    and exc.error_code == "runtime_read_too_large"
+                ):
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Too many skill matches. Narrow the graph's time range or filters.",
+                            code=exc.error_code,
+                        )
+                    )
                 if not (
                     isinstance(exc, BoundedGraphReadError)
                     or is_clickhouse_api_read_unavailable_error(exc)
@@ -4871,25 +4898,47 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Cursor pagination is unavailable for this query shape.",
             )
         cursor_enabled = cursor_requested and cursor_supported
+        from tracer.services.clickhouse.runtime_cohorts import LATENCY_DESC
+        from tracer.services.clickhouse.v2.query_builders.observe_runtime import (
+            RuntimeLatencyQueryBuilderV2,
+        )
         from tracer.services.clickhouse.v2.query_builders.observe_usage import (
             ObserveTraceListQueryBuilderV2,
         )
-
-        builder = ObserveTraceListQueryBuilderV2(
-            project_id=None if org_scope else str(project_id),
-            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
-            filters=filters,
-            page_number=page_number,
-            page_size=page_size,
-            eval_config_ids=eval_config_ids,
-            annotation_label_ids=annotation_label_ids,
-            annotation_label_ids_by_project=annotation_label_ids_by_project,
-            eval_count_mode=True,
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
         )
+
+        list_sort = validated_data.get("sort_params") or []
+        # Typed as the shared base, as the former conditional expression inferred it.
+        builder: TraceListQueryBuilderV2
+        if list_sort == LATENCY_DESC:
+            builder = RuntimeLatencyQueryBuilderV2(
+                project_id=None if org_scope else str(project_id),
+                project_ids=[str(p) for p in org_project_ids] if org_scope else None,
+                filters=filters,
+                page_number=page_number,
+                page_size=page_size,
+                eval_config_ids=eval_config_ids,
+                annotation_label_ids=annotation_label_ids,
+                annotation_label_ids_by_project=annotation_label_ids_by_project,
+                eval_count_mode=True,
+            )
+        else:
+            builder = ObserveTraceListQueryBuilderV2(
+                project_id=None if org_scope else str(project_id),
+                project_ids=[str(p) for p in org_project_ids] if org_scope else None,
+                filters=filters,
+                page_number=page_number,
+                page_size=page_size,
+                eval_config_ids=eval_config_ids,
+                annotation_label_ids=annotation_label_ids,
+                annotation_label_ids_by_project=annotation_label_ids_by_project,
+                eval_count_mode=True,
+            )
         pin_filter_seed_witness_slack(builder, cursor_state)
-        usage_sort = validated_data.get("sort_params") or []
         requires_cursor = (
-            not usage_sort and builder.requires_cursor_for_long_filtered_read()
+            not list_sort and builder.requires_cursor_for_long_filtered_read()
         )
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
@@ -4948,8 +4997,53 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
-        if usage_sort:
-            query, params = builder.build_usage_sorted_query(usage_sort)
+        if isinstance(builder, RuntimeLatencyQueryBuilderV2):
+            from tracer.services.clickhouse.query_service import QueryResult
+
+            if not analytics.supports_per_query_read_settings:
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Bounded latency ordering is unavailable on this connection.",
+                    code="service_unavailable",
+                )
+
+            def read_page(statement, parameters):
+                remaining = read_deadline.remaining_ms()
+                return analytics.execute_ch_query(
+                    statement,
+                    parameters,
+                    timeout_ms=remaining,
+                    server_execution_cap_ms=remaining,
+                    settings={
+                        **page_read_settings,
+                        "max_memory_usage": min(
+                            page_read_settings["max_memory_usage"], 512 * 1024**2
+                        ),
+                    },
+                )
+
+            count_result = read_page(*builder.build_runtime_latency_page(list_sort))
+            (receipt,) = count_result.data
+            total_count = receipt["total"]
+            ranked = builder.runtime_latency_page_rows(receipt["page"])
+            result = QueryResult([], 0, "clickhouse", 0.0)
+            if ranked:
+                result = read_page(*builder.build_filter_page_hydration_query(ranked))
+                # Light replay returns newest first. Reassemble only after proving
+                # it hydrated every ranked physical winner, version and latency.
+                by_trace = {row["trace_id"]: row for row in result.data}
+                if not builder.content_root_rows_match(ranked, result.data) or any(
+                    row["latency_ms"] != by_trace[row["trace_id"]]["latency_ms"]
+                    for row in ranked
+                ):
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Trace data changed while loading this page. Please retry.",
+                        code="service_unavailable",
+                    )
+                result.data = [by_trace[row["trace_id"]] for row in ranked]
+        elif list_sort:
+            query, params = builder.build_usage_sorted_query(list_sort)
             result = analytics.execute_ch_query(
                 query,
                 params,
@@ -4957,7 +5051,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 settings=page_read_settings,
             )
             count_query, count_params = builder.build_usage_sorted_query(
-                usage_sort, count_only=True
+                list_sort, count_only=True
             )
             count_result = analytics.execute_ch_query(
                 count_query,
@@ -5253,6 +5347,81 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         tasks: dict[str, Any] = {}
+
+        def _probe_skill_links(client):
+            # Discover across the project, not just this page's traces. Only an
+            # elected load inside the *full* time filter proves availability.
+            from tracer.services.clickhouse.application_read_policy import (
+                application_read_context,
+            )
+            from tracer.services.clickhouse.query_builders.filters import (
+                SkillEvidenceWindow,
+            )
+            from tracer.services.clickhouse.query_service import QueryResult
+            from tracer.services.clickhouse.skill_replay_errors import (
+                SkillReplayBudgetExceeded,
+            )
+            from tracer.services.clickhouse.v2.query_builders.filters import (
+                ClickHouseFilterBuilderV2,
+            )
+            from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
+                iter_runtime_load_replays,
+            )
+
+            start, end = builder.parse_time_range(filters)
+            assert start is not None and end is not None
+            window = SkillEvidenceWindow.from_bounds(start, end, filters)
+            compiler = ClickHouseFilterBuilderV2(project_id=str(project_id))
+            calls = rows = payload_bytes = 0
+            expires_at = read_deadline.started + read_deadline.total_ms / 1000
+
+            def read_rows(sql, params):
+                nonlocal calls, rows, payload_bytes
+                # The optional native lane takes a permit without waiting or
+                # retrying. It clamps max_execution_time at send_query, after
+                # connection setup, to the lesser of timeout_ms and the wall.
+                remaining = read_deadline.remaining_ms(TRACE_LIST_ENRICHMENT_TIMEOUT_MS)
+                calls += 1
+                with application_read_context(execution_cap_ms=remaining):
+                    raw, columns, elapsed, _, _ = client.execute_read_with_progress(
+                        sql,
+                        params,
+                        timeout_ms=remaining,
+                        settings=page_read_settings,
+                        retained_until=expires_at,
+                    )
+                data = QueryResult.from_clickhouse_rows(raw, columns, elapsed).data
+                rows += len(data)
+                payload_bytes += len(
+                    json.dumps(
+                        data, default=str, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                )
+                return data
+
+            try:
+                for replay, params in iter_runtime_load_replays(
+                    compiler,
+                    read_rows,
+                    skill_window=window,
+                    max_keys=page_read_settings["max_result_rows"],
+                ):
+                    if read_rows(f"SELECT 1 FROM ({replay}) LIMIT 1", params):
+                        return True, calls, rows, payload_bytes
+            except Exception as exc:
+                if not (
+                    isinstance(
+                        exc, (SkillReplayBudgetExceeded, TimeoutError, ConnectionError)
+                    )
+                    or is_read_budget_error(exc)
+                    or is_clickhouse_query_error(exc)
+                ):
+                    raise
+                # A local admission refusal, server limit, or incomplete scan
+                # establishes no negative. Keep the page without the hint.
+                return None, calls, rows, payload_bytes
+            return False, calls, rows, payload_bytes
+
         content_task_names: list[str] = []
         attribute_task_names: list[str] = []
         attribute_task_expected_rows: dict[str, int] = {}
@@ -5849,6 +6018,42 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             metadata_total_rows = cursor_seen_rows
 
         metadata = {"total_rows": metadata_total_rows}
+        # Only spend the remaining wall on the optional project-wide scan once
+        # the required page is complete. A stalled probe must neither occupy a
+        # required worker slot nor make a later required deadline check fail.
+        if (
+            project_id
+            and validated_data.get("include_skill_links")
+            and page_number == 0
+        ):
+            from tracer.services.clickhouse.client import ClickHouseClient
+
+            client = getattr(analytics, "ch_client", None)
+            if getattr(
+                analytics, "supports_per_query_read_settings", False
+            ) and isinstance(client, ClickHouseClient):
+                probe_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
+                    read_deadline.remaining_ms()
+                    future = probe_pool.submit(_probe_skill_links, client)
+                    wait_ms = max(
+                        0, read_deadline.total_ms - read_deadline.elapsed_ms()
+                    )
+                    verdict, calls, rows, payload_bytes = future.result(
+                        timeout=wait_ms / 1000
+                    )
+                    query_count += calls
+                    query_rows_returned += rows
+                    query_result_payload_bytes += payload_bytes
+                    if (
+                        verdict is not None
+                        and read_deadline.elapsed_ms() < read_deadline.total_ms
+                    ):
+                        metadata["skill_links_exist"] = verdict
+                except TimeoutError:
+                    pass  # A pending probe is unknown, not a failed trace page.
+                finally:
+                    probe_pool.shutdown(wait=False, cancel_futures=True)
         if bounded_page is not None:
             published_has_more = (
                 bool(bounded_page.complete and bounded_page.has_more) or cursor_has_more

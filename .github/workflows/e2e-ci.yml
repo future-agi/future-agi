@@ -65,6 +65,7 @@ env:
   # finished 5 to 10 minutes earlier, so Standalone stays at 6.
   E2E_SHARDS: "8"
   E2E_STANDALONE_SHARDS: "6"
+  SKILL_PAIR_UV_VERSION: "0.11.33"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -87,6 +88,7 @@ jobs:
       stacks: ${{ steps.stacks.outputs.stacks }}
       shard_totals: ${{ steps.shards.outputs.totals }}
       today: ${{ steps.shards.outputs.today }}
+      journeys: ${{ steps.journeys.outputs.journeys }}
     steps:
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
@@ -275,6 +277,180 @@ jobs:
           created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
           [[ $created =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})T ]]
           echo "today=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      - name: Select the registered Skills journeys this change can affect
+        id: journeys
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        # Registered journeys run on paid Blacksmith runners. A pull request or queue
+        # group runs the ones its diff can affect; dev pushes, nightly and dispatches
+        # run all seven, and so does any change to what all of them share. Fork PRs
+        # run none (their dev push covers them).
+        run: |
+          set -euo pipefail
+          all='["j3","j4","056","057","058","059","063"]'
+          shared=(
+            'futureagi/**/*skill*' 'futureagi/**/*skill*/**'
+            'frontend/src/**/*kill*' 'frontend/src/**/*kill*/**'
+            'e2e/lib/skills-r3/**' 'e2e/benchmarks/context-hub/**'
+            'e2e/harness/skills-r3/qualification-contract.json'
+            'e2e/scripts/skills-journey-*' 'e2e/scripts/skills-coverage.*' 'e2e/scripts/test_skills_coverage.py'
+            'e2e/stack/**' 'e2e/package.json' 'e2e/yarn.lock' 'e2e/playwright.config.ts'
+            'bin/e2e' '.github/workflows/e2e-ci.yml' '.github/workflows/skills-e2e-journeys.yml'
+          )
+          ranges=()
+          case "$GITHUB_EVENT_NAME" in
+            merge_group) ranges=("$BASE_SHA $HEAD_SHA") ;;
+            pull_request)
+              # What the merge changes on the base it was built on (its first
+              # parent; the event's base.sha can be an older tip), and, as the
+              # planner does, the head's own edits in case the base renamed a
+              # path. Unknown: run all.
+              read -r first second extra <<< "$(git show -s --format=%P "$GITHUB_SHA")"
+              if [[ -z ${extra:-} && ${second:-} == "$HEAD_SHA" ]] && git merge-base --is-ancestor "$BASE_SHA" "$first" &&
+                  roots=$(git merge-base --all "$first" "$HEAD_SHA") && [[ $roots =~ ^[0-9a-f]{40}$ ]]; then
+                ranges=("$first $GITHUB_SHA" "$roots $HEAD_SHA")
+              fi ;;
+          esac
+          # git diff --quiet exits 1 when paths differ; anything above 1 is an error, never "unchanged".
+          changed() {
+            local specs=() p range from to rc
+            for p in "$@"; do specs+=(":(glob)$p"); done
+            for range in "${ranges[@]}"; do
+              read -r from to <<< "$range"
+              rc=0
+              git diff --quiet --no-ext-diff --no-renames "$from" "$to" -- "${specs[@]}" || rc=$?
+              if (( rc > 1 )); then echo "::error::git diff $from $to failed ($rc)"; exit 1; fi
+              if (( rc == 1 )); then return 0; fi
+            done
+            return 1
+          }
+          if [[ $FORK == true ]]; then
+            journeys='[]'
+          elif (( ${#ranges[@]} == 0 )) || changed "${shared[@]}"; then
+            journeys=$all
+          else
+            picks=()
+            if changed 'e2e/**/j3*' 'e2e/**/j3*/**'; then picks+=(j3); fi
+            if changed 'e2e/**/j4*' 'e2e/**/j4*/**'; then picks+=(j4); fi
+            if changed 'e2e/**/j5*' 'e2e/**/j5*/**' 'bin/context-campaign.mjs'; then picks+=(056 057 058 059); fi
+            if changed 'e2e/**/j6*' 'e2e/**/j6*/**'; then picks+=(063); fi
+            journeys=$(jq -cn '$ARGS.positional' --args "${picks[@]}")
+          fi
+          echo "journeys=$journeys" >> "$GITHUB_OUTPUT"
+          echo "Registered Skills journeys for this run: $journeys"
+
+  skill-packages:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      sdk: ${{ fromJSON(steps.refs.outputs.sources).sdk.commit }}
+      traceai: ${{ fromJSON(steps.refs.outputs.sources).traceai.commit }}
+      pair_sha256: ${{ steps.build.outputs.pair_sha256 }}
+      sdk_sha256: ${{ steps.build.outputs.sdk_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve matching public branches independently
+        id: refs
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          PR_BASE: ${{ github.base_ref }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_ref }}
+        run: |
+          if [[ $GITHUB_EVENT_NAME == merge_group ]]; then BRANCH=${QUEUE_BASE#refs/heads/}; fi
+          sources=$(python3 -I e2e/stack/resolve-skill-refs.py -- "${BRANCH:?missing target branch}" "$PR_BASE")
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ fromJSON(steps.refs.outputs.sources).sdk.commit }}
+          path: .skill-sources/sdk
+          fetch-depth: 0 # Scoped sync reads the non-Skills baseline from SDK history.
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: future-agi/traceAI
+          ref: ${{ fromJSON(steps.refs.outputs.sources).traceai.commit }}
+          path: .skill-sources/traceai
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - name: Install SDK generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.2'
+      - name: Check the producer and package verification controls
+        run: python3 -I -m unittest discover -s e2e/stack -p 'test_skill_*.py'
+      - name: Regenerate the SDK and build and verify the five Skills packages
+        id: build
+        env:
+          SKILL_REFS: ${{ steps.refs.outputs.sources }}
+        run: e2e/stack/build-skill-pair.sh .skill-sources/sdk .skill-sources/traceai "$RUNNER_TEMP/skill-pair"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+          overwrite: true
+          retention-days: 3
+          if-no-files-found: error
+  application-wheels:
+    needs: skill-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      sha256: ${{ steps.application.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - name: Verify the SDK wheel against the source build
+        env:
+          SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+          TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
+          PAIR_SHA256: ${{ needs.skill-packages.outputs.pair_sha256 }}
+        run: |
+          python3 -I e2e/stack/verify-skill-packages.py "$RUNNER_TEMP/skill-pair" "$PAIR_SHA256" \
+            "$(git rev-parse HEAD)" "$SDK_COMMIT" "$TRACEAI_COMMIT" --require-sums
+      - name: Build the application and select its paired SDK wheel
+        id: application
+        run: |
+          dist="$RUNNER_TEMP/j6-wheels"
+          mkdir "$dist"
+          uv build --python 3.11 --wheel e2e/fixtures/skills-r3/support-application --out-dir "$dist"
+          cp "$RUNNER_TEMP/skill-pair/$(jq -er '.artifacts.sdk_python.file' "$RUNNER_TEMP/skill-pair/pair.json")" "$dist/"
+          uv venv --python 3.11 "$RUNNER_TEMP/app-preflight"
+          uv pip install --python "$RUNNER_TEMP/app-preflight/bin/python" "$dist"/*.whl
+          uv pip check --python "$RUNNER_TEMP/app-preflight/bin/python"
+          echo "sha256=$(sha256sum "$dist"/ctxhub_support_application-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-application-wheels-${{ github.sha }}
+          path: ${{ runner.temp }}/j6-wheels/*.whl
+          overwrite: true
+          retention-days: 3
+          if-no-files-found: error
 
   lock-wheels:
     # The URL-pinned wheels of uv.lock (en-core-web-sm, a GitHub release
@@ -354,6 +530,9 @@ jobs:
       contents: read
       packages: read # The push-only cache publisher has its own token.
     env:
+      # The ordinary legs run the complement of the Skills cohorts' cases
+      # (playwright.config.ts, scripts/skills-coverage.py ordinary).
+      SKILLS_COHORT: ordinary
       # bin/e2e and lib/managed-mock.ts pick the stack from this.
       E2E_STACK: ${{ matrix.stack }}
       # Always from source: the stack's compose file runs backend modules at
@@ -748,7 +927,12 @@ jobs:
           python -m pip install --quiet -e ./python pytest pyyaml
           # Writes futureagi-sdk/.env.local, which both suites read. :8100 is
           # BACKEND_PORT in both e2e/stack/e2e.env and standalone-e2e.env.
-          python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
+          # Skills resources refuse an org system key; SDK checkouts whose helper can
+          # mint a user-bound workspace key use one (the SDK's own e2e.yml does too).
+          # Older SDK refs do not know the flag, so pass it only when supported.
+          key_flag=()
+          if grep -q -- '--workspace-user-key' sdkgen/local_api_key.py; then key_flag=(--workspace-user-key); fi
+          python sdkgen/local_api_key.py --signup "${key_flag[@]}" --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
         id: sdk-python
@@ -858,6 +1042,609 @@ jobs:
           bin/e2e ps
           bin/e2e logs --tail 200
 
+  # Same source images, boot graph and browser as the ordinary legs (the steps
+  # are shared through YAML anchors), on fresh machines for the Skills cohorts'
+  # incompatible topologies. Each cohort runs exactly its own cases
+  # (scripts/skills-coverage.py) and uploads a receipt the gate reconciles.
+  skills:
+    needs: [changes, lock-wheels, skill-packages, application-wheels]
+    # An incompatible J6 wheel must not cancel F6 or campaign clients. J6
+    # consumers still require the real artifact and its independent digest.
+    if: ${{ !cancelled() && needs.changes.outputs.any == 'true' && needs.skill-packages.result == 'success' }}
+    name: skills (${{ matrix.cohort }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: read # The same read-only build cache as the ordinary legs.
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {cohort: host, stack: distributed}
+          - {cohort: application, stack: distributed}
+          - {cohort: typescript, stack: standalone}
+          - {cohort: install-turn, stack: standalone}
+          - {cohort: native, stack: standalone}
+          - {cohort: campaign-sdk, stack: distributed}
+          - {cohort: campaign-cold, stack: distributed}
+          - {cohort: campaign-configured, stack: distributed}
+    env:
+      # The shared bake step builds the frontend with the Skills trace UI (docker-bake.hcl).
+      VITE_SKILL_TRACES: "on"
+      SKILLS_COHORT: ${{ matrix.cohort }}
+      E2E_SKILLS_CAMPAIGNS_ENABLED: ${{ startsWith(matrix.cohort, 'campaign-') && 'true' || 'false' }}
+      E2E_STANDALONE_NETWORK: ${{ matrix.cohort == 'typescript' && 'typescript' || matrix.cohort == 'native' && 'native' || 'managed-mock' }}
+      CTXHUB_APP_COMMIT: ${{ github.sha }}
+      SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+      TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
+      SKILL_TRACE_PAIR_SHA256: ${{ needs.skill-packages.outputs.pair_sha256 }}
+      J6_APP_SHA256: ${{ needs.application-wheels.outputs.sha256 }}
+      E2E_STACK: ${{ matrix.stack }}
+      BUILD_BACKEND: "true"
+      BUILD_FRONTEND: "true"
+      BUILD_GATEWAY: "true"
+      E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify package-producing job completed
+        if: matrix.cohort != 'campaign-executor'
+        run: test -n "$SKILL_TRACE_PAIR_SHA256" || { echo '::error::No verified Skills package pair for this checkout'; exit 1; }
+      - name: Tag for the images built below
+        # Standalone runs the tag e2e/stack/standalone-e2e.env names
+        # (FUTURE_AGI_VERSION), which `bin/e2e build standalone-app` reads too;
+        # Distributed runs e2e-ci, which a later step writes into e2e.env.
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            tag=$(sed -n 's/^FUTURE_AGI_VERSION=//p' e2e/stack/standalone-e2e.env)
+          else
+            tag=e2e-ci
+          fi
+          # mock-google runs on the backend image; without this it pulls
+          # futureagi/future-agi:latest from Docker Hub on every boot.
+          echo "E2E_GOOGLE_IMAGE_TAG=${tag:?no FUTURE_AGI_VERSION in e2e/stack/standalone-e2e.env}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Reclaim runner disk
+        # / is the small volume and the backend image alone unpacks ~15GB of
+        # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
+        # before setup-buildx creates its builder container under the old root.
+        # The move is done when the step returns; deleting the unused
+        # toolchains goes on in the background (it took 1 to 2 minutes of
+        # every shard, and nothing later reads them).
+        env:
+          RECLAIM_DELETE: background
+        run: scripts/reclaim-runner-disk.sh
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: ghcr login for read-only cache imports
+        # Fork PRs and queue groups do not log in; they build cold if the
+        # cache package cannot be read anonymously.
+        if: >-
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+          || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Place this run's verified lock wheels in the backend build context
+        # Distributed only: the slim (Standalone) build installs no extras and,
+        # like its caches, never has the wheel in its context.
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: e2e-lock-wheels
+          path: futureagi/docker/lock-wheels
+
+      - name: Point the stack at the built images
+        # printf, not echo: e2e.env's last line may lack a trailing newline.
+        # standalone-e2e.env already names the Standalone leg's tag.
+        if: matrix.stack == 'distributed'
+        run: |
+          if [ "$BUILD_BACKEND" = "true" ]; then
+            printf '\n%s\n' "FUTURE_AGI_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+          fi
+          if [ "$BUILD_FRONTEND" = "true" ]; then
+            printf '\n%s\n' "FRONTEND_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+          fi
+          if [ "$BUILD_GATEWAY" = "true" ]; then
+            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+          fi
+
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
+        run: |
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
+      - name: Prefetch vendor images
+        # Vendor-only pulls, in the background while the images build; the
+        # await step before the boot fails the job if any pull failed. App,
+        # collector and gateway images and peerdb-temporal-init (the backend
+        # image) use the locally built tag. Pull one service at a time so a
+        # transient error cannot hide another image's permanent failure. Only
+        # pulls retry; bootstrap stays single-shot. It starts after the steps
+        # above write e2e.env and GITHUB_ENV, which compose reads.
+        shell: bash
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(postgres clickhouse mock-llm)
+          else
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack mock-daytona
+              peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
+              peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
+              property-catalog-kafka property-catalog-topic-init
+              property-catalog-runtime-volume-init)
+          fi
+          : > /tmp/e2e-pull.log
+          rm -f /tmp/e2e-pull.status
+          # .github/scripts/registry-retry.sh retries rate limits (30, 60, 120 s)
+          # and transient errors, and fails at once on auth, tag and
+          # configuration errors and on anything it does not recognise.
+          nohup bash -c '
+            status=0
+            for service in "$@"; do
+              bash .github/scripts/registry-retry.sh "Vendor prefetch for $service" bin/e2e compose pull --policy missing "$service" || { status=$?; break; }
+            done
+            if [ "$status" = 0 ]; then echo "Vendor image prefetch completed for $E2E_STACK."; fi
+            echo "$status" > /tmp/e2e-pull.status
+          ' prefetch "${services[@]}" >> /tmp/e2e-pull.log 2>&1 &
+
+      # The backend, frontend and gateway images are always built from this
+      # PR's code (see the env block above), in one parallel bake with the
+      # registry layer cache (e2e/stack/docker-bake.hcl). The builds were
+      # serial steps: 504 to 595 s per leg, the backend and frontend about
+      # 220 s each.
+      - name: Build the stack images from PR code
+        run: |
+          targets=(code-executor)
+          if [ "$BUILD_BACKEND" = true ]; then targets+=(backend fi-collector); fi
+          if [ "$BUILD_FRONTEND" = true ]; then targets+=(frontend); fi
+          if [ "$BUILD_GATEWAY" = true ]; then targets+=(gateway); fi
+          docker buildx bake -f e2e/stack/docker-bake.hcl --print "${targets[@]}"
+          docker buildx bake -f e2e/stack/docker-bake.hcl "${targets[@]}"
+
+      - name: Add E2E-only fixtures and telemetry isolation to backend image
+        if: env.BUILD_BACKEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/future-agi:$IMAGE_TAG"
+          -f e2e/stack/backend/Dockerfile .
+
+      # Never select :latest for a PR: it cannot contain the unmerged source.
+      - name: Select the source-built executor in both stacks
+        run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      - name: Add local editor assets to the E2E frontend
+        if: env.BUILD_FRONTEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/frontend:$IMAGE_TAG"
+          -f e2e/stack/frontend/Dockerfile .
+
+      - name: Assemble futureagi/standalone from those images
+        if: matrix.stack == 'standalone'
+        # The docker driver's builder sees the images loaded above; the buildx
+        # container builder would look for them on Docker Hub.
+        env:
+          BUILDX_BUILDER: default
+        run: bin/e2e build standalone-app
+
+      - name: Drop the buildkit copy of the built images
+        # buildx holds a second copy of every loaded image; the cross-run
+        # cache lives in the registry, so the local one is free to drop.
+        run: |
+          docker buildx prune -af || true
+          df -h / /mnt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        working-directory: e2e
+        run: yarn install --frozen-lockfile
+
+      - name: Restore Playwright browser cache
+        id: pw-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('e2e/yarn.lock') }}
+
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - uses: actions/setup-python@v5
+        if: matrix.cohort != 'campaign-executor'
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.cohort != 'campaign-executor'
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        if: matrix.cohort != 'campaign-executor'
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - uses: actions/download-artifact@v4
+        if: matrix.cohort == 'application' || matrix.cohort == 'registered-recovery'
+        with:
+          name: skill-application-wheels-${{ github.sha }}
+          path: ${{ runner.temp }}/j6-wheels
+      - name: Prepare verified Skills clients before stack boot
+        if: matrix.cohort != 'campaign-executor' && matrix.cohort != 'native'
+        run: e2e/stack/prepare-skill-clients.sh "$RUNNER_TEMP/skill-pair" "$SKILLS_COHORT"
+      - name: Await the vendor image prefetch
+        # The pulls started before the image builds. Fifteen minutes is far
+        # above their measured 35 to 45 s; a pull that never ends fails here.
+        shell: bash
+        run: |
+          for _ in $(seq 450); do [ -s /tmp/e2e-pull.status ] && break; sleep 2; done
+          cat /tmp/e2e-pull.log
+          [ -s /tmp/e2e-pull.status ] || { echo "::error::The vendor image prefetch did not finish."; exit 1; }
+          exit "$(cat /tmp/e2e-pull.status)"
+
+      - name: Boot the e2e stack
+        if: matrix.cohort != 'native' # the serial native driver builds its guest before boot
+        id: boot
+        run: bin/e2e up
+      # The native matrix entry requires 021 (runtime enabled), 022 and 108 in its receipt.
+      # Raw diagnostics and private attachments stay on this ephemeral machine.
+      - name: Run the Skills cohort
+        id: suite
+        run: e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"
+      - name: Upload Skills execution receipt
+        if: ${{ !cancelled() && steps.suite.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-passes-${{ matrix.cohort }}
+          path: ${{ runner.temp }}/${{ matrix.cohort }}.json
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+
+  # The JavaScript executor needs no package pin, so it does not wait for the pair.
+  campaign-executor:
+    needs: [changes, lock-wheels]
+    if: needs.changes.outputs.any == 'true'
+    name: skills (${{ matrix.cohort }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      matrix:
+        include:
+          - {cohort: campaign-executor, stack: distributed}
+    env:
+      # The shared bake step builds the frontend with the Skills trace UI (docker-bake.hcl).
+      VITE_SKILL_TRACES: "on"
+      SKILLS_COHORT: ${{ matrix.cohort }}
+      E2E_SKILLS_CAMPAIGNS_ENABLED: "true"
+      E2E_STANDALONE_NETWORK: managed-mock
+      CTXHUB_APP_COMMIT: ${{ github.sha }}
+      E2E_STACK: ${{ matrix.stack }}
+      BUILD_BACKEND: "true"
+      BUILD_FRONTEND: "true"
+      BUILD_GATEWAY: "true"
+      E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify package-producing job completed
+        if: matrix.cohort != 'campaign-executor'
+        run: test -n "$SKILL_TRACE_PAIR_SHA256" || { echo '::error::No verified Skills package pair for this checkout'; exit 1; }
+      - name: Tag for the images built below
+        # Standalone runs the tag e2e/stack/standalone-e2e.env names
+        # (FUTURE_AGI_VERSION), which `bin/e2e build standalone-app` reads too;
+        # Distributed runs e2e-ci, which a later step writes into e2e.env.
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            tag=$(sed -n 's/^FUTURE_AGI_VERSION=//p' e2e/stack/standalone-e2e.env)
+          else
+            tag=e2e-ci
+          fi
+          # mock-google runs on the backend image; without this it pulls
+          # futureagi/future-agi:latest from Docker Hub on every boot.
+          echo "E2E_GOOGLE_IMAGE_TAG=${tag:?no FUTURE_AGI_VERSION in e2e/stack/standalone-e2e.env}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Reclaim runner disk
+        # / is the small volume and the backend image alone unpacks ~15GB of
+        # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
+        # before setup-buildx creates its builder container under the old root.
+        # The move is done when the step returns; deleting the unused
+        # toolchains goes on in the background (it took 1 to 2 minutes of
+        # every shard, and nothing later reads them).
+        env:
+          RECLAIM_DELETE: background
+        run: scripts/reclaim-runner-disk.sh
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: ghcr login for read-only cache imports
+        # Fork PRs and queue groups do not log in; they build cold if the
+        # cache package cannot be read anonymously.
+        if: >-
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+          || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Place this run's verified lock wheels in the backend build context
+        # Distributed only: the slim (Standalone) build installs no extras and,
+        # like its caches, never has the wheel in its context.
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: e2e-lock-wheels
+          path: futureagi/docker/lock-wheels
+
+      - name: Point the stack at the built images
+        # printf, not echo: e2e.env's last line may lack a trailing newline.
+        # standalone-e2e.env already names the Standalone leg's tag.
+        if: matrix.stack == 'distributed'
+        run: |
+          if [ "$BUILD_BACKEND" = "true" ]; then
+            printf '\n%s\n' "FUTURE_AGI_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+          fi
+          if [ "$BUILD_FRONTEND" = "true" ]; then
+            printf '\n%s\n' "FRONTEND_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+          fi
+          if [ "$BUILD_GATEWAY" = "true" ]; then
+            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+          fi
+
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
+        run: |
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
+      - name: Prefetch vendor images
+        # Vendor-only pulls, in the background while the images build; the
+        # await step before the boot fails the job if any pull failed. App,
+        # collector and gateway images and peerdb-temporal-init (the backend
+        # image) use the locally built tag. Pull one service at a time so a
+        # transient error cannot hide another image's permanent failure. Only
+        # pulls retry; bootstrap stays single-shot. It starts after the steps
+        # above write e2e.env and GITHUB_ENV, which compose reads.
+        shell: bash
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(postgres clickhouse mock-llm)
+          else
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack mock-daytona
+              peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
+              peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
+              property-catalog-kafka property-catalog-topic-init
+              property-catalog-runtime-volume-init)
+          fi
+          : > /tmp/e2e-pull.log
+          rm -f /tmp/e2e-pull.status
+          # .github/scripts/registry-retry.sh retries rate limits (30, 60, 120 s)
+          # and transient errors, and fails at once on auth, tag and
+          # configuration errors and on anything it does not recognise.
+          nohup bash -c '
+            status=0
+            for service in "$@"; do
+              bash .github/scripts/registry-retry.sh "Vendor prefetch for $service" bin/e2e compose pull --policy missing "$service" || { status=$?; break; }
+            done
+            if [ "$status" = 0 ]; then echo "Vendor image prefetch completed for $E2E_STACK."; fi
+            echo "$status" > /tmp/e2e-pull.status
+          ' prefetch "${services[@]}" >> /tmp/e2e-pull.log 2>&1 &
+
+      # The backend, frontend and gateway images are always built from this
+      # PR's code (see the env block above), in one parallel bake with the
+      # registry layer cache (e2e/stack/docker-bake.hcl). The builds were
+      # serial steps: 504 to 595 s per leg, the backend and frontend about
+      # 220 s each.
+      - name: Build the stack images from PR code
+        run: |
+          targets=(code-executor)
+          if [ "$BUILD_BACKEND" = true ]; then targets+=(backend fi-collector); fi
+          if [ "$BUILD_FRONTEND" = true ]; then targets+=(frontend); fi
+          if [ "$BUILD_GATEWAY" = true ]; then targets+=(gateway); fi
+          docker buildx bake -f e2e/stack/docker-bake.hcl --print "${targets[@]}"
+          docker buildx bake -f e2e/stack/docker-bake.hcl "${targets[@]}"
+
+      - name: Add E2E-only fixtures and telemetry isolation to backend image
+        if: env.BUILD_BACKEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/future-agi:$IMAGE_TAG"
+          -f e2e/stack/backend/Dockerfile .
+
+      # Never select :latest for a PR: it cannot contain the unmerged source.
+      - name: Select the source-built executor in both stacks
+        run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      - name: Add local editor assets to the E2E frontend
+        if: env.BUILD_FRONTEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/frontend:$IMAGE_TAG"
+          -f e2e/stack/frontend/Dockerfile .
+
+      - name: Assemble futureagi/standalone from those images
+        if: matrix.stack == 'standalone'
+        # The docker driver's builder sees the images loaded above; the buildx
+        # container builder would look for them on Docker Hub.
+        env:
+          BUILDX_BUILDER: default
+        run: bin/e2e build standalone-app
+
+      - name: Drop the buildkit copy of the built images
+        # buildx holds a second copy of every loaded image; the cross-run
+        # cache lives in the registry, so the local one is free to drop.
+        run: |
+          docker buildx prune -af || true
+          df -h / /mnt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        working-directory: e2e
+        run: yarn install --frozen-lockfile
+
+      - name: Restore Playwright browser cache
+        id: pw-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('e2e/yarn.lock') }}
+
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - uses: actions/setup-python@v5
+        if: matrix.cohort != 'campaign-executor'
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.cohort != 'campaign-executor'
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        if: matrix.cohort != 'campaign-executor'
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - uses: actions/download-artifact@v4
+        if: matrix.cohort == 'application' || matrix.cohort == 'registered-recovery'
+        with:
+          name: skill-application-wheels-${{ github.sha }}
+          path: ${{ runner.temp }}/j6-wheels
+      - name: Prepare verified Skills clients before stack boot
+        if: matrix.cohort != 'campaign-executor' && matrix.cohort != 'native'
+        run: e2e/stack/prepare-skill-clients.sh "$RUNNER_TEMP/skill-pair" "$SKILLS_COHORT"
+      - name: Await the vendor image prefetch
+        # The pulls started before the image builds. Fifteen minutes is far
+        # above their measured 35 to 45 s; a pull that never ends fails here.
+        shell: bash
+        run: |
+          for _ in $(seq 450); do [ -s /tmp/e2e-pull.status ] && break; sleep 2; done
+          cat /tmp/e2e-pull.log
+          [ -s /tmp/e2e-pull.status ] || { echo "::error::The vendor image prefetch did not finish."; exit 1; }
+          exit "$(cat /tmp/e2e-pull.status)"
+
+      - name: Boot the e2e stack
+        if: matrix.cohort != 'native' # the serial native driver builds its guest before boot
+        id: boot
+        run: bin/e2e up
+      # The native matrix entry requires 021 (runtime enabled), 022 and 108 in its receipt.
+      # Raw diagnostics and private attachments stay on this ephemeral machine.
+      - name: Run the Skills cohort
+        id: suite
+        run: e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"
+      - name: Upload Skills execution receipt
+        if: ${{ !cancelled() && steps.suite.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-passes-${{ matrix.cohort }}
+          path: ${{ runner.temp }}/${{ matrix.cohort }}.json
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+
+  skills-journeys:
+    needs: [changes, skill-packages, application-wheels]
+    if: >-
+      needs.changes.outputs.any == 'true' && needs.changes.outputs.journeys != '[]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/skills-e2e-journeys.yml
+    with:
+      sdk: ${{ needs.skill-packages.outputs.sdk }}
+      traceai: ${{ needs.skill-packages.outputs.traceai }}
+      pair_sha256: ${{ needs.skill-packages.outputs.pair_sha256 }}
+      application_sha256: ${{ needs.application-wheels.outputs.sha256 }}
+      journeys: ${{ needs.changes.outputs.journeys }}
+
+  # One verdict for every Skills job: each passed (the registered journeys only
+  # when this run selected any), and every required case has a receipt from this
+  # run on this commit, with the package pair this run built.
+  skills-receipts:
+    name: Skills E2E receipts
+    needs: [changes, skill-packages, application-wheels, skills, campaign-executor, skills-journeys]
+    if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every Skills job finished as this run requires
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -e '([."skill-packages".result, ."application-wheels".result, .skills.result, ."campaign-executor".result] | all(. == "success")) and
+            (if .changes.outputs.journeys == "[]" then ."skills-journeys".result == "skipped" else ."skills-journeys".result == "success" end)' <<< "$NEEDS"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: skill-passes-*
+          path: ${{ runner.temp }}/skill-passes
+          merge-multiple: false
+      - name: Collect the package pair from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - name: Collect registered worker receipts from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: skills-journey-*
+          path: ${{ runner.temp }}/skills-journeys
+      - name: Check required-coverage controls
+        run: python3 -I e2e/scripts/test_skills_coverage.py
+      - name: Require every Skills case on this tested commit
+        env:
+          SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+          TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
+          APP_SHA: ${{ needs.application-wheels.outputs.sha256 }}
+          PAIR_SHA: ${{ needs.skill-packages.outputs.pair_sha256 }}
+          SDK_SHA: ${{ needs.skill-packages.outputs.sdk_sha256 }}
+          JOURNEYS: ${{ needs.changes.outputs.journeys }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/skills-journeys"
+          python3 -I e2e/scripts/skills-coverage.py reconcile "$RUNNER_TEMP/skill-passes" "$GITHUB_SHA" \
+            --registered "$RUNNER_TEMP/skills-journeys" --run-id "$GITHUB_RUN_ID" --journeys "$JOURNEYS" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
+            --traceai "$TRACEAI_COMMIT" --pair-sha "$PAIR_SHA" --sdk-sha "$SDK_SHA" --application-sha "$APP_SHA"
+
   report:
     # One report for all shards of a stack, and the proof that sharding dropped
     # nothing: every test an unsharded listing names must have exactly one
@@ -879,6 +1666,8 @@ jobs:
       run:
         working-directory: e2e
     env:
+      # Lists exactly what the ordinary legs ran (playwright.config.ts).
+      SKILLS_COHORT: ordinary
       E2E_STACK: ${{ matrix.stack }}
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
       E2E_JOB_PREFIX: ${{ inputs.job_prefix }}
@@ -959,7 +1748,7 @@ jobs:
 
   e2e-tests:
     name: E2E Tests Pass
-    needs: [changes, e2e, report]
+    needs: [changes, e2e, report, skills-receipts]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -985,6 +1774,21 @@ jobs:
             echo "No path that the E2E suite covers changed, so it was not needed."
           else
             echo "::error::E2E did not pass (e2e: $E2E, report: $REPORT, e2e needed: ${E2E_NEEDED:-<none>})."
+            exit 1
+          fi
+
+      - name: Fail closed unless the Skills cohorts and journeys passed, or nothing needed to run
+        env:
+          E2E_NEEDED: ${{ needs.changes.outputs.any }}
+          SKILLS: ${{ needs.skills-receipts.result }}
+        run: |
+          echo "e2e needed: ${E2E_NEEDED:-<none>}, Skills receipts: $SKILLS"
+          if [ "$E2E_NEEDED" = true ] && [ "$SKILLS" = success ]; then
+            echo "Every Skills cohort and selected registered journey passed on this commit."
+          elif [ "$E2E_NEEDED" = false ] && [ "$SKILLS" = skipped ]; then
+            echo "No path that the E2E suite covers changed, so the Skills cohorts were not needed."
+          else
+            echo "::error::Skills E2E did not pass (receipts: $SKILLS, e2e needed: ${E2E_NEEDED:-<none>})."
             exit 1
           fi
 

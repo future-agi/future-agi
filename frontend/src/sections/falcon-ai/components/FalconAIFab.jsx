@@ -1,19 +1,25 @@
 import React, { useCallback, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Fab from "@mui/material/Fab";
+import { paths } from "src/routes/paths";
 import CustomTooltip from "src/components/tooltip";
 import FalconIcon from "src/components/falcon-icon";
 import useFalconStore from "../store/useFalconStore";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
-export default function FalconAIFab() {
-  const { pathname } = useLocation();
+export { FalconIcon };
+
+/**
+ * Opens Falcon AI the way the floating button and Cmd+K do: the sidebar when
+ * the deployment allows it, otherwise the full page with its upsell. Skills
+ * uses it for the assistant button in its navigation row.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- the hook belongs with the button it mirrors
+export function useOpenFalconAI() {
   const navigate = useNavigate();
   const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
-  const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
-
-  const openFalconAI = useCallback(() => {
+  return useCallback(() => {
     if (!falconAllowed) {
       // Full page shows the capability upsell for unlicensed deployments.
       navigate("/dashboard/falcon-ai");
@@ -21,6 +27,14 @@ export default function FalconAIFab() {
     }
     toggleSidebar();
   }, [falconAllowed, navigate, toggleSidebar]);
+}
+
+export default function FalconAIFab() {
+  const { pathname } = useLocation();
+  const skillsRoot = paths.dashboard.skills.root;
+  const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
+  const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
+  const openFalconAI = useOpenFalconAI();
 
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
@@ -41,6 +55,11 @@ export default function FalconAIFab() {
 
   // Hide FAB when sidebar is open
   if (isSidebarOpen) return null;
+
+  // Skills, at every width: no floating button, so nothing ever floats over
+  // body text, tables or footers. The same action sits in the Skills
+  // navigation row (SkillsWorkspaceLayout); Cmd+K above stays mounted.
+  if (inSkills) return null;
 
   return (
     <CustomTooltip title="Chat (⌘K)" show={true} placement="left" arrow>
@@ -67,6 +86,7 @@ export default function FalconAIFab() {
           },
           transition:
             "box-shadow 0.2s ease, background-color 0.2s ease, transform 0.15s ease",
+          "@media (prefers-reduced-motion: reduce)": { transition: "none" },
         }}
       >
         <FalconIcon sx={{ fontSize: 20 }} />

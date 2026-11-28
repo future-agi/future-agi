@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
-  existsSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -29,12 +29,26 @@ export function extractFlows(entries) {
         `missing flow annotation on "${e.title}" (${e.location})`,
       );
     const meta = JSON.parse(ann.description);
+    const text = (value) =>
+      typeof value === "string" && value.trim().length > 0;
+    const textList = (value) =>
+      Array.isArray(value) && value.length > 0 && value.every(text);
     for (const key of REQUIRED) {
-      if (!meta[key] || (Array.isArray(meta[key]) && !meta[key].length)) {
-        throw new Error(`flow "${e.title}": annotation missing ${key}`);
+      const valid = key === "steps" ? textList(meta?.[key]) : text(meta?.[key]);
+      if (!valid) {
+        throw new Error(
+          `flow "${e.title}": annotation missing ${key} or invalid value`,
+        );
       }
     }
-    if (!meta.backendChecks?.length && !meta.browserChecks?.length)
+    for (const key of ["backendChecks", "browserChecks"]) {
+      if (
+        meta[key] !== undefined &&
+        (!Array.isArray(meta[key]) || !meta[key].every(text))
+      )
+        throw new Error(`flow "${e.title}": annotation invalid ${key}`);
+    }
+    if (!textList(meta.backendChecks) && !textList(meta.browserChecks))
       throw new Error(`flow "${e.title}": annotation missing checks`);
     return {
       ...meta,
@@ -123,12 +137,13 @@ export function renderCatalog(flows) {
   return lines.join("\n");
 }
 
-function main() {
-  const listFile = path.join(os.tmpdir(), `flow-list-${process.pid}.json`);
+export function collectFlowEntries(run = execFileSync) {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "flow-list-"));
+  const listFile = path.join(directory, "entries.json");
   try {
     // The catalog documents which flows exist, independent of what a given run
-    // executes — quarantining, live-LLM-gating or stack-gating a flow must not delete it from FLOWS.md.
-    execFileSync(
+    // executes — quarantining, live-LLM-gating or stack-gating a flow must not drop it from the catalog.
+    run(
       "npx",
       [
         "playwright",
@@ -146,24 +161,26 @@ function main() {
           E2E_INCLUDE_QUARANTINED: "1",
           E2E_LIVE_LLM: "1",
           E2E_INCLUDE_ERROR_FEED_STACK: "1",
+          // The ordinary legs run with SKILLS_COHORT=ordinary, which narrows the
+          // suite to what the Skills cohorts do not own (playwright.config.ts).
+          SKILLS_COHORT: undefined,
         },
       },
     );
-  } catch (err) {
-    // The reporter always writes the list once it runs, so a missing file means
-    // Playwright failed before collection — a real error, not an empty catalog.
-    if (!existsSync(listFile)) {
-      console.error(err.stderr || err.message);
-      process.exit(1);
-    }
+    // onBegin may write a partial list even when another spec failed collection.
+    // A file is not proof of successful discovery: every nonzero exit must fail.
+    return JSON.parse(readFileSync(listFile, "utf8"));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
-  const listed = readFileSync(listFile, "utf8");
-  rmSync(listFile, { force: true });
+}
+
+function main() {
   let flows;
   try {
-    flows = extractFlows(JSON.parse(listed));
+    flows = extractFlows(collectFlowEntries());
   } catch (err) {
-    console.error(err.message);
+    console.error(err.stderr || err.message);
     process.exit(1);
   }
   const rendered = renderCatalog(flows);

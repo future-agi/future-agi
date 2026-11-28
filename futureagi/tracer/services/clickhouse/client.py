@@ -29,6 +29,7 @@ from tracer.services.clickhouse.server_readonly import (
     ensure_read_statement,
     without_query_settings,
 )
+from tracer.services.clickhouse.skill_bounds import bind_outer_skill_bounds
 
 _TOO_MANY_SIMULTANEOUS_QUERIES_CODE = 202
 _READ_ADMISSION_RETRY_DELAYS_SECONDS = tuple(
@@ -116,10 +117,14 @@ def _guard_retained_dispatch(client, deadline):
         if remaining_ms < 25 or not connection.connected or connection.socket is None:
             raise TimeoutError("ClickHouse read deadline exhausted")
         remaining = remaining_ms / 1000
-        # send_query serializes context.settings, not execute's input dict.
+        # Never enlarge a tighter explicit application execution cap. send_query
+        # serializes context.settings, not execute's input dict.
+        server_cap = connection.context.settings.get("max_execution_time")
         connection.context.settings = {
             **connection.context.settings,
-            "max_execution_time": remaining,
+            "max_execution_time": min(remaining, float(server_cap))
+            if server_cap
+            else remaining,
         }
         if connection.send_receive_timeout is not None:
             remaining = min(connection.send_receive_timeout, remaining)
@@ -389,7 +394,7 @@ class ClickHouseClient:
             logger.debug("Executing ClickHouse query", query=query[:200])
             result = client.execute(
                 query,
-                params or {},
+                bind_outer_skill_bounds(query, params or {}),
                 with_column_types=with_column_types,
                 settings=settings,
             )
@@ -501,10 +506,12 @@ class ClickHouseClient:
             by native read_rows and read_bytes progress.
         """
         retained_lookup = retained_until is not None
-        application_read = is_application_read() and not retained_lookup
+        # Retained dispatch needs a wall for admission and the socket even in
+        # application mode. It does not change the statement resource policy.
+        application_read = is_application_read()
         timeout_ms = (
             None
-            if application_read
+            if application_read and not retained_lookup
             else _bounded_read_timeout_ms(
                 timeout_ms, ceiling_ms=self.read_timeout_ceiling_ms
             )
@@ -596,13 +603,14 @@ class ClickHouseClient:
                     query=query[:200],
                     timeout_ms=timeout_ms,
                 )
+            params = bind_outer_skill_bounds(query, params or {})
             retry_attempt = 0
             while True:
                 try:
                     result = self._execute_native_read_with_remaining_timeout(
                         client,
                         query,
-                        params or {},
+                        params,
                         query_settings=query_settings,
                         started_at=t_start,
                         timeout_ms=timeout_ms,
@@ -858,7 +866,7 @@ class ClickHouseClient:
         return _ManagedNativeReadStream(
             self,
             query,
-            params or {},
+            bind_outer_skill_bounds(query, params or {}),
             timeout_ms=(
                 None
                 if application_read
@@ -892,7 +900,9 @@ class ClickHouseClient:
         client = self._get_client()
 
         try:
-            return client.execute_iter(query, params or {})
+            return client.execute_iter(
+                query, bind_outer_skill_bounds(query, params or {})
+            )
 
         except CHError as e:
             logger.error("ClickHouse query failed", error=str(e), query=query[:200])

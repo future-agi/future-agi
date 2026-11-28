@@ -19,3 +19,11 @@ if find_spec("tracer.services.feed_alerts") is not None:
     from tracer.views.e2e_feed_issue import E2EFeedIssueView
 
     urlpatterns.append(path("tracer/e2e/feed-issue/", E2EFeedIssueView.as_view()))
+
+# J4: test-image-only retention clock seam (see e2e_j4_evidence_clock.py).
+if find_spec("model_hub.views.e2e_j4_evidence_clock") is not None:
+    from model_hub.views.e2e_j4_evidence_clock import E2EJ4EvidenceClockView
+
+    urlpatterns.append(
+        path("model-hub/e2e/j4/evidence-clock/", E2EJ4EvidenceClockView.as_view())
+    )

@@ -260,6 +260,8 @@ class FakeStack:
         return Client()
 
     def native_main(self, argv):
+        if argv != ["--phase", "native", "--apply", "--timeout", "600"]:
+            raise AssertionError(f"unexpected native installer invocation: {argv}")
         self.log.append("clickhouse native schema")
         if isinstance(self.native_exit, BaseException):
             raise self.native_exit

@@ -31,7 +31,11 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+// Partial: the filter panel reaches the app snackbar, which styles notistack's MaterialDesignContent.
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: vi.fn(),
+}));
 
 let access = { canDelete: true };
 vi.mock("../../hooks/useCanEditAgent", () => ({

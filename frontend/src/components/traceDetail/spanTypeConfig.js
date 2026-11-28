@@ -88,6 +88,33 @@ export const TYPE_CONFIG = {
 export const getTypeConfig = (type) =>
   TYPE_CONFIG[(type || "").toLowerCase()] || TYPE_CONFIG.unknown;
 
+// Skill and context loads (SKILL-TRACES §3.1, §7.2) are ordinary spans with
+// no observation type of their own. They get a glyph by span name, never a
+// new type, so type filters and counts are unchanged.
+export const SPAN_NAME_CONFIG = {
+  "skill.load": {
+    color: "#0D9488",
+    label: "Skill load",
+    mdiIcon: "solar:book-bookmark-linear",
+  },
+  "context.load": {
+    color: "#0D9488",
+    label: "Context load",
+    mdiIcon: "solar:book-2-linear",
+  },
+};
+
+/**
+ * Type config for one span: the name-based override for `skill.load` and
+ * `context.load`, else the observation type's. The label stays the type's,
+ * so anything that groups by type still reads the real type.
+ */
+export const getSpanTypeConfig = (type, name) => {
+  const base = getTypeConfig(type);
+  const override = SPAN_NAME_CONFIG[name];
+  return override ? { ...base, color: override.color, mdiIcon: override.mdiIcon, nameLabel: override.label } : base;
+};
+
 /**
  * LLM provider icons — shown next to model name.
  */

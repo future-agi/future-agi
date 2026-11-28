@@ -1,0 +1,14 @@
+# Native Skills qualification only. Never attach the guest to an external network.
+services:
+  app:
+    networks: !override [default, link-public, native-net]
+    environment:
+      # J2: hosted native verification runs on the internal-only container runtime
+      # below. Evidence from it is a synthetic fixture, never E2B qualification.
+      SKILLS_NATIVE_RUNTIME_URL: http://native-runtime:8090
+      SKILLS_NATIVE_CALLBACK_URL: http://app:8000
+      SKILLS_NATIVE_RUNTIME_TOKEN: e2e-native-runtime-launch-token-0001
+      SKILLS_NATIVE_RUNTIME_NAME: ctxhub-container-runtime
+      SKILLS_NATIVE_EVIDENCE_CLASS: synthetic fixture
+  skills-fakes:
+    networks: !override [default, native-net]

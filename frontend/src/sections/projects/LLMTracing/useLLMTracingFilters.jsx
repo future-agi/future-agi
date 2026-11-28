@@ -17,6 +17,7 @@ export const useLLMTracingFilters = (
   dateFilterName,
   columns,
   getFilterExtraProperties,
+  preserveRuntimeWindow = false,
 ) => {
   const [filters, setFilters] = useUrlState(mainFilterName, defaultFilter);
 
@@ -59,7 +60,9 @@ export const useLLMTracingFilters = (
       filter_config: {
         filter_type: "datetime",
         filter_op: "between",
-        filter_value: convertToISO([
+        filter_value: preserveRuntimeWindow && dateFilter?.dateFilter?.every((value) =>
+          typeof value === "string" && /T.*(?:Z|[+-]\d\d:\d\d)$/.test(value))
+          ? dateFilter.dateFilter : convertToISO([
           new Date(dateFilter?.dateFilter[0]).toISOString(),
           new Date(dateFilter?.dateFilter[1]).toISOString(),
         ]),
@@ -72,7 +75,7 @@ export const useLLMTracingFilters = (
     }
 
     return [...validatedMainFilters, dateFilterEntry];
-  }, [dateFilter, validatedMainFilters, hasDefaultFilters]);
+  }, [dateFilter, validatedMainFilters, hasDefaultFilters, preserveRuntimeWindow]);
 
   return { filters, setFilters, validatedFilters, setDateFilter, dateFilter };
 };

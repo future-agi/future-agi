@@ -34,4 +34,55 @@ from .optimize_dataset import OptimizeDataset
 from .performance_report import PerformanceReport
 from .prompt import Prompt
 from .score import Score
+from .skills_hub import (
+    HubSkill,
+    HubSkillBlob,
+    HubSkillDraft,
+    HubSkillFile,
+    HubSkillLabel,
+    HubSkillLabelEvent,
+    HubSkillUsageDaily,
+    HubSkillVersion,
+)
+from .skills_hub_r3 import (
+    HubSkillDraftCheckpoint,
+    HubSkillEvidenceAnnotation,
+    HubSkillIntakePlan,
+    HubSkillIntakeReceipt,
+    HubSkillMigrationReceipt,
+    HubSkillNativeEvidence,
+    HubSkillReleaseDecision,
+    HubSkillReleasePacket,
+    HubSkillReleaseRecipient,
+    HubSkillReleaseRequest,
+    HubSkillSpendPeriod,
+    HubSkillSpendPolicy,
+    HubSkillSpendReservation,
+)
+from .skills_hub_v11 import (
+    HubSkillAssistProposal,
+    HubSkillExecutionQuota,
+    HubSkillGitHubPreview,
+    HubSkillGitHubSource,
+    HubSkillJob,
+    HubSkillLabelPolicyEvent,
+    HubSkillModelCall,
+    HubSkillTestAttempt,
+    HubSkillTestEvidence,
+    HubSkillTestRun,
+    HubSkillTestSuite,
+)
+from .skills_hub_v12 import (
+    HubSkillContextBinding,
+    HubSkillContextCampaign,
+    HubSkillContextCampaignTarget,
+    HubSkillContextCapture,
+    HubSkillContextCredential,
+    HubSkillContextDependency,
+    HubSkillContextOperation,
+    HubSkillContextQuarantine,
+    HubSkillContextReceipt,
+    HubSkillContextResolution,
+    HubSkillContextSession,
+)
 from .tts_voices import TTSVoice

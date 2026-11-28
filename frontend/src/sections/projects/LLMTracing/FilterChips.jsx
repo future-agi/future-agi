@@ -3,6 +3,12 @@ import PropTypes from "prop-types";
 import { Box, Button, Chip, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import _ from "lodash";
+import {
+  OBSERVE_SKILL_COPY,
+  isSkillFilterItem,
+  skillGroupChipText,
+  skillGroupOf,
+} from "./skillFilters";
 
 // A chip's operator: comparisons as symbols, the rest in the filter panel's
 // words.
@@ -99,9 +105,62 @@ function buildChipParts(filter, fieldLabelMap) {
   return { field: prettyField, op: opLabel, value: valueStr };
 }
 
+/**
+ * Chips in filter order. `SKILL` items (SKILL-TRACES §6.3) become one chip
+ * per correlation group, so a Skill chip edits and removes its sub-fields
+ * together, and a second group reads "and also loaded…" so the AND between
+ * groups is visible (UX-12). A `not_in` group reads "No recorded load of…".
+ */
+export function buildFilterChips(extraFilters, fieldLabelMap) {
+  const chips = [];
+  const groupChip = new Map();
+  let skillGroupCount = 0;
+  (extraFilters || []).forEach((filter, idx) => {
+    if (isSkillFilterItem(filter)) {
+      const group = skillGroupOf(filter);
+      const existing = groupChip.get(group);
+      if (existing) {
+        existing.indices.push(idx);
+        existing.items.push(filter);
+        return;
+      }
+      const chip = {
+        kind: "skill",
+        _idx: idx,
+        indices: [idx],
+        items: [filter],
+        column_id: filter.column_id,
+        andAlso: skillGroupCount > 0,
+      };
+      skillGroupCount += 1;
+      groupChip.set(group, chip);
+      chips.push(chip);
+      return;
+    }
+    const parts = buildChipParts(filter, fieldLabelMap);
+    if (parts) chips.push({ ...filter, kind: "filter", _idx: idx, indices: [idx], parts });
+  });
+  return chips.map((chip) => {
+    if (chip.kind !== "skill") return chip;
+    const { text, tooltip, negative, failed } = skillGroupChipText(chip.items, fieldLabelMap);
+    return {
+      ...chip,
+      negative,
+      failed,
+      tooltip,
+      parts: {
+        field: chip.andAlso ? OBSERVE_SKILL_COPY.andAlsoLoaded : OBSERVE_SKILL_COPY.fields["skill.id"],
+        op: "",
+        value: text,
+      },
+    };
+  });
+}
+
 const FilterChips = ({
   extraFilters,
   onRemoveFilter,
+  onRemoveFilters,
   onClearAll,
   onSave,
   onAddFilter,
@@ -109,16 +168,19 @@ const FilterChips = ({
   fieldLabelMap,
 }) => {
   const chips = useMemo(
-    () =>
-      (extraFilters || [])
-        .map((f, idx) => ({
-          ...f,
-          _idx: idx,
-          parts: buildChipParts(f, fieldLabelMap),
-        }))
-        .filter((c) => c.parts),
+    () => buildFilterChips(extraFilters, fieldLabelMap),
     [extraFilters, fieldLabelMap],
   );
+  const removeChip = (chip) => {
+    if (chip.indices.length === 1) {
+      onRemoveFilter(chip._idx);
+    } else if (onRemoveFilters) {
+      onRemoveFilters(chip.indices);
+    } else {
+      // Highest index first, so earlier indices stay valid.
+      [...chip.indices].sort((a, b) => b - a).forEach((idx) => onRemoveFilter(idx));
+    }
+  };
 
   if (chips.length === 0) return null;
 
@@ -156,14 +218,18 @@ const FilterChips = ({
         {chips.map((chip) => (
           <Tooltip
             key={chip._idx}
-            title={`${chip.parts.field} ${chip.parts.op} ${chip.parts.value}`}
+            title={
+              chip.tooltip ||
+              `${chip.parts.field} ${chip.parts.op} ${chip.parts.value}`
+            }
             placement="top"
             arrow
           >
             <Chip
               size="small"
               data-filter-chip-column={chip.column_id}
-              onDelete={() => onRemoveFilter(chip._idx)}
+              data-filter-chip-kind={chip.kind}
+              onDelete={() => removeChip(chip)}
               onClick={
                 onChipClick
                   ? (e) => onChipClick(chip._idx, e.currentTarget)
@@ -193,15 +259,17 @@ const FilterChips = ({
                   >
                     {chip.parts.field}
                   </Typography>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      flexShrink: 0,
-                      color: "text.disabled",
-                    }}
-                  >
-                    {chip.parts.op}
-                  </Typography>
+                  {chip.parts.op ? (
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        flexShrink: 0,
+                        color: "text.disabled",
+                      }}
+                    >
+                      {chip.parts.op}
+                    </Typography>
+                  ) : null}
                   <Typography
                     variant="caption"
                     fontWeight={600}
@@ -210,7 +278,7 @@ const FilterChips = ({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      color: "text.primary",
+                      color: chip.failed ? "error.main" : "text.primary",
                     }}
                   >
                     {chip.parts.value}
@@ -324,6 +392,9 @@ const FilterChips = ({
 FilterChips.propTypes = {
   extraFilters: PropTypes.array,
   onRemoveFilter: PropTypes.func.isRequired,
+  // Removes several items at once (a Skill chip's correlation group). When
+  // absent, the group is removed one index at a time, highest first.
+  onRemoveFilters: PropTypes.func,
   onClearAll: PropTypes.func.isRequired,
   onSave: PropTypes.func,
   // Called with `(anchorEl)` so the opener can anchor its filter popover

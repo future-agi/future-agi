@@ -14,6 +14,15 @@ from mcp_server.tests.test_tool_generation import CATALOG_PATH, CONTRACT_PATH
 from mcp_server.tool_generation import ToolGenerationError, generate_tool_manifest
 
 PAGE_SIZE_FIELDS = {"limit", "page_size"}
+# Rows that can carry long notes or descriptions keep their REST default as the
+# ceiling, so a full page stays near the 64 KiB MCP response limit.
+TIGHTER_PAGE_SIZE_CEILINGS = {
+    "get_dashboard_filter_values": 50,
+    "list_trace_properties": 50,
+    "list_skill_versions": 25,
+    "list_agent_contexts": 25,
+    "list_agent_context_versions": 25,
+}
 PAGINATED_TOOLS = [
     (tool, field)
     for tool in registry.list_all()
@@ -28,11 +37,7 @@ PAGINATED_TOOLS = [
 def test_every_page_size_is_bounded(tool, field):
     schema = tool.input_schema["properties"][field]
     validator = Draft7Validator(schema)
-    maximum = (
-        50
-        if tool.name in {"get_dashboard_filter_values", "list_trace_properties"}
-        else 100
-    )
+    maximum = TIGHTER_PAGE_SIZE_CEILINGS.get(tool.name, 100)
     assert schema["maximum"] == maximum
     assert validator.is_valid(maximum)
     assert not validator.is_valid(maximum + 1)
