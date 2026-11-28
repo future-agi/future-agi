@@ -10,6 +10,8 @@ They are pure unit tests — the ClickHouse ``analytics`` client is faked and th
 Postgres managers are patched — so they need no database or CH test stack.
 """
 
+import re
+import uuid
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from inspect import unwrap
@@ -30,6 +32,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_detail import (
     retrieve_trace_detail_ch,
 )
 from tracer.services.clickhouse.v2.trace_detail_reads import (
+    MAX_TRACE_DETAIL_EVAL_CONFIGS,
     PhysicalSpanIdentity,
     TraceDetailNotFound,
     TraceDetailRead,
@@ -89,6 +92,372 @@ def test_trace_detail_eval_query_uses_authoritative_legacy_named_table():
     assert "argMax(status, _peerdb_version)" in query
     assert "argMax(tuple(skipped_reason), _peerdb_version)" in query
     assert "argMax(_peerdb_is_deleted, _peerdb_version)" in query
+
+
+_DRIVER_CONTEXT = SimpleNamespace(
+    server_info=SimpleNamespace(get_timezone=lambda: "UTC")
+)
+_EVAL_TABLES = pytest.mark.parametrize(
+    "table", ["tracer_eval_logger", "tracer_eval_logger_v2"]
+)
+# ClickHouse's default max_query_size, and the size the rendered eval statement
+# must stay under: a 32 KiB reserve for longer span ids.
+_MAX_QUERY_SIZE = 262_144
+_RENDERED_SIZE_BUDGET = _MAX_QUERY_SIZE - 32_768
+_WITH_BINDING = re.compile(r"%\((\w+)\)s\s+AS\s+(\w+)")
+_SQL_ALIAS = re.compile(r"\bAS\s+(\w+)")
+
+
+def _uuid_strings(count, *, offset=0):
+    return [str(uuid.UUID(int=offset + index)) for index in range(1, count + 1)]
+
+
+def _render(query, params):
+    """The statement text the native driver sends: parameters inlined."""
+
+    from clickhouse_driver.util.escape import escape_params
+
+    return query % escape_params(params, _DRIVER_CONTEXT)
+
+
+def _split_with_clause(query):
+    """``(WITH clause, statement from its first SELECT on)``."""
+
+    head, select, body = query.partition("SELECT")
+    assert head.strip().startswith("WITH"), head
+    return head, select + body
+
+
+def _inline_with_bindings(query):
+    """``query`` with every ``WITH %(param)s AS alias`` binding undone.
+
+    Each ``IN alias`` names its parameter again, so the rendered text carries
+    one copy of the list per use, as it did before the lists were bound.
+    """
+
+    head, body = _split_with_clause(query)
+    bindings = _WITH_BINDING.findall(head)
+    assert bindings, head
+    for param, alias in bindings:
+        body = re.sub(rf"\bIN\s+{alias}\b", f"IN %({param})s", body)
+        assert alias not in body, alias
+    return body
+
+
+def _eval_query(table, *, configs=MAX_TRACE_DETAIL_EVAL_CONFIGS, spans=1000):
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id=str(uuid.UUID(int=0)))
+    with override_settings(CH25_EVAL_LOGGER_TABLE=table):
+        return builder.build_eval_query(
+            project_id="P1",
+            span_ids=_uuid_strings(spans, offset=10_000),
+            eval_config_ids=_uuid_strings(configs),
+        )
+
+
+@pytest.mark.unit
+@_EVAL_TABLES
+def test_trace_detail_eval_query_writes_each_list_into_the_sql_once(table):
+    query, params = _eval_query(table)
+    config_literal = _render("%(c)s", {"c": params["detail_eval_config_ids"]})
+    span_literal = _render("%(s)s", {"s": params["detail_eval_span_ids"]})
+
+    rendered = _render(query, params)
+
+    assert rendered.count(config_literal) == 1
+    assert rendered.count(span_literal) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("table", "with_clause", "alias_uses", "inlined_copies"),
+    [
+        (
+            "tracer_eval_logger",
+            "WITH %(detail_eval_config_ids)s AS detail_eval_config_set",
+            {"detail_eval_config_set": 3},
+            {"detail_eval_config_ids": 2, "detail_eval_span_ids": 1},
+        ),
+        (
+            "tracer_eval_logger_v2",
+            "WITH %(detail_eval_config_ids)s AS detail_eval_config_set",
+            {"detail_eval_config_set": 3},
+            {"detail_eval_config_ids": 2, "detail_eval_span_ids": 1},
+        ),
+    ],
+)
+def test_trace_detail_eval_query_binds_each_list_once(
+    table, with_clause, alias_uses, inlined_copies
+):
+    query, params = _eval_query(table, configs=3, spans=2)
+
+    assert " ".join(query.split()).startswith(f"{with_clause} SELECT")
+    for alias, uses in alias_uses.items():
+        assert query.count(alias) == uses, alias
+    for param in inlined_copies:
+        assert query.count(f"%({param})s") == 1, param
+    # Undoing the bindings gives the statement with one copy of each list per
+    # use; the bound statement carries each list once.
+    inlined = _render(_inline_with_bindings(query), params)
+    rendered = _render(query, params)
+    assert "%(" not in inlined
+    for param, copies in inlined_copies.items():
+        literal = _render("%(p)s", {"p": params[param]})
+        assert inlined.count(literal) == copies, param
+        assert rendered.count(literal) == 1, param
+
+
+@pytest.mark.unit
+@_EVAL_TABLES
+def test_trace_detail_eval_query_fits_max_query_size_at_the_ceiling(table):
+    # 4,096 UUID configs x 1,000 UUID spans rendered 370,383 bytes when the
+    # config tuple was written twice, over the 262,144-byte default.
+    query, params = _eval_query(table)
+
+    rendered = _render(query, params).encode()
+    inlined = _render(_inline_with_bindings(query), params).encode()
+
+    assert len(rendered) <= _RENDERED_SIZE_BUDGET, len(rendered)
+    assert len(inlined) > _MAX_QUERY_SIZE, len(inlined)
+
+
+@pytest.mark.unit
+@_EVAL_TABLES
+def test_trace_detail_eval_query_passes_the_read_only_statement_guard(table):
+    from tracer.services.clickhouse.server_readonly import (
+        ensure_read_statement,
+        without_query_settings,
+    )
+
+    query, _params = _eval_query(table, configs=2, spans=2)
+
+    ensure_read_statement(query)
+    assert without_query_settings(query) == query
+
+
+def _create_table_statement(ddl, table):
+    """The ``CREATE TABLE`` statement of ``table``, without ``--`` comments."""
+
+    code = "\n".join(line.split("--", 1)[0] for line in ddl.splitlines())
+    start = code.index(f"CREATE TABLE IF NOT EXISTS {table}")
+    return code[start:].split(";", 1)[0]
+
+
+def _ddl_column_types(statement):
+    """``{column: type}`` of one ``CREATE TABLE`` statement."""
+
+    body = statement[statement.index("(") + 1 :]
+    types = {}
+    for line in body.splitlines():
+        code = line.strip().rstrip(",")
+        if not code:
+            continue
+        if code.startswith(")"):
+            break
+        name, _, rest = code.partition(" ")
+        if name.upper() in {"INDEX", "PROJECTION", "CONSTRAINT"}:
+            continue
+        types[name] = rest.split(" DEFAULT ", 1)[0].strip()
+    return types
+
+
+def _eval_table_ddl():
+    from pathlib import Path
+
+    from tracer.services.clickhouse.schema import CDC_EVAL_LOGGER
+
+    v2_ddl = (
+        Path(__file__).resolve().parents[1]
+        / "services/clickhouse/v2/schema/011_eval_logger_v2.sql"
+    ).read_text(encoding="utf-8")
+    return {
+        "tracer_eval_logger": _create_table_statement(
+            CDC_EVAL_LOGGER, "tracer_eval_logger"
+        ),
+        "tracer_eval_logger_v2": _create_table_statement(
+            v2_ddl, "tracer_eval_logger_v2"
+        ),
+    }
+
+
+@pytest.mark.unit
+def test_trace_detail_eval_aliases_are_not_columns_or_select_aliases():
+    from tracer.models.observation_span import EvalLogger
+
+    aliases = (TraceDetailReadBuilder._EVAL_CONFIG_SET,)
+    ddl = _eval_table_ddl()
+    # The legacy table is a CDC mirror of the Postgres model.
+    model_columns = {
+        name
+        for field in EvalLogger._meta.get_fields()
+        for name in (field.name, getattr(field, "column", None))
+        if name
+    }
+    for table, statement in ddl.items():
+        columns = set(_ddl_column_types(statement))
+        assert {"id", "observation_span_id", "custom_eval_config_id"} <= columns
+        query, _params = _eval_query(table, configs=2, spans=2)
+        _head, body = _split_with_clause(query)
+        select_aliases = set(_SQL_ALIAS.findall(body))
+        assert "latest_span_id" in select_aliases
+        for alias in aliases:
+            assert alias not in columns, (table, alias)
+            assert alias not in statement, (table, alias)
+            assert alias not in model_columns, alias
+            assert alias not in select_aliases, (table, alias)
+
+
+# The eval read on tracer_eval_logger: one trace-scoped scan, each record's
+# latest version picked before its span is tested against the live spans.
+# This statement was measured on production-shaped tables; whitespace is not
+# significant.
+_V1_EVAL_SQL = """
+WITH %(detail_eval_config_ids)s AS detail_eval_config_set
+SELECT
+    latest_span_id AS span_id,
+    toString(latest_eval_config_id) AS eval_config_id,
+    latest_output_float AS output_float,
+    latest_output_bool AS output_bool,
+    latest_output_str AS output_str,
+    latest_output_str_list AS output_str_list,
+    latest_eval_explanation AS eval_explanation,
+    latest_error AS error,
+    latest_error_message AS error_message,
+    latest_status AS status,
+    latest_skipped_reason AS skipped_reason,
+    latest_created_at AS created_at,
+    latest_target_type AS target_type,
+    toString(grouped_eval_id) AS log_id
+FROM (
+    SELECT
+        id AS grouped_eval_id,
+        argMax(tuple(observation_span_id), _peerdb_version).1 AS latest_span_id,
+        argMax(custom_eval_config_id, _peerdb_version) AS latest_eval_config_id,
+        argMax(tuple(output_float), _peerdb_version).1 AS latest_output_float,
+        argMax(tuple(output_bool), _peerdb_version).1 AS latest_output_bool,
+        argMax(tuple(output_str), _peerdb_version).1 AS latest_output_str,
+        argMax(tuple(output_str_list), _peerdb_version).1 AS latest_output_str_list,
+        argMax(tuple(eval_explanation), _peerdb_version).1
+            AS latest_eval_explanation,
+        argMax(error, _peerdb_version) AS latest_error,
+        argMax(tuple(error_message), _peerdb_version).1 AS latest_error_message,
+        argMax(status, _peerdb_version) AS latest_status,
+        argMax(tuple(skipped_reason), _peerdb_version).1 AS latest_skipped_reason,
+        argMax(created_at, _peerdb_version) AS latest_created_at,
+        argMax(target_type, _peerdb_version) AS latest_target_type,
+        greatest(argMax(_peerdb_is_deleted, _peerdb_version),
+                 coalesce(argMax(deleted, _peerdb_version), 0)) AS latest_is_deleted
+    FROM tracer_eval_logger
+    PREWHERE trace_id = %(detail_eval_trace_id)s
+      AND toString(custom_eval_config_id) IN detail_eval_config_set
+    GROUP BY id
+) AS latest_trace_evals
+WHERE latest_is_deleted = 0
+  AND latest_span_id IN %(detail_eval_span_ids)s
+  AND toString(latest_eval_config_id) IN detail_eval_config_set
+ORDER BY span_id ASC, eval_config_id ASC
+LIMIT 5001
+"""
+# The eval read on tracer_eval_logger_v2: still scoped to the trace/span
+# candidates in PREWHERE, with the config list bound once.
+_V2_CANDIDATE_EVAL_SQL = """
+WITH %(detail_eval_config_ids)s AS detail_eval_config_set
+SELECT
+    latest_span_id AS span_id,
+    toString(latest_eval_config_id) AS eval_config_id,
+    latest_output_float AS output_float,
+    latest_output_bool AS output_bool,
+    latest_output_str AS output_str,
+    latest_output_str_list AS output_str_list,
+    latest_eval_explanation AS eval_explanation,
+    latest_error AS error,
+    latest_error_message AS error_message,
+    latest_status AS status,
+    latest_skipped_reason AS skipped_reason,
+    latest_created_at AS created_at,
+    latest_target_type AS target_type,
+    toString(grouped_eval_id) AS log_id
+FROM (
+    SELECT
+        id AS grouped_eval_id,
+        argMax(observation_span_id, _version) AS latest_span_id,
+        argMax(custom_eval_config_id, _version) AS latest_eval_config_id,
+        argMax(tuple(output_float), _version).1 AS latest_output_float,
+        argMax(tuple(output_bool), _version).1 AS latest_output_bool,
+        argMax(tuple(output_str), _version).1 AS latest_output_str,
+        argMax(tuple(output_str_list), _version).1 AS latest_output_str_list,
+        argMax(tuple(eval_explanation), _version).1 AS latest_eval_explanation,
+        argMax(error, _version) AS latest_error,
+        argMax(tuple(error_message), _version).1 AS latest_error_message,
+        'completed' AS latest_status,
+        CAST(NULL AS Nullable(String)) AS latest_skipped_reason,
+        argMax(created_at, _version) AS latest_created_at,
+        argMax(target_type, _version) AS latest_target_type,
+        argMax(is_deleted, _version) AS latest_is_deleted
+    FROM tracer_eval_logger_v2
+    PREWHERE trace_id = %(detail_eval_trace_id)s
+      AND observation_span_id IN %(detail_eval_span_ids)s
+      AND toString(custom_eval_config_id) IN detail_eval_config_set
+    GROUP BY id
+) AS latest_trace_evals
+WHERE latest_is_deleted = 0
+  AND toString(latest_eval_config_id) IN detail_eval_config_set
+ORDER BY span_id ASC, eval_config_id ASC
+LIMIT 5001
+"""
+
+
+@pytest.mark.unit
+def test_trace_detail_v1_eval_query_is_the_latest_first_statement():
+    query, _params = _eval_query("tracer_eval_logger", configs=2, spans=2)
+
+    assert " ".join(query.split()) == " ".join(_V1_EVAL_SQL.split())
+
+
+@pytest.mark.unit
+def test_trace_detail_v2_eval_query_keeps_the_candidate_scoped_statement():
+    query, _params = _eval_query("tracer_eval_logger_v2", configs=2, spans=2)
+
+    assert " ".join(query.split()) == " ".join(_V2_CANDIDATE_EVAL_SQL.split())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("table", ["tracer_eval_logger"])
+def test_trace_detail_eval_plain_argmax_columns_are_not_nullable(table):
+    # argMax skips NULL, so a plain argMax over a Nullable column could take its
+    # value from an older version than the rest of the row. Nullable columns
+    # are read with argMax(tuple(column), version).1; the coalesce()-guarded
+    # legacy ``deleted`` flag is the one exception.
+    query, _params = _eval_query(table, configs=2, spans=2)
+    types = _ddl_column_types(_eval_table_ddl()[table])
+
+    guarded = set(re.findall(r"coalesce\(argMax\((\w+),", query))
+    plain = set(re.findall(r"\bargMax\((\w+),", query)) - guarded
+
+    assert {"custom_eval_config_id", "created_at"} <= plain
+    for column in plain:
+        assert not types[column].startswith("Nullable("), (column, types[column])
+
+
+@pytest.mark.unit
+@_EVAL_TABLES
+def test_trace_detail_eval_query_params_are_unchanged(table):
+    builder = TraceDetailReadBuilder(project_ids=["P1"], trace_id="T1")
+
+    with override_settings(CH25_EVAL_LOGGER_TABLE=table):
+        query, params = builder.build_eval_query(
+            project_id="P1",
+            span_ids=["S1", "S2", "S1"],
+            eval_config_ids=["C1", "C1", "C2"],
+        )
+
+    assert params == {
+        "detail_eval_trace_id": "T1",
+        "detail_eval_span_ids": ("S1", "S2"),
+        "detail_eval_config_ids": ("C1", "C2"),
+        "detail_project_id": "P1",
+    }
+    # The handler fakes route the eval read by this subquery alias.
+    assert "latest_trace_evals" in query
 
 
 class _FakeAnalytics:

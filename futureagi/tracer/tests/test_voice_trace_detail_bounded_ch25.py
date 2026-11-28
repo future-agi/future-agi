@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -35,22 +38,33 @@ def ch_client():
         yield client
 
 
-@pytest.fixture()
-def detail_tables(ch_client, monkeypatch):
+@contextmanager
+def _detail_tables(ch_client, monkeypatch, *, legacy_evals=False):
     suffix = uuid.uuid4().hex[:8]
     spans = f"_test_voice_detail_spans_{suffix}"
-    evals = f"_test_voice_detail_evals_{suffix}_v2"
+    # The builder picks the version and tombstone columns by the ``_v2``
+    # suffix, so the legacy-shaped table must not end with it.
+    evals = (
+        f"_test_voice_detail_evals_{suffix}_legacy"
+        if legacy_evals
+        else f"_test_voice_detail_evals_{suffix}_v2"
+    )
     scores = f"_test_voice_detail_scores_{suffix}"
+    live_predicate = (
+        "_peerdb_is_deleted = 0 AND deleted = 0" if legacy_evals else "is_deleted = 0"
+    )
     monkeypatch.setattr(
         trace_detail_reads_module,
         "eval_logger_source",
-        lambda *args, **kwargs: (evals, "is_deleted = 0"),
+        lambda *args, **kwargs: (evals, live_predicate),
     )
 
     def test_eval_source(alias="", include_cdc_tombstone_guard=False):
         del include_cdc_tombstone_guard
         prefix = f"{alias}." if alias else ""
-        return evals, f"{prefix}is_deleted = 0"
+        return evals, " AND ".join(
+            f"{prefix}{term}" for term in live_predicate.split(" AND ")
+        )
 
     monkeypatch.setattr(
         VoiceCallListQueryBuilderV2,
@@ -117,6 +131,29 @@ def detail_tables(ch_client, monkeypatch):
             output_str Nullable(String),
             output_str_list String DEFAULT '[]',
             eval_explanation Nullable(String),
+            error UInt8 DEFAULT 0,
+            error_message Nullable(String),
+            status LowCardinality(String) DEFAULT 'completed',
+            skipped_reason Nullable(String),
+            target_type LowCardinality(String) DEFAULT 'span',
+            created_at DateTime64(6),
+            deleted UInt8 DEFAULT 0,
+            _peerdb_is_deleted UInt8 DEFAULT 0,
+            _peerdb_version Int64
+        ) ENGINE = MergeTree ORDER BY (id, _peerdb_version)
+        """
+        if legacy_evals
+        else f"""
+        CREATE TABLE {evals} (
+            id UUID,
+            trace_id Nullable(UUID),
+            observation_span_id Nullable(String),
+            custom_eval_config_id UUID,
+            output_bool Nullable(UInt8),
+            output_float Nullable(Float64),
+            output_str Nullable(String),
+            output_str_list String DEFAULT '[]',
+            eval_explanation Nullable(String),
             error UInt8,
             error_message Nullable(String),
             target_type LowCardinality(String) DEFAULT 'span',
@@ -144,11 +181,41 @@ def detail_tables(ch_client, monkeypatch):
     monkeypatch.setattr(TraceDetailReadBuilder, "TABLE", spans)
     monkeypatch.setattr(TraceDetailReadBuilder, "SCORE_TABLE", scores)
     try:
-        yield SimpleNamespace(spans=spans, evals=evals, scores=scores)
+        yield SimpleNamespace(
+            spans=spans, evals=evals, scores=scores, legacy_evals=legacy_evals
+        )
     finally:
         ch_client.execute(f"DROP TABLE {spans}")
         ch_client.execute(f"DROP TABLE {evals}")
         ch_client.execute(f"DROP TABLE {scores}")
+
+
+@pytest.fixture()
+def detail_tables(ch_client, monkeypatch):
+    with _detail_tables(ch_client, monkeypatch) as tables:
+        yield tables
+
+
+@pytest.fixture(params=["v2", "legacy"])
+def shaped_detail_tables(request, ch_client, monkeypatch):
+    """``detail_tables`` with a native v2 or a legacy PeerDB-shaped eval table.
+
+    Both are plain MergeTree, so every physical version stays readable, as on
+    production before a merge.
+    """
+
+    with _detail_tables(
+        ch_client, monkeypatch, legacy_evals=request.param == "legacy"
+    ) as tables:
+        yield tables
+
+
+@pytest.fixture()
+def legacy_detail_tables(ch_client, monkeypatch):
+    """``detail_tables`` with a legacy PeerDB-shaped ``tracer_eval_logger``."""
+
+    with _detail_tables(ch_client, monkeypatch, legacy_evals=True) as tables:
+        yield tables
 
 
 class _Analytics:
@@ -658,6 +725,671 @@ def test_trace_detail_without_authorized_configs_skips_eval_read(
     assert read.evals == ()
     # identity + content + annotations; the eval query is not issued.
     assert read.query_count == 3
+
+
+def _inline_with_bindings(query):
+    """``query`` with every ``WITH %(param)s AS alias`` binding undone.
+
+    Each ``IN alias`` names its parameter again: the statement as it was
+    written before the lists were bound once.
+    """
+
+    head, select, body = query.partition("SELECT")
+    bindings = re.findall(r"%\((\w+)\)s\s+AS\s+(\w+)", head)
+    assert head.strip().startswith("WITH") and bindings, head
+    for param, alias in bindings:
+        body = re.sub(rf"\bIN\s+{alias}\b", f"IN %({param})s", body)
+        assert alias not in body, alias
+    return select + body
+
+
+def _seed_config_scope_trace(ch_client, tables, *, project, trace, span_ids, evals):
+    started = datetime(2026, 8, 1, 9, 0, 0)
+    ch_client.execute(
+        f"INSERT INTO {tables.spans} {_SPAN_COLUMNS} VALUES",
+        [
+            _span_row(
+                project_id=project,
+                trace_id=trace,
+                span_id=span_id,
+                started_at=started + timedelta(microseconds=index),
+            )
+            for index, span_id in enumerate(span_ids)
+        ],
+    )
+    created = datetime(2026, 8, 1, 9, 30)
+    if tables.legacy_evals:
+        columns = "_peerdb_is_deleted, _peerdb_version"
+        extra = ()
+    else:
+        columns = "error, is_deleted, _version"
+        extra = (0,)
+    ch_client.execute(
+        f"""
+        INSERT INTO {tables.evals}
+            (id, trace_id, observation_span_id, custom_eval_config_id,
+             output_str, eval_explanation, created_at, {columns})
+        VALUES
+        """,
+        [
+            (
+                eval_id,
+                trace,
+                span_id,
+                config_id,
+                payload,
+                payload,
+                created,
+                *extra,
+                deleted,
+                version,
+            )
+            for eval_id, span_id, config_id, payload, deleted, version in evals
+        ],
+    )
+
+
+@pytest.mark.parametrize("config_count", [1, 2])
+def test_trace_detail_eval_config_alias_scopes_small_config_sets(
+    ch_client, shaped_detail_tables, config_count
+):
+    # One config renders as ('x'), which ClickHouse reads as a scalar String.
+    project = "00000000-0000-4000-8000-0000000000c1"
+    trace = "00000000-0000-4000-8000-0000000000c2"
+    configs = [str(uuid.UUID(int=0xC100 + index)) for index in range(config_count)]
+    foreign_config = str(uuid.UUID(int=0xC1FF))
+    served_ids = [str(uuid.uuid4()) for _ in configs]
+    _seed_config_scope_trace(
+        ch_client,
+        shaped_detail_tables,
+        project=project,
+        trace=trace,
+        span_ids=["root"],
+        evals=[
+            *(
+                (eval_id, "root", config_id, f"own-{index}", 0, 1)
+                for index, (eval_id, config_id) in enumerate(
+                    zip(served_ids, configs, strict=True)
+                )
+            ),
+            (str(uuid.uuid4()), "root", foreign_config, "foreign", 0, 1),
+        ],
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: configs,
+        include_annotations=False,
+        deadline_ms=5000,
+    )
+
+    assert {
+        row["log_id"]: (row["eval_config_id"], row["output_str"]) for row in read.evals
+    } == {
+        eval_id: (config_id, f"own-{index}")
+        for index, (eval_id, config_id) in enumerate(
+            zip(served_ids, configs, strict=True)
+        )
+    }
+    assert read.eval_unavailable is False
+
+
+def test_trace_detail_eval_read_fits_max_query_size_at_the_config_ceiling(
+    ch_client, shaped_detail_tables
+):
+    from clickhouse_driver.errors import ServerException
+
+    from tracer.services.clickhouse.read_budget import is_clickhouse_query_size_error
+
+    tables = shaped_detail_tables
+    project = "00000000-0000-4000-8000-0000000000d1"
+    trace = "00000000-0000-4000-8000-0000000000d2"
+    span_ids = [str(uuid.UUID(int=0xD0000 + index)) for index in range(1000)]
+    configs = [
+        str(uuid.UUID(int=0xE0000 + index))
+        for index in range(trace_detail_reads_module.MAX_TRACE_DETAIL_EVAL_CONFIGS)
+    ]
+    first, deleted, versioned, last = (str(uuid.uuid4()) for _ in range(4))
+    _seed_config_scope_trace(
+        ch_client,
+        tables,
+        project=project,
+        trace=trace,
+        span_ids=span_ids,
+        evals=[
+            (first, span_ids[0], configs[0], "first-config", 0, 1),
+            (last, span_ids[-1], configs[-1], "last-config", 0, 1),
+            (str(uuid.uuid4()), span_ids[0], str(uuid.uuid4()), "foreign", 0, 1),
+            (deleted, span_ids[1], configs[1], "deleted-v1", 0, 1),
+            (deleted, span_ids[1], configs[1], "deleted-v2", 1, 2),
+            (versioned, span_ids[2], configs[2], "versioned-v1", 0, 1),
+            (versioned, span_ids[2], configs[2], "versioned-v2", 0, 2),
+        ],
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: configs,
+        include_annotations=False,
+        deadline_ms=30_000,
+    )
+
+    assert len(read.spans) == 1000
+    assert read.eval_unavailable is False
+    assert [
+        (row["log_id"], row["span_id"], row["eval_config_id"], row["output_str"])
+        for row in read.evals
+    ] == sorted(
+        [
+            (first, span_ids[0], configs[0], "first-config"),
+            (versioned, span_ids[2], configs[2], "versioned-v2"),
+            (last, span_ids[-1], configs[-1], "last-config"),
+        ],
+        key=lambda row: (row[1], row[2]),
+    )
+
+    # Negative control: the same statement with each bound list written out
+    # at every use, as before the binding, is over this server's limit.
+    limit = int(
+        ch_client.execute(
+            "SELECT value FROM system.settings WHERE name = 'max_query_size'"
+        )[0][0]
+    )
+    query, params = TraceDetailReadBuilder(
+        project_ids=[project], trace_id=trace
+    ).build_eval_query(project_id=project, span_ids=span_ids, eval_config_ids=configs)
+    context = ch_client.connection.context
+    rendered = ch_client.substitute_params(query, params, context)
+    rendered_inlined = ch_client.substitute_params(
+        _inline_with_bindings(query), params, context
+    )
+    assert len(rendered.encode()) < limit < len(rendered_inlined.encode())
+    with pytest.raises(ServerException) as caught:
+        ch_client.execute(rendered_inlined)
+    assert is_clickhouse_query_size_error(caught.value), caught.value
+
+
+# Each case lists its versions oldest first as (span, payload) or
+# (span, payload, deleted). Every version has its own payload, so the served
+# row shows which version won. Spans: "root" and "child" are live in the
+# selected project, "dead" is tombstoned, "foreign" is live only in another
+# project's copy of the trace and "ghost" is not in ClickHouse at all.
+_STALE_EVAL_CASES = {
+    "E1-null": [("root", "E1-v1"), (None, "E1-v2")],
+    "E2-dead": [("root", "E2-v1"), ("dead", "E2-v2")],
+    "E3-foreign": [("root", "E3-v1"), ("foreign", "E3-v2")],
+    "E4-ghost": [("root", "E4-v1"), ("ghost", "E4-v2")],
+    "E5-null-tombstone": [("root", "E5-v1"), (None, "E5-v2", 1)],
+    "E6-child-to-root": [("child", "E6-v1"), ("root", "E6-v2")],
+    "E7-null-to-root": [(None, "E7-v1"), ("root", "E7-v2")],
+    "E8-root-null-child": [("root", "E8-v1"), (None, "E8-v2"), ("child", "E8-v3")],
+    "E9-single": [("root", "E9-v1")],
+    "E10-tombstone-on-span": [("root", "E10-v1"), ("root", "E10-v2", 1)],
+    "E17-five-versions": [
+        ("root", "E17-v1"),
+        (None, "E17-v2"),
+        ("child", "E17-v3"),
+        ("dead", "E17-v4"),
+        ("root", "E17-v5"),
+    ],
+}
+_STALE_EVAL_CREATED = datetime(2026, 7, 31, 9, 30)
+# The trace-detail eval read before the latest-first change, reduced to the
+# columns these tests compare: the span check runs in PREWHERE, before
+# GROUP BY id picks each record's latest version.
+_PRIOR_EVAL_SQL = """
+SELECT
+    toString(grouped_eval_id) AS log_id,
+    latest_span_id AS span_id,
+    toString(latest_eval_config_id) AS eval_config_id,
+    latest_output_str AS output_str
+FROM (
+    SELECT
+        id AS grouped_eval_id,
+        argMax(observation_span_id, {version}) AS latest_span_id,
+        argMax(custom_eval_config_id, {version}) AS latest_eval_config_id,
+        argMax(tuple(output_str), {version}).1 AS latest_output_str,
+        {deleted} AS latest_is_deleted
+    FROM {table}
+    PREWHERE trace_id = %(detail_eval_trace_id)s
+      AND observation_span_id IN %(detail_eval_span_ids)s
+      AND toString(custom_eval_config_id) IN %(detail_eval_config_ids)s
+    GROUP BY id
+) AS latest_trace_evals
+WHERE latest_is_deleted = 0
+  AND toString(latest_eval_config_id) IN %(detail_eval_config_ids)s
+"""
+
+
+def _eval_columns(tables):
+    """``(version column, deleted expression over physical rows)``."""
+
+    if tables.legacy_evals:
+        return "_peerdb_version", "greatest(_peerdb_is_deleted, deleted)"
+    return "_version", "is_deleted"
+
+
+def _seed_stale_attachment_trace(ch_client, tables, *, project, foreign, trace):
+    started = datetime(2026, 7, 31, 9, 0, 0)
+    rows = [
+        _span_row(
+            project_id=project, trace_id=trace, span_id="root", started_at=started
+        ),
+        # The newest write makes the selected project's copy win.
+        _span_row(
+            project_id=project,
+            trace_id=trace,
+            span_id="root",
+            started_at=started,
+            version=2,
+        ),
+        _span_row(
+            project_id=project,
+            trace_id=trace,
+            span_id="child",
+            parent="root",
+            started_at=started + timedelta(seconds=1),
+        ),
+        _span_row(
+            project_id=project,
+            trace_id=trace,
+            span_id="dead",
+            started_at=started + timedelta(seconds=2),
+        ),
+        _span_row(
+            project_id=project,
+            trace_id=trace,
+            span_id="dead",
+            started_at=started + timedelta(seconds=2),
+            version=2,
+            deleted=1,
+        ),
+        _span_row(
+            project_id=foreign,
+            trace_id=trace,
+            span_id="foreign",
+            started_at=started,
+        ),
+    ]
+    ch_client.execute(f"INSERT INTO {tables.spans} {_SPAN_COLUMNS} VALUES", rows)
+
+
+def _insert_evals(ch_client, tables, physical):
+    """Insert physical eval versions, given as dicts, into either table shape."""
+
+    version, _deleted = _eval_columns(tables)
+    deleted_column = "_peerdb_is_deleted" if tables.legacy_evals else "is_deleted"
+    ch_client.execute(
+        f"""
+        INSERT INTO {tables.evals}
+            (id, trace_id, observation_span_id, custom_eval_config_id,
+             output_str, eval_explanation, created_at, {deleted_column},
+             {version})
+        VALUES
+        """,
+        [
+            (
+                row["id"],
+                row["trace_id"],
+                row["span"],
+                row["config"],
+                row["payload"],
+                row["payload"],
+                row.get("created", _STALE_EVAL_CREATED),
+                row["deleted"],
+                row["version"],
+            )
+            for row in physical
+        ],
+    )
+
+
+def _live_span_oracle(ch_client, tables, *, project, trace):
+    """Live span ids of one project's copy, from every physical span row."""
+
+    latest = {}
+    for row in ch_client.execute(
+        f"""
+        SELECT toString(project_id), trace_id, id, start_time, _version, is_deleted
+        FROM {tables.spans}
+        """
+    ):
+        key = row[:4]
+        if key not in latest or row[4] > latest[key][4]:
+            latest[key] = row
+    return {
+        span_id
+        for (row_project, row_trace, span_id, _start), row in latest.items()
+        if row_project == project and row_trace == trace and not row[5]
+    }
+
+
+def _latest_by_id(rows):
+    """The newest physical row of each id; a version tie would be ambiguous."""
+
+    versions = Counter((row["id"], row["version"]) for row in rows)
+    assert all(count == 1 for count in versions.values()), versions
+    latest = {}
+    for row in rows:
+        if row["id"] not in latest or row["version"] > latest[row["id"]]["version"]:
+            latest[row["id"]] = row
+    return latest
+
+
+def _eval_oracle(ch_client, tables, *, trace, configs, live_spans):
+    """``{id: (span, config, payload)}`` from every physical eval row.
+
+    The newest version of each id is served only when it is live, on the
+    trace, under an authorized config and on one of the live spans.
+    """
+
+    version, deleted = _eval_columns(tables)
+    stored = [
+        dict(
+            zip(
+                ("id", "trace_id", "span", "config", "payload", "deleted", "version"),
+                row,
+                strict=True,
+            )
+        )
+        for row in ch_client.execute(
+            f"""
+            SELECT toString(id), toString(trace_id), observation_span_id,
+                   toString(custom_eval_config_id), output_str, {deleted},
+                   {version}
+            FROM {tables.evals}
+            """
+        )
+    ]
+    return {
+        row["id"]: (row["span"], row["config"], row["payload"])
+        for row in _latest_by_id(stored).values()
+        if row["trace_id"] == trace
+        and row["config"] in configs
+        and not row["deleted"]
+        and row["span"] in live_spans
+    }
+
+
+def _prior_eval_rows(ch_client, tables, *, trace, spans, configs):
+    """``{id: (span, config, payload)}`` served by the prior statement."""
+
+    version, _deleted = _eval_columns(tables)
+    deleted = (
+        f"greatest(argMax(_peerdb_is_deleted, {version}), "
+        f"coalesce(argMax(deleted, {version}), 0))"
+        if tables.legacy_evals
+        else f"argMax(is_deleted, {version})"
+    )
+    rows = ch_client.execute(
+        _PRIOR_EVAL_SQL.format(table=tables.evals, version=version, deleted=deleted),
+        {
+            "detail_eval_trace_id": trace,
+            "detail_eval_span_ids": tuple(spans),
+            "detail_eval_config_ids": tuple(configs),
+        },
+    )
+    return {log_id: (span, config, payload) for log_id, span, config, payload in rows}
+
+
+def _served_evals(read):
+    served = {
+        row["log_id"]: (row["span_id"], row["eval_config_id"], row["output_str"])
+        for row in read.evals
+    }
+    assert len(served) == len(read.evals)
+    return served
+
+
+def test_trace_detail_serves_eval_only_when_latest_version_is_on_a_live_span(
+    ch_client, legacy_detail_tables
+):
+    tables = legacy_detail_tables
+    project = "00000000-0000-4000-8000-0000000000a1"
+    foreign = "00000000-0000-4000-8000-0000000000a2"
+    trace = "00000000-0000-4000-8000-0000000000a3"
+    config = "00000000-0000-4000-8000-0000000000a4"
+    other_config = "00000000-0000-4000-8000-0000000000a5"
+    unauthorized = "00000000-0000-4000-8000-0000000000a6"
+    _seed_stale_attachment_trace(
+        ch_client, tables, project=project, foreign=foreign, trace=trace
+    )
+    cases = {
+        name: [(span, payload, *rest, config) for span, payload, *rest in versions]
+        for name, versions in _STALE_EVAL_CASES.items()
+    }
+    # A config change between two authorized configs serves the latest one.
+    cases["E11-config-move"] = [
+        ("root", "E11-v1", 0, config),
+        ("root", "E11-v2", 0, other_config),
+    ]
+    cases["E12-unauthorized"] = [("root", "E12-v1", 0, unauthorized)]
+    ids = {name: str(uuid.uuid4()) for name in cases}
+    _insert_evals(
+        ch_client,
+        tables,
+        [
+            {
+                "id": ids[name],
+                "trace_id": trace,
+                "span": span,
+                "config": rest[-1],
+                "payload": payload,
+                "deleted": rest[0] if len(rest) == 2 else 0,
+                "version": version,
+            }
+            for name, versions in cases.items()
+            for version, (span, payload, *rest) in enumerate(versions, start=1)
+        ],
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project, foreign],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: [config, other_config],
+        include_annotations=False,
+        deadline_ms=5000,
+    )
+
+    assert read.project_id == project
+    live_spans = _live_span_oracle(ch_client, tables, project=project, trace=trace)
+    assert live_spans == {"root", "child"}
+    oracle = _eval_oracle(
+        ch_client,
+        tables,
+        trace=trace,
+        configs={config, other_config},
+        live_spans=live_spans,
+    )
+    assert oracle == {
+        ids["E6-child-to-root"]: ("root", config, "E6-v2"),
+        ids["E7-null-to-root"]: ("root", config, "E7-v2"),
+        ids["E8-root-null-child"]: ("child", config, "E8-v3"),
+        ids["E9-single"]: ("root", config, "E9-v1"),
+        ids["E11-config-move"]: ("root", other_config, "E11-v2"),
+        ids["E17-five-versions"]: ("root", config, "E17-v5"),
+    }
+    assert _served_evals(read) == oracle
+    assert all(row["eval_explanation"] == row["output_str"] for row in read.evals)
+    assert read.eval_unavailable is False
+    # identity + content + evals; annotations were not requested.
+    assert read.query_count == 3
+    # The prior statement serves each moved record's older version, so these
+    # cases exercise the order this read fixes.
+    prior = _prior_eval_rows(
+        ch_client,
+        tables,
+        trace=trace,
+        spans=sorted(live_spans),
+        configs=[config, other_config],
+    )
+    assert {
+        name: prior.get(ids[name])
+        for name in ("E1-null", "E2-dead", "E3-foreign", "E4-ghost")
+    } == {
+        "E1-null": ("root", config, "E1-v1"),
+        "E2-dead": ("root", config, "E2-v1"),
+        "E3-foreign": ("root", config, "E3-v1"),
+        "E4-ghost": ("root", config, "E4-v1"),
+    }
+
+
+def test_trace_detail_eval_residual_cases_against_the_prior_statement(
+    ch_client, legacy_detail_tables
+):
+    tables = legacy_detail_tables
+    project = "00000000-0000-4000-8000-0000000000b4"
+    foreign = "00000000-0000-4000-8000-0000000000b5"
+    trace = "00000000-0000-4000-8000-0000000000b6"
+    config = "00000000-0000-4000-8000-0000000000b7"
+    other_config = "00000000-0000-4000-8000-0000000000b8"
+    later = _STALE_EVAL_CREATED + timedelta(days=40)
+    _seed_stale_attachment_trace(
+        ch_client, tables, project=project, foreign=foreign, trace=trace
+    )
+    names = ("E14-config-and-span", "E15-created-and-span", "E16-id-only-tombstone")
+    ids = {name: str(uuid.uuid4()) for name in names}
+
+    def version(name, number, span, config_id, created=_STALE_EVAL_CREATED):
+        return {
+            "id": ids[name],
+            "trace_id": trace,
+            "span": span,
+            "config": config_id,
+            "payload": f"{name}-v{number}",
+            "deleted": 0,
+            "version": number,
+            "created": created,
+        }
+
+    _insert_evals(
+        ch_client,
+        tables,
+        [
+            # A sort-key column changes in the same version as the span
+            # leaves the live spans.
+            version("E14-config-and-span", 1, "root", config),
+            version("E14-config-and-span", 2, None, other_config),
+            version("E15-created-and-span", 1, "root", config),
+            version("E15-created-and-span", 2, None, config, later),
+            version("E16-id-only-tombstone", 1, "root", config),
+        ],
+    )
+    # A hard delete arrives as the id, the tombstone flag and a newer version;
+    # every other column keeps its default, so it has no trace.
+    version_column, _deleted = _eval_columns(tables)
+    deleted_column = "_peerdb_is_deleted" if tables.legacy_evals else "is_deleted"
+    ch_client.execute(
+        f"INSERT INTO {tables.evals} (id, {deleted_column}, {version_column}) VALUES",
+        [(ids["E16-id-only-tombstone"], 1, 2)],
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project, foreign],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: [config, other_config],
+        include_annotations=False,
+        deadline_ms=5000,
+    )
+
+    served = _served_evals(read)
+    live_spans = _live_span_oracle(ch_client, tables, project=project, trace=trace)
+    assert (
+        _eval_oracle(
+            ch_client,
+            tables,
+            trace=trace,
+            configs={config, other_config},
+            live_spans=live_spans,
+        )
+        == {}
+    )
+    prior = _prior_eval_rows(
+        ch_client,
+        tables,
+        trace=trace,
+        spans=sorted(live_spans),
+        configs=[config, other_config],
+    )
+    assert prior == {ids[name]: ("root", config, f"{name}-v1") for name in names}
+    # An id-only tombstone has no trace, so no trace-scoped read sees it.
+    assert served[ids["E16-id-only-tombstone"]] == prior[ids["E16-id-only-tombstone"]]
+    # tracer_eval_logger reads every version of the trace in one scan, so a
+    # key change that also leaves the live spans is hidden.
+    assert set(served) == {ids["E16-id-only-tombstone"]}
+
+
+def test_trace_detail_eval_read_past_the_row_limit_returns_only_live_rows(
+    ch_client, legacy_detail_tables
+):
+    tables = legacy_detail_tables
+    project = "00000000-0000-4000-8000-0000000000e1"
+    foreign = "00000000-0000-4000-8000-0000000000e2"
+    trace = "00000000-0000-4000-8000-0000000000e3"
+    config = "00000000-0000-4000-8000-0000000000e4"
+    _seed_stale_attachment_trace(
+        ch_client, tables, project=project, foreign=foreign, trace=trace
+    )
+    version_column, _deleted = _eval_columns(tables)
+    # 6,000 ids whose newest version moved to the tombstoned span, more than
+    # the 5,000-row limit, and 10 ids live on a live span.
+    ch_client.execute(
+        f"""
+        INSERT INTO {tables.evals}
+            (id, trace_id, observation_span_id, custom_eval_config_id,
+             output_str, created_at, {version_column})
+        SELECT
+            reinterpretAsUUID(sipHash128('stale', intDiv(number, 2))),
+            toUUID('{trace}'),
+            if(number % 2 = 0, 'root', 'dead'),
+            toUUID('{config}'),
+            concat('stale-', toString(number)),
+            toDateTime64('2026-07-31 09:30:00', 3),
+            1 + number % 2
+        FROM numbers(12000)
+        """
+    )
+    ch_client.execute(
+        f"""
+        INSERT INTO {tables.evals}
+            (id, trace_id, observation_span_id, custom_eval_config_id,
+             output_str, created_at, {version_column})
+        SELECT
+            reinterpretAsUUID(sipHash128('live', number)),
+            toUUID('{trace}'),
+            'child',
+            toUUID('{config}'),
+            concat('live-', toString(number)),
+            toDateTime64('2026-07-31 09:30:00', 3),
+            1
+        FROM numbers(10)
+        """
+    )
+
+    read = read_trace_detail(
+        analytics=_Analytics(ch_client),
+        project_ids=[project, foreign],
+        trace_id=trace,
+        eval_config_ids_resolver=lambda selected_project: [config],
+        include_annotations=False,
+        deadline_ms=30_000,
+    )
+
+    assert read.eval_unavailable is False
+    assert sorted(row["output_str"] for row in read.evals) == sorted(
+        f"live-{number}" for number in range(10)
+    )
+    # The prior statement served all 6,010 ids, over the row limit.
+    prior = _prior_eval_rows(
+        ch_client, tables, trace=trace, spans=["child", "root"], configs=[config]
+    )
+    assert len(prior) == 6010
 
 
 def test_voice_simulator_exclusion_is_candidate_scoped_and_page_exact(
