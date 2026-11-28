@@ -27,10 +27,10 @@ def reset_token_cache():
     import ee.licensing.activation_client as mod
 
     mod._cached_token = None
-    mod._last_failure = None
+    mod._failure_state["last"] = None
     yield
     mod._cached_token = None
-    mod._last_failure = None
+    mod._failure_state["last"] = None
 
 
 class TestServiceToken:

@@ -74,7 +74,8 @@ class _ActivationFailure:
 
 _lock = threading.RLock()
 _cached_token: ServiceToken | None = None
-_last_failure: _ActivationFailure | None = None
+# Holds the latest activation failure; a dict so callers update it without `global`.
+_failure_state: dict[str, _ActivationFailure | None] = {"last": None}
 
 
 def get_activation_url() -> str:
@@ -130,13 +131,11 @@ def _refusal_detail(response: httpx.Response) -> str:
 
 def _activate() -> ServiceToken | None:
     """Called under the token lock so only one caller retries an expired window."""
-    global _last_failure
-
     license_key = _get_configured_license_key()
     key_hash = hash_key(license_key) if license_key else ""
     url = get_activation_url()
     config = (url, key_hash)
-    previous = _last_failure
+    previous = _failure_state["last"]
     if previous and previous.config != config:
         previous = None
     if previous and time.monotonic() < previous.retry_at:
@@ -152,9 +151,9 @@ def _activate() -> ServiceToken | None:
         payload = {"instance_id": str(state.instance_id), "version": get_version()}
         if key_hash:
             payload["license_key_hash"] = key_hash
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - best-effort: activation is retried later
         # A worker can read telemetry even if an event-loop caller could not.
-        _last_failure = None
+        _failure_state["last"] = None
         logger.error("activation_preparation_failed", error_type=type(exc).__name__)
         return None
 
@@ -166,14 +165,14 @@ def _activate() -> ServiceToken | None:
         if status == 200:
             token = _parse_service_token(response.json())
             if token is not None or not key_hash:  # Includes keyless OSS check-in.
-                _last_failure = None
+                _failure_state["last"] = None
                 return token
             detail = "Activation returned no service token"
         else:
             detail = _refusal_detail(response)
             if status == 429:
                 retry_after = parse_retry_after(response.headers.get("Retry-After"))
-    except Exception:
+    except Exception:  # noqa: BLE001 - external call; any failure backs off below
         detail = "Could not complete license activation"
 
     backoff = 60
@@ -181,7 +180,7 @@ def _activate() -> ServiceToken | None:
         backoff = min(3600, 2 * previous.backoff)
     delay = backoff if retry_after is None else retry_after
     retry_at = time.monotonic() + delay
-    _last_failure = _ActivationFailure(config, detail, retry_at, backoff)
+    _failure_state["last"] = _ActivationFailure(config, detail, retry_at, backoff)
     logger.error(
         "activation_failed", status_code=status, detail=detail, retry_after=delay
     )
@@ -350,7 +349,7 @@ def _require_service_token() -> ServiceToken:
     with _lock:
         token = get_service_token()
         if token is None:
-            failure = _last_failure
+            failure = _failure_state["last"]
             detail = failure.detail if failure else "Could not obtain service token"
             raise ManagedServiceError("ACTIVATION_FAILED", detail)
     if token.scope == "oss" and not token.access_token:
