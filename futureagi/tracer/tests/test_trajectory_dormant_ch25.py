@@ -17,8 +17,10 @@ from django.test import override_settings
 
 from conftest import (
     _ch_test_apply_v2_schema,
+    _ch_test_http_port,
     _ch_test_native_client,
     _ch_test_owned_database,
+    _open_ch_test_http_client,
 )
 from tracer.services.clickhouse import oss_cdc_bootstrap as core
 from tracer.services.clickhouse.v2 import apply_schema
@@ -41,8 +43,29 @@ def _apply_pre040_schema(database: str) -> None:
         for p in sorted(SCHEMA_DIR.glob("*.sql"))
         if not p.name.startswith("_") and p.name != "040_trajectory_items.sql"
     ]
-    # Shared helper: proves the target is the CI sidecar before applying.
-    _ch_test_apply_v2_schema(database, files=files)
+    import os
+
+    # Same sidecar proof as conftest's _ch_test_apply_v2_schema, before any DDL.
+    _open_ch_test_http_client(database=database).close()
+    rc = apply_schema.main(
+        [
+            "--schema-dir",
+            str(SCHEMA_DIR),
+            "--ch-host",
+            os.environ.get("CH25_HOST", "127.0.0.1"),
+            "--ch-http-port",
+            str(_ch_test_http_port().port),
+            "--ch-user",
+            os.environ.get("CH25_USER") or os.environ.get("CH_USERNAME") or "default",
+            "--ch-password",
+            os.environ.get("CH25_PASSWORD") or os.environ.get("CH_PASSWORD") or "",
+            "--ch-database",
+            database,
+            "--files",
+            *files,
+        ]
+    )
+    assert rc == 0, f"pre-040 schema apply failed with rc={rc}"
 
 
 def _span_columns(client, database: str) -> dict[str, tuple[str, str, str]]:
