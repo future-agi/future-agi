@@ -39,6 +39,10 @@ from simulate.services.hosted_harness_conversation import (
     issue_conversation_capability,
 )
 from simulate.services.hosted_harness_gateway import rewrite_conversation_scenarios
+from simulate.services.hosted_sandbox import (
+    SandboxNotFoundError,
+    SandboxProviderConfigurationError,
+)
 from simulate.tests.test_evidence_datasets import EXPECTED
 from simulate.tests.test_evidence_datasets import columns as columns
 from simulate.tests.test_evidence_datasets import dataset as dataset
@@ -526,6 +530,49 @@ class TestSettleAndForget:
 
         assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 0}
         assert _gone(conversation)["job"]
+
+    @patch("simulate.services.hosted_harness_gateway.get_sandbox_provider")
+    def test_sweep_retries_the_same_sandbox_until_delete_succeeds(
+        self, get_provider, cases, user, scheduled
+    ):
+        conversation = _start(cases, user)
+        lease = _lease(conversation, state="expired")
+        ref = lease.provider_ref
+        evidence_import = cases[0].evidence_import
+        evidence_import.cases.update(status=EvidenceImportCase.Status.BLOCKED)
+        provider = get_provider.return_value
+        provider.delete.side_effect = [TimeoutError("provider timed out"), False, True]
+
+        with pytest.raises(HostedHarnessError, match="did not confirm"):
+            evidence_drafts.forget(str(evidence_import.id))
+        lease.refresh_from_db()
+        evidence_import.refresh_from_db()
+        assert lease.provider_ref == ref
+        assert evidence_import.drafting_job_id == conversation.job_id
+
+        assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 0}
+        assert evidence_drafts.sweep() == {"timed_out": 0, "forgotten": 1}
+        assert [call.args[0] for call in provider.get.call_args_list] == [ref] * 3
+        assert not any(_gone(conversation).values())
+
+    @patch("simulate.services.hosted_harness_gateway.get_sandbox_provider")
+    def test_unavailable_provider_keeps_job_until_it_confirms_sandbox_is_absent(
+        self, get_provider, cases, user, scheduled
+    ):
+        conversation = _start(cases, user)
+        _lease(conversation)
+        import_id = str(cases[0].evidence_import_id)
+        get_provider.side_effect = SandboxProviderConfigurationError("not configured")
+        with pytest.raises(HostedHarnessError, match="not configured"):
+            evidence_drafts.forget(import_id)
+        assert _gone(conversation)["job"]
+
+        get_provider.side_effect = None
+        get_provider.return_value.get.side_effect = SandboxNotFoundError("already gone")
+        evidence_drafts.forget(import_id)
+        get_provider.return_value.get.assert_called_once()
+        get_provider.return_value.delete.assert_not_called()
+        assert not any(_gone(conversation).values())
 
     def test_a_deletion_that_stopped_part_way_is_finished_by_the_sweep(
         self, cases, user, scheduled, storage

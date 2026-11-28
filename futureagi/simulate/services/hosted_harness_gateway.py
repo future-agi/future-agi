@@ -3977,9 +3977,10 @@ class HostedHarnessGateway:
             )
         return started
 
-    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> bool:
+        """True if the provider confirmed deletion or the sandbox was already gone."""
         try:
-            self.client.delete(
+            return self.client.delete(
                 self.client.get(
                     provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
                 ),
@@ -3987,12 +3988,13 @@ class HostedHarnessGateway:
                 wait=True,
             )
         except SandboxNotFoundError:
-            pass
+            return True
         except Exception:
             logger.exception(
                 "retired conversation sandbox deletion failed conversation=%s",
                 conversation_id,
             )
+            return False
 
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
         """Keep a chat sandbox for the idle window after the user's latest message."""

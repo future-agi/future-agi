@@ -719,17 +719,13 @@ def forget(evidence_import_id: str) -> None:
         ).first()
         ref = str(getattr(lease, "provider_ref", "") or "")
         if ref and not ref.startswith("pending:"):
-            try:
-                gateway = HostedHarnessGateway()
-            except HostedHarnessError:
-                # No sandbox provider here, so no sandbox can be running; the
-                # lease is expired already, and the rows below matter more.
-                logger.warning(
-                    "evidence_forget_no_sandbox_provider",
-                    conversation=str(conversation.id),
+            if not HostedHarnessGateway()._delete_chat_sandbox(ref, conversation.id):
+                raise HostedHarnessError(
+                    "drafting_sandbox_delete_unconfirmed",
+                    "The provider did not confirm drafting sandbox deletion.",
+                    status_code=503,
+                    retryable=True,
                 )
-            else:
-                gateway._delete_chat_sandbox(ref, conversation.id)
         client = get_storage_client()
         prefix = (
             f"harness-conversations/{conversation.organization_id}/{conversation.id}/"
