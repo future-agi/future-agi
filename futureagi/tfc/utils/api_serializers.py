@@ -289,7 +289,10 @@ class RelayMessageField(serializers.DictField):
     def to_internal_value(self, data):
         if isinstance(data, str):
             return {"message": data}
-        return super().to_internal_value(data)
+        message = super().to_internal_value(data)
+        if "alert_title" in message and not isinstance(message["alert_title"], str):
+            message["alert_title"] = "Notification"
+        return message
 
 
 class CallWebsocketRequestSerializer(serializers.Serializer):
