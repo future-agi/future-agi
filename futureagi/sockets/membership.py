@@ -90,6 +90,7 @@ class MembershipSocketGuard:
         self.consumer = consumer
         self.closed = False
         self.template_id: UUID | None = None
+        self._subscription_revision = 0
         self._last_validated_at: float | None = None
         self._revalidation_pending = False
         # Advanced by every forced check. Only a check that started at the
@@ -106,6 +107,15 @@ class MembershipSocketGuard:
         """Advanced by every forced check."""
 
         return self._generation
+
+    def set_template(self, template_id: UUID | None) -> None:
+        self.template_id = template_id
+        # Even resubscribing to the same UUID invalidates an in-flight lookup.
+        self._subscription_revision += 1
+
+    @property
+    def check_version(self) -> tuple[int, int]:
+        return self._generation, self._subscription_revision
 
     def mark_validated(self, at: float | None = None) -> None:
         self._last_validated_at = time.monotonic() if at is None else at
@@ -140,20 +150,19 @@ class MembershipSocketGuard:
             ):
                 return True
 
-        generation = self._generation
+        version = self.check_version
         template_id = self.template_id
         try:
-            if template_id is not None:
-                # This also checks the user's current organization membership.
-                # Workspace-only changes need not produce an organization event.
-                allowed = (
-                    await template_workspace_access(
-                        user.id, organization_id, template_id
-                    )
-                    is True
-                )
-            else:
-                allowed = await database_sync_to_async(
+            # A positive template lookup includes organization membership. A
+            # negative (including a vanished template) does not distinguish
+            # losing a subscription from losing the entire organization.
+            template_allowed = template_id is not None and (
+                await template_workspace_access(user.id, organization_id, template_id)
+                is True
+            )
+            member = template_allowed
+            if not member:
+                member = await database_sync_to_async(
                     organization_membership_is_active
                 )(user.id, organization_id)
         except Exception as exc:  # noqa: BLE001 - skip delivery until a check succeeds
@@ -163,17 +172,16 @@ class MembershipSocketGuard:
             )
             return False
 
-        if (
-            self.closed
-            or generation != self._generation
-            or template_id != self.template_id
-        ):
+        if self.closed or version != self.check_version:
             # The socket closed or membership changed while this check ran.
             # A stale result must not deliver, close or clear revalidation.
             return False
-        if not allowed:
+        if not member:
             await self._close()
             return False
+        if template_id is not None and not template_allowed:
+            if not await self.consumer._deny_subscription(template_id, version=version):
+                return False
         self._last_validated_at = now
         self._revalidation_pending = False
         return True
