@@ -359,7 +359,8 @@ def select_split(
     be in the split, or else every scenario of the split in suite order. Only a pair
     of versions that is locked now has splits to run. The split holds the lock's
     roster members of it, less the ones the run can't play now: which tools reach
-    production follows the run's bundle, which the lock doesn't freeze."""
+    production follows the run's bundle, which the lock doesn't freeze. A split with
+    none left to play is refused."""
     environment_version = pins.environment_version if pins is not None else None
     suite_version = pins.suite_version if pins is not None else None
     locked_version = (
@@ -399,6 +400,14 @@ def select_split(
         for scenario_id, key, _ in members
         if splits.get(scenario_id) == split and scenario_id not in blocked
     ]
+    if not keys:
+        raise HostedHarnessError(
+            "split_empty",
+            f"The {split} split of lock {locked_version.label} has no scenario this"
+            " run can play.",
+            status_code=422,
+            details={"split": split},
+        )
     if not scenario_keys:
         return SplitSelection(locked_version, keys)
     outside = [key for key in scenario_keys if key not in keys]
