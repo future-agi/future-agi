@@ -18,6 +18,7 @@ migrations read and nothing the receivers read. It is a public artifact.
 """
 
 import argparse
+import ast
 import hashlib
 import importlib.util
 import json
@@ -269,14 +270,62 @@ def _shown(name):
     return repr(name) if SAFE_NAME.fullmatch(name) else "a name with other characters"
 
 
-def plan(switch, totals, db):
+# Stacks whose restore needs a bridge in e2e-db-restore.sh for an effect a
+# migration makes outside Postgres: the text that is the bridge. Distributed:
+# tracer 0093 registers the eval-task search attributes in Temporal, and the
+# stack refuses that migration's own command outside migrate. Bridged by CI
+# until the stack's start-up registers them; the product change that does it
+# deletes the bridge and this entry.
+BRIDGES = {"distributed": "temporal operator search-attribute"}
+SEARCH_ATTRIBUTES = "tfc/temporal/eval_tasks/search_attributes.py"
+
+
+def search_attributes(path):
+    """The eval-task search attributes a product file defines: [(name, type)].
+
+    Every `SearchAttributeKey.for_<type>("<name>")` call in the file. The
+    bridge can create Keyword attributes only, so anything else, or a name
+    that is not a plain string, is an error, and so is a file with none.
+    """
+    found = []
+    for node in ast.walk(ast.parse(Path(path).read_text(), str(path))):
+        func = node.func if isinstance(node, ast.Call) else None
+        if not (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "SearchAttributeKey"
+        ):
+            continue
+        args = node.args
+        if (
+            func.attr != "for_keyword"
+            or len(args) != 1
+            or node.keywords
+            or not isinstance(args[0], ast.Constant)
+            or not isinstance(args[0].value, str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", args[0].value)
+        ):
+            raise ValueError(
+                f"{path}:{node.lineno}: the bridge creates Keyword search "
+                f"attributes named by a plain string only, not SearchAttributeKey.{func.attr}(...)"
+            )
+        found.append((args[0].value, "Keyword"))
+    if not found:
+        raise ValueError(f"{path}: no search attributes found")
+    return found
+
+
+def plan(switch, totals, db, bridged=None):
     """What each stack's legs do with the saved dump in this run.
 
     `totals` gives each stack's leg count, `db` each stack's key and whether
-    a saved dump was found. Returns (lines to print, {stack: {key, found,
+    a saved dump was found, `bridged` the stacks whose bridge (BRIDGES) is in
+    this commit's restore step. Returns (lines to print, {stack: {key, found,
     restore}}). A stack restores only when the switch names it, a dump was
-    found and it has a zero leg and a control leg.
+    found, it has a zero leg and a control leg, and any bridge it needs is
+    there.
     """
+    bridged = set(bridged or ())
     named, unknown = read_switch(switch)
     if not named and not unknown:
         lines = [f"{SWITCH} is not set or names nothing: every leg migrates from zero."]
@@ -297,6 +346,12 @@ def plan(switch, totals, db):
             restore, why = False, f"migrates from zero: {SWITCH} does not name it"
         elif not found:
             restore, why = False, "migrates from zero: no saved dump for this commit"
+        elif stack in BRIDGES and stack not in bridged:
+            restore, why = (
+                False,
+                "migrates from zero: this commit's restore step cannot add "
+                "Temporal's eval-task search attributes (migration tracer 0093)",
+            )
         elif total < CONTROL_SHARD:
             restore, why = (
                 False,
@@ -329,7 +384,8 @@ def summary(directory, stack, total):
 
     `directory` holds one folder per leg and attempt, as download-artifact
     writes them (db-reuse-<stack>-<shard>-attempt-<n>/e2e-db-result). The
-    last attempt of each shard counts.
+    last attempt of each shard counts. The file's first line is the restore
+    step's result; a later `suite: <job status>` line, the leg's outcome.
     """
     last = {}
     for folder in sorted(Path(directory).iterdir()) if Path(directory).is_dir() else []:
@@ -343,14 +399,17 @@ def summary(directory, stack, total):
                 if (folder / RESULT_FILE).is_file()
                 else ""
             )
-            last[shard] = (
-                attempt,
-                text.strip().splitlines()[0] if text.strip() else "",
+            lines_ = text.strip().splitlines()
+            outcome = next(
+                (x.split(":", 1)[1].strip() for x in lines_ if x.startswith("suite:")),
+                "",
             )
+            last[shard] = (attempt, lines_[0] if lines_ else "", outcome)
     counts = {"restored": [], "fell back": [], "miss": [], "zero": [], "no result": []}
     reasons = []
+    failed = []
     for shard in range(1, total + 1):
-        result = last.get(shard, (0, ""))[1]
+        _attempt, result, outcome = last.get(shard, (0, "", ""))
         kind = next(
             (
                 k
@@ -362,6 +421,8 @@ def summary(directory, stack, total):
         counts[kind].append(shard)
         if kind in ("fell back", "miss"):
             reasons.append(f"- shard {shard}: {result}")
+        if outcome == "failure":
+            failed.append((shard, kind))
     lines = [
         f"### Saved database, {stack}",
         "",
@@ -373,7 +434,36 @@ def summary(directory, stack, total):
             lines.append(
                 f"| {kind} | {len(shards)} | {', '.join(map(str, shards)) or '-'} |"
             )
-    return "\n".join(lines + ([""] + reasons if reasons else []))
+    lines += [""] + reasons if reasons else []
+    if failed:
+        lines += ["", "Failed legs:"]
+        lines += [f"- shard {shard}: {ROLES[kind](shard)}" for shard, kind in failed]
+    if any(kind == "restored" for _shard, kind in failed):
+        lines += ["", RESTORED_FAILED]
+    return "\n".join(lines)
+
+
+ROLES = {
+    "restored": lambda shard: (
+        "restored the saved dump"
+        + (", and compared it with a fresh migrate" if shard == CONTROL_SHARD else "")
+    ),
+    "zero": lambda shard: "migrated from zero, by design",
+    "fell back": lambda shard: "migrated from zero after its restore fell back",
+    "miss": lambda shard: "migrated from zero: the dump was not for its Postgres",
+    "no result": lambda shard: (
+        "no database result (it stopped before or during the restore)"
+    ),
+}
+# Not "likely": most legs restore, so an ordinary failure looks the same.
+RESTORED_FAILED = (
+    "A leg that restored the saved dump failed. A restored database that lacks "
+    "something the stack needs is possible: the dump holds only Postgres, and "
+    "the boot's migrate applies nothing on it. To tell: take this stack out of "
+    "the E2E_DB_REUSE repository variable (or clear it), then re-run all jobs "
+    "of this run. Every leg then migrates from zero. If the same tests pass, "
+    "the saved database is the cause; if they fail the same way, it is not."
+)
 
 
 def main(argv=None):
@@ -405,6 +495,12 @@ def main(argv=None):
     sub.add_argument("totals", help="JSON: {stack: leg count}")
     sub.add_argument("db", help="JSON: {stack: {key, found}}")
     sub.add_argument("out", help="file for the JSON result")
+    sub.add_argument(
+        "--restore-script",
+        help="the restore step the legs run: which stacks' bridges it holds",
+    )
+    sub = commands.add_parser("search-attributes")
+    sub.add_argument("file")
     args = parser.parse_args(argv)
     try:
         if args.command == "key":
@@ -420,9 +516,15 @@ def main(argv=None):
             _say(summary(args.directory, args.stack, args.total))
         elif args.command == "named":
             _say(" ".join(read_switch(args.switch)[0]))
+        elif args.command == "search-attributes":
+            _say(" ".join(name for name, _type in search_attributes(args.file)))
         elif args.command == "plan":
+            script = (
+                Path(args.restore_script).read_text() if args.restore_script else ""
+            )
+            bridged = {s for s, text in BRIDGES.items() if text in script}
             lines, result = plan(
-                args.switch, json.loads(args.totals), json.loads(args.db)
+                args.switch, json.loads(args.totals), json.loads(args.db), bridged
             )
             for line in lines:
                 _say(line)
@@ -435,6 +537,7 @@ def main(argv=None):
         subprocess.CalledProcessError,
         ValueError,
         AttributeError,
+        SyntaxError,
     ) as exc:
         _say(f"::error title=E2E database dump::{exc}")
         return 1

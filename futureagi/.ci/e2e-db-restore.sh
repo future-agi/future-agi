@@ -81,19 +81,16 @@ case $STACK in
     # migration's own command outside migrate (model_hub/apps.py allows only
     # listed commands), so Temporal's CLI adds them, as Standalone's Temporal
     # gets them at its start. The names come from the product's own list.
-    names=$(python3 -I - "$here/../tfc/temporal/eval_tasks/search_attributes.py" <<'EOF'
-import re, sys
-keys = re.findall(r"SearchAttributeKey\.for_(\w+)\(\s*\"(\w+)\"\s*\)", open(sys.argv[1]).read())
-if not keys or any(kind != "keyword" for kind, _ in keys):
-    sys.exit(f"expected keyword attributes only, found {keys}")
-print(" ".join(name for _, name in keys))
-EOF
-    ) || fall_back "could not read the eval-task search attributes"
+    names=$("${tool[@]}" search-attributes "$here/../tfc/temporal/eval_tasks/search_attributes.py") ||
+      fall_back "could not read the eval-task search attributes"
     try_log=$(mktemp)
     start=$SECONDS
     # Temporal on the restored Postgres, as the boot starts it.
     bin/e2e compose up -d --wait temporal > "$try_log" 2>&1 ||
       fall_back "Temporal did not start" "$try_log"
+    # The stack's own TEMPORAL_HOST and TEMPORAL_NAMESPACE
+    # (docker-compose.distributed.yml; OutsideTest pins them). Only `list`
+    # and `create`: an attribute is never removed or changed.
     cli=(bin/e2e compose exec -T temporal temporal operator search-attribute)
     at=(--address temporal:7233 --namespace default)
     # Temporal adds its namespace a little after it starts. Only missing

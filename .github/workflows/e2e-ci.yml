@@ -339,7 +339,10 @@ jobs:
             echo "db=$db" >> "$GITHUB_OUTPUT"
           done
           # Prints the switch as read and each stack's decision.
-          python3 -I "$tools/e2e_db.py" plan "$E2E_DB_REUSE" "$TOTALS" "$db" "$RUNNER_TEMP/e2e-db-plan.json"
+          # A stack whose restore needs a bridge restores only when this
+          # commit's restore step, the one its legs run, holds it.
+          python3 -I "$tools/e2e_db.py" plan "$E2E_DB_REUSE" "$TOTALS" "$db" "$RUNNER_TEMP/e2e-db-plan.json" \
+            --restore-script "$GITHUB_WORKSPACE/futureagi/.ci/e2e-db-restore.sh"
           echo "db=$(cat "$RUNNER_TEMP/e2e-db-plan.json")" >> "$GITHUB_OUTPUT"
       - name: Hand the saved database dumps to the legs that use them
         if: steps.db.outputs.artifact != ''
@@ -765,6 +768,33 @@ jobs:
           overwrite: true
           if-no-files-found: warn
 
+      - name: Check Temporal's eval-task search attributes
+        # In a run where Distributed restores, every leg lists them after its
+        # boot and fails if one the product defines is missing: without them
+        # every eval-task workflow hangs. Only the leg from zero gets them
+        # from the product's own registration (migration tracer 0093, which
+        # passes with a warning when it cannot register); the others get them
+        # from the bridge in e2e-db-restore.sh. The lines are compared across
+        # legs. After the suite, and whatever its outcome: a red leg says too.
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && matrix.stack == 'distributed' && fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
+        timeout-minutes: 3
+        run: |
+          names=$(python3 -I futureagi/.ci/e2e_db.py search-attributes futureagi/tfc/temporal/eval_tasks/search_attributes.py)
+          listed=$(bin/e2e compose exec -T temporal temporal operator search-attribute list --address temporal:7233 --namespace default)
+          missing=()
+          for name in $names; do
+            line=$(grep -w -- "$name" <<< "$listed" || true)
+            if grep -qw Keyword <<< "$line"; then
+              echo "Temporal search attribute on this leg: $(tr -s ' \t|' ' ' <<< "$line" | sed 's/^ //; s/ $//')"
+            else
+              missing+=("$name")
+            fi
+          done
+          if ((${#missing[@]})); then
+            echo "::error title=E2E database reuse::Temporal on this leg lacks the eval-task search attributes ${missing[*]} (as Keyword). Every eval-task workflow would hang."
+            exit 1
+          fi
+
       - name: Record the stack's pulled images
         # The report combines shards from different attempts (a re-run of failed
         # jobs) only when they ran the same pulled images: scripts/shard-report.mjs
@@ -991,6 +1021,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           overwrite: true
+      - name: Note this leg's outcome for the database count
+        # The count names each failed leg's role (restored, from zero, ...).
+        if: ${{ always() && steps.db-restore.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          echo "suite: $OUTCOME" >> "$RUNNER_TEMP/e2e-db-result"
       - name: Upload this leg's database result
         # For the report job's count of restored, fell-back, missed and
         # zero legs.
@@ -1008,7 +1046,7 @@ jobs:
         # for this; a dev push shows it.
         if: ${{ always() && steps.db-restore.outcome == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-restore-proof' }}
         run: |
-          result=$(cat "$RUNNER_TEMP/e2e-db-result")
+          result=$(head -n 1 "$RUNNER_TEMP/e2e-db-result")
           if [[ $result == "fell back:"* ]]; then
             echo "::error title=E2E database reuse::This leg could not restore the saved dump ($result). Its suite ran on a database migrated from zero."
             exit 1
