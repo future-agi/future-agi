@@ -302,9 +302,27 @@ func TestUsageReportCountsOnlyRemovedBytes(t *testing.T) {
 	if want := int64(len(in) + len(out)); r.OrigExtractedBytes != want {
 		t.Fatalf("credit %d, want len(input)+len(output) = %d (flattened bytes are stored, the attribute copy is in raw once)", r.OrigExtractedBytes, want)
 	}
+	// The kept overhead, recomputed from the stored row: both previews (both
+	// sides extracted), the scope id, the envelope and the hash lists.
+	row := res.Rows[0]
+	kept := int64(len(row["input"].(string)) + len(row["output"].(string)) + len(row["item_scope_id"].(string)) + len(row["payload_envelope"].(string)))
+	for _, col := range []string{"input_item_hashes", "output_item_hashes", "tool_def_hashes"} {
+		for _, h := range row[col].([]string) {
+			kept += int64(len(h))
+		}
+	}
+	if r.KeptSpanOverheadBytes != kept {
+		t.Fatalf("kept overhead %d, want %d recomputed from the stored row", r.KeptSpanOverheadBytes, kept)
+	}
+	// The exact bill: raw minus each extracted side once, plus what the
+	// pointers keep. Every other raw byte (flattened copies, other
+	// attributes, the span envelope) stays billed.
+	if want, stored := raw-int64(len(in)+len(out))+kept, r.StoredTotalBytes(); stored != want {
+		t.Fatalf("billed %d B, want exactly %d B (raw %d - sides %d + kept %d)", stored, want, raw, len(in)+len(out), kept)
+	}
 	flattened := int64(19_000 + 19_000 + 900 + 1_500)
-	if stored := r.StoredTotalBytes(); stored < flattened {
-		t.Fatalf("billed %d B, below the %d B of attributes still stored on the span", stored, flattened)
+	if stored := r.StoredTotalBytes(); stored < flattened+kept {
+		t.Fatalf("billed %d B, below the %d B still stored on the span", stored, flattened+kept)
 	}
 }
 
