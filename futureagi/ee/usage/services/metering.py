@@ -127,6 +127,9 @@ def _get_cached_billing_status(org_id: str) -> str:
 
 # Budget scope priced on the whole invoice rather than a metered dimension.
 TOTAL_SPEND_SCOPE = "total_spend"
+PAUSABLE_DIMENSIONS = frozenset(
+    {"ai_credits", "text_sim_tokens", "voice_sim_minutes", "gateway_requests"}
+)
 
 
 def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
@@ -219,10 +222,10 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
                     ),
                 )
 
-    # Check budget pause flags (set by budget enforcement in Phase 4).
-    # A per-dimension budget pauses only its own dimension; a total_spend
-    # budget is written as pause:{org_id}:total_spend and pauses all billable
-    # usage, since no event is ever metered under a "total_spend" dimension.
+    # Budget pauses must not cause trace batches or stored payloads to be dropped.
+    if dimension not in PAUSABLE_DIMENSIONS:
+        return CheckResult(allowed=True, dimension=dimension)
+
     r = get_redis()
     if r.get(f"pause:{org_id}:{dimension}"):
         return CheckResult(
