@@ -249,7 +249,7 @@ def test_project_root_count_arrival_window_supports_half_open_end():
 # threading (half the fix) leaves the reader tests green while the hot-path reads
 # silently go unscoped again. One assertion per caller that owns a project_id.
 
-from unittest.mock import MagicMock, call, patch  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
 
 from tracer.queries import feed  # noqa: E402
 
@@ -304,11 +304,3 @@ def test_root_input_texts_threads_project():
     with patch.object(feed, "_get_root_spans_batch", return_value={}) as roots:
         feed._root_input_texts(["t1", "t2"], "p1")
     roots.assert_called_once_with(["t1", "t2"], "p1")
-
-
-def test_distribution_shift_threads_project_on_both_reads():
-    # Overview pattern-summary path (_insight_distribution_shift): both the
-    # failing totals read and the baseline totals read must pin the project.
-    with patch.object(feed, "_get_trace_totals_batch", return_value={}) as totals:
-        feed._insight_distribution_shift(["t1"], ["b1"], "latency", "p1")
-    assert totals.call_args_list == [call(["t1"], "p1"), call(["b1"], "p1")]

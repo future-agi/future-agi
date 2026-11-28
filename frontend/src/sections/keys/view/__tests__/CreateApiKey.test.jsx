@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PropTypes from "prop-types";
 import { endOfDay } from "date-fns";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
+import { handleError } from "src/utils/queryErrorHandler";
 import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
 import CreateApiKey from "../CreateApiKey";
 
@@ -37,6 +43,7 @@ vi.mock("@mui/x-date-pickers/DatePicker", () => {
 
 const renderDialog = () => {
   const queryClient = new QueryClient({
+    mutationCache: new MutationCache({ onError: handleError }),
     defaultOptions: { mutations: { retry: false } },
   });
   return render(
@@ -46,7 +53,7 @@ const renderDialog = () => {
   );
 };
 
-describe("CreateApiKey expiry", () => {
+describe("CreateApiKey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.post.mockResolvedValue({
@@ -78,6 +85,58 @@ describe("CreateApiKey expiry", () => {
       "/accounts/key/generate_secret_key/",
       { key_name: "ci key" },
     );
+  });
+
+  it("explains when to copy both keys after creation", async () => {
+    renderDialog();
+    const notice = /copy the API key and secret key before closing/i;
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Key name/), {
+      target: { value: "ci key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByText(notice)).toHaveTextContent(
+      /only copy them here/i,
+    );
+    expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  });
+
+  it("marks only a rejected duplicate name and clears it on edit", async () => {
+    const expiryError = "Expiry must be in the future.";
+    mocks.post
+      .mockRejectedValueOnce({
+        statusCode: 400,
+        code: "invalid",
+        result: "Keys with this already name exists.",
+      })
+      .mockRejectedValueOnce({
+        statusCode: 400,
+        code: "invalid",
+        result: expiryError,
+      });
+    renderDialog();
+    const name = screen.getByRole("textbox", { name: /Key name/ });
+    const next = screen.getByRole("button", { name: "Next" });
+    fireEvent.change(name, { target: { value: "ci key" } });
+    fireEvent.click(next);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/another name/i);
+    expect(name).toBeInvalid();
+    expect(name).toHaveAccessibleDescription(/name already exists/i);
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+
+    fireEvent.change(name, { target: { value: "new name" } });
+    expect(name).toBeValid();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(next);
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(expiryError, {
+        variant: "error",
+      }),
+    );
+    expect(name).toBeValid();
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
   });
 
   it("sends the end of the picked day as expires_at", async () => {

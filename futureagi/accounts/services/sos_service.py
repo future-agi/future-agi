@@ -1,9 +1,7 @@
 """SOS (support impersonation) session minting.
 
-Both current entry points route through here so that every mint leaves a
-record: the Django admin view, where the operator is the signed-in staff
-user, and the Appsmith-facing API, which authenticates with a shared key and
-therefore has no operator identity.
+The Django admin view, where the operator is the signed-in staff user, routes
+through here so that every mint leaves a record.
 
 This is a convention, not an invariant. `issue_sos_tokens` remains callable
 directly, so a future caller could mint a pair with no audit line; the ruff

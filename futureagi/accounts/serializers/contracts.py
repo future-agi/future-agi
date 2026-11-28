@@ -96,13 +96,6 @@ class TokenRefreshRequestSerializer(serializers.Serializer):
     localhost_bypass = serializers.BooleanField(required=False, default=False)
 
 
-class RedisKeyRequestSerializer(serializers.Serializer):
-    access_token_id = serializers.CharField()
-    key = serializers.CharField()
-    value = serializers.JSONField(required=False)
-    expiry = serializers.IntegerField(required=False, min_value=1)
-
-
 class TimezoneRequestSerializer(serializers.Serializer):
     timezone = serializers.CharField(max_length=64)
 
@@ -196,27 +189,6 @@ class AccountsBulkUserMutationItemSerializer(serializers.Serializer):
     user_id = serializers.UUIDField()
     message = serializers.CharField(required=False)
     error = serializers.CharField(required=False)
-
-
-class AccountsRedisSetResultSerializer(serializers.Serializer):
-    message = serializers.CharField()
-    key = serializers.CharField()
-    value = serializers.JSONField()
-
-
-class AccountsRedisSetResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = AccountsRedisSetResultSerializer()
-
-
-class AccountsRedisDeleteResultSerializer(serializers.Serializer):
-    message = serializers.CharField()
-    key = serializers.CharField()
-
-
-class AccountsRedisDeleteResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = AccountsRedisDeleteResultSerializer()
 
 
 class PublicRegionConfigSerializer(serializers.Serializer):
@@ -756,27 +728,6 @@ class AccountUserItemResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     role = serializers.CharField(allow_blank=True, allow_null=True)
     goals = serializers.ListField(child=serializers.CharField(), required=False)
-
-
-class AccountsPaginatedUserResponseSerializer(serializers.Serializer):
-    count = serializers.IntegerField()
-    next = serializers.CharField(allow_null=True)
-    previous = serializers.CharField(allow_null=True)
-    results = AccountUserItemResponseSerializer(many=True)
-    total_pages = serializers.IntegerField()
-    current_page = serializers.IntegerField()
-    total_queries = serializers.IntegerField(required=False)
-
-
-class AppsmithUserCreateResponseSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField()
-    organization_name = serializers.CharField()
-    send_credential = serializers.BooleanField()
-
-
-class AppsmithPasswordUpdateResponseSerializer(serializers.Serializer):
-    password = serializers.CharField()
 
 
 class WorkspaceAdminSummarySerializer(serializers.Serializer):

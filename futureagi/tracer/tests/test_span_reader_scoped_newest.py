@@ -8,11 +8,14 @@ tombstone. ``first_span_by_type(project_id=...)`` must read only the given
 project's copy. Proven against a real ReplacingMergeTree copied from ``spans``.
 """
 
+import re
 import uuid
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
-from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+from tracer.services.clickhouse.v2.span_reader import CHSpanReader, SpanScope
 
 OLDER = "11111111-1111-4111-8111-111111111111"
 NEWER = "22222222-2222-4222-8222-222222222222"
@@ -137,6 +140,44 @@ def test_scope_by_ids_reads_only_the_given_projects(copies):
     assert reader.scope_by_ids(["root"], project_ids=[NEWER]) == {}
     assert reader.scope_by_ids(["root"], project_ids=[]) == {}
     assert reader.scope_by_ids(["root"])["root"].project_id in {OLDER, FOREIGN}
+
+
+@pytest.mark.django_db
+def test_pinned_span_scope_prunes_unrelated_granules(copies):
+    reader, insert = copies
+    now = datetime.now(UTC)
+    insert(OLDER, version=1, start_time=now)
+    insert(FOREIGN, version=3, start_time=now)
+    # Other days of the same project's history cannot be ruled out by project alone.
+    for days in (1, 2, 3):
+        insert(
+            OLDER,
+            version=1,
+            span_id=f"other-{days}",
+            start_time=now - timedelta(days=days),
+        )
+
+    client = reader._client
+    with patch.object(client, "query", wraps=client.query) as query:
+        scopes = reader.scope_by_ids(["root"], project_ids=[OLDER])
+    assert scopes == {"root": SpanScope(project_id=OLDER, trace_id=TRACE)}
+    query.assert_called_once()
+    (sql,), kwargs = query.call_args
+    # Replay the reader's query against a profile with skip indexes off under FINAL.
+    settings = {"use_skip_indexes_if_final": 0, **kwargs.get("settings", {})}
+    rows = client.query(
+        "EXPLAIN indexes = 1 " + sql,
+        parameters=kwargs["parameters"],
+        settings={**settings, "force_primary_key": 1},
+    ).result_rows
+    plan = "\n".join(line for (line,) in rows)
+    bloom = re.search(r"Name: idx_id\b.*?Granules: (\d+)/(\d+)", plan, re.S)
+    assert bloom, plan
+    selected, total = map(int, bloom.groups())
+    assert 0 < selected < total, plan
+
+    insert(OLDER, version=2, deleted=1, start_time=now)
+    assert reader.scope_by_ids(["root"], project_ids=[OLDER]) == {}
 
 
 @pytest.mark.django_db
