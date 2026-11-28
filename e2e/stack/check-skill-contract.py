@@ -87,45 +87,98 @@ def effective_operation(doc, method, path):
     return {**inline_reusable(doc, op), 'parameters': parameters}
 
 
+def schema_inputs(doc, schema, prefix, required, inputs, visiting=()):
+    """Record each input a request can send under `prefix`: (required, type, format, enum, nullable).
+    Walks definitions, allOf, object properties, array items and map values; readOnly fields are
+    not inputs."""
+    schema = schema or {}
+    ref = schema.get('$ref')
+    if ref:
+        if ref in visiting:
+            return
+        schema, visiting = inline_reusable(doc, referenced(doc, ref)), (*visiting, ref)
+    parts = [schema, *(inline_reusable(doc, part) for part in schema.get('allOf', ()))]
+    for i, part in enumerate(parts[1:], 1):
+        if '$ref' in part:
+            if part['$ref'] in visiting:
+                parts[i] = {}
+                continue
+            parts[i] = inline_reusable(doc, referenced(doc, part['$ref']))
+            visiting = (*visiting, part['$ref'])
+    first = lambda key: next((part[key] for part in parts if key in part), None)
+    enum = first('enum')
+    inputs[prefix] = (required, first('type'), first('format'),
+                      None if enum is None else tuple(sorted(map(json.dumps, enum))),
+                      bool(first('x-nullable')))
+    needed = {field for part in parts for field in part.get('required') or ()}
+    fields = {}
+    for part in parts:
+        fields.update(part.get('properties') or {})
+    for field in sorted({*fields, *needed}):
+        child = fields.get(field) or {}
+        if child.get('readOnly'):
+            continue
+        schema_inputs(doc, child, (*prefix, field), field in needed, inputs, visiting)
+    items = first('items')
+    if isinstance(items, dict):
+        schema_inputs(doc, items, (*prefix, '[]'), False, inputs, visiting)
+    extra = first('additionalProperties')
+    if isinstance(extra, dict):
+        schema_inputs(doc, extra, (*prefix, '{}'), False, inputs, visiting)
+
+
 def skills_inputs(doc, method, path):
-    """(location, name) -> required for one operation's inputs, request body fields included."""
+    """Input path -> (required, type, format, enum, nullable) for one operation, request body
+    fields included at any depth, e.g. ('body', 'files', '[]', 'path')."""
     op = effective_operation(doc, method, path)
     if op is None:
         return None
     inputs = {}
     for (location, name), param in op['parameters'].items():
-        if location != 'body':
-            inputs[location, name] = bool(param.get('required'))
-            continue
-        schema = param.get('schema') or {}
-        if '$ref' in schema:
-            schema = inline_reusable(doc, referenced(doc, schema['$ref']))
-        required = set(schema.get('required') or ())
-        for field in {*schema.get('properties', {}), *required}:
-            inputs['body', field] = field in required
+        prefix = ('body',) if location == 'body' else (location, name)
+        schema = param.get('schema') if location == 'body' else {k: v for k, v in param.items() if k != 'required'}
+        schema_inputs(doc, schema, prefix, bool(param.get('required')), inputs)
     return inputs
 
 
 def breaking_skills_changes(shipped, product):
     """What a client of the shipped Skills contract would break on: a route the product no longer
-    serves, a required input it removed or renamed, or an input it newly requires. The regenerated
-    SDK follows the product, so this compares the paired SDK's committed slice with the product."""
+    serves, a required input it removed or renamed, an input it newly requires (a field of an
+    object the client already sends included), or an input whose type, format, values or
+    nullability it narrowed. The regenerated SDK follows the product, so this compares the paired
+    SDK's committed slice with the product."""
     problems = []
     for path, item in sorted(shipped.get('paths', {}).items()):
         if not path.startswith(SKILLS):
             continue
         for method in sorted(m for m in item if m in HTTP_METHODS):
+            where = f'{method.upper()} {path}'
             before = skills_inputs(shipped, method, path)
             after = skills_inputs(product, method, path)
             if after is None:
-                problems.append(f'{method.upper()} {path} is no longer served')
+                problems.append(f'{where} is no longer served')
                 continue
-            for (location, name), required in sorted(before.items()):
-                if required and (location, name) not in after:
-                    problems.append(f'{method.upper()} {path}: required {location} input {name!r} was removed or renamed')
-            for (location, name), required in sorted(after.items()):
-                if required and not before.get((location, name)):
-                    problems.append(f'{method.upper()} {path}: {location} input {name!r} is newly required')
+            name = lambda key: f'{key[0]} input ' + repr('.'.join(key[1:]) or key[0])
+            for key, (required, *kind) in sorted(before.items()):
+                if key not in after:
+                    if required:
+                        problems.append(f'{where}: required {name(key)} was removed or renamed')
+                    continue
+                _, kind_type, kind_format, values, nullable = after[key]
+                if kind_type is not None and kind_type != kind[0]:
+                    problems.append(f'{where}: {name(key)} changed type')
+                elif kind_format is not None and kind_format != kind[1]:
+                    problems.append(f'{where}: {name(key)} changed format')
+                elif values is not None and (kind[2] is None or not set(kind[2]) <= set(values)):
+                    problems.append(f'{where}: {name(key)} accepts fewer values')
+                elif kind[3] and not nullable:
+                    problems.append(f'{where}: {name(key)} no longer accepts null')
+            for key, (required, *_) in sorted(after.items()):
+                # A new required field matters when the client already sends its parent object.
+                top = 1 if key[0] == 'body' else 2
+                parent = key[:-1] if len(key) > top else ()
+                if required and not (before.get(key) or (False,))[0] and (not parent or parent in before):
+                    problems.append(f'{where}: {name(key)} is newly required')
     return problems
 
 

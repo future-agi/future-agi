@@ -293,6 +293,17 @@ class ContractTests(unittest.TestCase):
                     self.assertEqual(regenerate(root, sdk, revision)['source']['sql'], incomplete['sql'])
                     commit(sdk, {path: encode({'x-contract-sources': recorded})})
 
+                # The committed slice is what shipped SDK clients call: the regenerated one may extend
+                # it, but a product change that breaks it needs a paired SDK branch.
+                commit(sdk, {path: encode({'x-contract-sources': recorded, **self.swagger})})
+                regenerate(root, sdk, revision)
+                legacy = {'name': 'legacy', 'in': 'query', 'required': True, 'type': 'string'}
+                commit(sdk, {path: encode({'x-contract-sources': recorded,
+                                           'paths': {self.path: {'get': {'parameters': [legacy]}}}})})
+                with self.assertRaisesRegex(ValueError, "Breaking change.*required query input 'legacy' was removed"):
+                    regenerate(root, sdk, revision)
+                commit(sdk, {path: encode({'x-contract-sources': recorded})})
+
             # Malformed committed input cannot be repaired by overwriting it, or
             # bypassed by invoking the release sync when the sidecars are absent.
             broken_records = [None, {k: v for k, v in recorded.items() if k != 'skills'},
@@ -320,7 +331,12 @@ class ContractTests(unittest.TestCase):
                 '/model-hub/datasets/': {'get': {'parameters': []}},
             },
             'definitions': {'Push': {'type': 'object', 'required': ['name'],
-                                     'properties': {'name': {'type': 'string'}, 'note': {'type': 'string'}}}},
+                                     'properties': {'name': {'type': 'string'}, 'note': {'type': 'string'},
+                                                    'files': {'type': 'array', 'items': {'$ref': '#/definitions/File'}}}},
+                            'File': {'type': 'object', 'required': ['path', 'content'],
+                                     'properties': {'path': {'type': 'string'}, 'content': {'type': 'string'},
+                                                    'mode': {'type': 'string', 'enum': ['r', 'w'], 'x-nullable': True},
+                                                    'id': {'type': 'string', 'readOnly': True}}}},
         }
         self.assertEqual(breaking(shipped, shipped), [])
         # An optional addition, and a non-Skills route the product drops, are not this check's concern.
@@ -340,11 +356,33 @@ class ContractTests(unittest.TestCase):
             (lambda d: d['definitions']['Push']['properties'].pop('name') and d['definitions']['Push'].update(required=[]),
              ["POST /model-hub/skills/publish/: required body input 'name' was removed or renamed"]),
             (lambda d: d['paths'].pop(publish), ['POST /model-hub/skills/publish/ is no longer served']),
+            (lambda d: d['paths'][publish]['post']['parameters'][0].update(required=False), []),
+            (lambda d: d['paths'][resolve]['get']['parameters'][0].update(type='integer'),
+             ["GET /model-hub/skills/resolve/: query input 'name' changed type"]),
+            (lambda d: d['paths'][resolve]['get']['parameters'][1].update(format='uuid'),
+             ["GET /model-hub/skills/resolve/: query input 'label' changed format"]),
+            (lambda d: d['definitions']['File']['properties']['mode'].update(enum=['r']),
+             ["POST /model-hub/skills/publish/: body input 'files.[].mode' accepts fewer values"]),
+            (lambda d: d['definitions']['File']['properties']['mode'].update(enum=['r', 'w', 'x']), []),
+            (lambda d: d['definitions']['File']['properties']['mode'].pop('x-nullable'),
+             ["POST /model-hub/skills/publish/: body input 'files.[].mode' no longer accepts null"]),
+            # Fields one level or more down, behind a definition and an array, are guarded too.
+            (lambda d: d['definitions']['File'].update(required=['content']), []),
+            (lambda d: d['definitions']['File']['properties'].pop('path') and d['definitions']['File'].update(
+                required=['content']),
+             ["POST /model-hub/skills/publish/: required body input 'files.[].path' was removed or renamed"]),
+            (lambda d: d['definitions']['File']['properties'].update(path={'type': 'string', 'readOnly': True}),
+             ["POST /model-hub/skills/publish/: required body input 'files.[].path' was removed or renamed"]),
+            (lambda d: d['definitions']['File'].update(required=['path', 'content', 'encoding']),
+             ["POST /model-hub/skills/publish/: body input 'files.[].encoding' is newly required"]),
+            # A required field of an object the shipped client never sends is not a break.
+            (lambda d: d['definitions']['Push']['properties'].update(
+                meta={'type': 'object', 'required': ['owner'], 'properties': {'owner': {'type': 'string'}}}), []),
         ]
-        for change, expected in cases:
+        for index, (change, expected) in enumerate(cases):
             product = copy.deepcopy(shipped)
             change(product)
-            with self.subTest(expected=expected[0]):
+            with self.subTest(case=index, expected=expected[:1]):
                 self.assertEqual(breaking(shipped, product), expected)
 
     def test_sql_tool_name_alone_does_not_prove_its_product_binding(self):
