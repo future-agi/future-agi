@@ -35,7 +35,10 @@ from tracer.services.trajectory_seen_contract import (
     GC_LATCH_KEY,
     GC_MARGIN,
     IN_FLIGHT_MARGIN,
+    LEGACY_QUIET_PERIOD,
     MAX_REUSE_AGE_CAP,
+    QUIET_MARK_TTL,
+    QUIET_SINCE_KEY,
     clear_project_seen_keys,
 )
 
@@ -49,16 +52,26 @@ PRE040_FILES = ["002_spans_v2.sql", "024_spans_created_at_index.sql"]
 HOUR_US = 3_600_000_000
 DAY_US = 24 * HOUR_US
 MARGIN_US = int(GC_MARGIN.total_seconds() * 1_000_000)
+QUIET_US = int(LEGACY_QUIET_PERIOD.total_seconds() * 1_000_000)
+# A quiet-period mark old enough for GC to delete (the epoch).
+MATURE_QUIET_MARK = "0"
 
 GC_ON = override_settings(FI_TRAJECTORY_GC_DELETES_ENABLED=True)
 
 
 class Contract:
-    """Stands in for the collectors' Redis (contract key, latch, seen keys)."""
+    """Stands in for the collectors' Redis (contract key, latch, seen keys).
 
-    def __init__(self, present: bool = True, keys=()):
+    By default the GC quiet period has run its course (``quiet=True``); the
+    quiet-period tests start without the mark.
+    """
+
+    def __init__(self, present: bool = True, keys=(), *, quiet: bool = True):
         self.values: dict[str, str] = {CONTRACT_KEY: "1"} if present else {}
+        if present and quiet:
+            self.values[QUIET_SINCE_KEY] = MATURE_QUIET_MARK
         self.values.update(dict.fromkeys(keys, "h"))
+        self.ttls: dict[str, int] = {}
 
     def exists(self, *keys):
         return sum(key in self.values for key in keys)
@@ -66,8 +79,16 @@ class Contract:
     def get(self, key):
         return self.values.get(key)
 
-    def set(self, key, value, **kwargs):
+    def set(self, key, value, nx=False, **kwargs):
+        if nx and key in self.values:
+            return None
         self.values[key] = value
+        return True
+
+    def expire(self, key, seconds):
+        if key not in self.values:
+            return False
+        self.ttls[key] = int(seconds)
         return True
 
     def delete(self, *keys):
@@ -372,6 +393,18 @@ def test_gc_requires_contract_key(store, seen_redis):
         assert len(store.items(orphan)) == 1
 
         seen_redis.set(CONTRACT_KEY, "1", ex=3600)
+        # The key alone does not let GC delete: the quiet period starts now.
+        report = lifecycle.trajectory_items_gc(
+            execute=store.execute, redis_client=seen_redis
+        )
+        assert report["status"] == "waiting", report
+        assert report["reason"] == "legacy_quiet_period"
+        assert not store.deletes()
+        started = int(seen_redis.get(QUIET_SINCE_KEY))
+        assert abs(started - store.now_us()) < HOUR_US
+        assert 0 < seen_redis.ttl(QUIET_SINCE_KEY) <= QUIET_MARK_TTL.total_seconds()
+
+        seen_redis.set(QUIET_SINCE_KEY, str(started - QUIET_US - HOUR_US))
         report = lifecycle.trajectory_items_gc(
             execute=store.execute, redis_client=seen_redis
         )
@@ -477,10 +510,84 @@ def test_gc_waits_while_legacy_seen_keys_exist(store):
     assert report["status"] == "latched" and report["reason"] == "legacy_seen_keys"
     assert not store.deletes()
     assert GC_LATCH_KEY not in seen.values  # clears itself once the keys expire
+    # Seeing a legacy key restarted the quiet period.
+    assert QUIET_SINCE_KEY not in seen.values
     del seen.values[legacy]
+    with GC_ON:
+        # The key is gone, but a legacy pod may still reuse from its local
+        # LRU for 7 days: GC waits out the quiet period first.
+        waiting = _gc(store, redis_client=seen)
+    assert waiting["status"] == "waiting", waiting
+    assert not store.deletes()
+    assert len(store.items(orphan)) == 1
+    started = int(seen.values[QUIET_SINCE_KEY])
+    seen.values[QUIET_SINCE_KEY] = str(started - QUIET_US - HOUR_US)
     with GC_ON:
         assert _gc(store, redis_client=seen)["status"] == "ok"
     assert store.items(orphan) == set()
+
+
+@pytest.mark.integration
+def test_gc_quiet_period_starts_once_and_must_run_its_course(store):
+    """No mark yet: GC marks the start (set-if-absent) and deletes nothing.
+
+    A later run keeps the first mark; deletes start only once it is
+    LEGACY_QUIET_PERIOD old.
+    """
+    orphan = str(uuid.uuid4())
+    store.add_items([(orphan, "s", _h(), store.now_us() - 20 * DAY_US)])
+    seen = Contract(quiet=False)
+    with GC_ON:
+        first = _gc(store, redis_client=seen)
+    assert first["status"] == "waiting" and first["reason"] == "legacy_quiet_period"
+    started = int(seen.values[QUIET_SINCE_KEY])
+    assert abs(started - store.now_us()) < HOUR_US
+    assert seen.ttls[QUIET_SINCE_KEY] == int(QUIET_MARK_TTL.total_seconds())
+
+    with GC_ON:
+        assert _gc(store, redis_client=seen)["status"] == "waiting"
+    assert int(seen.values[QUIET_SINCE_KEY]) == started  # never moved forward
+
+    seen.values[QUIET_SINCE_KEY] = str(store.now_us() - QUIET_US + HOUR_US)
+    with GC_ON:
+        assert _gc(store, redis_client=seen)["status"] == "waiting"
+    assert not store.deletes()
+    assert len(store.items(orphan)) == 1
+
+    seen.values[QUIET_SINCE_KEY] = str(store.now_us() - QUIET_US - HOUR_US)
+    with GC_ON:
+        assert _gc(store, redis_client=seen)["status"] == "ok"
+    assert store.items(orphan) == set()
+
+
+@pytest.mark.integration
+def test_gc_quiet_period_restarts_without_contract_key(store):
+    orphan = str(uuid.uuid4())
+    store.add_items([(orphan, "s", _h(), store.now_us() - 20 * DAY_US)])
+    seen = Contract()
+    del seen.values[CONTRACT_KEY]
+    with GC_ON:
+        assert _gc(store, redis_client=seen)["status"] == "inactive"
+    assert QUIET_SINCE_KEY not in seen.values
+    seen.values[CONTRACT_KEY] = "1"
+    with GC_ON:
+        assert _gc(store, redis_client=seen)["status"] == "waiting"
+    assert len(store.items(orphan)) == 1
+
+
+@pytest.mark.integration
+def test_gc_audits_while_legacy_keys_hold_it_back(store):
+    """Legacy reuse past the bound latches GC for good, not only while keys live."""
+    now = store.now_us()
+    _stale_reuse(store, now)
+    legacy = f"traj:seen:{uuid.uuid4()}:sess"
+    seen = Contract(keys=[legacy])
+    with GC_ON:
+        report = _gc(store, redis_client=seen)
+    assert report["status"] == "latched"
+    assert report["reason"] == "reference_violation"
+    assert json.loads(seen.values[GC_LATCH_KEY])["stale"] == 1
+    assert not store.deletes()
 
 
 @pytest.mark.integration
@@ -945,6 +1052,10 @@ def test_gc_on_replicated_schema():
             store.add_items(
                 [(pid, "s", _h(), now - 9 * DAY_US), (held, "s", key, now - 9 * DAY_US)]
             )
+            # live: a recent span and its item, so the audit's span sample and
+            # item lookup both run on the replicated path.
+            live, live_key = str(uuid.uuid4()), _h()
+            store.add_items([(live, "sess", live_key, now - 2 * HOUR_US)])
             # held's span is within GC_MARGIN of its oldest item: nothing goes.
             store.add_spans(
                 [
@@ -953,7 +1064,13 @@ def test_gc_on_replicated_schema():
                         "created_us": now - 9 * DAY_US + HOUR_US,
                         "scope": "s",
                         "inputs": [key],
-                    }
+                    },
+                    {
+                        "project": live,
+                        "created_us": now - HOUR_US,
+                        "scope": "sess",
+                        "inputs": [live_key],
+                    },
                 ]
             )
             with GC_ON, override_settings(FI_TRAJECTORY_CH_CLUSTER=CI_CLUSTER):
@@ -963,6 +1080,16 @@ def test_gc_on_replicated_schema():
                 replicated=True, cluster=CI_CLUSTER, hosts=1, database=database
             )
             assert report["status"] == "ok", report
+            assert report["audit"]["references"] == 1, report
+            assert report["audit"]["violations"] == 0
+            audit_reads = [
+                sql
+                for sql in store.statements
+                if "payload_encoding = 'items_v1'" in sql or "max(persisted_at)" in sql
+            ]
+            assert audit_reads
+            assert all("clusterAllReplicas" in sql for sql in audit_reads)
+            assert any("max(persisted_at)" in sql for sql in audit_reads)
             assert report["projects_held"] == 1
             assert store.items(pid) == set()
             assert len(store.items(held)) == 1
@@ -1081,6 +1208,58 @@ def test_cluster_discovery_refuses_clusters_over_different_hosts():
     )
     with override_settings(FI_TRAJECTORY_CH_CLUSTER=""):
         assert lifecycle.resolve_topology(same_hosts).cluster == "alpha"
+
+
+def test_gc_audit_reads_every_replica():
+    """A violating span on another replica latches GC.
+
+    The connected replica has not fetched the span yet (its local read finds
+    nothing); only the all-replica read sees it, and its item is missing.
+    """
+    now = 1_900_000_000_000_000
+    pid, key = str(uuid.uuid4()), _h()
+    statements: list[str] = []
+    base = _replicated_fake(statements=statements)
+
+    def execute(sql, params=None):
+        params = params or {}
+        if "now64(6, 'UTC')" in sql:
+            return [(now,)]
+        if "payload_encoding = 'items_v1'" in sql and "LIMIT %(limit)s" in sql:
+            statements.append(sql)
+            if "clusterAllReplicas" in sql and params.get("bucket") == 0:
+                return [(pid, "sess", now - 2 * HOUR_US, [key])]
+            return []
+        if "max(persisted_at)" in sql:
+            statements.append(sql)
+            return []
+        return base(sql, params)
+
+    seen = Contract()
+    with GC_ON, override_settings(FI_TRAJECTORY_CH_CLUSTER="prod"):
+        report = lifecycle.trajectory_items_gc(execute=execute, redis_client=seen)
+        audit = lifecycle.run_audit(execute=execute)
+    assert report["status"] == "latched", report
+    assert report["reason"] == "reference_violation"
+    assert report["audit"]["missing"] == 1
+    assert GC_LATCH_KEY in seen.values
+    assert not [sql for sql in statements if sql.lstrip().startswith("DELETE")]
+    assert audit["status"] == "violations" and audit["missing"] == 1
+
+
+def test_trajectory_audit_keeps_latch_when_audit_refused(monkeypatch):
+    """A refused audit read nothing, so it cannot clear the latch."""
+    seen = Contract(keys=[GC_LATCH_KEY])
+    monkeypatch.setattr(lifecycle, "open_seen_redis", lambda: seen)
+    monkeypatch.setattr(
+        "tracer.management.commands.trajectory_audit.run_audit",
+        lambda since_us=None: {"status": "refused", "reason": "cluster_unknown"},
+    )
+    with pytest.raises(CommandError, match="stays set"):
+        call_command("trajectory_audit", "--clear-gc-latch", stdout=io.StringIO())
+    assert GC_LATCH_KEY in seen.values
+    with pytest.raises(CommandError, match="refused"):
+        call_command("trajectory_audit", stdout=io.StringIO())
 
 
 def test_gc_refuses_a_distributed_facade():

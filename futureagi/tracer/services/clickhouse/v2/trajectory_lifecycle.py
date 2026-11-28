@@ -25,18 +25,27 @@ GC deletes only when all of these hold, checked in this order:
    ``spans`` or ``trajectory_items``.
 4. Replicated only: every replica of both tables is present, writable, in a
    live Keeper session, and no more than ``MAX_REPLICA_DELAY_SECONDS`` or
-   ``MAX_REPLICA_INSERTS_IN_QUEUE`` behind. The oldest-span probe then reads
-   every replica (``clusterAllReplicas``), so a replica that is still fetching
-   ``spans`` parts cannot make a cut too new; the DELETE replicates.
+   ``MAX_REPLICA_INSERTS_IN_QUEUE`` behind. Every read a cut or the audit
+   depends on also reads every replica (``clusterAllReplicas``): the
+   oldest-span probe, and the audit's span sample and item lookup. A replica
+   that is still fetching ``spans`` parts can then neither make a cut too new
+   nor hide a violating span; the DELETE replicates. The reads that stay on
+   the connected replica (candidate items, the ``LIMIT 1`` early-span check)
+   can only hold a project back.
 5. ``traj:contract:v2`` exists: some collector enforces the reuse bound.
 6. ``traj:gc:latch`` is absent: no earlier run found a reference violation
    that an operator has not cleared since.
-7. No legacy ``traj:seen:<pid>:<scope>`` key exists: no collector on the
-   legacy layout (which reuses for up to 7 days) has written in its key TTL.
-8. The reference audit of recent ``items_v1`` spans finds no missing item and
+7. The reference audit of recent ``items_v1`` spans finds no missing item and
    no item older than the bound allows. A violation also sets
    ``traj:gc:latch``, so GC stays stopped after the violating span leaves the
-   audit window.
+   audit window. The audit runs even while 8 holds GC back, so reuse by a
+   legacy collector past the bound latches GC as well.
+8. No legacy ``traj:seen:<pid>:<scope>`` key exists, and none has been seen,
+   with the contract key present, for ``LEGACY_QUIET_PERIOD`` (8 days,
+   ``traj:gc:quiet_since``). A legacy pod reuses from its local LRU for up to
+   7 days after its key is gone, so the absence of keys alone proves nothing.
+   The period is measured by GC itself, so it starts when the switch is
+   turned on.
 
 Otherwise GC deletes nothing that run (latched, refused or inactive).
 
@@ -70,13 +79,16 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
 )
 from tracer.services.trajectory_seen_contract import (
     GC_MARGIN,
+    LEGACY_QUIET_PERIOD,
     canonical_project_id,
     clear_gc_latch,
     contract_key_present,
+    end_quiet_period,
     gc_latch_present,
     legacy_seen_keys_present,
     open_seen_redis,
     set_gc_latch,
+    start_quiet_period,
 )
 
 logger = structlog.get_logger(__name__)
@@ -392,23 +404,64 @@ def _span_refs(
             yield project_id, scope_id, text
 
 
+def _replica_params(topology: Topology | None, table: str) -> dict[str, Any]:
+    if topology is None or not topology.replicated:
+        return {}
+    return {
+        "cluster": topology.cluster or "",
+        "database": topology.database,
+        "table": table,
+    }
+
+
 def _audit_bucket(
-    execute: Execute, bucket: int, *, since_us: int, until_us: int, limit: int
+    execute: Execute,
+    bucket: int,
+    *,
+    since_us: int,
+    until_us: int,
+    limit: int,
+    topology: Topology | None = None,
 ) -> AuditReport:
-    rows = execute(
-        "SELECT toString(project_id), item_scope_id, "
-        "toUnixTimestamp64Micro(created_at), "
-        "arrayConcat(input_item_hashes, output_item_hashes, tool_def_hashes, "
-        "[JSONExtractString(payload_envelope, 'in', 'sh'), "
-        "JSONExtractString(payload_envelope, 'out', 'sh')]) "
-        "FROM spans "
-        "WHERE payload_encoding = 'items_v1' "
-        "AND modulo(cityHash64(project_id), 32) = %(bucket)s "
-        "AND created_at >= fromUnixTimestamp64Micro(%(since)s, 'UTC') "
-        "AND created_at < fromUnixTimestamp64Micro(%(until)s, 'UTC') "
-        "LIMIT %(limit)s",
-        {"bucket": bucket, "since": since_us, "until": until_us, "limit": limit},
-    )
+    replicated = bool(topology and topology.replicated)
+    params: dict[str, Any] = {
+        "bucket": bucket,
+        "since": since_us,
+        "until": until_us,
+        "limit": limit,
+        **_replica_params(topology, SPANS_TABLE),
+    }
+    if replicated:
+        # Every replica: one that is behind must not hide a violating span.
+        rows = execute(
+            "SELECT toString(project_id), item_scope_id, "
+            "toUnixTimestamp64Micro(created_at), "
+            "arrayConcat(input_item_hashes, output_item_hashes, tool_def_hashes, "
+            "[JSONExtractString(payload_envelope, 'in', 'sh'), "
+            "JSONExtractString(payload_envelope, 'out', 'sh')]) "
+            "FROM clusterAllReplicas(%(cluster)s, %(database)s, %(table)s) "
+            "WHERE payload_encoding = 'items_v1' "
+            "AND modulo(cityHash64(project_id), 32) = %(bucket)s "
+            "AND created_at >= fromUnixTimestamp64Micro(%(since)s, 'UTC') "
+            "AND created_at < fromUnixTimestamp64Micro(%(until)s, 'UTC') "
+            "LIMIT %(limit)s SETTINGS skip_unavailable_shards = 0",
+            params,
+        )
+    else:
+        rows = execute(
+            "SELECT toString(project_id), item_scope_id, "
+            "toUnixTimestamp64Micro(created_at), "
+            "arrayConcat(input_item_hashes, output_item_hashes, tool_def_hashes, "
+            "[JSONExtractString(payload_envelope, 'in', 'sh'), "
+            "JSONExtractString(payload_envelope, 'out', 'sh')]) "
+            "FROM spans "
+            "WHERE payload_encoding = 'items_v1' "
+            "AND modulo(cityHash64(project_id), 32) = %(bucket)s "
+            "AND created_at >= fromUnixTimestamp64Micro(%(since)s, 'UTC') "
+            "AND created_at < fromUnixTimestamp64Micro(%(until)s, 'UTC') "
+            "LIMIT %(limit)s",
+            params,
+        )
     report = AuditReport(spans_sampled=len(rows), buckets=1)
     # Newest span created_at per referenced key: the strictest age bound.
     newest_ref: dict[tuple[str, str, str], int] = {}
@@ -422,19 +475,36 @@ def _audit_bucket(
     projects = sorted({key[0] for key in newest_ref})
     scopes = sorted({key[1] for key in newest_ref})
     for start in range(0, len(scopes), SCOPES_PER_LOOKUP):
-        found = execute(
-            "SELECT toString(project_id), scope_id, toString(item_hash), "
-            "toUnixTimestamp64Micro(max(persisted_at)) "
-            "FROM trajectory_items "
-            "WHERE _partition_id = %(partition)s "
-            "AND project_id IN %(projects)s AND scope_id IN %(scopes)s "
-            "GROUP BY project_id, scope_id, item_hash",
-            {
-                "partition": str(bucket),
-                "projects": tuple(projects),
-                "scopes": tuple(scopes[start : start + SCOPES_PER_LOOKUP]),
-            },
-        )
+        lookup: dict[str, Any] = {
+            "bucket": bucket,
+            "partition": str(bucket),
+            "projects": tuple(projects),
+            "scopes": tuple(scopes[start : start + SCOPES_PER_LOOKUP]),
+            **_replica_params(topology, ITEMS_TABLE),
+        }
+        if replicated:
+            # The newest copy on any replica: a replica that has not fetched
+            # it yet must not report the item missing.
+            found = execute(
+                "SELECT toString(project_id), scope_id, toString(item_hash), "
+                "toUnixTimestamp64Micro(max(persisted_at)) "
+                "FROM clusterAllReplicas(%(cluster)s, %(database)s, %(table)s) "
+                "WHERE modulo(cityHash64(project_id), 32) = %(bucket)s "
+                "AND project_id IN %(projects)s AND scope_id IN %(scopes)s "
+                "GROUP BY project_id, scope_id, item_hash "
+                "SETTINGS skip_unavailable_shards = 0",
+                lookup,
+            )
+        else:
+            found = execute(
+                "SELECT toString(project_id), scope_id, toString(item_hash), "
+                "toUnixTimestamp64Micro(max(persisted_at)) "
+                "FROM trajectory_items "
+                "WHERE _partition_id = %(partition)s "
+                "AND project_id IN %(projects)s AND scope_id IN %(scopes)s "
+                "GROUP BY project_id, scope_id, item_hash",
+                lookup,
+            )
         for project_id, scope_id, item_hash, newest_us in found:
             key = (str(project_id), str(scope_id), str(item_hash).rstrip("\x00"))
             persisted[key] = max(persisted.get(key, 0), int(newest_us))
@@ -456,6 +526,7 @@ def audit_references(
     since_us: int,
     until_us: int,
     limit: int = AUDIT_SPANS_PER_BUCKET,
+    topology: Topology | None = None,
 ) -> AuditReport:
     """Check that recent ``items_v1`` spans point only at present, fresh items.
 
@@ -463,11 +534,17 @@ def audit_references(
     A violation is a referenced key with no item row (missing), or whose newest
     copy was persisted more than GC_MARGIN before the newest span that
     references it (stale: some collector reused past the bound). Counts only.
+    On a replicated ``topology`` both reads cover every replica.
     """
     total = AuditReport()
     for bucket in range(BUCKETS):
         part = _audit_bucket(
-            execute, bucket, since_us=since_us, until_us=until_us, limit=limit
+            execute,
+            bucket,
+            since_us=since_us,
+            until_us=until_us,
+            limit=limit,
+            topology=topology,
         )
         total.spans_sampled += part.spans_sampled
         total.references += part.references
@@ -490,14 +567,25 @@ def _recent_items_v1_spans(execute: Execute, *, since_us: int) -> bool:
 def run_audit(
     *, execute: Execute | None = None, since_us: int | None = None
 ) -> dict[str, Any]:
-    """Report-only audit for ``manage.py trajectory_audit``."""
+    """Report-only audit for ``manage.py trajectory_audit``.
+
+    On replicated tables it reads every replica, so a clean report cannot come
+    from a replica that lacks the violating spans. ``refused`` when the
+    topology is not supported.
+    """
     with _executor(execute) as run:
         if not store_present(run):
             return {"status": "absent"}
+        topology = resolve_topology(run)
+        if topology.refusal:
+            return {"status": "refused", "reason": topology.refusal}
         now_us = server_now_us(run)
         since = now_us - _us(AUDIT_WINDOW) if since_us is None else since_us
         report = audit_references(
-            run, since_us=since, until_us=now_us - _us(AUDIT_SETTLE)
+            run,
+            since_us=since,
+            until_us=now_us - _us(AUDIT_SETTLE),
+            topology=topology,
         )
         return {
             "status": "ok" if not report.violations else "violations",
@@ -607,13 +695,8 @@ def _gc_bucket(
         params: dict[str, Any] = {
             "projects": tuple(oldest_item),
             "horizon": max(horizon.values()),
+            **_replica_params(topology, SPANS_TABLE),
         }
-        if replicated and topology is not None:
-            params.update(
-                cluster=topology.cluster or "",
-                database=topology.database,
-                table=SPANS_TABLE,
-            )
         observed = {
             str(pid): int(min_us)
             for pid, min_us in execute(_OLDEST_SPAN_SQL[replicated], params)
@@ -649,13 +732,18 @@ def _gc_bucket(
 
 
 def masked_item_partitions(execute: Execute, *, limit: int) -> list[str]:
+    """Partitions with lightweight-deleted rows, the longest-waiting first.
+
+    Oldest masked part first, so the same large partitions cannot take every
+    slot day after day.
+    """
     if limit <= 0:
         return []
     rows = execute(
         "SELECT partition_id FROM system.parts "
         "WHERE database = currentDatabase() AND table = %(table)s "
         "AND active AND has_lightweight_delete "
-        "GROUP BY partition_id ORDER BY sum(rows) DESC, partition_id "
+        "GROUP BY partition_id ORDER BY min(modification_time), partition_id "
         "LIMIT %(limit)s",
         {"table": ITEMS_TABLE, "limit": int(limit)},
     )
@@ -701,7 +789,7 @@ def trajectory_items_gc(
 
         now_us = server_now_us(run)
         with _seen_client(redis_client) as seen:
-            blocked, audit = _gc_gate(run, seen, now_us=now_us)
+            blocked, audit = _gc_gate(run, seen, now_us=now_us, topology=topology)
         if blocked is not None:
             return blocked.as_dict()
 
@@ -719,11 +807,13 @@ def trajectory_items_gc(
 
 
 def _gc_gate(
-    run: Execute, seen: Any, *, now_us: int
+    run: Execute, seen: Any, *, now_us: int, topology: Topology | None = None
 ) -> tuple[GcReport | None, AuditReport]:
     """Steps 5-8 of the GC rule. Returns (report that stops GC, audit)."""
     since_us = now_us - _us(AUDIT_WINDOW)
     if not contract_key_present(seen):
+        # No collector vouches for the bound: the quiet period starts over.
+        end_quiet_period(seen)
         if _recent_items_v1_spans(run, since_us=since_us):
             logger.error("trajectory_gc_latched", reason="contract_key_absent")
             return GcReport(status="latched", reason="contract_key_absent"), (
@@ -736,12 +826,20 @@ def _gc_gate(
     if gc_latch_present(seen):
         logger.error("trajectory_gc_latched", reason="persisted_latch")
         return GcReport(status="latched", reason="persisted_latch"), AuditReport()
-    if legacy_seen_keys_present(seen):
-        logger.error("trajectory_gc_latched", reason="legacy_seen_keys")
-        return GcReport(status="latched", reason="legacy_seen_keys"), AuditReport()
+    legacy = legacy_seen_keys_present(seen)
+    quiet_since: int | None = None
+    if legacy:
+        end_quiet_period(seen)
+    else:
+        quiet_since = start_quiet_period(seen, now_us=now_us)
 
+    # Audit before the legacy checks below can stop GC, so a legacy collector
+    # reusing past the bound sets the persistent latch too.
     audit = audit_references(
-        run, since_us=since_us, until_us=now_us - _us(AUDIT_SETTLE)
+        run,
+        since_us=since_us,
+        until_us=now_us - _us(AUDIT_SETTLE),
+        topology=topology,
     )
     if audit.violations:
         persisted = set_gc_latch(
@@ -756,6 +854,29 @@ def _gc_gate(
         return (
             GcReport(
                 status="latched", reason="reference_violation", audit=audit.as_dict()
+            ),
+            audit,
+        )
+    if legacy:
+        logger.error("trajectory_gc_latched", reason="legacy_seen_keys")
+        return (
+            GcReport(
+                status="latched", reason="legacy_seen_keys", audit=audit.as_dict()
+            ),
+            audit,
+        )
+    if quiet_since is None or now_us - quiet_since < _us(LEGACY_QUIET_PERIOD):
+        # Absent or unreadable mark, or a legacy pod-local LRU may still reuse.
+        logger.info(
+            "trajectory_gc_waiting",
+            reason="legacy_quiet_period",
+            quiet_since_us=quiet_since,
+        )
+        return (
+            GcReport(
+                status="waiting",
+                reason="legacy_quiet_period",
+                audit=audit.as_dict(),
             ),
             audit,
         )

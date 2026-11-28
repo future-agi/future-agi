@@ -1322,14 +1322,25 @@ nothing unless all of these hold:
   writable and at most 5 minutes behind, and the cluster used to reach them
   (`FI_TRAJECTORY_CH_CLUSTER`, or the one single-shard cluster whose hosts
   match the replicas) lists every replica.
-- A collector has written the reuse contract key (`traj:contract:v2`), and no
-  legacy `traj:seen:<project>:<scope>` key is left in Redis. Legacy keys live
-  up to 7 days, so after an upgrade from the legacy seen store, or a
-  rollback to it, GC waits until the last one expires (or until
-  `trajectory_seen_reset` removes them).
+- A collector has written the reuse contract key (`traj:contract:v2`), and
+  for the last 8 days every daily GC run has found that key and no legacy
+  `traj:seen:<project>:<scope>` key in Redis. GC keeps the start of that
+  period in `traj:gc:quiet_since`. A collector on the legacy seen store keeps
+  reusing items from its in-process cache for up to 7 days (its default
+  `project_ttl`; do not raise it) after its Redis key is gone, so the absence
+  of legacy keys alone proves nothing. The period starts over when GC sees a
+  legacy key or no contract key, when it stops checking for 3 days (switch
+  off, schedule paused, refused or latched), and when `trajectory_seen_reset`
+  runs. So the first delete comes at least 8 days after the switch is turned
+  on, and after an upgrade from the legacy seen store, or a rollback to it,
+  at least 8 days after the last legacy key is gone. Status `waiting` means
+  the period is still running.
 - The GC latch (`traj:gc:latch`) is not set, and an audit of the last two days
-  of spans finds no missing or over-age item. A violation sets the latch, and
-  GC then stays stopped until an operator checks the cause and runs
+  of spans finds no missing or over-age item. The audit reads every replica
+  on replicated ClickHouse, and it runs during the 8-day period too, so reuse
+  past the bound by a legacy collector also sets the latch. A violation sets
+  the latch, and GC then stays stopped until an operator checks the cause and
+  runs
   `python manage.py trajectory_audit --since <latch time> --clear-gc-latch`
   (it clears the latch only when that audit is clean; add `--force` to clear
   it anyway).

@@ -21,6 +21,14 @@ code in this repo depends on three parts of that contract:
   GC deletes nothing while it exists; only an operator clears it
   (``trajectory_audit --clear-gc-latch``). It is outside ``traj:seen:*``, so a
   seen-store reset or a project erasure never removes it.
+- ``traj:gc:quiet_since``: the ClickHouse server time at which GC first saw the
+  contract key and no legacy key, in an unbroken run of daily checks (each
+  run renews its ``QUIET_MARK_TTL``, so a pause in checking expires it). A
+  legacy pod also reuses from its pod-local LRU for up to
+  ``LEGACY_SEEN_MAX_TTL`` after its last Redis read or commit, with no Redis
+  key left (expired, evicted, or removed by a reset). GC therefore deletes
+  only once this mark is ``LEGACY_QUIET_PERIOD`` old. GC removes the mark when
+  it sees a legacy key or no contract key, and a seen-store reset removes it.
 
 The bounded seen store (key layout v2) is built in a separate change. Until it
 lands the collector still writes the legacy layout ``traj:seen:<pid>:<scope>``,
@@ -43,12 +51,21 @@ MAX_REUSE_AGE_CAP = timedelta(hours=48)
 IN_FLIGHT_MARGIN = timedelta(hours=24)
 # GC keeps copies persisted within this margin of the oldest span still present.
 GC_MARGIN = MAX_REUSE_AGE_CAP + IN_FLIGHT_MARGIN
-# Longest TTL the legacy seen store set on a key (Go: DefaultProjectTTL).
+# Longest TTL the legacy seen store set on a key or a pod-local LRU entry
+# (Go: DefaultProjectTTL; no deploy overrides project_ttl).
 LEGACY_SEEN_MAX_TTL = timedelta(days=7)
+# GC deletes only after it has seen no legacy key, and the contract key, for
+# this long: every legacy pod-local LRU entry has expired by then, and a
+# request that read one has written its span.
+LEGACY_QUIET_PERIOD = LEGACY_SEEN_MAX_TTL + IN_FLIGHT_MARGIN
+# Each GC run renews the quiet-period mark for this long, so the period
+# starts over when GC stops checking (switch off, schedule paused) for longer.
+QUIET_MARK_TTL = timedelta(days=3)
 
 EPOCH_KEY = "traj:epoch"
 CONTRACT_KEY = "traj:contract:v2"
 GC_LATCH_KEY = "traj:gc:latch"
+QUIET_SINCE_KEY = "traj:gc:quiet_since"
 SEEN_KEY_PREFIX = "traj:seen:"
 SEEN_V2_KEY_PREFIX = "traj:seen:v2:"
 ALL_SEEN_KEYS_PATTERN = SEEN_KEY_PREFIX + "*"
@@ -121,6 +138,9 @@ def reset_seen_store(client) -> tuple[str, int]:
     """
     epoch = uuid.uuid4().hex
     client.set(EPOCH_KEY, epoch)
+    # Removing legacy keys does not stop a legacy pod reusing from its local
+    # LRU, so GC's quiet period starts again.
+    client.delete(QUIET_SINCE_KEY)
     return epoch, scan_unlink(client, (ALL_SEEN_KEYS_PATTERN,))
 
 
@@ -190,6 +210,41 @@ def legacy_seen_keys_present(client) -> bool:
         return True
 
 
+def start_quiet_period(client, *, now_us: int) -> int | None:
+    """Mark the start of GC's quiet period unless it is marked already.
+
+    Returns the marked start (server microseconds), or None when Redis fails
+    or holds a value that is not a time, which keeps GC from deleting.
+    """
+    if client is None:
+        return None
+    from redis.exceptions import RedisError
+
+    try:
+        client.set(QUIET_SINCE_KEY, str(int(now_us)), nx=True)
+        client.expire(QUIET_SINCE_KEY, int(QUIET_MARK_TTL.total_seconds()))
+        value = client.get(QUIET_SINCE_KEY)
+    except (RedisError, OSError):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def end_quiet_period(client) -> bool:
+    """Remove the quiet-period mark. Returns False if Redis refused."""
+    if client is None:
+        return False
+    from redis.exceptions import RedisError
+
+    try:
+        client.delete(QUIET_SINCE_KEY)
+    except (RedisError, OSError):
+        return False
+    return True
+
+
 def open_seen_redis():
     """A client on the Redis the collector uses.
 
@@ -222,13 +277,17 @@ __all__ = [
     "GC_LATCH_KEY",
     "GC_MARGIN",
     "IN_FLIGHT_MARGIN",
+    "LEGACY_QUIET_PERIOD",
     "LEGACY_SEEN_KEYS_PATTERN",
     "LEGACY_SEEN_MAX_TTL",
     "MAX_REUSE_AGE_CAP",
+    "QUIET_MARK_TTL",
+    "QUIET_SINCE_KEY",
     "canonical_project_id",
     "clear_gc_latch",
     "clear_project_seen_keys",
     "contract_key_present",
+    "end_quiet_period",
     "gc_latch_present",
     "legacy_seen_keys_present",
     "open_seen_redis",
@@ -236,4 +295,5 @@ __all__ = [
     "reset_seen_store",
     "scan_unlink",
     "set_gc_latch",
+    "start_quiet_period",
 ]

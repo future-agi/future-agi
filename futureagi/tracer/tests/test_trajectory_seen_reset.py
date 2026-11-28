@@ -12,7 +12,12 @@ import pytest
 from django.core.management import call_command
 from django.test import override_settings
 
-from tracer.services.trajectory_seen_contract import CONTRACT_KEY, EPOCH_KEY
+from tracer.services.trajectory_seen_contract import (
+    CONTRACT_KEY,
+    EPOCH_KEY,
+    GC_LATCH_KEY,
+    QUIET_SINCE_KEY,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -50,6 +55,8 @@ def test_trajectory_seen_reset_changes_epoch_and_removes_only_traj_seen_keys(
     client.set(CONTRACT_KEY, "1")
     client.set("usage:events:marker", "keep")
     client.set("traj:other", "keep")
+    client.set(QUIET_SINCE_KEY, "0")
+    client.set(GC_LATCH_KEY, "{}")
 
     out = io.StringIO()
     # The command always uses FI_TRAJECTORY_SEEN_REDIS_DB, not REDIS_URL's.
@@ -62,6 +69,10 @@ def test_trajectory_seen_reset_changes_epoch_and_removes_only_traj_seen_keys(
     assert client.get(CONTRACT_KEY) == "1"
     assert client.get("usage:events:marker") == "keep"
     assert client.get("traj:other") == "keep"
+    # Legacy pods may still reuse from their local LRU: GC's quiet period
+    # starts over. The latch is an operator's to clear, never the reset's.
+    assert not client.exists(QUIET_SINCE_KEY)
+    assert client.get(GC_LATCH_KEY) == "{}"
     assert f"removed {len(seen)} seen-set keys" in out.getvalue()
     # Counts only: no key name or epoch token is printed.
     assert "traj:" not in out.getvalue() and epoch not in out.getvalue()

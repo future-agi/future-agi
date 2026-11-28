@@ -11,7 +11,9 @@ A violation found by the daily GC also sets the GC latch (``traj:gc:latch``):
 GC then deletes nothing, even after the violating span leaves the audit
 window, until an operator runs this command with ``--clear-gc-latch``. That
 clears the latch only if the audit is clean over ``--since`` (pass the latch
-time or earlier); ``--force`` clears it regardless.
+time or earlier); ``--force`` clears it regardless. On replicated ClickHouse
+the audit reads every replica; it refuses (and clears nothing) on a topology
+GC does not support.
 """
 
 from __future__ import annotations
@@ -61,14 +63,18 @@ class Command(BaseCommand):
         since = _since_us(options["since"]) if options.get("since") else None
         report = run_audit(since_us=since)
         self.stdout.write(json.dumps(report, sort_keys=True))
+        status = report.get("status")
         if options.get("clear_gc_latch"):
-            if report.get("violations") and not options.get("force"):
+            if status != "ok" and not options.get("force"):
+                # A refused audit read nothing: it is no proof either way.
                 raise CommandError(
-                    "the audit found violations; the GC latch stays set "
+                    f"the audit is not clean ({status}); the GC latch stays set "
                     "(--force clears it anyway)"
                 )
             cleared = clear_trajectory_gc_latch()
             self.stdout.write(json.dumps({"gc_latch_cleared": cleared}))
+        if status == "refused":
+            raise CommandError(f"trajectory audit refused: {report.get('reason')}")
         if report.get("violations"):
             raise CommandError(
                 f"{report['violations']} trajectory item reference violation(s)"
