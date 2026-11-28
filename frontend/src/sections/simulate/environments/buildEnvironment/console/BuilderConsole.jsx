@@ -602,7 +602,9 @@ export default function BuilderConsole({
                     borderRadius: "4px",
                     border: "1px solid",
                     borderColor: "divider",
-                    maxWidth: 360, // room for the policy label beside a PDF name
+                    // Never wider than the composer: the file name truncates first.
+                    maxWidth: "100%",
+                    minWidth: 0,
                   }}
                 >
                   <Iconify
@@ -612,6 +614,7 @@ export default function BuilderConsole({
                   />
                   <Typography
                     noWrap
+                    title={file.name}
                     sx={{ typography: "s3", flex: 1, minWidth: 0 }}
                   >
                     {file.name}
