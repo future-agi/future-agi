@@ -1020,8 +1020,9 @@ class AuthMonitoringMiddleware:
             if _cache_transport_category(exc) is None:
                 raise
             # Signup and reset rely on this middleware for their IP limit.
-            limit_required = request.path.endswith(
-                ("signup/", "password-reset-initiate/")
+            limit_required = request.path_info in (
+                "/accounts/signup/",
+                "/accounts/password-reset-initiate/",
             )
             logger.warning(
                 "auth_rate_limit_cache_unavailable",

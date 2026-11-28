@@ -861,27 +861,34 @@ class TestErrorResponseEnvelope:
 @pytest.mark.unit
 @pytest.mark.usefixtures("non_oss_mode")
 class TestMiddlewareCacheOutage:
-    """Only login and token delegate to the view when the IP limit is unavailable."""
+    """Only signup and password-reset initiation return 503 on a cache outage."""
 
-    def _call(self, path, error):
+    def _call(self, path, error, method="POST"):
         from accounts.authentication import AuthMonitoringMiddleware
 
-        request = RequestFactory().post(path, content_type="application/json")
+        request = RequestFactory(SCRIPT_NAME="/api").generic(method, path)
         view = MagicMock(return_value=HttpResponse("OK", status=200))
         with patch("accounts.authentication.cache.get", side_effect=error):
             return AuthMonitoringMiddleware(view)(request), view
 
-    @pytest.mark.parametrize("path", ["/api/accounts/token/", "/api/accounts/login/"])
-    def test_unreachable_cache_lets_the_request_through(self, path):
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("POST", "/accounts/token/"),
+            ("POST", "/accounts/login/"),
+            ("GET", "/simulate/run-tests/get-id-by-name/newsletter-signup/"),
+        ],
+    )
+    def test_unreachable_cache_lets_the_request_through(self, method, path):
         # django-redis raises ConnectionInterrupted from the redis-py error.
         error = ConnectionInterrupted(connection=None)
         error.__cause__ = RedisConnectionError("Error 111 connecting to redis:6379")
-        response, view = self._call(path, error)
+        response, view = self._call(path, error, method)
         assert response is view.return_value
         view.assert_called_once()
 
     @pytest.mark.parametrize(
-        "path", ["/api/accounts/signup/", "/api/accounts/password-reset-initiate/"]
+        "path", ["/accounts/signup/", "/accounts/password-reset-initiate/"]
     )
     def test_unreachable_cache_returns_service_unavailable(self, path):
         from tfc.utils.general_methods import GeneralMethods
@@ -902,4 +909,4 @@ class TestMiddlewareCacheOutage:
 
     def test_other_cache_errors_still_raise(self):
         with pytest.raises(ConnectionInterrupted):
-            self._call("/api/accounts/login/", ConnectionInterrupted(connection=None))
+            self._call("/accounts/login/", ConnectionInterrupted(connection=None))
