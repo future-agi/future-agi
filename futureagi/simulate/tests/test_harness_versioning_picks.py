@@ -1720,3 +1720,186 @@ class TestRunPlanVerdict:
         )
 
         assert response.status_code == 400
+
+
+def _reads_as_browser(*agent_version_ids):
+    """Each named version's stored reading needs a browser; any other reads as chat."""
+    needs = {str(one) for one in agent_version_ids}
+    return patch(
+        "simulate.services.agent_contracts.stored_version_contract",
+        side_effect=lambda version_id: (
+            {"modality": "chat", "environment_needs": ["browser"]}
+            if str(version_id) in needs
+            else {"modality": "chat"}
+        ),
+    )
+
+
+class TestABrowserAgentRunsOnlyWithSites:
+    def test_a_picked_browser_agent_is_refused_where_the_environment_names_no_sites(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-browser-none", storage)
+        a2 = _second_agent(environment)
+        _ready(
+            environment,
+            a2.id,
+            environment.environment_version,
+            environment.suite_version,
+        )
+
+        with _reads_as_browser(a2.id):
+            refusal = _refusal(environment, VersionPicks(agent_version_id=a2.id))
+
+        assert refusal.code == "browser_environment_required"
+
+    def test_the_default_agent_is_held_to_the_same_rule(self, user, workspace, storage):
+        environment = _environment(user, workspace, "pk-browser-default", storage)
+
+        with _reads_as_browser(environment.agent_version_id):
+            refusal = _refusal(environment, None)
+
+        assert refusal.code == "browser_environment_required"
+
+    def test_a_browser_agent_runs_where_the_environment_names_sites(
+        self, user, workspace, storage
+    ):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
+        environment = _environment(user, workspace, "pk-browser-sites", storage)
+        # Named at create and recorded on the version, as a browser environment's are: the
+        # version's own record is what a run is held to.
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "browser": {"allowed_sites": ["shop.example.com"]},
+            }
+        )
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=["shop.example.com"])
+        environment.refresh_from_db()
+        a2 = _second_agent(environment)
+        _ready(
+            environment,
+            a2.id,
+            environment.environment_version,
+            environment.suite_version,
+        )
+
+        with _reads_as_browser(a2.id):
+            run = _create(environment, VersionPicks(agent_version_id=a2.id))
+
+        assert run.agent_version_id == a2.id
+
+    def test_a_chat_agent_runs_where_the_environment_names_sites(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-chat-sites", storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "browser": {"allowed_sites": ["shop.example.com"]},
+            }
+        )
+        environment.refresh_from_db()
+
+        with _reads_as_browser():
+            run = _create(environment)
+
+        assert run.agent_version_id == environment.agent_version_id
+
+    def test_the_pinned_version_s_own_sites_answer(self, user, workspace, storage):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
+        environment = _environment(user, workspace, "pk-browser-pinned", storage)
+        # Recorded on the version, though the create input names none.
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=["shop.example.com"])
+        environment.refresh_from_db()
+
+        with _reads_as_browser(environment.agent_version_id):
+            run = _create(environment)
+
+        assert run.agent_version_id == environment.agent_version_id
+
+    def test_a_version_that_recorded_no_sites_is_held_to_that(
+        self, user, workspace, storage
+    ):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
+        environment = _environment(user, workspace, "pk-browser-recorded-none", storage)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "browser": {"allowed_sites": ["shop.example.com"]},
+            }
+        )
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=[])
+        environment.refresh_from_db()
+
+        with _reads_as_browser(environment.agent_version_id):
+            refusal = _refusal(environment, None)
+
+        assert refusal.code == "browser_environment_required"
+
+    def test_a_run_reads_the_agent_s_contract_once(self, user, workspace, storage):
+        # The read goes to storage, so a run makes it once, before the environment's lock,
+        # however often its pins are resolved.
+        environment = _environment(user, workspace, "pk-browser-read-once", storage)
+
+        with _reads_as_browser() as reads:
+            _create(environment)
+
+        assert reads.call_count == 1
+
+    def test_pins_that_move_before_the_lock_are_checked_again(
+        self, user, workspace, storage, monkeypatch
+    ):
+        from simulate.services import hosted_harness
+
+        environment = _environment(user, workspace, "pk-browser-moved", storage)
+        a2 = _second_agent(environment)
+        _ready(
+            environment,
+            a2.id,
+            environment.environment_version,
+            environment.suite_version,
+        )
+        resolve = hosted_harness.resolve_run_pins
+        calls = []
+
+        def moving(environment, **kwargs):
+            calls.append(kwargs)
+            # The plan and the early check see the default agent; under the lock the
+            # browser agent is pinned, as if the default changed in between.
+            if len(calls) == 3:
+                kwargs["picks"] = VersionPicks(agent_version_id=a2.id)
+            return resolve(environment, **kwargs)
+
+        monkeypatch.setattr(hosted_harness, "resolve_run_pins", moving)
+
+        with _reads_as_browser(a2.id) as reads:
+            refusal = _refusal(environment, None)
+
+        assert len(calls) == 3
+        assert refusal.code == "browser_environment_required"
+        assert reads.call_count == 2
+
+    def test_the_run_preview_is_refused_as_the_run_would_be(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_versioning.run_warnings import preview_run
+
+        environment = _environment(user, workspace, "pk-browser-preview", storage)
+
+        with (
+            _reads_as_browser(environment.agent_version_id),
+            pytest.raises(HostedHarnessError) as caught,
+        ):
+            preview_run(environment)
+
+        assert caught.value.code == "browser_environment_required"

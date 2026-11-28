@@ -40,6 +40,7 @@ from urllib3.exceptions import HTTPError
 
 from simulate.constants.harness_environment import (
     ADAPTATION_APPROVAL_PREFIX,
+    AGENT_TYPE_BROWSER,
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
@@ -73,6 +74,7 @@ from simulate.selectors.environment_documents import (
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.selectors.stage_outputs import stage_output
+from simulate.services.browser_sites import needs_browser
 from simulate.services.harness_scenarios import (
     call_actor_choice_labels,
     call_actor_entries,
@@ -210,16 +212,30 @@ def filter_for_list(
                     Value(""),
                     output_field=TextField(),
                 ),
-                list_version_modality=Lower(Trim(KT("version_contract__modality"))),
+                # Empty, not NULL, for a contract that names no modality: the browser filter negates
+                # the voice test, and NOT NULL would leave such a browser agent out.
+                list_version_modality=Coalesce(
+                    Lower(Trim(KT("version_contract__modality"))),
+                    Value(""),
+                    output_field=TextField(),
+                ),
             )
             .annotate(
                 list_is_voice=Case(
                     When(_voice_q(), then=Value(True)),
                     default=Value(False),
                     output_field=BooleanField(),
-                )
+                ),
+                list_is_browser=Case(
+                    When(~_voice_q() & _needs_browser_q(), then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
             )
-            .filter(list_is_voice=agent_type == AGENT_TYPE_VOICE)
+            .filter(
+                list_is_voice=agent_type == AGENT_TYPE_VOICE,
+                list_is_browser=agent_type == AGENT_TYPE_BROWSER,
+            )
         )
     return queryset
 
@@ -295,6 +311,25 @@ def _voice_q() -> Q:
     ) | (~has_version_contract & snapshot_says_voice)
     return Q(list_connector__in=_VOICE_CONNECTORS) | (
         Q(list_connector__in=("", "auto")) & contract_says_voice
+    )
+
+
+# How the contract says an agent needs a browser from its environment.
+_NEEDS_BROWSER = {"environment_needs": ["browser"]}
+
+
+def _needs_browser_q() -> Q:
+    """Whether the contract a row reports needs a browser, read from the same contract ``_voice_q`` reads."""
+    contracts = HostedHarnessStageOutput.no_workspace_objects.filter(
+        job=OuterRef("pk"), kind="contract", deleted=False
+    )
+    snapshot_says_browser = Exists(contracts.filter(data__contains=_NEEDS_BROWSER)) | (
+        ~Exists(contracts)
+        & Q(stage_outputs__contains=[{"kind": "contract", "data": _NEEDS_BROWSER}])
+    )
+    has_version_contract = Q(version_contract__isnull=False) & ~Q(version_contract={})
+    return (has_version_contract & Q(version_contract__contains=_NEEDS_BROWSER)) | (
+        ~has_version_contract & snapshot_says_browser
     )
 
 
@@ -563,23 +598,29 @@ def status_for(job: HostedHarnessJob) -> str:
 
 
 def agent_type(job: HostedHarnessJob, contract: dict[str, Any] | None = None) -> str:
-    """Voice or chat, from the strongest evidence available.
+    """Voice, chat or browser, from the strongest evidence available.
 
-    The user's explicit connector wins. Under ``auto`` it is genuinely unknown
-    until authoring reports a modality, and chat is the safe default: a chat run
-    rendered as chat merely looks plainer, whereas a voice run rendered as chat
-    loses its recordings.
+    The user's explicit connector wins for voice. Under ``auto`` it is genuinely
+    unknown until authoring reports a modality, and chat is the safe default: a
+    chat run rendered as chat merely looks plainer, whereas a voice run rendered
+    as chat loses its recordings. A chat agent whose contract needs a browser is
+    a browser agent. A caller that gives no contract, for an agent whose
+    connector names chat, reads chat without a contract read: those callers ask
+    only whether it is voice.
     """
     agent = (job.payload or {}).get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
     if connector in _VOICE_CONNECTORS:
         return AGENT_TYPE_VOICE
-    if connector and connector != "auto":
+    explicit = bool(connector) and connector != "auto"
+    if explicit and contract is None:
         return AGENT_TYPE_CHAT
     if contract is None:
         contract = contract_data(job)
     modality = str((contract or {}).get("modality") or "").strip().lower()
-    return AGENT_TYPE_VOICE if modality == "voice" else AGENT_TYPE_CHAT
+    if modality == "voice" and not explicit:
+        return AGENT_TYPE_VOICE
+    return AGENT_TYPE_BROWSER if needs_browser(contract) else AGENT_TYPE_CHAT
 
 
 def scenario_count(job: HostedHarnessJob) -> int:

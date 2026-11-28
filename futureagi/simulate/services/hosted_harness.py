@@ -457,6 +457,7 @@ def create_selected_harness_run(
     # Before the lock as well: the validation job it starts, and its dispatch, must commit
     # although the 409 it raises would roll the run's transaction back.
     released: set[str] = set()
+    early: ResolvedPins | None = None
     # A request whose key already made a run is answered, or refused, under the lock below.
     repeated = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id,
@@ -476,6 +477,8 @@ def create_selected_harness_run(
                 require_pair_runnable,
             )
 
+            # Once, here, before the lock: it reads the agent's contract from storage.
+            refuse_unpaired_pins(environment, early)
             # A failed or validating pairing is refused before any validation starts.
             require_pair_runnable(environment, early)
         released = _validate_unproved_pair(environment, planned, early, scenario_keys)
@@ -529,6 +532,9 @@ def create_selected_harness_run(
                 return replayed, False
         if unreadable is not None:
             raise unreadable
+        if resolved is not None and (early is None or not _same_pair(resolved, early)):
+            # Checked before the lock unless the pins moved since, or were not resolved then.
+            refuse_unpaired_pins(environment, resolved)
         if resolved is not None:
             from simulate.services.harness_versioning.validation import (
                 require_pair_runnable,
@@ -1297,6 +1303,39 @@ def all_run_keys(
     left_out = set(hidden)
     ordered = dict.fromkeys(found)
     return [key for key in ordered if key not in left_out]
+
+
+def refuse_unpaired_pins(
+    environment: HostedHarnessJob, pins: ResolvedPins | None
+) -> None:
+    """Refuse pins that pair an agent needing a browser with an environment version naming no
+    sites: only a compatible pair runs.
+
+    It reads the pinned agent's stored contract, from storage, so a caller makes it once for a
+    run's pins, before the row lock; only a recheck after the pins moved runs under it.
+    """
+    if pins is None:
+        return
+    from simulate.services.browser_sites import (
+        browser_sites_at_pin,
+        refuse_unpaired_browser_agent,
+    )
+
+    refuse_unpaired_browser_agent(
+        getattr(pins.agent_version, "id", None),
+        browser_sites_at_pin(environment.payload, pins.environment_version),
+    )
+
+
+def _same_pair(one: ResolvedPins, other: ResolvedPins) -> bool:
+    """Whether two resolutions pin the same agent and environment versions."""
+    return (
+        getattr(one.agent_version, "id", None),
+        getattr(one.environment_version, "id", None),
+    ) == (
+        getattr(other.agent_version, "id", None),
+        getattr(other.environment_version, "id", None),
+    )
 
 
 def resolve_run_pins(

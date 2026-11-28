@@ -53827,7 +53827,8 @@
                         "type": "string",
                         "enum": [
                             "voice",
-                            "chat"
+                            "chat",
+                            "browser"
                         ]
                     }
                 ],
@@ -152044,7 +152045,8 @@
                     "type": "string",
                     "enum": [
                         "voice",
-                        "chat"
+                        "chat",
+                        "browser"
                     ]
                 },
                 "status": {
@@ -152326,7 +152328,8 @@
                     "type": "string",
                     "enum": [
                         "voice",
-                        "chat"
+                        "chat",
+                        "browser"
                     ]
                 },
                 "status": {
@@ -163110,6 +163113,23 @@
                 "allowed_egress_domains": []
             }
         },
+        "HarnessBrowser": {
+            "required": [
+                "allowed_sites"
+            ],
+            "type": "object",
+            "properties": {
+                "allowed_sites": {
+                    "description": "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 253
+                    },
+                    "maxItems": 100
+                }
+            }
+        },
         "HarnessRetry": {
             "type": "object",
             "properties": {
@@ -163240,6 +163260,9 @@
                 "security": {
                     "$ref": "#/definitions/HarnessSecurity"
                 },
+                "browser": {
+                    "$ref": "#/definitions/HarnessBrowser"
+                },
                 "retry": {
                     "$ref": "#/definitions/HarnessRetry"
                 },
@@ -163319,6 +163342,9 @@
                 },
                 "security": {
                     "$ref": "#/definitions/HarnessSecurity"
+                },
+                "browser": {
+                    "$ref": "#/definitions/HarnessBrowser"
                 },
                 "retry": {
                     "$ref": "#/definitions/HarnessRetry"

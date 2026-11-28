@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 
 from simulate.models import (
     CallExecution,
+    HostedHarnessArtifact,
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
@@ -1948,6 +1949,62 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
     assert capability.attempt.manifest_acked is True
     job.refresh_from_db()
     assert job.state == HostedHarnessJob.State.CLEANING_UP
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("level", "kept"),
+    [
+        ("metadata-only", False),
+        ("traces", False),
+        ("traces-and-recordings", True),
+        ("full", True),
+    ],
+)
+def test_a_screenshot_is_kept_at_the_levels_that_keep_recordings(
+    organization, level, kept
+):
+    # A screenshot can show what is on the screen, as a recording can carry what was said, so it is kept where recordings are.
+    job, _ = create_hosted_job(
+        organization,
+        _payload(
+            artifacts={
+                "level": level,
+                "retention_days": 30,
+                "allow_bundle_download": False,
+                "max_artifact_bytes": 1024,
+            }
+        ),
+        idempotency_key=f"screenshot-{level}",
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+    digest = hashlib.sha256(content).hexdigest()
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=MagicMock(),
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="image/png",
+            HTTP_X_ARTIFACT_KIND="screenshot",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="refund-1",
+            **_headers(capability),
+        )
+    if kept:
+        assert response.status_code == 201, response.content
+        artifact = HostedHarnessArtifact.no_workspace_objects.get(
+            job=job, sha256=digest
+        )
+        assert artifact.kind == "screenshot"
+        assert artifact.content_type == "image/png"
+    else:
+        assert response.status_code == 422, response.content
+        assert response.json()["error"] == "artifact_level_forbidden"
+        assert not HostedHarnessArtifact.no_workspace_objects.filter(job=job).exists()
 
 
 @pytest.mark.django_db

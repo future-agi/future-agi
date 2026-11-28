@@ -34,6 +34,7 @@ const initial = {
   installationId: "",
   envText: "",
   egress: "",
+  browserSites: "",
   secretFiles: [],
   scenarioCount: DEFAULT_SCENARIOS,
   observabilityEnabled: false,
@@ -68,6 +69,7 @@ export default function RepoForm({ onBusyChange }) {
     installationId,
     envText,
     egress,
+    browserSites,
     secretFiles,
     scenarioCount,
     observabilityEnabled,
@@ -161,6 +163,7 @@ export default function RepoForm({ onBusyChange }) {
     installationId: isPrivate ? installationId.trim() || null : null,
     envText: envText.trim() || null,
     egress: egress.trim() || null,
+    browserSites: browserSites.trim() || null,
     secretFiles,
     scenarioCount: Number(scenarioCount) || undefined,
     observabilityEnabled,
@@ -314,6 +317,8 @@ export default function RepoForm({ onBusyChange }) {
         onEnvText={set("envText")}
         egress={egress}
         onEgress={set("egress")}
+        browserSites={browserSites}
+        onBrowserSites={set("browserSites")}
         secretFiles={secretFiles}
         onSecretFiles={set("secretFiles")}
       />

@@ -21,6 +21,7 @@ const draftFor = (kind, picked, form) => {
       picked.envNames || [],
     ),
     egress: form.egress.trim() || null,
+    browserSites: form.browserSites.trim() || null,
     secretFiles: form.secretFiles,
     scenarioCount: Number(form.scenarioCount) || undefined,
     observabilityEnabled: form.observabilityEnabled,
@@ -61,6 +62,7 @@ const formFor = (picked) => ({
   values: {},
   extra: [],
   egress: "",
+  browserSites: "",
   secretFiles: [],
   scenarioCount: DEFAULT_SCENARIOS,
   observabilityEnabled: false,
@@ -155,6 +157,8 @@ export default function ConnectCodeForm({ kind, item, onBusyChange }) {
         onExtra={set("extra")}
         egress={form.egress}
         onEgress={set("egress")}
+        browserSites={form.browserSites}
+        onBrowserSites={set("browserSites")}
         secretFiles={form.secretFiles}
         onSecretFiles={set("secretFiles")}
       />

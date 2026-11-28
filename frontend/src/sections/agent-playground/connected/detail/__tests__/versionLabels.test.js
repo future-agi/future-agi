@@ -8,6 +8,12 @@ import {
 } from "../versionLabels";
 
 describe("failureText", () => {
+  it("no longer names browser agents as unsupported: they run in a browser environment", () => {
+    const text = failureText({ code: "agent_type_unsupported" });
+    expect(text).toBe(FAILURE_TEXT.agent_type_unsupported);
+    expect(text).not.toMatch(/browser/i);
+  });
+
   it.each([
     "agent_reading_timed_out",
     "agent_reading_crashed",

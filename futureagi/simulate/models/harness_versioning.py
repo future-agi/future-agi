@@ -144,6 +144,10 @@ class HarnessEnvironmentVersion(_HarnessPieceVersion):
     # The per-tool and per-action certification a combined archive holds, kept once
     # read so the archive is not opened for it again.
     certification_files = models.JSONField(null=True, blank=True)
+    # The sites this version's browser may open, in their one form; empty without a browser.
+    # Null on a version made before sites were recorded, which reads its job's create input.
+    # Not part of the version's hash. Read only through ``browser_sites_at_pin``.
+    browser_allowed_sites = models.JSONField(null=True, blank=True, default=None)
 
     class Meta:
         db_table = "simulate_harness_environment_version"

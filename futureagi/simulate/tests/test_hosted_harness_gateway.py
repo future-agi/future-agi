@@ -79,6 +79,7 @@ from simulate.services.hosted_harness_gateway import (
     _source_object_key,
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
+    _with_browser_allowed_sites,
     attach_platform_simulator_secret_refs,
     detect_source_api_keys,
     detect_source_connectors,
@@ -232,6 +233,7 @@ def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
         {},
         values,
         None,
+        browser_sites=[],
     )
 
 
@@ -252,6 +254,7 @@ def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
         {},
         values,
         None,
+        browser_sites=[],
     )
     assert {urlparse(clip["url"]).hostname for clip in clips} <= domains
 
@@ -307,7 +310,11 @@ def test_admission_counts_the_ambience_hosts_that_launch_adds(monkeypatch):
     }
 
     assert clip_hosts <= _resolved_egress_domains(
-        payload, {}, _known_simulator_egress_inputs(), None
+        payload,
+        {},
+        _known_simulator_egress_inputs(),
+        None,
+        browser_sites=[],
     )
 
 
@@ -624,7 +631,7 @@ def test_resolved_egress_rejects_daytona_domain_overflow():
         HostedHarnessError, match="selected sandbox provider supports at most 20"
     ):
         _validate_resolved_egress_domains(
-            {f"provider-{index}.example.com" for index in range(21)}
+            {f"provider-{index}.example.com" for index in range(21)},
         )
 
 
@@ -689,7 +696,7 @@ def test_livekit_cloud_connector_egress_is_wildcard_minimized(settings):
         "security": {"allowed_egress_domains": []},
     }
 
-    assert _resolved_egress_domains(payload, {}, {}, None) == {
+    assert _resolved_egress_domains(payload, {}, {}, None, browser_sites=[]) == {
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
     }
@@ -750,7 +757,9 @@ def test_vapi_call_control_hosts_survive_resolved_restricted_egress(
         "agent": {"connector": connector, "config": {}},
         "security": {"allowed_egress_domains": ["api.vapi.ai"]},
     }
-    domains = _resolved_egress_domains(payload, {"VAPI_API_KEY": "opaque"})
+    domains = _resolved_egress_domains(
+        payload, {"VAPI_API_KEY": "opaque"}, browser_sites=[]
+    )
     assert domains == {"*.vapi.ai"}
     _validate_resolved_egress_domains(domains)
     control_host = "aws-us-west-2-production1-phone-call-websocket.vapi.ai"
@@ -785,7 +794,7 @@ def test_retell_connector_includes_default_livekit_cloud_egress(settings):
         "security": {"allowed_egress_domains": []},
     }
 
-    assert _resolved_egress_domains(payload, {}, {}, None) == {
+    assert _resolved_egress_domains(payload, {}, {}, None, browser_sites=[]) == {
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
@@ -801,7 +810,9 @@ def test_retell_job_allowlists_platform_simulator_livekit_signaling_and_turn(set
     }
     simulator_env = {"LIVEKIT_URL": "wss://livekit-eu.futureagi.com"}
 
-    assert _resolved_egress_domains(payload, {}, simulator_env, None) == {
+    assert _resolved_egress_domains(
+        payload, {}, simulator_env, None, browser_sites=[]
+    ) == {
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
@@ -822,7 +833,11 @@ def test_livekit_job_does_not_spend_egress_slots_on_platform_simulator_livekit(
     simulator_env = {"LIVEKIT_URL": "wss://livekit-eu.futureagi.com"}
 
     assert _resolved_egress_domains(
-        payload, {"LIVEKIT_URL": "wss://tenant-abc.livekit.cloud"}, simulator_env, None
+        payload,
+        {"LIVEKIT_URL": "wss://tenant-abc.livekit.cloud"},
+        simulator_env,
+        None,
+        browser_sites=[],
     ) == {"*.livekit.cloud", "*.turn.livekit.cloud"}
 
 
@@ -854,11 +869,109 @@ def test_resolved_egress_cap_applies_after_wildcard_minimization(settings):
         },
     }
 
-    domains = _resolved_egress_domains(payload, {}, {}, None)
+    domains = _resolved_egress_domains(payload, {}, {}, None, browser_sites=[])
     assert "foo.example.com" not in domains
     assert "example.com" not in domains
     assert len(domains) == 20
     _validate_resolved_egress_domains(domains)
+
+
+def _browser_payload(sites, *, egress=()):
+    return {
+        "agent": {"connector": "auto", "config": {}},
+        "security": {"allowed_egress_domains": list(egress)},
+        "browser": {"allowed_sites": sites},
+    }
+
+
+def test_a_browser_environment_s_sites_join_the_sandbox_list(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = _browser_payload(["ignored.example.com"], egress=["api.agent.example"])
+
+    # The union takes the sites it is given, the job's sites at its pin, not the payload's.
+    assert _resolved_egress_domains(
+        payload,
+        {},
+        {},
+        None,
+        browser_sites=["docs.example.org", "shop.example.com"],
+    ) == {"api.agent.example", "shop.example.com", "docs.example.org"}
+
+
+def test_the_union_can_t_be_built_without_saying_which_sites():
+    # A caller that leaves the browser's sites out fails, rather than launching without them.
+    with pytest.raises(TypeError):
+        _resolved_egress_domains(_browser_payload([]), {}, {}, None)
+
+
+def test_the_sites_count_against_the_sandbox_provider_s_list(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = _browser_payload(
+        [], egress=[f"domain-{index}.example.test" for index in range(11)]
+    )
+
+    domains = _resolved_egress_domains(
+        payload,
+        {},
+        {},
+        None,
+        browser_sites=[f"site{index}.example.com" for index in range(10)],
+    )
+    assert len(domains) == 21
+    with pytest.raises(HostedHarnessError) as caught:
+        _validate_resolved_egress_domains(domains, max_domains=20)
+    # Refused with both counts, never cut to fit.
+    assert caught.value.code == "egress_domain_limit_exceeded"
+    assert "21" in caught.value.message and "20" in caught.value.message
+
+
+def test_the_dispatched_job_names_the_sites_at_its_pin():
+    payload = _payload()
+    payload["browser"] = {"allowed_sites": ["Shop.Example.com", "docs.example.org"]}
+    payload["metadata"] = {"browser_allowed_sites": ["sent.example.com"]}
+
+    unpinned = prepare_dispatch_payload(payload, {}, job=None)
+    assert unpinned["metadata"]["browser_allowed_sites"] == [
+        "docs.example.org",
+        "shop.example.com",
+    ]
+    pinned = prepare_dispatch_payload(
+        payload,
+        {},
+        job=SimpleNamespace(
+            environment_version=SimpleNamespace(
+                browser_allowed_sites=["pinned.example.com"]
+            )
+        ),
+    )
+    assert pinned["metadata"]["browser_allowed_sites"] == ["pinned.example.com"]
+    assert payload["metadata"] == {"browser_allowed_sites": ["sent.example.com"]}
+
+
+def test_a_dispatched_job_without_a_browser_carries_no_sites():
+    payload = _payload()
+    payload["metadata"] = {"browser_allowed_sites": ["sent.example.com"]}
+    assert (
+        "browser_allowed_sites"
+        not in prepare_dispatch_payload(payload, {}, job=None)["metadata"]
+    )
+
+
+def test_the_job_names_the_browser_s_sites_for_the_kit():
+    document = _with_browser_allowed_sites(
+        {"metadata": {"other": 1}}, ["shop.example.com", "docs.example.org"]
+    )
+    assert document["metadata"] == {
+        "other": 1,
+        "browser_allowed_sites": ["shop.example.com", "docs.example.org"],
+    }
+
+
+def test_a_job_without_a_browser_carries_no_sites_even_when_sent_some():
+    # The key is the platform's to set: one sent in the request's metadata never reaches the kit.
+    sent = {"metadata": {"browser_allowed_sites": ["anything.example"], "other": 1}}
+    assert _with_browser_allowed_sites(sent, []) == {"metadata": {"other": 1}}
+    assert sent["metadata"]["browser_allowed_sites"] == ["anything.example"]
 
 
 def test_authoring_archive_resolves_uploaded_source_by_explicit_key(tmp_path, settings):
@@ -2322,6 +2435,60 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     # Controlled egress: the harness points the agent at a proxy that refuses every host outside this list.
     allowed = dispatched["metadata"].get("egress_allowed_hosts")
     assert allowed == (None if unrestricted else sorted(client.params.allowed_domains))
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("unrestricted", [False, True])
+def test_a_browser_environment_s_launch_hands_the_kit_its_sites(
+    organization, settings, monkeypatch, unrestricted
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    payload["browser"] = {"allowed_sites": ["shop.example.com", "docs.example.org"]}
+    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-browser")
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = unrestricted
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: {
+            "ALK_HARNESS": "vertex-gemini",
+            "AGENTCC_BASE_URL": "https://gateway.example.test",
+            "AGENTCC_API_KEY": "harness-virtual-key",
+        },
+    )
+
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=SandboxCapacity("selected", 6, 12_288, 20, 1),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    # The kit holds its browser to these sites, whether or not the sandbox's egress is enforced.
+    assert dispatched["metadata"]["browser_allowed_sites"] == [
+        "docs.example.org",
+        "shop.example.com",
+    ]
+    if unrestricted:
+        assert client.params.unrestricted_egress is True
+    else:
+        assert {"shop.example.com", "docs.example.org"} <= set(
+            client.params.allowed_domains
+        )
+        assert {"shop.example.com", "docs.example.org"} <= set(
+            dispatched["metadata"]["egress_allowed_hosts"]
+        )
 
 
 @pytest.mark.django_db
@@ -4721,7 +4888,7 @@ def _relaunch(monkeypatch, gateway, first, *, lands: dict[str, int]):
     for name, value in (
         ("_authoring_archive_for", lambda _job: None),
         ("_platform_simulator_material", lambda: {}),
-        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+        ("_resolved_egress_domains", lambda *_args, **_kwargs: {"platform.example"}),
     ):
         monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
 
@@ -5258,7 +5425,7 @@ def test_chat_sandbox_job_document_omits_server_only_chat_state(
         ("load_workspace_archive", lambda _conversation: None),
         ("_authoring_archive_for", lambda _job: None),
         ("_platform_simulator_material", lambda: {}),
-        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+        ("_resolved_egress_domains", lambda *_args, **_kwargs: {"platform.example"}),
     ):
         monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
     monkeypatch.setattr(
@@ -5392,7 +5559,11 @@ def test_the_collector_host_follows_the_keys_whatever_the_harness_flag(monkeypat
         values = _platform_simulator_material()
         assert values["FI_BASE_URL"] == "https://collector.example.test"
         assert "collector.example.test" in _resolved_egress_domains(
-            payload, {}, values, None
+            payload,
+            {},
+            values,
+            None,
+            browser_sites=[],
         )
 
     # Without keys no rule adds the host in this setup, so the keys are what put it there.
@@ -5401,7 +5572,11 @@ def test_the_collector_host_follows_the_keys_whatever_the_harness_flag(monkeypat
         values = _platform_simulator_material()
         assert values["FI_BASE_URL"] == "https://collector.example.test"
         assert "collector.example.test" not in _resolved_egress_domains(
-            payload, {}, values, None
+            payload,
+            {},
+            values,
+            None,
+            browser_sites=[],
         )
 
 
@@ -5805,6 +5980,7 @@ class _ExportWorld:
             dict(self.declared),
             self.simulator_values,
             "platform.example.com",
+            browser_sites=[],
         )
 
     def launch(self):
@@ -5937,6 +6113,78 @@ def _unbound_job():
         # A job with no environment of its own stands in for one.
         environment=None,
     )
+
+
+def _browser_job(monkeypatch, sites):
+    unbound = _unbound_job
+
+    def job_with_sites():
+        job = unbound()
+        job.payload["browser"] = {"allowed_sites": sites}
+        job.payload["metadata"]["browser_allowed_sites"] = ["sent.example.com"]
+        return job
+
+    monkeypatch.setattr(sys.modules[__name__], "_unbound_job", job_with_sites)
+
+
+def test_a_build_s_job_names_the_sites_for_the_kit_s_check(monkeypatch):
+    _browser_job(monkeypatch, ["Shop.Example.com", "docs.example.org"])
+    client_params = {}
+    original = _Daytona.create
+
+    def capture(self, params, **kwargs):
+        client_params["allowed_domains"] = params.allowed_domains
+        return original(self, params, **kwargs)
+
+    monkeypatch.setattr(_Daytona, "create", capture)
+    document, _job = _authoring_document(monkeypatch)
+
+    # The kit refuses a browser agent's build without sites, so the build's job names them.
+    assert document["metadata"]["browser_allowed_sites"] == [
+        "docs.example.org",
+        "shop.example.com",
+    ]
+    # The browser starts only at a run: the build's own egress list does not take the sites.
+    assert "shop.example.com" not in set(client_params["allowed_domains"])
+
+
+def test_a_chat_sandbox_s_job_names_the_sites_and_its_list_takes_them(monkeypatch):
+    _browser_job(monkeypatch, ["Shop.Example.com", "docs.example.org"])
+    client_params = {}
+    original = _Daytona.create
+
+    def capture(self, params, **kwargs):
+        client_params["allowed_domains"] = params.allowed_domains
+        return original(self, params, **kwargs)
+
+    monkeypatch.setattr(_Daytona, "create", capture)
+    document, _job = _chat_document(monkeypatch)
+
+    assert document["metadata"]["browser_allowed_sites"] == [
+        "docs.example.org",
+        "shop.example.com",
+    ]
+    assert {"shop.example.com", "docs.example.org"} <= set(
+        client_params["allowed_domains"]
+    )
+
+
+@pytest.mark.parametrize("upload_document", ["authoring", "chat"])
+def test_a_job_without_a_browser_never_passes_on_sites_it_was_sent(
+    monkeypatch, upload_document
+):
+    unbound = _unbound_job
+
+    def job_sent_sites():
+        job = unbound()
+        job.payload["metadata"]["browser_allowed_sites"] = ["sent.example.com"]
+        return job
+
+    monkeypatch.setattr(sys.modules[__name__], "_unbound_job", job_sent_sites)
+    document, _job = (
+        _authoring_document if upload_document == "authoring" else _chat_document
+    )(monkeypatch)
+    assert "browser_allowed_sites" not in document["metadata"]
 
 
 def _authoring_document(monkeypatch, events=None):

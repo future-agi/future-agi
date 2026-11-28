@@ -252,6 +252,35 @@ def _environment_build_runtime(
     ).first()
 
 
+def _build_runtime(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> Any:
+    """The agent version a creation builds, as create finds it; None for any other creation."""
+    try:
+        return _connected_build_runtime(
+            organization_id, workspace_id, payload
+        ) or _environment_build_runtime(organization_id, workspace_id, payload)
+    except (ValueError, ValidationError):
+        return None
+
+
+def _refuse_unpaired_browser_build(runtime: Any, payload: dict[str, Any]) -> None:
+    """Refuse building an agent that needs a browser into an environment with no sites.
+
+    The version's stored reading says what it needs; a version not read yet is left to the build.
+    """
+    from simulate.services.browser_sites import (
+        browser_sites_at_pin,
+        refuse_unpaired_browser_agent,
+    )
+
+    if runtime is None:
+        return
+    refuse_unpaired_browser_agent(
+        runtime.agent_version_id, browser_sites_at_pin(payload)
+    )
+
+
 def get_harness_provider():
     """Return the configured public harness backend."""
     name = str(getattr(settings, "HARNESS_PROVIDER", "hosted") or "hosted").lower()
@@ -348,6 +377,22 @@ def _validate_secret_refs_hosted(secret_refs: dict) -> None:
             )
 
 
+def _created_browser_sites(payload: dict[str, Any]) -> list[str]:
+    """The sites a create request gives its browser, read strictly; none without a browser.
+
+    A ``browser`` section names at least one site. A wrong list is refused here, with a coded
+    400, before anything is stored or any sandbox starts.
+    """
+    from simulate.services.browser_sites import browser_sites
+
+    browser = payload.get("browser")
+    if browser is None:
+        return []
+    return browser_sites(
+        browser.get("allowed_sites") if isinstance(browser, dict) else None
+    )
+
+
 def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) -> None:
     """Reject an egress set unsupported by the configured sandbox provider."""
     from simulate.services.hosted_harness import HostedHarnessError
@@ -382,6 +427,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         target_inputs,
         _known_simulator_egress_inputs(),
         _hostname_from_url(callback_url),
+        browser_sites=_created_browser_sites(payload),
     )
     _validate_resolved_egress_domains(
         domains, max_domains=sandbox_egress_domain_limit()
@@ -1603,6 +1649,26 @@ def _mint_sandbox_values(request) -> Response | None:
     return None
 
 
+def _refuse_browser_on_sandbox(data: dict[str, Any]) -> Response | None:
+    """Refuse a browser section, or sites sent in metadata, on the sandbox server provider.
+
+    It has no browser environment, and it sends a request's metadata on as it came, so neither
+    would be read as the hosted provider reads them.
+    """
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    if data.get("browser") is None and "browser_allowed_sites" not in (
+        data.get("metadata") or {}
+    ):
+        return None
+    refusal = HostedHarnessError(
+        "browser_environment_unsupported",
+        "Browser environments run only on the hosted harness provider.",
+        status_code=400,
+    )
+    return Response(refusal.as_dict(), status=refusal.status_code)
+
+
 class HostedHarnessProvider:
     """Persist jobs and drive the configured managed sandbox through Temporal."""
 
@@ -1793,6 +1859,7 @@ class HostedHarnessProvider:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
+            _refuse_unpaired_browser_build(connected_runtime, payload)
             # A replay answers with its job, whatever GitHub says now.
             replayed = find_replayed_job(
                 organization,
@@ -1970,6 +2037,16 @@ class HostedHarnessProvider:
                 payload,
             )
             _validate_known_hosted_egress(payload, base_url)
+            organization = request_organization(request)
+            if organization is not None:
+                _refuse_unpaired_browser_build(
+                    _build_runtime(
+                        organization.id,
+                        getattr(request_workspace(request), "id", None),
+                        payload,
+                    ),
+                    payload,
+                )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         from simulate.services.hosted_harness import clamp_parallelism
@@ -3799,7 +3876,9 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
-        refused = _mint_sandbox_values(request)
+        refused = _refuse_browser_on_sandbox(
+            request.validated_data
+        ) or _mint_sandbox_values(request)
         if refused is not None:
             return refused
         try:
@@ -3836,7 +3915,9 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
-        refused = _mint_sandbox_values(request)
+        refused = _refuse_browser_on_sandbox(
+            request.validated_data
+        ) or _mint_sandbox_values(request)
         if refused is not None:
             return refused
         try:

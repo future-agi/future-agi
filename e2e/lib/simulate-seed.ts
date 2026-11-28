@@ -258,6 +258,8 @@ export function seedHarnessEnvironment(opts: {
   workers?: 'sealed' | 'not_fronted' | 'old_seal';
   // Each refund case gives the refund worker a budget, so the case relies on that worker.
   refundWorkerBudget?: boolean;
+  /** What the agent needs from its environment, written into the contract as is: `['browser']` makes a browser agent. */
+  environmentNeeds?: string[];
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -281,6 +283,7 @@ export function seedHarnessEnvironment(opts: {
         tool_detail: opts.toolDetail ?? false,
         workers: opts.workers ?? null,
         refund_worker_budget: opts.refundWorkerBudget ?? false,
+        environment_needs: opts.environmentNeeds ?? null,
       }),
     },
   ) as HarnessEnvironmentSeed;

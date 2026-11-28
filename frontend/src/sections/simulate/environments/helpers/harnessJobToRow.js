@@ -108,6 +108,7 @@ export function harnessJobToRow(item) {
 const ENV_AGENT_TYPE = {
   voice: AGENT_TYPES.VOICE,
   chat: AGENT_TYPES.CHAT,
+  browser: "browser",
 };
 
 // The value the API sent for `key`, null included, or NOT_PROVIDED when the
@@ -133,7 +134,7 @@ export function harnessEnvToRow(item) {
     name: item?.name,
     // §1 always reports status and agent_type, so these are passed through
     // rather than defaulted — inventing "building"/"chat" for a missing value
-    // would hide a real data gap. `agent_type` is one of two modalities.
+    // would hide a real data gap. `agent_type` is voice, chat or browser.
     status: envStatusFor(item?.stage, item?.status),
     agentType: ENV_AGENT_TYPE[item?.agent_type],
     updatedAt: item?.last_updated ?? item?.created_at ?? null,

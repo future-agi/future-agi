@@ -7,6 +7,7 @@ from rest_framework import serializers
 from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.constants.harness_environment import (
     ACTORS_TABS,
+    AGENT_TYPE_BROWSER,
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
@@ -82,7 +83,8 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
         ),
     )
     agent_type = serializers.ChoiceField(
-        required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
+        required=False,
+        choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT, AGENT_TYPE_BROWSER),
     )
 
 
@@ -122,7 +124,9 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     description = serializers.CharField(allow_null=True)
     domain = serializers.CharField(allow_null=True)
     source_kind = serializers.CharField()
-    agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
+    agent_type = serializers.ChoiceField(
+        choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT, AGENT_TYPE_BROWSER)
+    )
     status = serializers.ChoiceField(
         choices=(
             STATUS_AWAITING_APPROVAL,

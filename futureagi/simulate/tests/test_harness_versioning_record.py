@@ -1369,3 +1369,23 @@ class TestPromoteNoOp:
             ("active", 0),
             ("draft", 1),
         ]
+
+
+def _with_browser_sites(environment, sites):
+    """The environment as created with a browser that may open ``sites``."""
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        payload={**environment.payload, "browser": {"allowed_sites": sites}}
+    )
+    environment.refresh_from_db()
+    return environment
+
+
+def test_a_recorded_version_records_the_environment_s_sites(user, workspace, storage):
+    environment = _with_browser_sites(
+        _environment(user, workspace, "rec-sites"), ["Shop.Example.com"]
+    )
+
+    record_authoring(environment, _authoring(), origin="authoring")
+
+    environment.refresh_from_db()
+    assert environment.environment_version.browser_allowed_sites == ["shop.example.com"]

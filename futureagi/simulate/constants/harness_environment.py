@@ -20,6 +20,8 @@ STATUS_FAILED = "failed"
 
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPE_CHAT = "chat"
+# A chat agent whose contract says it needs a browser from its environment.
+AGENT_TYPE_BROWSER = "browser"
 
 RUN_KIND_ENVIRONMENT = "environment"
 RUN_KIND_SIMULATE = "simulate"

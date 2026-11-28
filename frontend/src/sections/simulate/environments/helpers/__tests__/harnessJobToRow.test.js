@@ -126,6 +126,12 @@ describe("harnessEnvToRow", () => {
     expect(row.updatedAt).toBe("2026-09-10T09:00:00Z");
   });
 
+  it("maps browser to the browser agent type", () => {
+    expect(harnessEnvToRow(env({ agent_type: "browser" })).agentType).toBe(
+      "browser",
+    );
+  });
+
   it("keeps sub-goals, runs and domain null when the backend omits them", () => {
     const row = harnessEnvToRow(env());
     expect(row.subgoals).toBeNull();

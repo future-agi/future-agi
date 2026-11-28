@@ -484,6 +484,22 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("says in its own words that no browser was started for an agent not read as a browser agent", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          notices: [
+            { code: "browser_not_started", message: "the kit's own words" },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.noticeWords.browser_not_started),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("the kit's own words")).not.toBeInTheDocument();
+  });
+
   it("shows no notices heading when the trial has none", () => {
     render(<TrialChangesPanel trialState={{ state_changes: [] }} />);
     expect(screen.queryByText("Worth knowing")).not.toBeInTheDocument();

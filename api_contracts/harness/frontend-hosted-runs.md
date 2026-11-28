@@ -169,8 +169,9 @@ Whether the read endpoint reproduces this envelope verbatim is part of Q2.
 ### Artifact kinds (closed)
 
 `recording_combined`, `recording_stereo`, `recording_customer`,
-`recording_assistant`, `transcript`, `tool_trace`, `result`, `build`,
-`trace`, `log`, `other`. Recordings are **mp4** (AAC-LC; stereo = customer
+`recording_assistant`, `transcript`, `tool_trace`, `screenshot`, `result`,
+`build`, `trace`, `log`, `other`. A `screenshot` is an image of the agent's
+browser page in a trial. Recordings are **mp4** (AAC-LC; stereo = customer
 left, assistant right) — the authoring UI's `GET recording/` endpoint
 serves different audio (`audio/wav` etc. per v0); a hosted results player
 must handle mp4 audio. Track mapping vs the authoring UI's vocabulary:
@@ -183,9 +184,9 @@ degrade, not assume:
 
 | level | UI can expect |
 |---|---|
-| `metadata-only` | verdicts + `build`/`result`/`log` only — no `transcript`, `tool_trace`, `trace`, or recordings |
+| `metadata-only` | verdicts + `build`/`result`/`log` only — no `transcript`, `tool_trace`, `trace`, recordings or screenshots |
 | `traces` | + `transcript`, `tool_trace`, `trace` |
-| `traces-and-recordings` | + recordings (playback) |
+| `traces-and-recordings` | + recordings (playback) and screenshots |
 | `full` | + `other` (never required at any level) |
 | `local-only` | never appears on a hosted job (rejected at admission) |
 
