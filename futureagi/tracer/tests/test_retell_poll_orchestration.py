@@ -4112,14 +4112,28 @@ def test_parse_returns_aware_datetime():
 # --------------------------------------------------------------------------
 
 
+def _vapi_connection(pid, watermark):
+    return SimpleNamespace(
+        id=pid,
+        provider=ProviderChoices.VAPI,
+        last_fetched_at=watermark,
+        agent_definition=SimpleNamespace(
+            provider="vapi",
+            active_version=None,
+            latest_version=None,
+            deleted=False,
+            api_key="test-key",
+            assistant_id="test-assistant",
+        ),
+    )
+
+
 def test_other_provider_advances_after_store_unconditionally(fake_table, monkeypatch):
     pid = uuid.uuid4()
     now = _dt(2026, 1, 1, 12, 0, 0)
     row = _FakeRow(id=pid, last_fetched_at=now - timedelta(hours=1))
     fake_table[pid] = row
-    provider = SimpleNamespace(
-        id=pid, provider=ProviderChoices.VAPI, last_fetched_at=row.last_fetched_at
-    )
+    provider = _vapi_connection(pid, row.last_fetched_at)
     monkeypatch.setattr(op.timezone, "now", lambda: now)
     monkeypatch.setattr(
         op.ObservabilityService, "get_call_logs", lambda **k: [{"id": "c1"}]
@@ -4141,9 +4155,7 @@ def test_other_provider_store_exception_does_not_advance_and_propagates(
     wm = now - timedelta(hours=1)
     row = _FakeRow(id=pid, last_fetched_at=wm)
     fake_table[pid] = row
-    provider = SimpleNamespace(
-        id=pid, provider=ProviderChoices.VAPI, last_fetched_at=wm
-    )
+    provider = _vapi_connection(pid, wm)
     monkeypatch.setattr(op.timezone, "now", lambda: now)
     monkeypatch.setattr(
         op.ObservabilityService, "get_call_logs", lambda **k: [{"id": "c1"}]
