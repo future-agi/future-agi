@@ -992,14 +992,16 @@ class TestEvalScoreMaterialization:
             {},
             "f_",
         )
-        subquery = clauses[0][clauses[0].index("(") + 1 : clauses[0].rindex(")")]
+        # The clause is "(project_id, trace_id) IN (<elected pairs>)".
+        opening = clauses[0].index(" IN (") + len(" IN (")
+        subquery = clauses[0][opening : clauses[0].rindex(")")]
         label_by_trace_id = {
             trace_id: label
             for label, trace_id in ch_eval_output_rows["trace_ids"].items()
         }
         filter_passes = {
-            label_by_trace_id[row[0]]
-            for row in _run(subquery, {**params, **filter_params})
+            label_by_trace_id[trace_id]
+            for _project_id, trace_id in _run(subquery, {**params, **filter_params})
         }
 
         assert breakdown_passes == filter_passes == set(EVAL_PASSING_SHAPES), (
