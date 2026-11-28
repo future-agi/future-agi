@@ -42,17 +42,12 @@ function uniqueExcept(logins, author) {
   return logins.filter((l) => !seen.has(lower(l)) && seen.add(lower(l)));
 }
 
-// Members of every matched team, then fallback_lead, then every member of every team.
-export function candidatesFor(teams, config, author) {
-  const members = uniqueExcept(
-    teams.flatMap((t) => t.members),
-    author,
-  );
-  if (members.length) return members;
-  if (config.fallback_lead && lower(config.fallback_lead) !== lower(author))
-    return [config.fallback_lead];
+// Everyone on the roster who can push here, except the author. Teams do not
+// narrow the pool: anyone on the roster can review any PR.
+export function rosterReviewers(roster, writers, author) {
+  const canPush = new Set(writers.map(lower));
   return uniqueExcept(
-    Object.values(config.teams).flatMap((t) => t.members),
+    roster.filter((l) => canPush.has(lower(l))),
     author,
   );
 }

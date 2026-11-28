@@ -360,8 +360,6 @@ def get_trace(
     is sorted ``(project_id, id)`` and has no bloom on ``id``, so without it a
     lone-id lookup scans every project's parts -- passing it enables the
     sort-key prefix prune."""
-    import json as _json
-
     from tracer.models.trace import Trace
     from tracer.services.clickhouse.v2 import get_reader
 
@@ -402,11 +400,20 @@ def get_trace(
             )
         return Trace.objects.get(id=trace_id)
 
+    return trace_from_ch_row(row)
+
+
+def trace_from_ch_row(row: dict) -> Trace:
+    """Hydrate a read-only Trace from CHSpanReader.get_trace_row()."""
+    import json
+
+    from tracer.models.trace import Trace
+
     def _decode(v):
         if not v:
             return None
         try:
-            return _json.loads(v)
+            return json.loads(v)
         except Exception:  # noqa: BLE001 — opaque non-JSON blob
             return v
 
