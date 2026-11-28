@@ -78,6 +78,9 @@ AUDIT_SETTLE = timedelta(minutes=15)
 # Spans probe reads span rows created before min(item persisted_at) + M + this.
 PROBE_LOOKAHEAD = timedelta(days=30)
 PROJECTS_PER_STATEMENT = 500
+# At most this many GC DELETE statements per run; the rest wait for the next
+# daily run (the cuts only move forward, so nothing is lost by waiting).
+MAX_DELETE_STATEMENTS_PER_RUN = 64
 SCOPES_PER_LOOKUP = 500
 DEFAULT_MASK_PARTITIONS_PER_RUN = 4
 
@@ -420,6 +423,7 @@ class GcReport:
     masked_partitions: int = 0
     audit: dict[str, int] = field(default_factory=dict)
     reason: str | None = None
+    capped: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -442,6 +446,9 @@ def _gc_bucket(execute: Execute, bucket: int, *, now_us: int, report: GcReport) 
     )
     report.projects_considered += len(candidates)
     for chunk in _chunks(candidates, PROJECTS_PER_STATEMENT):
+        if report.delete_statements >= MAX_DELETE_STATEMENTS_PER_RUN:
+            report.capped = True
+            return
         oldest_item = {str(pid): int(min_us) for pid, min_us in chunk}
         horizon = {
             pid: min(min_us + margin + _us(PROBE_LOOKAHEAD), now_us)

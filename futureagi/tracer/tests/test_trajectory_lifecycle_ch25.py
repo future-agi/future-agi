@@ -103,6 +103,8 @@ class Store:
             (p, s, h, (r[0] if r else f"content-{h}"), int(t))
             for p, s, h, t, *r in rows
         ]
+        # optimize_on_insert=0 keeps several copies of one key in one insert
+        # block; the default would collapse them before GC ever sees them.
         self.client.execute(
             "INSERT INTO trajectory_items "
             "(project_id, scope_id, item_hash, content, persisted_at) "
@@ -110,6 +112,7 @@ class Store:
             "fromUnixTimestamp64Micro(toInt64(r.5), 'UTC') "
             "FROM (SELECT arrayJoin(%(rows)s) AS r)",
             {"rows": values},
+            settings={"optimize_on_insert": 0},
         )
 
     def add_spans(self, rows):
@@ -483,6 +486,28 @@ def test_gc_property_never_deletes_referenced_items(store):
     # Every deleted copy was older than its project's cut; nothing else went.
     assert remaining == expected
     assert report["delete_statements"] >= 1
+    assert len(items) > len({(p, s, h) for p, s, h, _ in items})  # many copies
+
+
+def test_gc_caps_delete_statements_per_run(monkeypatch):
+    """A bucket with many candidate projects cannot issue unbounded mutations."""
+    monkeypatch.setattr(lifecycle, "PROJECTS_PER_STATEMENT", 1)
+    monkeypatch.setattr(lifecycle, "MAX_DELETE_STATEMENTS_PER_RUN", 2)
+    now = 1_000 * DAY_US
+    projects = [str(uuid.uuid4()) for _ in range(5)]
+    statements = []
+
+    def execute(sql, params=None):
+        statements.append(sql)
+        if "FROM trajectory_items WHERE _partition_id" in sql:
+            return [(p, now - 10 * DAY_US) for p in projects]
+        return []  # no span rows
+
+    report = lifecycle.GcReport(status="ok")
+    lifecycle._gc_bucket(execute, 0, now_us=now, report=report)
+    assert report.delete_statements == 2
+    assert report.capped is True
+    assert sum(s.lstrip().startswith("DELETE") for s in statements) == 2
 
 
 @pytest.mark.integration
@@ -505,8 +530,12 @@ def test_gc_deletes_old_copy_keeps_refreshed_copy(store):
             }
         ]
     )
+    assert len(store.items(pid)) == 2  # both copies are stored
     with GC_ON:
-        assert _gc(store)["status"] == "ok"
+        report = _gc(store)
+    assert report["status"] == "ok"
+    assert report["delete_statements"] == 1
+    assert {t for *_, t in store.items(pid)} == {now - HOUR_US}
     store.client.execute("OPTIMIZE TABLE trajectory_items FINAL")
     rows = store.client.execute(
         "SELECT count(), argMax(content, persisted_at) FROM trajectory_items "
@@ -781,7 +810,7 @@ def test_erasure_deletes_all_copies_and_applies_mask(store):
     neighbour = store.project_in_bucket(9, exclude={pid})
     store.add_items(
         [(pid, "__project__", _h(), now), (pid, "s", _h(), now - DAY_US)]
-        + [(pid, "s", _h(), now - HOUR_US)] * 2
+        + [(pid, "s", _h(), now - HOUR_US) for _ in range(2)]
     )
     store.add_items([(neighbour, "s", _h(), now)])
     result = lifecycle.erase_project_items(pid, execute=store.execute)
