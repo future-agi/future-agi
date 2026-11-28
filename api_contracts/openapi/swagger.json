@@ -160850,6 +160850,14 @@
                     "description": "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
                     "type": "integer",
                     "minimum": 0
+                },
+                "scenario_keys": {
+                    "description": "The scenarios a run of the split would run, in suite order; absent without a split.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },

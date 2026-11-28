@@ -54590,6 +54590,12 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
     .describe(
       "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
     ),
+  scenario_keys: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "The scenarios a run of the split would run, in suite order; absent without a split.",
+    ),
 });
 
 /**

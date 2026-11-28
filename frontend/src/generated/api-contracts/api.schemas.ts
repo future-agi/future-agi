@@ -25118,6 +25118,8 @@ export interface HarnessRunPlanApi {
    * @minimum 0
    */
   held_back: number;
+  /** The scenarios a run of the split would run, in suite order; absent without a split. */
+  scenario_keys?: string[];
 }
 
 /**

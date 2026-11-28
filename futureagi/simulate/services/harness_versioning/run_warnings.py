@@ -359,7 +359,8 @@ def preview_run(
     """The versions a run of ``picks`` would use, its warnings, whether its bundle
     is cached (``None`` when the run is not assembled) and ``run_verdict`` for
     ``scenario_keys``; without versioning only the verdict is filled. A ``split`` the
-    run could not take is refused as the run would refuse it."""
+    run could not take is refused as the run would refuse it; one it could take names
+    the scenarios it would run."""
     from simulate.services.harness_tool_reach import run_verdict
 
     pins = resolve_run_pins(environment, picks=picks)
@@ -375,6 +376,7 @@ def preview_run(
             pins.cached if pins is not None and _assembles(pins) else None
         ),
         **run_verdict(environment, pins, scenario_keys=scenario_keys, hidden=hidden),
+        **({"scenario_keys": scenario_keys} if split is not None else {}),
     }
 
 

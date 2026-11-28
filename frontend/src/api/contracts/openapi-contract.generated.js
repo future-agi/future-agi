@@ -75966,6 +75966,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 0,
         },
+        scenario_keys: {
+          description:
+            "The scenarios a run of the split would run, in suite order; absent without a split.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessRunReport: {

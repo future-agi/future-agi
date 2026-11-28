@@ -2613,6 +2613,11 @@ class HarnessRunPlanSerializer(serializers.Serializer):
         min_value=0,
         help_text="Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
     )
+    scenario_keys = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The scenarios a run of the split would run, in suite order; absent without a split.",
+    )
 
 
 class HarnessCompareQuerySerializer(serializers.Serializer):
