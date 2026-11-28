@@ -165,7 +165,9 @@ const UploadLimitNotification = () => {
                   color: "text.primary",
                 }}
               >
-                {alertData?.alert_description}
+                {typeof alertData?.alert_description === "string"
+                  ? alertData.alert_description
+                  : ""}
               </Typography>
               <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
                 <Button size="small" variant="text" onClick={handleOpenDialog}>
