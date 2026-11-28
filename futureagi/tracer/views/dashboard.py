@@ -1522,30 +1522,14 @@ def _dashboard_resolved_config(query_config):
     return (
         {
             **query_config,
-            "time_range": _frozen_time_range(query_config, window_start, window_end),
+            "time_range": {
+                "custom_start": window_start.isoformat(),
+                "custom_end": window_end.isoformat(),
+            },
         },
         window_start,
         window_end,
     )
-
-
-def _frozen_time_range(query_config, window_start, window_end):
-    """The concrete window a request froze, remembering whether it was a preset.
-
-    Builders render a custom window's bounds at microsecond precision; a
-    rolling preset frozen here keeps its historical whole-second rendering,
-    since a sub-second shift of "the last 7 days" is not a different window
-    (TH-10545).
-    """
-
-    time_range = query_config.get("time_range") or query_config.get("timeRange") or {}
-    frozen = {
-        "custom_start": window_start.isoformat(),
-        "custom_end": window_end.isoformat(),
-    }
-    if not (time_range.get("custom_start") and time_range.get("custom_end")):
-        frozen["frozen_preset"] = True
-    return frozen
 
 
 def _dashboard_degraded_payload(
@@ -6505,7 +6489,10 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         window_start, window_end = window_builder.parse_time_range()
         query_config = {
             **query_config,
-            "time_range": _frozen_time_range(query_config, window_start, window_end),
+            "time_range": {
+                "custom_start": window_start.isoformat(),
+                "custom_end": window_end.isoformat(),
+            },
         }
         long_trace_window = window_end - window_start > timedelta(
             days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS
