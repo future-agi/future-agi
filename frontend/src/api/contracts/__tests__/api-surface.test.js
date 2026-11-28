@@ -139,7 +139,7 @@ describe("api surface contract", () => {
     ).toBeGreaterThan(100);
     expect(
       Object.keys(API_SURFACE_CONTRACT.groups.usage).length,
-    ).toBeGreaterThan(55);
+    ).toBeGreaterThan(47);
     expect(
       Object.keys(API_SURFACE_CONTRACT.groups["falcon-ai"]).length,
     ).toBeGreaterThan(15);

@@ -834,29 +834,35 @@ def _with_check(case, *, catalogue):
     }
 
 
-class TestNewChecks:
-    def test_an_added_check_travels_with_its_case_and_saves_both_pieces(
-        self, environment, cases, storage, user
-    ):
-        conversation, command = _command(environment, cases, 60)
+@pytest.fixture
+def drafted_checks(environment, cases, storage):
+    for sequence, case in enumerate(cases, 60):
+        conversation, command = _command(environment, [case], sequence)
         key, digest = _save(
             conversation,
             command,
             storage,
             [],
-            **_with_check(cases[0], catalogue=[BASE_CHECK, NEW_CHECK]),
+            **_with_check(case, catalogue=[BASE_CHECK, NEW_CHECK]),
         )
         _end_turn(conversation, command)
-        _promote(conversation, command, key, digest, 60)
-        drafted = EvidenceImportCase.objects.get(id=cases[0].id)
-        assert drafted.status == "drafted"
-        assert drafted.new_sub_goals == [NEW_CHECK]
+        _promote(conversation, command, key, digest, sequence)
+    return _refreshed(cases)
+
+
+class TestNewChecks:
+    def test_an_added_check_travels_with_its_case_and_saves_both_pieces(
+        self, environment, drafted_checks, user
+    ):
+        for case in drafted_checks:
+            assert case.status == "drafted"
+            assert case.new_sub_goals == [NEW_CHECK]
         environment_before = environment.environment_version_id
 
         with _certifies():
             saved = add_to_suite(
-                drafted.evidence_import,
-                [str(drafted.id)],
+                drafted_checks[0].evidence_import,
+                [str(case.id) for case in drafted_checks],
                 expected={},
                 idempotency_key="check-1",
                 user=user,
@@ -870,12 +876,46 @@ class TestNewChecks:
                 environment, "environment", environment.environment_version
             )["sub_goals.json"]
         )
-        assert [one["name"] for one in catalogue["sub_goals"]] == [
-            "refunded",
-            "no_second_refund",
-        ]
+        assert catalogue["sub_goals"] == [BASE_CHECK, NEW_CHECK]
+        assert all(case.status == "added" for case in _refreshed(drafted_checks))
         assert drafts.open_draft(environment, "environment") is None
         assert drafts.open_draft(environment, "suite") is None
+
+    @pytest.mark.parametrize(
+        "check", [NEW_CHECK, BASE_CHECK], ids=["case", "catalogue"]
+    )
+    def test_conflicting_check_refuses_the_whole_add(
+        self, environment, drafted_checks, user, check
+    ):
+        first, second = drafted_checks
+        second.new_sub_goals = [{**check, "what": "a different condition"}]
+        second.save(update_fields=["new_sub_goals"])
+        suite_before = environment.suite_version_id
+        environment_before = environment.environment_version_id
+
+        with (
+            _certifies(),
+            pytest.raises(
+                HostedHarnessError,
+                match="Case 2 .*Discard this import .*re-import .*draft again",
+            ) as refused,
+        ):
+            add_to_suite(
+                first.evidence_import,
+                [str(first.id), str(second.id)],
+                expected={},
+                idempotency_key="conflict",
+                user=user,
+            )
+
+        assert refused.value.code == "evidence_check_conflict"
+        assert refused.value.status_code == 409
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite_before
+        assert environment.environment_version_id == environment_before
+        assert drafts.open_draft(environment, "suite") is None
+        assert drafts.open_draft(environment, "environment") is None
+        assert all(case.status == "drafted" for case in _refreshed(drafted_checks))
 
     def test_an_edit_to_an_existing_check_keeps_nothing(
         self, environment, cases, storage

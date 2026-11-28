@@ -35,9 +35,13 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import time
 import urllib.request
 import zipfile
+from collections.abc import Callable
+from http.client import IncompleteRead
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 NLTK_DATA_REVISION = "550b6625bcef1f2abff2ff770a5a0d272c9c6b2a"
 NLTK_DATA_ROOT = Path(os.environ.get("NLTK_DATA", "/usr/local/share/nltk_data"))
@@ -134,7 +138,7 @@ def selected_packages(profile: str) -> dict[str, tuple[str, ...] | None]:
     return selected
 
 
-def _download(package_path: str) -> bytes:
+def _download(package_path: str, *, sleep: Callable[[int], None] = time.sleep) -> bytes:
     url = (
         "https://raw.githubusercontent.com/nltk/nltk_data/"
         f"{NLTK_DATA_REVISION}/packages/{package_path}"
@@ -142,8 +146,20 @@ def _download(package_path: str) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": "futureagi-image-build"}
     )
-    with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
-        return response.read()
+    delays = iter((5, 15, 45))
+    while True:
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+                return response.read()
+        except (URLError, TimeoutError, ConnectionError, IncompleteRead) as exc:
+            if isinstance(exc, HTTPError):
+                if not 500 <= exc.code < 600:
+                    raise
+                exc.close()
+            delay = next(delays, None)
+            if delay is None:
+                raise RuntimeError(f"Failed to download {package_path}") from exc
+            sleep(delay)
 
 
 def _safe_extract(

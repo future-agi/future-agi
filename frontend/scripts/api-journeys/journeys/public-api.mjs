@@ -1650,78 +1650,11 @@ export const publicApiJourneys = [
       "accounts",
       "organization",
       "workspace",
-      "appsmith",
       "marketplace",
     ],
     public: true,
     async run({ apiBase, evidence }) {
       const zeroUuid = "00000000-0000-4000-8000-000000000456";
-
-      const apiKeyGuardEndpoints = [
-        {
-          label: "Appsmith users list",
-          method: "GET",
-          path: apiPath("/accounts/appsmith/users/"),
-        },
-        {
-          label: "Appsmith users patch alias",
-          method: "PATCH",
-          path: apiPath("/accounts/appsmith/users/"),
-          body: {},
-        },
-        {
-          label: "Appsmith users create",
-          method: "POST",
-          path: apiPath("/accounts/appsmith/users/"),
-          body: {},
-        },
-        {
-          label: "Appsmith SOS login",
-          method: "POST",
-          path: apiPath("/accounts/appsmith/users/login"),
-          body: {},
-        },
-        {
-          label: "Appsmith user detail",
-          method: "GET",
-          path: apiPath("/accounts/appsmith/users/{user_id}/", {
-            user_id: zeroUuid,
-          }),
-        },
-        {
-          label: "Appsmith user update",
-          method: "PATCH",
-          path: apiPath("/accounts/appsmith/users/{user_id}/", {
-            user_id: zeroUuid,
-          }),
-          body: {},
-        },
-        {
-          label: "Appsmith user detail post alias",
-          method: "POST",
-          path: apiPath("/accounts/appsmith/users/{user_id}/", {
-            user_id: zeroUuid,
-          }),
-          body: {},
-        },
-      ];
-
-      for (const endpoint of apiKeyGuardEndpoints) {
-        const result = await request(
-          apiBase,
-          endpoint.method,
-          endpoint.path,
-          endpoint.body,
-        );
-        assertJsonClientError(result, "No API key provided", endpoint.label);
-        evidence.push({
-          label: endpoint.label,
-          method: endpoint.method,
-          path: endpoint.path,
-          status: result.status,
-          code: result.body?.code || null,
-        });
-      }
 
       const publicValidationEndpoints = [
         {
@@ -1831,17 +1764,6 @@ export const publicApiJourneys = [
           label: "passkey rename",
           method: "PATCH",
           path: apiPath("/accounts/passkeys/{id}/", { id: zeroUuid }),
-          body: {},
-        },
-        {
-          label: "redis key delete",
-          method: "DELETE",
-          path: apiPath("/accounts/redis-key/"),
-        },
-        {
-          label: "redis key set",
-          method: "POST",
-          path: apiPath("/accounts/redis-key/"),
           body: {},
         },
         {
@@ -3554,11 +3476,10 @@ export const publicApiJourneys = [
   {
     id: "PUBLIC-AUTH-024",
     title:
-      "Generated usage admin routes reject anonymous requests before API-key or superuser billing work",
+      "Generated usage admin routes reject anonymous requests before superuser billing work",
     tags: ["public", "auth", "guard", "usage", "admin", "billing"],
     public: true,
     async run({ apiBase, evidence }) {
-      const usageAdminId = 100000001;
       const adminEndpoints = [
         {
           label: "GET /usage/admin/custom-plan/",
@@ -3622,58 +3543,7 @@ export const publicApiJourneys = [
           path: apiPath("/usage/admin/pricing/"),
         },
       ];
-      const appsmithResources = [
-        {
-          collectionTemplate: "/usage/subscription-tier/",
-          detailTemplate: "/usage/subscription-tier/{subscription_id}/",
-          params: { subscription_id: usageAdminId },
-          methods: ["GET", "POST", "PATCH", "DELETE"],
-        },
-        {
-          collectionTemplate: "/usage/organization-billing/",
-          detailTemplate: "/usage/organization-billing/{billing_id}/",
-          params: { billing_id: usageAdminId },
-          methods: ["GET", "PATCH"],
-        },
-        {
-          collectionTemplate: "/usage/organization-subscription/",
-          detailTemplate:
-            "/usage/organization-subscription/{organization_subscription_id}/",
-          params: { organization_subscription_id: usageAdminId },
-          methods: ["GET", "POST", "PATCH", "DELETE"],
-        },
-        {
-          collectionTemplate: "/usage/pricing/",
-          detailTemplate: "/usage/pricing/{pricing_id}/",
-          params: { pricing_id: usageAdminId },
-          methods: ["GET", "POST", "PATCH", "DELETE"],
-        },
-        {
-          collectionTemplate: "/usage/rate-limits/",
-          detailTemplate: "/usage/rate-limits/{rate_limit_id}/",
-          params: { rate_limit_id: usageAdminId },
-          methods: ["GET", "POST", "PATCH", "DELETE"],
-        },
-        {
-          collectionTemplate: "/usage/resource-limits/",
-          detailTemplate: "/usage/resource-limits/{resource_limit_id}/",
-          params: { resource_limit_id: usageAdminId },
-          methods: ["GET", "POST", "PATCH", "DELETE"],
-        },
-      ];
-      const appsmithEndpoints = appsmithResources.flatMap((resource) =>
-        [resource.collectionTemplate, resource.detailTemplate].flatMap(
-          (template) =>
-            resource.methods.map((method) => ({
-              label: `${method} ${template}`,
-              method,
-              path: apiPath(template, resource.params),
-              body: ["POST", "PUT", "PATCH"].includes(method) ? {} : undefined,
-            })),
-        ),
-      );
-
-      for (const endpoint of [...adminEndpoints, ...appsmithEndpoints]) {
+      for (const endpoint of adminEndpoints) {
         const result = await request(
           apiBase,
           endpoint.method,
@@ -3687,7 +3557,7 @@ export const publicApiJourneys = [
           path: endpoint.path,
           status: result.status,
           code: result.body?.code || null,
-          auth_boundary: "api_key_or_superuser",
+          auth_boundary: "superuser",
         });
       }
     },
@@ -3778,28 +3648,6 @@ export const publicApiJourneys = [
           path: apiPath("/usage/usage-summary/"),
         },
       ];
-      const apiKeyEndpoints = [
-        {
-          label: "GET /usage/api-call-type/",
-          method: "GET",
-          path: apiPath("/usage/api-call-type/"),
-        },
-        {
-          label: "GET /usage/organization-filter/",
-          method: "GET",
-          path: apiPath("/usage/organization-filter/"),
-        },
-        {
-          label: "GET /usage/organizations/",
-          method: "GET",
-          path: apiPath("/usage/organizations/"),
-        },
-        {
-          label: "GET /usage/resource-type/",
-          method: "GET",
-          path: apiPath("/usage/resource-type/"),
-        },
-      ];
 
       for (const endpoint of authGuardEndpoints) {
         const result = await request(
@@ -3819,23 +3667,6 @@ export const publicApiJourneys = [
         });
       }
 
-      for (const endpoint of apiKeyEndpoints) {
-        const result = await request(
-          apiBase,
-          endpoint.method,
-          endpoint.path,
-          endpoint.body,
-        );
-        assertApiKeyOrPermissionGuard(result, endpoint.label);
-        evidence.push({
-          label: endpoint.label,
-          method: endpoint.method,
-          path: endpoint.path,
-          status: result.status,
-          code: result.body?.code || null,
-          auth_boundary: "api_key",
-        });
-      }
 
       const pricing = await request(
         apiBase,

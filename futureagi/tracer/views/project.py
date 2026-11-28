@@ -763,20 +763,27 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                                         max(hour) AS day_last_active
                                     FROM trace_count_rollup
                                     PREWHERE project_id IN %(pids)s
-                                      AND hour >= toDateTime(
-                                          %(activity_start)s, 'UTC'
-                                      )
-                                      AND hour < toDateTime(
-                                          %(activity_end)s, 'UTC'
-                                      )
+                                      AND hour >= toDateTime(%(volume_start)s, 'UTC')
+                                      AND hour < toDateTime(%(activity_end)s, 'UTC')
                                     GROUP BY project_id, day
+
+                                    UNION ALL
+
+                                    -- Older hours contribute only to last_active.
+                                    SELECT
+                                        project_id,
+                                        toDate(max(hour)) AS day,
+                                        toUInt64(0) AS day_volume,
+                                        max(hour) AS day_last_active
+                                    FROM trace_count_rollup
+                                    PREWHERE project_id IN %(pids)s
+                                      AND hour >= toDateTime(%(activity_start)s, 'UTC')
+                                      AND hour < toDateTime(%(volume_start)s, 'UTC')
+                                    GROUP BY project_id
                                 )
                                 SELECT
                                     toString(project_id) AS project_id_text,
-                                    sumIf(
-                                        day_volume,
-                                        day >= toDate(%(volume_start)s)
-                                    ) AS volume,
+                                    sum(day_volume) AS volume,
                                     max(day_last_active) AS last_active,
                                     arraySort(
                                         item -> item.1,
