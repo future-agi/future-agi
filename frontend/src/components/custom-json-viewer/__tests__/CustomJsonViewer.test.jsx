@@ -19,6 +19,9 @@ const sampleObject = {
 // JsonViewer renders data-testid="data-key-pair{keypath}" for each entry
 const getKeyPair = (key) => screen.queryByTestId(`data-key-pair${key}`);
 
+// Built at runtime so the no-script-url lint rule doesn't flag the fixture.
+const SCRIPT_URL = ["javascript", "alert(1)//cat.png"].join(":");
+
 describe("CustomJsonViewer", () => {
   describe("rendering", () => {
     it("renders json content without search field by default", () => {
@@ -138,6 +141,62 @@ describe("CustomJsonViewer", () => {
         expect(getKeyPair("temperature")).toBeInTheDocument();
         expect(getKeyPair("metadata")).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("media previews", () => {
+    it("shows an image URL as a thumbnail that opens the full-size image", () => {
+      const src = "https://cdn.example.com/photos/cat.png?width=800";
+      render(<CustomJsonViewer object={{ image_url: src }} />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open image preview" }),
+      );
+
+      expect(
+        screen.getByRole("img", { name: "Full size image" }),
+      ).toHaveAttribute("src", src);
+    });
+
+    it("keeps base64 images previewable", () => {
+      render(
+        <CustomJsonViewer
+          object={{ image: "data:image/png;base64,iVBORw0KGgo=" }}
+        />,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Open image preview" }),
+      ).toBeInTheDocument();
+    });
+
+    it.each([
+      ["an audio URL", "https://cdn.example.com/calls/call-42.mp3"],
+      ["a base64 audio clip", "data:audio/wav;base64,UklGRg=="],
+    ])("shows %s as a chip that opens an audio player", (_label, src) => {
+      render(<CustomJsonViewer object={{ recording: src }} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Play audio" }));
+
+      expect(document.querySelector("audio")).toHaveAttribute("src", src);
+    });
+
+    it.each([
+      ["a web page URL", "https://example.com/docs/page"],
+      ["a relative image path", "images/cat.png"],
+      ["a blob audio URL", "blob:https://example.com/call.mp3"],
+      ["a data URI without a media type", "data:image;base64,AAAA"],
+      ["a script URL", SCRIPT_URL],
+    ])("keeps %s as plain text", (_label, value) => {
+      render(<CustomJsonViewer object={{ field: value }} />);
+
+      expect(getKeyPair("field")).toHaveTextContent(value);
+      expect(
+        screen.queryByRole("button", { name: "Open image preview" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Play audio" }),
+      ).not.toBeInTheDocument();
     });
   });
 });
