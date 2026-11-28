@@ -71,6 +71,28 @@ describe("Debug failures drawer on a run the rule refuses", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: KPIS_KEY });
   });
 
+  it.each([
+    [
+      "execution_not_completed",
+      "Diagnosis is available once every call in this run finishes.",
+    ],
+    [
+      "execution_calls_unfinished",
+      "Some calls in this run didn’t finish, so Debug failures can’t read it.",
+    ],
+  ])("says why a %s refusal started no analysis", async (code, words) => {
+    server.get.mockImplementation(() => refused(code));
+
+    renderDrawer();
+
+    expect(await screen.findByText(words)).toBeInTheDocument();
+    expect(screen.queryByText("server words")).toBeNull();
+    // Unlike the environments drawer, this one offers no retry for any refusal.
+    expect(screen.queryByText(/try again/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /refresh/i })).toBeNull();
+    expect(server.get).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the run's analysis when a Refresh is refused", async () => {
     server.get.mockResolvedValue({
       data: {

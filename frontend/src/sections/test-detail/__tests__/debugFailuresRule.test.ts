@@ -5,6 +5,7 @@ import {
   NOTHING_FAILED_REASON,
   TOO_FEW_CALLS_REASON,
   debugFailuresBlockedReason,
+  debugFailuresRefusalReason,
 } from "../debugFailuresRule";
 
 describe("debugFailuresBlockedReason", () => {
@@ -37,4 +38,14 @@ describe("debugFailuresBlockedReason", () => {
       investigation_nothing_failed: NOTHING_FAILED_REASON,
     });
   });
+});
+
+describe("debugFailuresRefusalReason", () => {
+  // Any other conflict is a generic failure, never a reason the run gives.
+  it.each(["conflict", "error", "", null, undefined])(
+    "%o is not a refusal",
+    (code) => {
+      expect(debugFailuresRefusalReason(code)).toBeNull();
+    },
+  );
 });

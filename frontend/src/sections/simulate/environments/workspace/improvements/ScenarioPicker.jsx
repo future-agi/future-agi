@@ -180,7 +180,9 @@ function ScenarioList({
                     flexShrink: 0,
                   }}
                 >
-                  {scenarioStatus(s.passed)}
+                  {s.split === "test"
+                    ? `${scenarioStatus(s.passed)} · Test split`
+                    : scenarioStatus(s.passed)}
                 </Typography>
               </Stack>
             );
@@ -219,15 +221,21 @@ export default function ScenarioPicker({
   onProtected,
 }) {
   const fixable = options.scenarios.filter((s) => s.failing_sub_goals.length);
+  // A test-split case can't be must-pass: the epoch would learn from it.
   const protectable = options.scenarios.filter(
-    (s) => s.passed === true && !targets.includes(s.key),
+    (s) => s.passed === true && s.split !== "test" && !targets.includes(s.key),
   );
+  const onLockedVersion = options.held_back_from === "locked_version";
   return (
     <Stack spacing={2} sx={{ mt: 1.25 }}>
       <ScenarioList
         testId="cases-fix"
         title="Cases to fix"
-        note="The failing cases this epoch works on. Some are held back to prove the change; it never sees them."
+        note={
+          onLockedVersion
+            ? "The failing cases this epoch works on. Those in the test split are held back to prove the change; it never sees them."
+            : "The failing cases this epoch works on. Some are held back to prove the change; it never sees them."
+        }
         items={fixable}
         chosen={targets}
         suggested={options.suggested.target_scenario_keys}
@@ -240,7 +248,11 @@ export default function ScenarioPicker({
       <ScenarioList
         testId="cases-protect"
         title="Cases to protect"
-        note="Cases this epoch must not break. Suggested: every case that passed in this run."
+        note={
+          onLockedVersion
+            ? "Cases this epoch must not break. Suggested: every train-split case that passed in this run. Test-split cases can't be protected."
+            : "Cases this epoch must not break. Suggested: every case that passed in this run."
+        }
         items={protectable}
         chosen={protectedKeys}
         suggested={options.suggested.protected_scenario_keys.filter(

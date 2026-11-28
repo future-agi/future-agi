@@ -17,6 +17,7 @@ import test_db_dump as samples
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONTROL = ROOT / "futureagi/.ci/e2e-db-control.sh"
+BOUNDARY = ROOT / "futureagi/.ci/e2e_db_migrate.py"
 KEY = "e2e-migrated-db-v1-distributed-" + "1" * 40
 
 # Stands in for `bin/e2e`: each database is one file that holds its dump.
@@ -26,12 +27,15 @@ import os, pathlib, sys
 state = pathlib.Path(os.environ["FAKE_PG"])
 args = sys.argv[1:]
 with (state / "calls").open("a") as log:
-    log.write(" ".join(args) + "\n")
+    # The wrapper's text is one argument of many lines: noted by name.
+    log.write(" ".join("<wrapper>" if "\n" in a else a for a in args) + "\n")
 def db(name):
     return state / f"db-{name}"
 if args[:2] == ["compose", "run"]:
     name = next(a for a in args if a.startswith("PG_DB=")).split("=", 1)[1]
-    assert args[-3:] == ["manage.py", "migrate", "--noinput"], args
+    # The stack's migrate, stopped before post_migrate: the wrapper's text.
+    code = pathlib.Path(os.environ["FAKE_MIGRATE_CODE"]).read_text().rstrip("\n")
+    assert args[-2:] == ["-c", code], args[:-1]
     assert db(name).read_text() == "", "migrate into a database that is not empty"
     count = len(list(state.glob("migrated-*"))) + 1
     (state / f"migrated-{count}").write_text(name)
@@ -103,6 +107,7 @@ class KeyTest(Workspace):
             "futureagi/ee/falcon_ai/builtin_skills/a.yaml": "skill",
             "futureagi/.ci/e2e_db.py": "tool",
             "futureagi/.ci/e2e-db-control.sh": "control",
+            "futureagi/.ci/e2e_db_migrate.py": "migrate",
             "futureagi/.ci/db_dump.py": "dump tool",
             "futureagi/conftest.py": "pytest only",
             "futureagi/accounts/views.py": "view",
@@ -146,7 +151,9 @@ class KeyTest(Workspace):
         # What a migration opens: the same list the backend's key has.
         "futureagi/ee/falcon_ai/builtin_skills/a.yaml",
         "futureagi/.ci/e2e_db.py",
+        # What runs the migrate: a change there can change the dump.
         "futureagi/.ci/e2e-db-control.sh",
+        "futureagi/.ci/e2e_db_migrate.py",
         "futureagi/.ci/db_dump.py",
     )
     # The files that name a stack's Postgres image, build its image and hold
@@ -373,6 +380,72 @@ class WhatADumpDoesNotCarryTest(Workspace):
         )
 
 
+# Stands in for Django and the stack's manage.py: it notes the command line
+# Django sees, and whether post_migrate was sent.
+FAKE_MIGRATE_MODULE = """
+import pathlib
+def emit_post_migrate_signal(*args, **kwargs):
+    pathlib.Path("sent").write_text("post_migrate")
+"""
+FAKE_MANAGE = """
+import pathlib, sys
+from django.core.management.commands import migrate
+pathlib.Path("argv").write_text(repr(sys.argv))
+if pathlib.Path("applied").exists():
+    migrate.emit_post_migrate_signal(1, False, "default")
+"""
+
+
+class BoundaryTest(Workspace):
+    """The scratch migrate stops where post_migrate would be sent."""
+
+    def setUp(self):
+        super().setUp()
+        commands = self.dir / "django/core/management/commands"
+        commands.mkdir(parents=True)
+        for folder in (commands, *commands.parents):
+            if folder == self.dir:
+                break
+            (folder / "__init__.py").write_text("")
+        (commands / "migrate.py").write_text(FAKE_MIGRATE_MODULE)
+        (self.dir / "manage.py").write_text(FAKE_MANAGE)
+
+    def run_boundary(self):
+        # As the control runs it: the file's text, from manage.py's folder.
+        return subprocess.run(
+            ["python3", "-c", BOUNDARY.read_text().rstrip("\n")],
+            cwd=self.dir,
+            env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+            capture_output=True,
+            text=True,
+        )
+
+    def test_migrate_runs_with_its_own_command_line_and_sends_no_post_migrate(self):
+        (self.dir / "applied").write_text("")
+        result = self.run_boundary()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.dir / "argv").read_text(), repr(["manage.py", "migrate", "--noinput"])
+        )
+        # The receivers seed from code no migration names: they run on the
+        # leg that restores, never into the dump.
+        self.assertFalse((self.dir / "sent").exists())
+
+    def test_a_migrate_that_never_reaches_post_migrate_fails(self):
+        result = self.run_boundary()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("without reaching post_migrate", result.stderr)
+
+    def test_the_control_hands_the_stack_this_wrapper_and_not_plain_migrate(self):
+        control = CONTROL.read_text()
+        self.assertIn('boundary=$(< "$here/e2e_db_migrate.py")\n', control)
+        self.assertIn('"${run_migrate[@]}" \\\n    -c "$boundary"', control)
+        # Outside comments, nothing runs a plain migrate.
+        self.assertNotRegex(control, r"(?m)^[^#]*manage\.py migrate")
+        for stack in e2e_db.STACKS:
+            self.assertTrue(e2e_db.key_input("futureagi/.ci/e2e_db_migrate.py", stack))
+
+
 class ControlTest(Workspace):
     def setUp(self):
         super().setUp()
@@ -395,6 +468,7 @@ class ControlTest(Workspace):
             PRODUCE="true",
             RECORD=str(self.record),
             OUT=str(self.out),
+            FAKE_MIGRATE_CODE=str(BOUNDARY),
         )
         (self.dir / "tmp").mkdir()
 
@@ -447,7 +521,7 @@ class ControlTest(Workspace):
         )
         self.assertIn(
             "compose run --rm --no-deps -T -e PG_DB=e2e_scratch_fresh "
-            "--entrypoint python postgres-schema-bootstrap manage.py migrate --noinput",
+            "--entrypoint python postgres-schema-bootstrap -c <wrapper>",
             calls,
         )
 
@@ -533,11 +607,11 @@ class ControlTest(Workspace):
     def test_each_stack_runs_its_own_migrate_with_what_its_boot_sets(self):
         runs = {
             "distributed": "compose run --rm --no-deps -T -e PG_DB=e2e_scratch_fresh"
-            " --entrypoint python postgres-schema-bootstrap manage.py migrate --noinput",
+            " --entrypoint python postgres-schema-bootstrap -c <wrapper>",
             # deploy/standalone/bin/bootstrap.py sets both before it migrates.
             "standalone": "compose run --rm --no-deps -T -e PG_DB=e2e_scratch_fresh"
             " -e NO_STARTUP_DB_MUTATIONS=false -e SERVICE_TYPE=bootstrap"
-            " -w /app/backend app python manage.py migrate --noinput",
+            " -w /app/backend app python -c <wrapper>",
         }
         for stack, run in runs.items():
             with self.subTest(stack):

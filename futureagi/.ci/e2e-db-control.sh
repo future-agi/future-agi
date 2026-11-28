@@ -34,6 +34,10 @@ scratch() {
   "${pg[@]}" createdb -U "$user" "$1"
 }
 
+# The stack's own `manage.py migrate --noinput`, stopped before post_migrate
+# (e2e_db_migrate.py says why). Passed as text: .ci/ is not in the image.
+boundary=$(< "$here/e2e_db_migrate.py")
+
 # The stack's own migrate, pointed at another database. Same image, same
 # settings; what its own migrate step sets before it migrates is set here too.
 case $stack in
@@ -58,7 +62,7 @@ esac
 migrate() {
   scratch "$1"
   if ! bin/e2e compose run --rm --no-deps -T -e "PG_DB=$1" "${run_migrate[@]}" \
-    manage.py migrate --noinput > "$work/$1.log" 2>&1; then
+    -c "$boundary" > "$work/$1.log" 2>&1; then
     tail -n 40 "$work/$1.log"
     echo "::error title=E2E database dump::The scratch migrate failed."
     return 1
