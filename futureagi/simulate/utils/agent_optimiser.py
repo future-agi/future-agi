@@ -1,4 +1,7 @@
+from datetime import timedelta
+
 import structlog
+from django.utils import timezone
 
 from tfc.ee_stub import _ee_stub
 
@@ -330,22 +333,15 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
             )
             return None
 
-        if test_execution.eval_explanation_summary is None:
-            # The analysis step relies on clustered eval explanations.
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-            logger.info(
-                "sim_analysis_input_eval_summary_missing",
-                test_execution_id=test_execution_id,
-            )
-            run_eval_summary_task(str(test_execution.id))
-            test_execution.refresh_from_db(fields=["eval_explanation_summary"])
-
+        # The summary is resolved by the queued optimiser job when it starts,
+        # from the run as it is then: a current one is used, and a missing or
+        # out-of-date one is made first. No model runs while preparing, which
+        # happens inside a web request.
         input_data = {
             "test_execution_id": test_execution_id,
             "scenarios": scenarios,
             "aggregate_metrics": aggregate_metrics,
-            "cluster_dict_by_eval": test_execution.eval_explanation_summary,
+            "cluster_dict_by_eval": None,
             # Global, deduplicated eval templates/metadata (avoid repeating per scenario).
             "eval_templates": eval_templates_list,
             "metadata": {
@@ -364,7 +360,7 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
             simulation_type=simulation_type,
             scenario_count=len(scenarios),
             call_count=call_count,
-            has_eval_explanation_summary=bool(test_execution.eval_explanation_summary),
+            eval_explanation_summary_status=test_execution.eval_explanation_summary_status,
         )
         return input_data
 
@@ -609,31 +605,69 @@ def get_or_create_optimiser_for_test_execution(
     return optimiser
 
 
-def get_latest_optimiser_result(
-    optimiser: AgentOptimiser, test_execution: TestExecution
-) -> dict:
-    """
-    Get the latest optimiser run result.
+# The optimiser job's time limit: the analysis (up to an hour) after the run's
+# summary, which the job makes first when it is not current (the summary job's
+# own limit is 1800 s). A run still pending or running past it, with room for
+# a wait in the queue, was killed with its job and is not waited for.
+OPTIMISER_RUN_TIME_LIMIT_SECONDS = 3600 + 1800
+# How long the job may wait in the queue. One that would start later never
+# starts, so the run is read as lost only once no job can still be working.
+OPTIMISER_RUN_QUEUE_WAIT_SECONDS = 1200
+_OPTIMISER_RUN_GIVE_UP = timedelta(
+    seconds=OPTIMISER_RUN_QUEUE_WAIT_SECONDS + OPTIMISER_RUN_TIME_LIMIT_SECONDS
+) + timedelta(minutes=10)
 
-    Args:
-        optimiser: AgentOptimiser instance
-        test_execution: TestExecution instance
-    Returns:
-        dict with response data including status and result
+
+def analysis_on_its_way(optimiser: AgentOptimiser | None) -> AgentOptimiserRun | None:
+    """The optimiser's latest run when it is still pending or running and has
+    not outlived its job, else None."""
+    latest_run: AgentOptimiserRun | None = (
+        optimiser.latest_run if optimiser is not None else None
+    )
+    if latest_run is None or latest_run.status not in (
+        AgentOptimiserRun.OptimiserStatus.PENDING,
+        AgentOptimiserRun.OptimiserStatus.RUNNING,
+    ):
+        return None
+    if latest_run.created_at < timezone.now() - _OPTIMISER_RUN_GIVE_UP:
+        return None
+    return latest_run
+
+
+def get_latest_optimiser_result(optimiser: AgentOptimiser | None) -> dict:
+    """The latest optimiser run's result, read only.
+
+    A run never analysed gets the message to trigger a refresh: reading
+    creates no optimiser run and queues no analysis. A run left pending or
+    running by a job that is gone is told failed, so a page polling it
+    stops; what is stored is not changed.
     """
-    latest_run = optimiser.latest_run
+    latest_run = optimiser.latest_run if optimiser is not None else None
 
     if not latest_run:
-        run = create_optimiser_run_for_test_execution(test_execution, optimiser)
+        return {
+            "response": None,
+            "status": "completed",
+            "message": "No optimiser runs found. Trigger a refresh to start analysis.",
+        }
 
-        if not run:
-            return {
-                "response": None,
-                "status": "completed",
-                "message": "No optimiser runs found. Trigger a refresh to start analysis.",
-            }
-
-        latest_run = run
+    if (
+        latest_run.status
+        in (
+            AgentOptimiserRun.OptimiserStatus.PENDING,
+            AgentOptimiserRun.OptimiserStatus.RUNNING,
+        )
+        and analysis_on_its_way(optimiser) is None
+    ):
+        return {
+            "response": latest_run.result,
+            "status": AgentOptimiserRun.OptimiserStatus.FAILED,
+            "message": (
+                "The last analysis stopped before it finished. "
+                "Trigger a refresh to start a new one."
+            ),
+            "last_updated": latest_run.updated_at.isoformat(),
+        }
 
     return {
         "response": latest_run.result,
@@ -643,10 +677,15 @@ def get_latest_optimiser_result(
 
 
 def create_optimiser_run_for_test_execution(
-    test_execution: TestExecution, optimiser: AgentOptimiser
+    test_execution: TestExecution,
+    optimiser: AgentOptimiser,
+    *,
+    dispatch: bool = True,
 ) -> AgentOptimiserRun | None:
     """
-    Create a new optimiser run for a test execution.
+    Create a new optimiser run for a test execution, and hand its job over
+    unless ``dispatch`` is False (the caller then hands it over itself, with
+    ``dispatch_optimiser_run``, once the run is committed).
 
     Args:
         test_execution: TestExecution instance
@@ -683,6 +722,14 @@ def create_optimiser_run_for_test_execution(
         f"Created optimiser run {run.id} for test execution {test_execution.id}"
     )
 
+    if dispatch:
+        dispatch_optimiser_run(run, test_execution.id)
+
+    return run
+
+
+def dispatch_optimiser_run(run: AgentOptimiserRun, test_execution_id) -> None:
+    """Hand the run's job over; a hand-off that fails marks the run failed."""
     from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
     try:
@@ -692,11 +739,9 @@ def create_optimiser_run_for_test_execution(
         logger.exception(
             "optimiser_run_dispatch_failed",
             optimiser_run_id=str(run.id),
-            test_execution_id=str(test_execution.id),
+            test_execution_id=str(test_execution_id),
             error=str(dispatch_error),
         )
-
-    return run
 
 
 def get_agent_definition_prompt(

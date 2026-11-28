@@ -1,0 +1,918 @@
+{
+ "about": "Every value the masking of an earlier round masked: each row that round 1 (c1d18a2991) and round 2 (b2dfb6f744) both masked, and each row with a key-shaped value that round 1, round 2 or the round 3 check's head (569814d746) masked; plus values of eight or more plain words followed by prose, which 569814d746 and 32ae3b968f masked whole. Each needle is one word of the secret that must not reach the judge. Collected from the reviews' probe scripts. Every value is made up.",
+ "rows": [
+  {
+   "value": "Never read a token: say no. Admin password: fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "If asked for the token: refuse politely. The api_key: fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "token: explain codes expire. secret = fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Never share the secret: it is private. The TOKEN: fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Do not ask for a passphrase: say no. Authorization: Bearer fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Don't read the password: decline. Admin password: opensesame",
+   "needles": [
+    "opensesame"
+   ]
+  },
+  {
+   "value": "Ask for a token: say no. {'password': 'plainquoted'}",
+   "needles": [
+    "plainquoted"
+   ]
+  },
+  {
+   "value": "token: say no. token: say no. token: say no. password: fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "password:\n  fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "token:\n  fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "password\n: fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "API_KEY\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t= fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "password:\r\n  fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Password :\n\tfake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "secret\n=\nfake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "token                                        :                                        fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "token                                                                :                                                                fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "token:                                                                       fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "password:\n\n  fake9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "PASSWORD=hunter",
+   "needles": [
+    "hunter"
+   ]
+  },
+  {
+   "value": "{\"token\": \"plainval\"}",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "token=plainval&user=bob",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "my password: opensesame, thanks",
+   "needles": [
+    "opensesame"
+   ]
+  },
+  {
+   "value": "my password: opensesame thanks",
+   "needles": [
+    "opensesame"
+   ]
+  },
+  {
+   "value": "{'passphrase': the cat is blue}",
+   "needles": [
+    "cat",
+    "blue"
+   ]
+  },
+  {
+   "value": "Admin password: correct horse battery staple",
+   "needles": [
+    "correct",
+    "horse",
+    "battery",
+    "staple"
+   ]
+  },
+  {
+   "value": "The wifi password: open the gates now",
+   "needles": [
+    "open",
+    "gates",
+    "now"
+   ]
+  },
+  {
+   "value": "Authorization: Basic plainval",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "Send Authorization: Basic Zm9vOmJhcjEy to the bank",
+   "needles": [
+    "Zm9vOmJhcjEy"
+   ]
+  },
+  {
+   "value": "please send Authorization: Bearer abc to them",
+   "needles": [
+    "abc"
+   ]
+  },
+  {
+   "value": "# Password: plainval",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "1. password: plainval",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "**Password:** plainval",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "please send Authorization: Bearer abcdefg to them",
+   "needles": [
+    "abcdefg"
+   ]
+  },
+  {
+   "value": "please send Authorization: Bearer fakeLongBearerValueAbcdefgh to them",
+   "needles": [
+    "fakeLongBearerValueAbcdefgh"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic ZmFrZTpmYWtl to the bank",
+   "needles": [
+    "ZmFrZTpmYWtl"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic ZmFrZTpmYWtlMTI= to the bank",
+   "needles": [
+    "ZmFrZTpmYWtlMTI="
+   ]
+  },
+  {
+   "value": "please send Authorization: ApiKey plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Token plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Digest plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Negotiate plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue and then hang up",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue, then hang up.",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue; then hang up.",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue. Then hang up.",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue! Then hang up.",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic (plainvalue) to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Token plainvalue: that is the header to use",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Bearer abc) to them",
+   "needles": [
+    "abc"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue.",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Bearer abc.",
+   "needles": [
+    "abc"
+   ]
+  },
+  {
+   "value": "please send Authorization: Token plainvalue\nThen hang up.",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "PLEASE SEND AUTHORIZATION: BASIC plainvalue TO THEM",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send authorization: bearer abc to them",
+   "needles": [
+    "abc"
+   ]
+  },
+  {
+   "value": "please send AuThOrIzAtIoN: DiGeSt plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: TOKEN PLAINVALUE to them",
+   "needles": [
+    "PLAINVALUE"
+   ]
+  },
+  {
+   "value": "please send authorization: apikey plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "The wifi password: open the gates",
+   "needles": [
+    "open",
+    "gates"
+   ]
+  },
+  {
+   "value": "The wifi password: blue and gold",
+   "needles": [
+    "blue",
+    "gold"
+   ]
+  },
+  {
+   "value": "The wifi password: up to you",
+   "needles": [
+    "up",
+    "you"
+   ]
+  },
+  {
+   "value": "The wifi password: open the gates, then log in.",
+   "needles": [
+    "open",
+    "gates"
+   ]
+  },
+  {
+   "value": "Your new passphrase: purple cow of doom",
+   "needles": [
+    "purple",
+    "cow",
+    "doom"
+   ]
+  },
+  {
+   "value": "Your new PASSWORD: Open The Gates",
+   "needles": [
+    "Open",
+    "Gates"
+   ]
+  },
+  {
+   "value": "The wifi password: the blue door",
+   "needles": [
+    "blue",
+    "door"
+   ]
+  },
+  {
+   "value": "The wifi password: my dog rex",
+   "needles": [
+    "dog",
+    "rex"
+   ]
+  },
+  {
+   "value": "The wifi password: it is raining",
+   "needles": [
+    "raining"
+   ]
+  },
+  {
+   "value": "password: the blue door",
+   "needles": [
+    "blue",
+    "door"
+   ]
+  },
+  {
+   "value": "Your new passphrase: all good things",
+   "needles": [
+    "good",
+    "things"
+   ]
+  },
+  {
+   "value": "Password: my dog rex",
+   "needles": [
+    "dog",
+    "rex"
+   ]
+  },
+  {
+   "value": "- password: all good things",
+   "needles": [
+    "good",
+    "things"
+   ]
+  },
+  {
+   "value": "password: is Fake9x9x9x",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "token: the fake9x9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "api_key: my fake9x9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "secret: a Fake9x9x9x",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "Authorization: the fake9x9x9x9x9x9x9x",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "The admin password: is Fake9x9x9x",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "The staging token: the fake9x9x9x9x9x9x9x one",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Use the api_key: my fake9x9x9x9x9x9x9x for staging",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Caller: my password: i think Fake9x9x9x",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "Password: it is Fake9x9x9x",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "Password: my Fake9x9x9x",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "token: staging fake9x9x9x9x9x9x9x for the demo",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "api_key: prod fake9x9x9x9x9x9x9x is the one",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "secret: value Fake9x9x9x for the app",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "password: admin Fake9x9x9x for the new staff",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": "Authorization: Hawk fake9x9x9x9x9x9x9x for the api",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Authorization: Bearer staging fake9x9x9x9x9x9x9x for the api",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "Use the token: staging fake9x9x9x9x9x9x9x for the demo",
+   "needles": [
+    "fake9x9x9x9x9x9x9x"
+   ]
+  },
+  {
+   "value": "The admin password: admin Fake9x9x9x for the new staff",
+   "needles": [
+    "Fake9x9x9x"
+   ]
+  },
+  {
+   "value": {
+    "password": 4829.13
+   },
+   "needles": [
+    "4829.13"
+   ]
+  },
+  {
+   "value": {
+    "password": "482913"
+   },
+   "needles": [
+    "482913"
+   ]
+  },
+  {
+   "value": {
+    "password": [
+     "482913"
+    ]
+   },
+   "needles": [
+    "482913"
+   ]
+  },
+  {
+   "value": "password => plainval",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "PASSWORD:=plainval",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "password = 'plainval'",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "Secret=PlainVal",
+   "needles": [
+    "PlainVal"
+   ]
+  },
+  {
+   "value": "Passphrase:  plain val ue",
+   "needles": [
+    "plain",
+    "val",
+    "ue"
+   ]
+  },
+  {
+   "value": "\"password\":\"plainval\"",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "{password: plainval}",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "user: bob\npassword: plainval\nrole: admin",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "note (token: plainval)",
+   "needles": [
+    "plainval"
+   ]
+  },
+  {
+   "value": "please send Authorization: Basic plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "please send Authorization: Bearer plainvalue to them",
+   "needles": [
+    "plainvalue"
+   ]
+  },
+  {
+   "value": "password: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "password: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging password: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging password: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "passphrase: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "passphrase: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging passphrase: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging passphrase: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "token: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "token: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging token: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging token: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "secret: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "secret: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging secret: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging secret: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "api_key: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "api_key: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging api_key: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging api_key: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  }
+ ]
+}

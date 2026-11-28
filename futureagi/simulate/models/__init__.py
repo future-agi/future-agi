@@ -12,12 +12,14 @@ from .agent_setup import (
     AgentVersionSetup,
 )
 from .agent_version import AgentVersion
+from .ask import SimulateAsk
 from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .code_archive import CodeArchive
 from .component_evaluation import ComponentEvaluation
 from .eval_config import SimulateEvalConfig, SimulateEvalConfigRemovedKeys
+from .eval_result_store import SimulateEvalResult
 from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
@@ -79,6 +81,8 @@ from .test_execution import (
 from .trial_item_result import TrialItemResult
 
 __all__ = [
+    "SimulateAsk",
+    "SimulateEvalResult",
     "AgentFixCandidate",
     "AgentFixIssueJob",
     "AgentFixRun",

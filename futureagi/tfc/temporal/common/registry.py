@@ -83,6 +83,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.hosted_harness_usage",
     "simulate.tasks.hosted_harness_cancel",
     "simulate.tasks.agent_scans",
+    # The ask's job and its later settle
+    "simulate.services.ask_engine",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks

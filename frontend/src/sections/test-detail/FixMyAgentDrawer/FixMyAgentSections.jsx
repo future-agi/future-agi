@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
 import { ShowComponent } from "../../../components/show";
@@ -30,8 +30,10 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis, refusal }) => {
         <Box
           sx={{
             display: "flex",
+            flexDirection: "column",
             justifyContent: "center",
             alignItems: "center",
+            gap: 2,
             height: "100%",
           }}
         >
@@ -39,6 +41,14 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis, refusal }) => {
             {refusal ||
               "There are no suggestions yet, click the refresh button to get suggestions"}
           </Typography>
+          {/* A run nobody has analysed has no other way to start one; a run
+              the rule refuses gets no refetch, so no Refresh that would be
+              refused again. */}
+          {refetch && (
+            <Button variant="contained" size="small" onClick={() => refetch()}>
+              Refresh
+            </Button>
+          )}
         </Box>
       </ShowComponent>
       <ShowComponent condition={optimizerAnalysis?.response}>

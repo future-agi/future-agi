@@ -35085,7 +35085,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             404: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
+            409: {
+              $ref: "#/definitions/ApiTextErrorResponse",
+            },
             500: {
+              $ref: "#/definitions/ApiTextErrorResponse",
+            },
+            503: {
               $ref: "#/definitions/ApiTextErrorResponse",
             },
             default: {
@@ -129230,6 +129236,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "measured",
         "errored",
+        "input_missing",
         "missing",
         "pass_rate",
         "average_score",
@@ -129260,6 +129267,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         errored: {
           title: "Errored",
+          type: "integer",
+        },
+        input_missing: {
+          title: "Input missing",
           type: "integer",
         },
         missing: {
@@ -131064,6 +131075,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        eval_explanation_summary_requested: {
+          title: "Eval explanation summary requested",
+          type: "boolean",
+        },
       },
     },
     SDKSimulationMetricsResult: {
@@ -131251,6 +131266,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval explanation summary status",
           type: "string",
           "x-nullable": true,
+        },
+        eval_explanation_summary_requested: {
+          title: "Eval explanation summary requested",
+          type: "boolean",
         },
         total_pages: {
           title: "Total pages",

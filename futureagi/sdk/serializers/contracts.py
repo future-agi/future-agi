@@ -203,6 +203,7 @@ class SDKExecutionRunsDetailResultSerializer(ExecutionRunsSerializer):
     eval_explanation_summary_status = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+    eval_explanation_summary_requested = serializers.BooleanField(required=False)
 
 
 class SDKSimulationMetricsResultSerializer(serializers.Serializer):
@@ -258,6 +259,7 @@ class SDKSimulationRunsResultSerializer(serializers.Serializer):
     eval_explanation_summary_status = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+    eval_explanation_summary_requested = serializers.BooleanField(required=False)
     total_pages = serializers.IntegerField(required=False)
     current_page = serializers.IntegerField(required=False)
     count = serializers.IntegerField(required=False)
@@ -289,6 +291,7 @@ class SDKSimulationAnalyticsResultSerializer(serializers.Serializer):
     eval_explanation_summary_status = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+    eval_explanation_summary_requested = serializers.BooleanField(required=False)
 
 
 class SDKSimulationAnalyticsResponseSerializer(serializers.Serializer):

@@ -557,7 +557,10 @@ def test_second_add_eval_while_first_in_flight(run_test, eval_template):
         },
     )
 
-    assert queue_eval_for_finished_calls(execution, first)["queued"] == 1
+    assert (
+        queue_eval_for_finished_calls(execution, first, keep_replaced=True)["queued"]
+        == 1
+    )
     graded.refresh_from_db()
     receipt_job.refresh_from_db()
     before = {
@@ -565,7 +568,7 @@ def test_second_add_eval_while_first_in_flight(run_test, eval_template):
         for call in (graded, receipt_job)
     }
 
-    counts = queue_eval_for_finished_calls(execution, second)
+    counts = queue_eval_for_finished_calls(execution, second, keep_replaced=True)
 
     assert counts == {
         "queued": 0,
@@ -621,14 +624,14 @@ def test_add_eval_requeues_a_lost_job_once_its_clock_is_due(
     clock = "simulate.services.harness_run_evals.timezone.now"
 
     with patch(clock, return_value=due_at - timedelta(seconds=1)):
-        early = queue_eval_for_finished_calls(execution, config)
+        early = queue_eval_for_finished_calls(execution, config, keep_replaced=True)
 
     assert (early["queued"], early["skipped_pending"]) == (0, 1)
     call.refresh_from_db()
     assert call.call_metadata == metadata
 
     with patch(clock, return_value=due_at):
-        due = queue_eval_for_finished_calls(execution, config)
+        due = queue_eval_for_finished_calls(execution, config, keep_replaced=True)
 
     assert (due["queued"], due["skipped_pending"]) == (1, 0)
     call.refresh_from_db()
@@ -849,7 +852,8 @@ def test_native_settle_arms_and_hooks(
             assert stopping.completed_at == earlier
 
     # A regraded run still holds its previous summary; completing it again
-    # must mark that summary stale.
+    # marks that summary as not current. Nothing is queued to rebuild it: the
+    # summary is made only when a person asks for it.
     done = _run(
         run_test,
         Status.EVALUATING,
@@ -857,8 +861,8 @@ def test_native_settle_arms_and_hooks(
     )
     _call(done, metadata=dict(CLOSED))
     _call(done, status=CallExecution.CallStatus.FAILED)
-    # The summary task reads the run on its own connection, so it must not be
-    # queued before the completed run is committed.
+    # The live update reads the run on its own connection, so it must not be
+    # sent before the completed run is committed.
     with django_capture_on_commit_callbacks() as callbacks:
         settle(done.id)
         settle(done.id)
@@ -871,7 +875,7 @@ def test_native_settle_arms_and_hooks(
     assert done.completed_at is not None
     assert (done.total_calls, done.completed_calls, done.failed_calls) == (2, 1, 1)
     assert done.eval_explanation_summary_status == EvalExplanationSummaryStatus.PENDING
-    dispatch.summary.assert_called_once_with(args=(str(done.id),))
+    dispatch.summary.assert_not_called()
     dispatch.notify.assert_called_once_with(
         organization_id=run_test.organization_id,
         run_test_id=str(run_test.id),
@@ -880,18 +884,18 @@ def test_native_settle_arms_and_hooks(
 
 
 @pytest.mark.django_db
-def test_settle_hook_failure_is_logged_and_the_other_hook_runs(
+def test_settle_hook_failure_is_logged_and_queues_no_summary(
     run_test, django_capture_on_commit_callbacks, dispatch
 ):
-    """A summary that cannot be queued still completes the run, still sends
-    the live update, and leaves a log line naming the hook."""
+    """A live update that cannot be sent still completes the run and leaves a
+    log line naming the hook. No summary is queued either way."""
     from structlog.testing import capture_logs
 
     from simulate.services.test_executor import TestExecutor
 
     run = _run(run_test, TestExecution.ExecutionStatus.EVALUATING)
     _call(run, metadata=dict(CLOSED))
-    dispatch.summary.side_effect = RuntimeError("broker down")
+    dispatch.notify.side_effect = RuntimeError("websocket down")
 
     with capture_logs() as logs, django_capture_on_commit_callbacks(execute=True):
         TestExecutor(
@@ -904,8 +908,9 @@ def test_settle_hook_failure_is_logged_and_the_other_hook_runs(
         (entry["test_execution_id"], entry["hook"])
         for entry in logs
         if entry["event"] == "simulate_run_completed_hooks_failed"
-    ] == [(str(run.id), "summary")]
+    ] == [(str(run.id), "notify")]
     dispatch.notify.assert_called_once()
+    dispatch.summary.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -1196,7 +1201,7 @@ def test_chat_monitor_delegates_to_settle(
 ):
     """The chat monitor leaves a run being stopped alone, moves a
     finished-transport run to ``evaluating``, and lets only the settle
-    complete it."""
+    complete it. No summary is queued at any step."""
     from simulate.tasks.alk_sim import _set_csat_state
     from simulate.tasks.chat_sim import monitor_test_execution_for_chat
 
@@ -1219,7 +1224,7 @@ def test_chat_monitor_delegates_to_settle(
         monitor_test_execution_for_chat._original_func(str(run.id))
     run.refresh_from_db()
     assert run.status == Status.COMPLETED
-    dispatch.summary.assert_called_once_with(args=(str(run.id),))
+    dispatch.summary.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -2979,7 +2984,7 @@ def test_add_eval_counts_a_placeholder_with_no_mapping(
     )
 
     with patch("simulate.services.harness_run_evals.timezone.now", return_value=NOW):
-        counts = queue_eval_for_finished_calls(execution, added)
+        counts = queue_eval_for_finished_calls(execution, added, keep_replaced=True)
 
     assert (counts["queued"], counts["skipped_pending"]) == (queued, 1 - queued)
 
@@ -3099,8 +3104,8 @@ def test_finalizer_completes_a_run_still_open(
     run_test, dispatch, monkeypatch, finalizer, open_status
 ):
     """A run still in transport or scoring is completed by its workflow's
-    finalizer: counts, ``completed_at``, a pending summary queued once, and
-    the executor's claim (and the rerun's marker) released."""
+    finalizer: counts, ``completed_at``, the summary marked not current but
+    not queued, and the executor's claim (and the rerun's marker) released."""
     from simulate.models.test_execution import EvalExplanationSummaryStatus
 
     run = _run(
@@ -3121,9 +3126,33 @@ def test_finalizer_completes_a_run_still_open(
     assert run.completed_at is not None
     assert run.picked_up_by_executor is False
     assert run.eval_explanation_summary_status == EvalExplanationSummaryStatus.PENDING
-    dispatch.summary.assert_called_once_with(args=(str(run.id),))
+    dispatch.summary.assert_not_called()
     if finalizer == "rerun":
         assert run.execution_metadata == {"kept": True}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("finalizer", ["native", "rerun"])
+def test_finalizer_leaves_a_summary_a_person_is_waiting_for_running(
+    run_test, dispatch, monkeypatch, finalizer
+):
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
+
+    run = _run(
+        run_test,
+        "evaluating",
+        execution_metadata=dict(_RERUN_MARKER),
+        eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
+        # Asked for just now: its job is alive.
+        eval_explanation_summary_last_updated=timezone.now(),
+    )
+    _call(run, metadata=dict(CLOSED))
+
+    _finalize(finalizer, run, monkeypatch, completed_calls=1, failed_calls=0)
+
+    run.refresh_from_db()
+    assert run.status == TestExecution.ExecutionStatus.COMPLETED
+    assert run.eval_explanation_summary_status == EvalExplanationSummaryStatus.RUNNING
 
 
 @pytest.mark.django_db(transaction=True)
@@ -3168,12 +3197,12 @@ def test_finalizer_leaves_a_run_something_else_ended(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("finalizer", ["native", "rerun"])
-def test_finalize_after_backstop_settle_queues_summary_once(
+def test_finalize_after_backstop_settle_queues_no_summary(
     run_test, dispatch, monkeypatch, finalizer
 ):
     """The sweeper's backstop can settle a run in the seconds before its
-    workflow's own finalizer runs. The run's summary is still queued once,
-    and its ``completed_at`` stays the settle's."""
+    workflow's own finalizer runs. Neither queues a summary, and the run's
+    ``completed_at`` stays the settle's."""
     from simulate.tasks.chat_sim import _sweep_stuck_scoring_pass
 
     run = _run(
@@ -3185,7 +3214,7 @@ def test_finalize_after_backstop_settle_queues_summary_once(
     run.refresh_from_db()
     assert run.status == TestExecution.ExecutionStatus.COMPLETED
     settled_at = run.completed_at
-    dispatch.summary.assert_called_once_with(args=(str(run.id),))
+    dispatch.summary.assert_not_called()
 
     _finalize(finalizer, run, monkeypatch, completed_calls=1, failed_calls=0)
 
@@ -3193,18 +3222,17 @@ def test_finalize_after_backstop_settle_queues_summary_once(
     assert run.status == TestExecution.ExecutionStatus.COMPLETED
     assert run.completed_at == settled_at
     assert run.picked_up_by_executor is False
-    assert dispatch.summary.call_count == 1
+    dispatch.summary.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)
-def test_rerun_finalize_retried_after_a_failed_release_queues_summary_once(
+def test_rerun_finalize_retried_after_a_failed_release_queues_no_summary(
     run_test, dispatch, monkeypatch
 ):
     """Completing the run and releasing the rerun's claim are two writes. If
     the release fails, Temporal runs the activity again, and that attempt
-    finds the run already completed and moves no row. The summary must not
-    depend on it: it is queued once, by the attempt that completed the run,
-    and the retry only repeats the release."""
+    finds the run already completed and moves no row; the retry only repeats
+    the release. Neither attempt queues a summary."""
     Status = TestExecution.ExecutionStatus
     run = _run(
         run_test,
@@ -3235,7 +3263,36 @@ def test_rerun_finalize_retried_after_a_failed_release_queues_summary_once(
     assert run.status == Status.COMPLETED
     assert run.picked_up_by_executor is False
     assert run.execution_metadata == {"kept": True}
-    dispatch.summary.assert_called_once_with(args=(str(run.id),))
+    dispatch.summary.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "summary_status, expected",
+    [("completed", "pending"), ("running", "running"), ("failed", "pending")],
+)
+def test_a_rerun_that_ends_failed_marks_a_finished_summary_out_of_date(
+    run_test, dispatch, monkeypatch, summary_status, expected
+):
+    """A rerun that ends with every call failed changed the verdicts: a
+    finished summary is from before them and is marked pending, as when the
+    rerun completes. A summary a person is waiting for keeps running."""
+    Status = TestExecution.ExecutionStatus
+    run = _run(
+        run_test,
+        Status.EVALUATING,
+        picked_up_by_executor=True,
+        eval_explanation_summary_status=summary_status,
+        eval_explanation_summary_last_updated=timezone.now(),
+    )
+    _call(run, status="failed", metadata=dict(CLOSED))
+
+    _finalize("rerun", run, monkeypatch)
+
+    run.refresh_from_db()
+    assert run.status == Status.FAILED
+    assert run.eval_explanation_summary_status == expected
+    dispatch.summary.assert_not_called()
 
 
 # --- the tool loop, the tool-only close and a late verdict --------------------
@@ -3420,23 +3477,17 @@ def test_tool_only_close_is_not_kept_when_the_call_cannot_be_completed(run_test)
 
 
 @pytest.mark.django_db
-def test_late_verdicts_in_one_window_schedule_one_delayed_rebuild(
-    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
+@pytest.mark.parametrize("path", ["locked", "unlocked"])
+def test_late_verdict_on_a_completed_run_marks_the_summary_out_of_date(
+    run_test, eval_template, django_capture_on_commit_callbacks, dispatch, path
 ):
-    """A job the sweeper gave up on can still land its verdict, after the run
-    completed and its summary was built without it. The first such verdict
-    schedules one summary job, to start after a delay and only once the
-    transaction commits. Every further late verdict of the run inside that
-    window schedules nothing. The run, its ``completed_at`` and its stored
-    summary are not touched. Once the window is over the next late verdict
-    schedules one more job."""
-    from django.core.cache import cache
-
+    """A job the sweeper gave up on can still land its verdict after the run
+    completed. Nothing is queued for it: no summary job, now or later, on the
+    row-locked path and on the path that re-reads the call without a lock.
+    The run and its ``completed_at`` are not touched. The stored summary is
+    kept, but marked pending: it was made without this verdict, and the page
+    says so until a person presses Refresh."""
     from simulate.models.test_execution import EvalExplanationSummaryStatus
-    from simulate.services.scoring_status import (
-        SUMMARY_REBUILD_DELAY_SECONDS,
-        summary_rebuild_marker_key,
-    )
     from simulate.services.test_executor import TestExecutor
 
     Status = TestExecution.ExecutionStatus
@@ -3444,9 +3495,6 @@ def test_late_verdicts_in_one_window_schedule_one_delayed_rebuild(
     config_id = str(_config(run_test, eval_template).id)
     verdict = {config_id: {"status": "Completed", "output": "Passed"}}
     earlier = timezone.now() - timedelta(hours=1)
-    check = TestExecutor(
-        initialize_voice_service=False
-    )._check_and_update_eval_completion
     done = _run(
         run_test,
         Status.COMPLETED,
@@ -3454,316 +3502,188 @@ def test_late_verdicts_in_one_window_schedule_one_delayed_rebuild(
         eval_explanation_summary={"build": 0},
         eval_explanation_summary_status=Summary.COMPLETED,
     )
-    late = [_call(done, metadata=dict(CLOSED), eval_outputs=verdict) for _ in range(4)]
-    key = summary_rebuild_marker_key(done.id)
-    cache.delete(key)
-    assert SUMMARY_REBUILD_DELAY_SECONDS == 300
-    delayed = {"args": (str(done.id),), "start_delay": timedelta(seconds=300)}
+    late = [_call(done, metadata=dict(CLOSED), eval_outputs=verdict) for _ in range(2)]
+    check = TestExecutor(
+        initialize_voice_service=False
+    )._check_and_update_eval_completion
 
-    with patch("django.core.cache.cache.add", wraps=cache.add) as marker:
-        with django_capture_on_commit_callbacks() as callbacks:
-            check(late[0], eval_config_ids=[config_id])
-            dispatch.summary.assert_not_called()
-        assert len(callbacks) == 1
-        callbacks[0]()
-    marker.assert_called_once_with(key, "1", timeout=270)
-    dispatch.summary.assert_called_once_with(**delayed)
-    assert cache.get(key) == "1"
-
-    for call in late[1:]:
+    lock_refused = patch.object(
+        CallExecution.objects,
+        "select_for_update",
+        side_effect=RuntimeError("lock not available"),
+    )
+    for call in late:
         with django_capture_on_commit_callbacks(execute=True) as callbacks:
-            check(call, eval_config_ids=[config_id])
-        assert callbacks == [], "one job covers every verdict of the window"
-    assert dispatch.summary.call_count == 1, "four late verdicts, one job"
+            if path == "unlocked":
+                with lock_refused:
+                    check(call, eval_config_ids=[config_id])
+            else:
+                check(call, eval_config_ids=[config_id])
+        assert len(callbacks) == 1, "the mark waits for the verdict's commit"
+    dispatch.summary.assert_not_called()
     done.refresh_from_db()
     assert (done.status, done.completed_at) == (Status.COMPLETED, earlier)
     assert done.eval_explanation_summary == {"build": 0}
-    assert done.eval_explanation_summary_status == Summary.COMPLETED
-
-    # The window is over: the marker has expired.
-    cache.delete(key)
-    with django_capture_on_commit_callbacks(execute=True):
-        check(late[0], eval_config_ids=[config_id])
-    assert dispatch.summary.call_count == 2
-    dispatch.summary.assert_called_with(**delayed)
-    with django_capture_on_commit_callbacks(execute=True):
-        check(late[1], eval_config_ids=[config_id])
-    assert dispatch.summary.call_count == 2, "the new window has its one job"
+    assert done.eval_explanation_summary_status == Summary.PENDING
 
 
 @pytest.mark.django_db
-def test_late_verdict_on_another_run_schedules_that_runs_own_rebuild(
-    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
+@pytest.mark.parametrize("summary_status", ["running", "failed", "pending"])
+def test_late_verdict_leaves_a_summary_that_is_not_finished_alone(
+    run_test,
+    eval_template,
+    django_capture_on_commit_callbacks,
+    dispatch,
+    summary_status,
 ):
-    """The marker belongs to one run. While one completed run's window is
-    open, a late verdict on another completed run still schedules that run's
-    own summary job and sets that run's own marker: one run's rebuild never
-    stands in for another's."""
-    from unittest.mock import call as called_with
-
-    from django.core.cache import cache
-
-    from simulate.services.scoring_status import summary_rebuild_marker_key
+    """Only a finished summary goes out of date. One a person asked for and
+    that is still running, one that failed, or none at all keep their state,
+    and nothing is queued."""
     from simulate.services.test_executor import TestExecutor
 
     Status = TestExecution.ExecutionStatus
     config_id = str(_config(run_test, eval_template).id)
     verdict = {config_id: {"status": "Completed", "output": "Passed"}}
-    check = TestExecutor(
-        initialize_voice_service=False
-    )._check_and_update_eval_completion
-    runs = [
-        _run(run_test, Status.COMPLETED, completed_at=timezone.now()) for _ in range(2)
-    ]
-    late = [_call(run, metadata=dict(CLOSED), eval_outputs=verdict) for run in runs]
-    keys = [summary_rebuild_marker_key(run.id) for run in runs]
-    assert keys[0] != keys[1]
-    for key in keys:
-        cache.delete(key)
-    delay = timedelta(seconds=300)
-
-    with patch("django.core.cache.cache.add", wraps=cache.add) as marker:
-        with django_capture_on_commit_callbacks(execute=True):
-            check(late[0], eval_config_ids=[config_id])
-        dispatch.summary.assert_called_once_with(
-            args=(str(runs[0].id),), start_delay=delay
-        )
-        assert cache.get(keys[0]) == "1"
-        assert cache.get(keys[1]) is None
-
-        # Inside the first run's window: its marker is still set.
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
-            check(late[1], eval_config_ids=[config_id])
-        assert len(callbacks) == 1, "the other run schedules its own job"
-
-    assert dispatch.summary.call_args_list == [
-        called_with(args=(str(runs[0].id),), start_delay=delay),
-        called_with(args=(str(runs[1].id),), start_delay=delay),
-    ]
-    assert marker.call_args_list == [
-        called_with(keys[0], "1", timeout=270),
-        called_with(keys[1], "1", timeout=270),
-    ]
-    assert [cache.get(key) for key in keys] == ["1", "1"]
-
-
-@pytest.mark.django_db
-def test_late_verdict_schedules_the_rebuild_on_the_unlocked_path(
-    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
-):
-    """When the completion check cannot take its row lock it re-reads the call
-    without one. A late verdict on a completed run schedules the rebuild
-    there too."""
-    from django.core.cache import cache
-
-    from simulate.services.scoring_status import summary_rebuild_marker_key
-    from simulate.services.test_executor import TestExecutor
-
-    config_id = str(_config(run_test, eval_template).id)
     done = _run(
-        run_test, TestExecution.ExecutionStatus.COMPLETED, completed_at=timezone.now()
+        run_test,
+        Status.COMPLETED,
+        completed_at=timezone.now() - timedelta(hours=1),
+        eval_explanation_summary_status=summary_status,
     )
-    late = _call(
-        done,
-        metadata=dict(CLOSED),
-        eval_outputs={config_id: {"status": "Completed", "output": "Passed"}},
-    )
-    key = summary_rebuild_marker_key(done.id)
-    cache.delete(key)
+    call = _call(done, metadata=dict(CLOSED), eval_outputs=verdict)
 
-    with (
-        patch.object(
-            CallExecution.objects,
-            "select_for_update",
-            side_effect=RuntimeError("lock not available"),
-        ),
-        django_capture_on_commit_callbacks(execute=True),
-    ):
+    with django_capture_on_commit_callbacks(execute=True):
         TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
-            late, eval_config_ids=[config_id]
+            call, eval_config_ids=[config_id]
         )
 
-    dispatch.summary.assert_called_once_with(
-        args=(str(done.id),), start_delay=timedelta(seconds=300)
-    )
-    assert cache.get(key) == "1"
+    dispatch.summary.assert_not_called()
+    done.refresh_from_db()
+    assert done.eval_explanation_summary_status == summary_status
 
 
 @pytest.mark.django_db
-def test_only_a_late_verdict_on_a_completed_run_schedules_a_rebuild(
+def test_the_out_of_date_mark_waits_for_the_verdicts_commit(
     run_test, eval_template, django_capture_on_commit_callbacks, dispatch
 ):
-    """The delayed rebuild belongs to one case. A job that closes its call in
-    time completes the run through the settle, whose own summary job starts
-    at once: nothing is scheduled with a delay and no marker is set. A late
-    verdict on a run that is not completed schedules nothing either: a run
-    still scoring gets its summary from the settle, and a failed or stopped
-    run has none to rebuild."""
-    from django.core.cache import cache
-
-    from simulate.services.scoring_status import summary_rebuild_marker_key
+    """The mark is made once the verdict is committed, so a summary job that
+    looks at the grading after it sees the verdict too."""
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
     from simulate.services.test_executor import TestExecutor
 
-    Status = TestExecution.ExecutionStatus
-    config_id = str(_config(run_test, eval_template).id)
-    verdict = {config_id: {"status": "Completed", "output": "Passed"}}
-    earlier = timezone.now() - timedelta(hours=1)
-    check = TestExecutor(
-        initialize_voice_service=False
-    )._check_and_update_eval_completion
-
-    first = _run(run_test, Status.EVALUATING)
-    in_time = _call(
-        first,
-        metadata={"eval_started": True, "eval_completed": False},
-        eval_outputs=verdict,
+    Summary = EvalExplanationSummaryStatus
+    done = _run(
+        run_test,
+        TestExecution.ExecutionStatus.COMPLETED,
+        eval_explanation_summary_status=Summary.COMPLETED,
     )
-    cache.delete(summary_rebuild_marker_key(first.id))
-    with django_capture_on_commit_callbacks(execute=True):
-        check(in_time, eval_config_ids=[config_id])
-    first.refresh_from_db()
-    assert first.status == Status.COMPLETED
-    dispatch.summary.assert_called_once_with(args=(str(first.id),))
-    assert cache.get(summary_rebuild_marker_key(first.id)) is None
 
-    dispatch.summary.reset_mock()
-    for status in (
-        Status.RUNNING,
-        Status.EVALUATING,
-        Status.FAILED,
-        Status.CANCELLING,
-        Status.CANCELLED,
-    ):
-        other = _run(run_test, status, completed_at=earlier)
-        late = _call(other, metadata=dict(CLOSED), eval_outputs=verdict)
-        cache.delete(summary_rebuild_marker_key(other.id))
-        with django_capture_on_commit_callbacks(execute=True) as callbacks:
-            check(late, eval_config_ids=[config_id])
-        other.refresh_from_db()
-        assert callbacks == [], status
-        assert (other.status, other.completed_at) == (status, earlier)
-        assert cache.get(summary_rebuild_marker_key(other.id)) is None, status
-    dispatch.summary.assert_not_called()
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        TestExecutor(initialize_voice_service=False)._mark_summary_out_of_date(done.id)
+        done.refresh_from_db()
+        assert done.eval_explanation_summary_status == Summary.COMPLETED
+
+    assert len(callbacks) == 1
+    callbacks[0]()
+    done.refresh_from_db()
+    assert done.eval_explanation_summary_status == Summary.PENDING
 
 
 @pytest.mark.django_db
-def test_rebuild_handoff_that_fails_clears_the_marker(
-    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
+@pytest.mark.parametrize(
+    "run_status", ["running", "evaluating", "failed", "cancelling", "cancelled"]
+)
+def test_a_late_verdict_marks_the_summary_out_of_date_whatever_the_runs_status(
+    run_test, eval_template, django_capture_on_commit_callbacks, dispatch, run_status
 ):
-    """The marker says a summary job is on its way. If the hand-off of that
-    job fails, the marker is removed, so the next late verdict schedules
-    again instead of waiting out a window with no job in it. The stored
-    summary is left as it was: nothing reads as pending."""
-    from django.core.cache import cache
-    from structlog.testing import capture_logs
-
+    """A finished summary goes out of date on a late verdict on any run: a
+    failed or stopped run can be summarised too, and its summary was made
+    without the verdict. The run's status and ``completed_at`` are not
+    touched, and nothing is queued."""
     from simulate.models.test_execution import EvalExplanationSummaryStatus
-    from simulate.services.scoring_status import summary_rebuild_marker_key
     from simulate.services.test_executor import TestExecutor
 
     Summary = EvalExplanationSummaryStatus
     config_id = str(_config(run_test, eval_template).id)
-    check = TestExecutor(
-        initialize_voice_service=False
-    )._check_and_update_eval_completion
-    done = _run(
+    verdict = {config_id: {"status": "Completed", "output": "Passed"}}
+    earlier = timezone.now() - timedelta(hours=1)
+    other = _run(
         run_test,
-        TestExecution.ExecutionStatus.COMPLETED,
-        completed_at=timezone.now(),
+        run_status,
+        completed_at=earlier,
+        eval_explanation_summary={"build": 0},
         eval_explanation_summary_status=Summary.COMPLETED,
     )
-    late = _call(
-        done,
-        metadata=dict(CLOSED),
-        eval_outputs={config_id: {"status": "Completed", "output": "Passed"}},
-    )
-    key = summary_rebuild_marker_key(done.id)
-    cache.delete(key)
+    late = _call(other, metadata=dict(CLOSED), eval_outputs=verdict)
 
-    dispatch.summary.side_effect = RuntimeError("broker unreachable")
-    with capture_logs() as logs, django_capture_on_commit_callbacks(execute=True):
-        check(late, eval_config_ids=[config_id])
-    assert dispatch.summary.call_count == 1
-    assert cache.get(key) is None
-    assert [
-        line["test_execution_id"]
-        for line in logs
-        if line["event"] == "simulate_summary_rebuild_handoff_failed"
-    ] == [str(done.id)]
-    done.refresh_from_db()
-    assert done.eval_explanation_summary_status == Summary.COMPLETED
-
-    dispatch.summary.side_effect = None
     with django_capture_on_commit_callbacks(execute=True):
-        check(late, eval_config_ids=[config_id])
-    assert dispatch.summary.call_count == 2, "the next late verdict schedules again"
-    assert cache.get(key) == "1"
+        TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+            late, eval_config_ids=[config_id]
+        )
+
+    other.refresh_from_db()
+    assert (other.status, other.completed_at) == (run_status, earlier)
+    assert other.eval_explanation_summary_status == Summary.PENDING
+    dispatch.summary.assert_not_called()
 
 
 @pytest.mark.django_db
-def test_rebuild_is_scheduled_when_the_cache_is_down(
+def test_settle_leaves_a_summary_a_person_is_waiting_for_running(
     run_test, eval_template, django_capture_on_commit_callbacks, dispatch
 ):
-    """Without the cache nothing can say whether a rebuild is already
-    scheduled. The job is scheduled anyway: one summary job too many costs
-    less than a summary left without the verdict. A hand-off that fails as
-    well is logged and nothing escapes."""
-    from structlog.testing import capture_logs
-
+    """A summary already running when the run settles keeps running, so the
+    pane keeps polling; the job itself sees whether grading changed."""
+    from simulate.models.test_execution import EvalExplanationSummaryStatus
     from simulate.services.test_executor import TestExecutor
 
+    Summary = EvalExplanationSummaryStatus
     config_id = str(_config(run_test, eval_template).id)
-    check = TestExecutor(
-        initialize_voice_service=False
-    )._check_and_update_eval_completion
-    done = _run(
-        run_test, TestExecution.ExecutionStatus.COMPLETED, completed_at=timezone.now()
+    first = _run(
+        run_test,
+        TestExecution.ExecutionStatus.EVALUATING,
+        eval_explanation_summary_status=Summary.RUNNING,
+        # Asked for just now: its job is alive.
+        eval_explanation_summary_last_updated=timezone.now(),
     )
-    late = _call(
-        done,
-        metadata=dict(CLOSED),
+    in_time = _call(
+        first,
+        metadata={"eval_started": True, "eval_completed": False},
         eval_outputs={config_id: {"status": "Completed", "output": "Passed"}},
     )
-    cache_down = ConnectionError("cache unreachable")
+    with django_capture_on_commit_callbacks(execute=True):
+        TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+            in_time, eval_config_ids=[config_id]
+        )
 
-    def _rebuild_events(logs):
-        return [
-            (line["event"], line.get("step"))
-            for line in logs
-            if line["event"].startswith("simulate_summary_rebuild_")
-        ]
+    first.refresh_from_db()
+    assert first.status == TestExecution.ExecutionStatus.COMPLETED
+    assert first.eval_explanation_summary_status == Summary.RUNNING
 
-    with (
-        patch("django.core.cache.cache.add", side_effect=cache_down),
-        capture_logs() as logs,
-    ):
-        for _ in range(2):
-            with django_capture_on_commit_callbacks(execute=True):
-                check(late, eval_config_ids=[config_id])
-    assert dispatch.summary.call_count == 2, "no marker, so every verdict schedules"
-    dispatch.summary.assert_called_with(
-        args=(str(done.id),), start_delay=timedelta(seconds=300)
+
+@pytest.mark.django_db
+def test_verdict_in_time_completes_the_run_and_queues_no_summary(
+    run_test, eval_template, django_capture_on_commit_callbacks, dispatch
+):
+    """A job that closes its call in time completes the run through the
+    settle. The run is told to the page, and no summary is queued."""
+    from simulate.services.test_executor import TestExecutor
+
+    Status = TestExecution.ExecutionStatus
+    config_id = str(_config(run_test, eval_template).id)
+    first = _run(run_test, Status.EVALUATING)
+    in_time = _call(
+        first,
+        metadata={"eval_started": True, "eval_completed": False},
+        eval_outputs={config_id: {"status": "Completed", "output": "Passed"}},
     )
-    each_verdict = [
-        ("simulate_summary_rebuild_marker_failed", "set"),
-        ("simulate_summary_rebuild_scheduled", None),
-    ]
-    assert _rebuild_events(logs) == each_verdict * 2
-
-    dispatch.summary.side_effect = RuntimeError("broker unreachable")
-    with (
-        patch("django.core.cache.cache.add", side_effect=cache_down),
-        patch("django.core.cache.cache.delete", side_effect=cache_down),
-        capture_logs() as logs,
-        django_capture_on_commit_callbacks(execute=True),
-    ):
-        check(late, eval_config_ids=[config_id])
-    assert dispatch.summary.call_count == 3
-    assert _rebuild_events(logs) == [
-        ("simulate_summary_rebuild_marker_failed", "set"),
-        ("simulate_summary_rebuild_handoff_failed", None),
-        ("simulate_summary_rebuild_marker_failed", "clear"),
-    ]
+    with django_capture_on_commit_callbacks(execute=True):
+        TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+            in_time, eval_config_ids=[config_id]
+        )
+    first.refresh_from_db()
+    assert first.status == Status.COMPLETED
+    dispatch.notify.assert_called_once()
+    dispatch.summary.assert_not_called()
 
 
 # --- CSAT attempts ------------------------------------------------------------
@@ -3857,7 +3777,7 @@ def test_add_eval_dispatch_failure_restores_what_each_call_held(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 2
     assert dispatch.evals.call_count == 1, "the batch stops at the first failure"
@@ -3915,7 +3835,7 @@ def test_add_eval_dispatch_failure_completes_a_run_that_holds_an_ungraded_call(
     dispatch.evals.side_effect = _broker_unreachable
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 1, "only the completed call is queued"
     assert run_at_hand_off == [Status.EVALUATING], "the add did reopen the run"
@@ -3957,7 +3877,7 @@ def test_add_eval_dispatch_failure_keeps_a_verdict_that_landed_anyway(
     dispatch.evals.side_effect = _taken_then_errored
 
     with django_capture_on_commit_callbacks(execute=True):
-        queue_eval_for_finished_calls(run, config)
+        queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     call.refresh_from_db()
     run.refresh_from_db()
@@ -4008,7 +3928,7 @@ def test_add_eval_dispatch_failure_leaves_a_run_something_else_holds(
     dispatch.evals.side_effect = _something_else_takes_the_run
 
     with django_capture_on_commit_callbacks(execute=True):
-        queue_eval_for_finished_calls(run, config)
+        queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     call.refresh_from_db()
     run.refresh_from_db()
@@ -4037,7 +3957,7 @@ def test_add_eval_dispatch_failure_leaves_a_run_it_did_not_reopen(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 1
     assert dispatch.evals.call_count == 1
@@ -4079,7 +3999,7 @@ def test_add_eval_dispatch_failure_ignores_a_deleted_call_still_open(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks(execute=True):
-        counts = queue_eval_for_finished_calls(run, config)
+        counts = queue_eval_for_finished_calls(run, config, keep_replaced=True)
 
     assert counts["queued"] == 1, "the deleted call is not queued"
     call.refresh_from_db()
@@ -4124,7 +4044,7 @@ def test_add_eval_undo_that_fails_is_logged_with_its_run(
     dispatch.evals.side_effect = RuntimeError("broker unreachable")
 
     with django_capture_on_commit_callbacks() as callbacks:
-        queue_eval_for_finished_calls(run, config)
+        queue_eval_for_finished_calls(run, config, keep_replaced=True)
     assert len(callbacks) == 1
 
     # Called as the commit would call it, without Django's robust wrapper,

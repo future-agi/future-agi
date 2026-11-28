@@ -34,7 +34,8 @@ def failing_call_count(execution: TestExecution) -> int:
 
 def has_debug_failures_analysis(execution: TestExecution) -> bool:
     """Whether the analysis read returns an analysis the run already has: any run of its
-    optimiser, in any status. A refused first read leaves an optimiser with no run."""
+    optimiser, in any status. An optimiser can have no run (a refresh that could not
+    prepare its input commits one), and that is no analysis."""
     return (
         execution.agent_optimiser_id is not None
         and AgentOptimiserRun.objects.filter(

@@ -49,11 +49,7 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
         from django.db.models import Count, Q
         from django.utils import timezone
 
-        from simulate.models.test_execution import (
-            CallExecution,
-            EvalExplanationSummaryStatus,
-            TestExecution,
-        )
+        from simulate.models.test_execution import CallExecution, TestExecution
 
         # Aggregate counts from CallExecution statuses
         counts = await CallExecution.objects.filter(
@@ -150,23 +146,26 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
                 )
 
         # The calls say the run is done and not failed. Complete it if it is
-        # still open, queue its summary only if this write moved it, and
-        # release the rerun's hold on it either way.
+        # still open, and release the rerun's hold on it either way.
         if final_status == TestExecution.ExecutionStatus.COMPLETED:
-            from simulate.services.scoring_status import SETTLE_FROM_STATUSES
+            from simulate.services.scoring_status import (
+                SETTLE_FROM_STATUSES,
+                summary_status_once_graded,
+            )
 
             # The scoring sweeper's settle may have completed this run in the
             # seconds before this activity, and a stop or a failure may have
-            # ended it. Only a run still open is completed here, so its
-            # summary is built once and a finished run is not stamped again.
-            moved = await TestExecution.objects.filter(
+            # ended it. Only a run still open is completed here, so a finished
+            # run is not stamped again. A summary a person is waiting for keeps
+            # running; any other is marked pending (not current).
+            await TestExecution.objects.filter(
                 id=test_execution.id, status__in=SETTLE_FROM_STATUSES
             ).aupdate(
                 status=final_status,
                 completed_calls=completed_count,
                 failed_calls=failed_count,
                 completed_at=test_execution.completed_at,
-                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                eval_explanation_summary_status=summary_status_once_graded(),
             )
             # Whether or not the update above moved the run, and whatever
             # status it holds now (completed by the settle, or ended by a
@@ -177,30 +176,17 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
             if "execution_metadata" in update_fields:
                 released.append("execution_metadata")
 
-            # Trigger eval summary task. Before the release is written: if
-            # that write fails, the retry of this activity finds the run
-            # completed and moves no row, so it would never queue the summary.
-            if moved:
-                try:
-                    from simulate.tasks.eval_summary_tasks import (
-                        run_eval_summary_task,
-                    )
-
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                    logger.info(
-                        "triggered_eval_summary_for_rerun",
-                        test_execution_id=input.test_execution_id,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "failed_to_trigger_eval_summary",
-                        test_execution_id=input.test_execution_id,
-                        error=str(e),
-                    )
             await test_execution.asave(update_fields=released)
         elif final_status == TestExecution.ExecutionStatus.FAILED:
+            from simulate.services.scoring_status import summary_status_once_graded
+
             update_fields.extend(["completed_at", "picked_up_by_executor"])
             await test_execution.asave(update_fields=update_fields)
+            # The rerun changed the verdicts: a finished summary is from
+            # before them, as when the rerun completes.
+            await TestExecution.objects.filter(id=test_execution.id).aupdate(
+                eval_explanation_summary_status=summary_status_once_graded()
+            )
         else:
             # Still in progress - just update counts and status
             await test_execution.asave(update_fields=update_fields)

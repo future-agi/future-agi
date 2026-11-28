@@ -15,7 +15,11 @@ from simulate.models import (
 )
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
-from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.models.test_execution import (
+    CallExecution,
+    EvalExplanationSummaryStatus,
+    TestExecution,
+)
 from simulate.selectors.debug_failures import connected_call_count
 from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
@@ -141,23 +145,33 @@ def test_refuses_to_start_an_analysis(
     dispatch.assert_not_called()
 
 
-@pytest.mark.parametrize("route", ["read", "refresh"])
 def test_starts_an_analysis_of_15_connected_calls_and_a_failure(
-    auth_client, organization, workspace, dispatch, route
+    auth_client, organization, workspace, dispatch
 ):
     execution = _run(organization, workspace, ELIGIBLE)
 
-    if route == "read":
-        response = auth_client.get(_analysis_url(execution))
-    else:
-        response = auth_client.post(
-            f"{_analysis_url(execution)}refresh/", {}, format="json"
-        )
+    response = auth_client.post(
+        f"{_analysis_url(execution)}refresh/", {}, format="json"
+    )
 
     assert response.status_code == 200
     assert response.json()["result"]["status"] == "pending"
     assert _runs(execution) == 1
     dispatch.assert_called_once()
+
+
+def test_opening_a_run_the_rule_allows_starts_nothing(
+    auth_client, organization, workspace, dispatch
+):
+    # Each analysis is a chain of paid model calls: only the refresh starts one.
+    execution = _run(organization, workspace, ELIGIBLE)
+
+    response = auth_client.get(_analysis_url(execution))
+
+    assert response.status_code == 200
+    assert response.json()["result"]["response"] is None
+    assert _runs(execution) == 0
+    dispatch.assert_not_called()
 
 
 def test_returns_the_analysis_a_blocked_run_already_has(
@@ -189,13 +203,13 @@ def _ask(client, execution, route):
     "status",
     [TestExecution.ExecutionStatus.CANCELLED, TestExecution.ExecutionStatus.FAILED],
 )
-@pytest.mark.parametrize("route", ["read", "refresh"])
 def test_starts_an_analysis_of_a_stopped_run(
-    auth_client, organization, workspace, dispatch, status, route
+    auth_client, organization, workspace, dispatch, status
 ):
+    # Only the refresh starts an analysis; a read starts nothing.
     execution = _run(organization, workspace, ELIGIBLE, status=status)
 
-    response = _ask(auth_client, execution, route)
+    response = _ask(auth_client, execution, "refresh")
 
     assert response.status_code == 200
     assert response.json()["result"]["status"] == "pending"
@@ -274,9 +288,13 @@ def test_a_cancelled_runs_finished_calls_are_analysed(
         [*ELIGIBLE, (CallExecution.CallStatus.CANCELLED, 0)],
         status=TestExecution.ExecutionStatus.CANCELLED,
     )
-    # Its eval explanations are summarised already, so no summary is computed.
+    # Its eval explanations are summarised already (a current summary), so no
+    # summary is computed.
     execution.eval_explanation_summary = {}
-    execution.save(update_fields=["eval_explanation_summary"])
+    execution.eval_explanation_summary_status = EvalExplanationSummaryStatus.COMPLETED
+    execution.save(
+        update_fields=["eval_explanation_summary", "eval_explanation_summary_status"]
+    )
     analysis = {"agent_level": {}, "system_level": {}}
 
     # The task's body runs inline, without the activity wrapper's connection
@@ -290,7 +308,10 @@ def test_a_cancelled_runs_finished_calls_are_analysed(
         patch("simulate.utils.agent_optimiser.SimulationAnalysisAgent") as agent,
     ):
         agent.return_value.analyze.return_value = analysis
-        response = auth_client.get(_analysis_url(execution))
+        # Only the refresh starts an analysis.
+        response = auth_client.post(
+            f"{_analysis_url(execution)}refresh/", {}, format="json"
+        )
 
     assert response.status_code == 200
     run = AgentOptimiserRun.objects.get(agent_optimiser__test_executions=execution)
@@ -371,17 +392,31 @@ def test_kpis_say_a_finished_run_has_an_analysis(auth_client, organization, work
     assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is True
 
 
+@pytest.mark.parametrize(
+    "has_optimiser",
+    [False, True],
+    ids=["no_optimiser", "optimiser_with_no_run"],
+)
 def test_kpis_say_a_refused_read_left_no_analysis(
-    auth_client, organization, workspace, dispatch
+    auth_client, organization, workspace, dispatch, has_optimiser
 ):
     execution = _run(organization, workspace, NONE_FAILING)
+    if has_optimiser:
+        # A refresh that could not prepare its input commits an optimiser with
+        # no run, and earlier reads left such rows.
+        execution.agent_optimiser = AgentOptimiser.objects.create(name="Empty")
+        execution.save(update_fields=["agent_optimiser"])
+    optimiser_before = execution.agent_optimiser_id
 
     refused = auth_client.get(_analysis_url(execution))
     execution.refresh_from_db()
 
-    assert refused.status_code == 409
-    # The refused read made the run an optimiser, with no analysis in it.
-    assert execution.agent_optimiser_id is not None
+    # A run with no analysis yet meets the rule on opening, optimiser or not.
+    _refused(refused, "investigation_nothing_failed", NOTHING_FAILED)
+    # A read creates nothing, refused or not.
+    assert execution.agent_optimiser_id == optimiser_before
+    assert _runs(execution) == 0
+    dispatch.assert_not_called()
     assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is False
 
 

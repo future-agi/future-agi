@@ -620,10 +620,7 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
 
         from django.utils import timezone
 
-        from simulate.models.test_execution import (
-            EvalExplanationSummaryStatus,
-            TestExecution,
-        )
+        from simulate.models.test_execution import TestExecution
 
         test_execution = await TestExecution.objects.aget(id=input.test_execution_id)
 
@@ -645,12 +642,16 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
             "COMPLETED",
             "completed",
         ]:
-            from simulate.services.scoring_status import SETTLE_FROM_STATUSES
+            from simulate.services.scoring_status import (
+                SETTLE_FROM_STATUSES,
+                summary_status_once_graded,
+            )
 
             # The scoring sweeper's settle may have completed this run in the
             # seconds before this activity, and a stop or a failure may have
-            # ended it. Only a run still open is completed here, so its
-            # summary is built once and a finished run is not stamped again.
+            # ended it. Only a run still open is completed here, so a finished
+            # run is not stamped again. A summary a person is waiting for keeps
+            # running; any other is marked pending (not current).
             moved = await TestExecution.objects.filter(
                 id=test_execution.id, status__in=SETTLE_FROM_STATUSES
             ).aupdate(
@@ -659,7 +660,7 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
                 failed_calls=test_execution.failed_calls,
                 completed_at=test_execution.completed_at,
                 picked_up_by_executor=False,
-                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                eval_explanation_summary_status=summary_status_once_graded(),
             )
             if not moved:
                 # Whoever ended the run owns its status, counts and summary;
@@ -667,18 +668,6 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
                 await TestExecution.objects.filter(id=test_execution.id).aupdate(
                     picked_up_by_executor=False
                 )
-            else:
-                try:
-                    from simulate.tasks.eval_summary_tasks import (
-                        run_eval_summary_task,
-                    )
-
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                    activity.logger.info(
-                        f"Triggered eval summary for test_execution={input.test_execution_id}"
-                    )
-                except Exception as e:
-                    activity.logger.warning(f"Failed to trigger eval summary: {str(e)}")
         else:
             await test_execution.asave(
                 update_fields=[

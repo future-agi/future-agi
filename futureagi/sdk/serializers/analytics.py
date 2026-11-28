@@ -277,8 +277,8 @@ class ExecutionRunsSerializer(serializers.ModelSerializer):
 class AnalyticsResponseSerializer(serializers.Serializer):
     """Response for /simulation/analytics/ endpoint.
 
-    Note: eval_explanation_summary and eval_explanation_summary_status are
-    conditionally added by the view when summary=true, so they are not
+    Note: eval_explanation_summary, eval_explanation_summary_status and
+    eval_explanation_summary_requested are conditionally added by the view when summary=true, so they are not
     declared as fields here. The serializer passes them through via
     to_representation.
     """
@@ -296,6 +296,9 @@ class AnalyticsResponseSerializer(serializers.Serializer):
             data["eval_explanation_summary"] = instance["eval_explanation_summary"]
             data["eval_explanation_summary_status"] = instance.get(
                 "eval_explanation_summary_status"
+            )
+            data["eval_explanation_summary_requested"] = instance.get(
+                "eval_explanation_summary_requested"
             )
         return data
 

@@ -74507,8 +74507,7 @@ export const getSimulateTestExecutionsEvalExplanationSummaryListUrl = (
 };
 
 /**
- * Fetch the evaluation explanation summary from the database.
-If not present, trigger async calculation and return empty response.
+ * Return the stored summary and its status; write and queue nothing.
  */
 export const simulateTestExecutionsEvalExplanationSummaryList = async (
   testExecutionId: string,
@@ -74535,16 +74534,28 @@ export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse404
     status: 404;
   };
 
+export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse409 =
+  {
+    data: ApiTextErrorResponseApi;
+    status: 409;
+  };
+
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse500 =
   {
     data: ApiTextErrorResponseApi;
     status: 500;
   };
 
+export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse503 =
+  {
+    data: ApiTextErrorResponseApi;
+    status: 503;
+  };
+
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 404 | 409 | 500 | 503>;
   };
 
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseSuccess =
@@ -74554,7 +74565,9 @@ export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseSuc
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseError =
   (
     | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse404
+    | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse409
     | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse500
+    | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse503
     | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseDefault
   ) & {
     headers: ApiResponseHeaders;

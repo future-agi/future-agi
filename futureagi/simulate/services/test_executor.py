@@ -97,6 +97,7 @@ except ImportError:
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
+from model_hub.utils.eval_input_validation import MissingEvalInputError
 from model_hub.views.utils.evals import run_eval_func
 from sdk.utils.helpers import _get_api_call_type
 from simulate.constants.persona_prompt_guides import (
@@ -163,6 +164,7 @@ from simulate.temporal.activities.xl import (
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
+    record_missing_eval_input,
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import (
@@ -175,8 +177,6 @@ from simulate.utils.verdicts import has_stored_verdict
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE, APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
-
-# Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
 from tfc.utils.evaluation_denials import EvaluationDenied
 
@@ -311,10 +311,6 @@ class TestExecutor:
                     test_execution.save(
                         update_fields=["eval_explanation_summary_status"]
                     )
-                    # Lazy import to avoid circular dependency
-                    from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
 
                     test_execution.picked_up_by_executor = False
                     test_execution.save()
@@ -524,14 +520,6 @@ class TestExecutor:
                             EvalExplanationSummaryStatus.PENDING
                         )
                         test_execution.save()
-                        # Lazy import to avoid circular dependency
-                        from simulate.tasks.eval_summary_tasks import (
-                            run_eval_summary_task,
-                        )
-
-                        run_eval_summary_task.apply_async(
-                            args=(str(test_execution.id),)
-                        )
 
                     logger.info(
                         f"Test execution {test_execution.id} completed - all evaluations finished"
@@ -4095,7 +4083,7 @@ class TestExecutor:
                                         call_execution_locked.test_execution_id
                                     )
                         else:
-                            self._rebuild_summary_after_late_verdict(
+                            self._mark_summary_out_of_date(
                                 call_execution_locked.test_execution_id
                             )
                 except Exception as e:
@@ -4143,9 +4131,7 @@ class TestExecutor:
                                     call_execution.test_execution_id
                                 )
                     else:
-                        self._rebuild_summary_after_late_verdict(
-                            call_execution.test_execution_id
-                        )
+                        self._mark_summary_out_of_date(call_execution.test_execution_id)
             else:
                 logger.debug(
                     f"Not all eval configs completed for call {call_execution.id}. "
@@ -4185,6 +4171,7 @@ class TestExecutor:
         from simulate.services.scoring_status import (
             CALL_SCORING_OPEN_Q,
             SETTLE_FROM_STATUSES,
+            summary_status_once_graded,
         )
 
         try:
@@ -4242,14 +4229,15 @@ class TestExecutor:
                     total_calls=total_call_count,
                     completed_calls=completed_call_count,
                     failed_calls=failed_call_count,
-                    eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                    eval_explanation_summary_status=summary_status_once_graded(),
                 )
                 if updated:
                     logger.info(
                         f"Test execution {test_execution_id} marked as completed - all evaluations done"
                     )
 
-                    # After commit, so the summary reads the completed run.
+                    # After commit, so the live update reads the completed
+                    # run.
                     def _after_completion():
                         self._after_run_completed(test_execution_id)
 
@@ -4265,18 +4253,33 @@ class TestExecutor:
             traceback.print_exc()
             return False
 
-    def _after_run_completed(self, test_execution_id):
-        """Summary and live update for a run the settle just completed."""
-        try:
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+    def _mark_summary_out_of_date(self, test_execution_id):
+        """A late verdict on a run: mark its finished summary pending.
 
-            run_eval_summary_task.apply_async(args=(str(test_execution_id),))
-        except Exception:
-            logger.exception(
-                "simulate_run_completed_hooks_failed",
-                test_execution_id=str(test_execution_id),
-                hook="summary",
+        Any run, whatever its status: a failed or stopped run can be
+        summarised too. The summary was made without this verdict. It is
+        kept, and nothing is queued: pending tells the page, and the SDK,
+        that nobody has asked for a summary since the run's verdicts last
+        changed. A summary that failed or was never made keeps its state.
+        One that is running sees the verdict itself, so it keeps running and
+        the page keeps polling.
+
+        The mark is made once the verdict is committed: a summary job that
+        looks at the grading after the mark then sees the verdict too.
+        """
+
+        def _mark():
+            TestExecution.objects.filter(
+                id=test_execution_id,
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
+            ).update(
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING
             )
+
+        transaction.on_commit(_mark, robust=True)
+
+    def _after_run_completed(self, test_execution_id):
+        """Live update for a run the settle just completed."""
         try:
             from simulate.utils.websocket_notifications import (
                 notify_simulation_update,
@@ -4296,88 +4299,6 @@ class TestExecutor:
                 test_execution_id=str(test_execution_id),
                 hook="notify",
             )
-
-    def _rebuild_summary_after_late_verdict(self, test_execution_id):
-        """Schedule one rebuild of a completed run's summary after a late verdict.
-
-        A grading job that outlives the scoring clock writes its verdict on a
-        call the sweeper already closed, after the run completed and its
-        summary was built without that verdict. The run stays completed and
-        keeps its ``completed_at``, and nothing is written to the summary
-        here. One summary job is scheduled to start after a delay, and a
-        marker in the cache says so for a little less than that delay: every
-        further late verdict of the run that finds the marker schedules
-        nothing, and the job, starting after all of them, reads them all.
-        """
-        from datetime import timedelta
-
-        from django.core.cache import cache
-
-        from simulate.services.scoring_status import (
-            SUMMARY_REBUILD_DELAY_SECONDS,
-            SUMMARY_REBUILD_MARKER_SECONDS,
-            summary_rebuild_marker_key,
-        )
-        from simulate.tasks.eval_summary_tasks import run_eval_summary_task
-
-        if not TestExecution.objects.filter(
-            id=test_execution_id, status=TestExecution.ExecutionStatus.COMPLETED
-        ).exists():
-            # A run still scoring gets its summary from the settle; a failed
-            # or stopped run has none to rebuild.
-            return
-        run_id = str(test_execution_id)
-        key = summary_rebuild_marker_key(run_id)
-        try:
-            scheduled_already = not cache.add(
-                key, "1", timeout=SUMMARY_REBUILD_MARKER_SECONDS
-            )
-        except Exception:
-            # Without the cache nothing says whether a rebuild is scheduled.
-            # One job too many costs less than a summary left without the
-            # verdict, so this one is scheduled.
-            logger.warning(
-                "simulate_summary_rebuild_marker_failed",
-                test_execution_id=run_id,
-                step="set",
-                exc_info=True,
-            )
-            scheduled_already = False
-        if scheduled_already:
-            return
-
-        def _schedule():
-            try:
-                run_eval_summary_task.apply_async(
-                    args=(run_id,),
-                    start_delay=timedelta(seconds=SUMMARY_REBUILD_DELAY_SECONDS),
-                )
-            except Exception:
-                logger.exception(
-                    "simulate_summary_rebuild_handoff_failed",
-                    test_execution_id=run_id,
-                )
-                # No job is coming, so the marker must not make the next late
-                # verdict wait out a window with nothing in it.
-                try:
-                    cache.delete(key)
-                except Exception:
-                    logger.warning(
-                        "simulate_summary_rebuild_marker_failed",
-                        test_execution_id=run_id,
-                        step="clear",
-                        exc_info=True,
-                    )
-                return
-            logger.info(
-                "simulate_summary_rebuild_scheduled",
-                test_execution_id=run_id,
-                delay_seconds=SUMMARY_REBUILD_DELAY_SECONDS,
-            )
-
-        # After commit: nothing is scheduled for a transaction that rolls
-        # back, and the job is not handed over while a row lock is held.
-        transaction.on_commit(_schedule, robust=True)
 
     def _run_simulate_evaluations(
         self,
@@ -4575,13 +4496,16 @@ class TestExecutor:
                             continue
                         extra = {"harness_run": True} if harness_run else {}
                         mark_eval_progress(call_execution)
-                        self._run_single_simulate_evaluation(
+                        graded = self._run_single_simulate_evaluation(
                             eval_config, call_execution, transcript_data, **extra
                         )
-                        logger.info(
-                            f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
-                            f"on call execution {call_execution.id}"
-                        )
+                        # A skip was logged by the grader as simulate_eval_input_missing.
+                        if graded:
+                            logger.info(
+                                "simulate_evaluation_ran",
+                                eval_config_id=str(eval_config.id),
+                                call_execution_id=str(call_execution.id),
+                            )
                 except EvaluationDenied as denial:
                     logger.warning("simulation_evaluation_denied", code=denial.code)
                 except Exception as e:
@@ -5132,9 +5056,10 @@ class TestExecutor:
         call_execution: CallExecution,
         transcript_data,
         harness_run=False,
-    ):
+    ) -> bool:
         """
-        Run a single SimulateEvalConfig evaluation
+        Run a single SimulateEvalConfig evaluation. Returns whether it was
+        graded: False when an input was empty, so it was stored as missing.
 
         Args:
             eval_config: SimulateEvalConfig instance
@@ -5515,6 +5440,16 @@ class TestExecutor:
         except EvaluationDenied as denial:
             record_evaluation_denial(call_execution, eval_config, denial)
             raise
+        except MissingEvalInputError as missing:
+            # An empty input on this call: not graded, and not an error.
+            record_missing_eval_input(call_execution, eval_config, missing)
+            logger.info(
+                "simulate_eval_input_missing",
+                call_execution_id=str(call_execution.id),
+                eval_config_id=str(eval_config.id),
+                fields=list(missing.fields),
+            )
+            return False
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -5539,6 +5474,7 @@ class TestExecutor:
             eval_config.status = StatusType.FAILED.value
             eval_config.save(update_fields=["status", "updated_at"])
             raise
+        return True
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
         """

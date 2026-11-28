@@ -176,6 +176,11 @@ def run_eval_func(
             organization_id=org.id,
             workspace_id=workspace.id if workspace else None,
         )
+        # Ground-truth and feedback examples join the evaluator's message. A caller
+        # that measured that message before sending passes ``with_examples=False``,
+        # so what it measured is what is sent.
+        with_examples = kwargs.get("with_examples", True)
+        runner.examples_from_feedback = with_examples
 
         source_config = {
             "reference_id": str(template.id),
@@ -372,12 +377,13 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        GroundTruthService.inject_context(
-            _run_kwargs,
-            template,
-            organization_id=org.id if org else None,
-            workspace_id=workspace.id if workspace else None,
-        )
+        if with_examples:
+            GroundTruthService.inject_context(
+                _run_kwargs,
+                template,
+                organization_id=org.id if org else None,
+                workspace_id=workspace.id if workspace else None,
+            )
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:
