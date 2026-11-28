@@ -240,9 +240,13 @@ def _latest_recorded_eval_sql(
 ) -> str:
     """One row per trace: its LATEST RECORDED result for one eval template.
 
-    * Candidates are every live ``success`` or ``error`` row of the trace,
-      whenever it was recorded (no upper time bound, so a re-evaluation
-      replaces the earlier result in every range). ``processing``,
+    * Candidates are every live ``success`` or ``error`` row of the trace
+      recorded from a day before the window on, with no upper bound, so a
+      re-evaluation replaces the earlier result in every range. The lower
+      bound keeps a short window from reading the template's whole history;
+      the day is the same ingestion buffer the spans scan uses. A result
+      recorded more than a day before the window, on a trace that is still
+      producing spans inside it, is therefore not a candidate. ``processing``,
       ``not_started`` and the denied statuses are not recorded results.
     * A stamped row of another project is dropped before the election
       (``eval_result_belongs_to_trace_project_sql``). A trace UUID held by two
@@ -345,6 +349,8 @@ def _latest_recorded_eval_sql(
                           SELECT {lookup}.id FROM usage_apicalllog AS {lookup}
                           PREWHERE {lookup_scope}
                             AND {lookup}.source_id = %({template_param})s
+                            AND {lookup}.created_at >=
+                                %(start_date)s - INTERVAL 1 DAY
                           WHERE {subject_match}
                       )
                     ORDER BY {scan_alias}._peerdb_version DESC
