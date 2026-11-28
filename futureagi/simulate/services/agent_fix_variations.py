@@ -652,13 +652,18 @@ def _settle(
     results = {one.key: one.failing_sub_goals for one in scenario_results(run)}
     kept = {key: parent for key, parent in variations.items() if results.get(key)}
     failing = {**parents, **{key: results[key] for key in kept}}
+    if request.locked_version_id is None:
+        held_back = split_held_back(str(fix_run.source_run_id), failing, kept)
+    else:
+        # The launch held back the locked version's failing test cases. Their
+        # variations go with them, and an unlock since then changes nothing.
+        launched = set(request.held_back_scenario_keys)
+        held_back = [key for key in failing if kept.get(key, key) in launched]
     floor = settings.AGENT_FIX_MIN_FAILING_CASES
     settled = request.model_copy(
         update={
             "target_scenario_keys": [*request.target_scenario_keys, *kept],
-            "held_back_scenario_keys": split_held_back(
-                str(fix_run.source_run_id), failing, kept
-            ),
+            "held_back_scenario_keys": held_back,
             "failing_sub_goals": list(
                 dict.fromkeys(name for names in failing.values() for name in names)
             ),

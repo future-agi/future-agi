@@ -1,14 +1,17 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { DEBUG_FAILURES_REFUSALS } from "src/sections/test-detail/debugFailuresRule";
+import { runResultsKey } from "./runEvals";
 
 /**
  * The Debug-failures data source.
  *
  * `POST …/debug-analysis/` queues one Omega job per call of a completed run.
  * The run's evals decide which goals broke on which calls; Omega explains how,
- * and grouping clusters its explanations into the ways each goal broke. Every
- * count arrives computed, so a card's number always matches its View link.
+ * and grouping clusters its explanations into the ways each goal broke. Goal
+ * counts arrive computed, so a card's number always matches its View link;
+ * one-off rows are grouped and counted client-side.
  */
 
 export const DEBUG_ANALYSIS_WORKING_STATES = ["pending", "running"];
@@ -47,7 +50,6 @@ export function mapDebugAnalysis(raw) {
       measuredCalls: summary.measured_call_count,
       brokenGoals: summary.broken_goal_count,
       brokenCalls: summary.broken_call_count,
-      oneOffs: summary.one_off_count,
     },
     goals: (raw?.goals ?? []).map((goal) => ({
       goal: goal.goal,
@@ -120,7 +122,16 @@ export function useDebugAnalysis(executionId) {
         // The route's contract is an explicit empty object, not a missing body.
         .post(endpoints.testExecutions.debugAnalysis(executionId), {})
         .then((res) => res.data),
+    // A read still on its way (a reopen re-enables the query) was sent before
+    // this request; if it landed after, it would overwrite the new status.
+    onMutate: () => queryClient.cancelQueries({ queryKey }),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
+    // A refusal means the header's counts were stale; read them again.
+    onError: (error) => {
+      if (DEBUG_FAILURES_REFUSALS[error?.code]) {
+        queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
+      }
+    },
     // The drawer shows every refusal and failure itself; no second, global toast.
     meta: { errorHandled: true },
   });

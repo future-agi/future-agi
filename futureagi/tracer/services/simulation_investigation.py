@@ -2,14 +2,19 @@ import json
 import uuid
 
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 
 from simulate.models import SimulateEvalConfig
 from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
-from simulate.selectors.debug_failures import connected_call_count, failing_call_count
+from simulate.selectors.debug_failures import (
+    CONNECTED,
+    connected_call_count,
+    failing_call_count,
+)
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import build_evaluation_catalog, eval_rows
+from tfc.utils.api_errors import ApiErrorCode
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_investigation import (
@@ -25,7 +30,8 @@ from tracer.services.simulation_diagnosis import build_diagnosis
 
 
 class SimulationInvestigationConflict(Exception):
-    def __init__(self, message: str, code: str = "execution_not_completed") -> None:
+    # A refusal of the rule names its own code; any other conflict is generic.
+    def __init__(self, message: str, code: str = ApiErrorCode.CONFLICT) -> None:
         super().__init__(message)
         self.code = code
 
@@ -37,6 +43,10 @@ TOO_FEW_CALLS = (
     f"You need at least {MIN_CONNECTED_CALLS} connected calls to debug failures."
 )
 NOTHING_FAILED = "Nothing failed in this run, so there’s nothing to debug."
+RUN_IN_PROGRESS = "Diagnosis is available once every call in this run finishes."
+CALLS_UNFINISHED = (
+    "Some calls in this run didn’t finish, so Debug failures can’t read it."
+)
 
 
 def _project_for_execution(execution: TestExecution) -> Project:
@@ -67,34 +77,34 @@ _TERMINAL_CALL_STATUSES = (
     CallExecution.CallStatus.FAILED,
     CallExecution.CallStatus.CANCELLED,
 )
+# A run in one of these makes no more calls. A failed or cancelled run is read
+# like a completed one.
+FINISHED_RUN_STATUSES = (
+    TestExecution.ExecutionStatus.COMPLETED,
+    TestExecution.ExecutionStatus.FAILED,
+    TestExecution.ExecutionStatus.CANCELLED,
+)
 
 
 def ensure_simulation_investigation(
     execution: TestExecution,
 ) -> list[TraceInvestigationJob]:
-    """Create one durable job per call of a completed execution; re-arm failed ones.
+    """Create one durable job per readable call of a finished execution; re-arm
+    failed ones.
 
-    Refuses to start a diagnosis of a run with too few connected calls or no
-    failing call: it would spend credits and find nothing. A diagnosis such a run
-    already has is returned unchanged.
+    Refuses to start a diagnosis of a run that debug_failures_refusal refuses. A
+    diagnosis such a run already has is returned unchanged while any of its calls
+    is read or in flight.
     """
-    if execution.status != TestExecution.ExecutionStatus.COMPLETED:
-        raise SimulationInvestigationConflict("Test execution is not completed")
     with transaction.atomic():
         execution = (
             TestExecution.objects.select_for_update()
             .select_related("run_test")
             .get(pk=execution.pk)
         )
-        if execution.status != TestExecution.ExecutionStatus.COMPLETED:
-            raise SimulationInvestigationConflict("Test execution is not completed")
         calls = CallExecution.objects.filter(
             test_execution_id=execution.id, deleted=False
         )
-        if calls.exclude(status__in=_TERMINAL_CALL_STATUSES).exists():
-            raise SimulationInvestigationConflict(
-                "Test execution contains nonterminal calls"
-            )
         earlier = list(
             TraceInvestigationJob.objects.select_for_update(of=("self",))
             .select_related("current_report")
@@ -103,10 +113,11 @@ def ensure_simulation_investigation(
                 workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
             )
         )
-        refusal = _refusal(execution)
+        refusal = debug_failures_refusal(execution)
         # The rule stops new spend, not a diagnosis already made: that one stays
-        # readable as it is, with no call read again.
-        if refusal is not None and earlier:
+        # readable as it is, with no call read again. One with no call read or
+        # in flight has nothing to show, so it is refused like a new one.
+        if refusal is not None and any(not _unread(job) for job in earlier):
             return earlier
         if refusal is not None:
             raise refusal
@@ -116,9 +127,18 @@ def ensure_simulation_investigation(
             for job in earlier
             if job.project_id == project.id
         }
+        # A cancel closes the calls it stopped before they began. One that never
+        # connected has nothing to read, so it gets no paid read. A chat connects
+        # only when it completes, so a chat the cancel closed mid-run loses its
+        # read on purpose; a voice call that ran for any time keeps it.
+        readable = calls.exclude(
+            Q(status=CallExecution.CallStatus.CANCELLED) & ~CONNECTED
+        )
         now = timezone.now()
         jobs = []
-        for call_id in calls.order_by("created_at", "id").values_list("id", flat=True):
+        for call_id in readable.order_by("created_at", "id").values_list(
+            "id", flat=True
+        ):
             job = existing.get(call_id)
             if job is None:
                 job = TraceInvestigationJob.objects.create(
@@ -136,8 +156,28 @@ def ensure_simulation_investigation(
         return jobs
 
 
-def _refusal(execution: TestExecution) -> SimulationInvestigationConflict | None:
-    """Why a new diagnosis of this run would find nothing, or None."""
+def debug_failures_refusal(
+    execution: TestExecution,
+) -> SimulationInvestigationConflict | None:
+    """Why a new diagnosis of this run would find nothing, or None. Run
+    Simulation's optimiser analysis refuses the same runs.
+
+    A run is read once it is finished and every call in it is terminal. A
+    finished run can keep calls that no step ever closes, so that case has its
+    own words.
+    """
+    if execution.status not in FINISHED_RUN_STATUSES:
+        return SimulationInvestigationConflict(
+            RUN_IN_PROGRESS, code="execution_not_completed"
+        )
+    if (
+        CallExecution.objects.filter(test_execution_id=execution.id, deleted=False)
+        .exclude(status__in=_TERMINAL_CALL_STATUSES)
+        .exists()
+    ):
+        return SimulationInvestigationConflict(
+            CALLS_UNFINISHED, code="execution_calls_unfinished"
+        )
     if connected_call_count(execution) < MIN_CONNECTED_CALLS:
         return SimulationInvestigationConflict(
             TOO_FEW_CALLS, code="investigation_too_few_calls"
@@ -525,7 +565,7 @@ def simulation_evidence_page(
     if attempt is None:
         raise SimulationInvestigationConflict("Attempt is not active")
     execution = attempt.job.test_execution
-    if execution is None or execution.status != TestExecution.ExecutionStatus.COMPLETED:
+    if execution is None or execution.status not in FINISHED_RUN_STATUSES:
         raise SimulationInvestigationConflict("Execution evidence is unavailable")
     job = attempt.job
     project = job.project

@@ -14,22 +14,40 @@ const ASSIGN_RE = /<!--\s*devflow-assigned:v1\b([^>]*)-->/;
 
 const lower = (s) => String(s || "").toLowerCase();
 
+// The team GitHub adds for a code-owner path. Its request is not a person's
+// review request, so rotation still assigns one reviewer.
+export const CODE_OWNER_TEAM = "internal-all-write";
+
+// True when a person, or a team other than the code-owner team, is asked to review.
+export function hasHumanReviewRequest(pr) {
+  return (
+    (pr.requested_reviewers?.length ?? 0) > 0 ||
+    (pr.requested_teams || []).some((t) => lower(t.slug) !== CODE_OWNER_TEAM)
+  );
+}
+
+// True for a comment by the assigner: the approver App, or github-actions
+// for assignments written before the App. Routing only: the approval job
+// trusts the App's review request, never a comment.
+export function isAssignerComment(comment, assigner) {
+  const login = lower(comment.user?.login);
+  return (
+    /^github-actions(\[bot\])?$/.test(login) ||
+    (Boolean(assigner) && login === lower(assigner))
+  );
+}
+
 function uniqueExcept(logins, author) {
   const seen = new Set([lower(author)]);
   return logins.filter((l) => !seen.has(lower(l)) && seen.add(lower(l)));
 }
 
-// Members of every matched team, then fallback_lead, then every member of every team.
-export function candidatesFor(teams, config, author) {
-  const members = uniqueExcept(
-    teams.flatMap((t) => t.members),
-    author,
-  );
-  if (members.length) return members;
-  if (config.fallback_lead && lower(config.fallback_lead) !== lower(author))
-    return [config.fallback_lead];
+// Everyone on the roster who can push here, except the author. Teams do not
+// narrow the pool: anyone on the roster can review any PR.
+export function rosterReviewers(roster, writers, author) {
+  const canPush = new Set(writers.map(lower));
   return uniqueExcept(
-    Object.values(config.teams).flatMap((t) => t.members),
+    roster.filter((l) => canPush.has(lower(l))),
     author,
   );
 }

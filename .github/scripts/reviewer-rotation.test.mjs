@@ -3,49 +3,34 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  candidatesFor,
+  hasHumanReviewRequest,
+  isAssignerComment,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
   renderAssignment,
+  rosterReviewers,
   workingMsBetween,
 } from "./reviewer-rotation.mjs";
 
 const HOUR = 3600 * 1000;
 
-// Synthetic config: fake logins, not .github/reviewer-config.json.
-const config = {
-  fallback_lead: "lead-f",
-  teams: {
-    alpha: { lead: "lead-a", members: ["lead-a", "ann", "bob"] },
-    beta: { lead: "lead-b", members: ["lead-b", "Bob", "cy"] },
-    pair: { lead: "pa", members: ["pa", "pb"] },
-  },
-};
-const team = (id) => config.teams[id];
+// Synthetic roster: fake logins, not .github/reviewer-config.json.
+const roster = ["lead-a", "ann", "Bob", "cy", "pa", "pb"];
 
-test("candidates are the members of every matched team, deduplicated, never the author", () => {
+test("reviewers are everyone on the roster who can push, never the author", () => {
   assert.deepEqual(
-    candidatesFor([team("alpha"), team("beta")], config, "ANN"),
-    ["lead-a", "bob", "lead-b", "cy"],
+    rosterReviewers(
+      roster,
+      ["LEAD-A", "ann", "bob", "pa", "pb", "outsider"],
+      "ANN",
+    ),
+    ["lead-a", "Bob", "pa", "pb"],
   );
 });
 
-test("no matched team falls back to fallback_lead", () => {
-  assert.deepEqual(candidatesFor([], config, "ann"), ["lead-f"]);
-});
-
-test("author as the only member and as fallback_lead falls back to all members", () => {
-  const solo = { lead: "lead-f", members: ["lead-f"] };
-  assert.deepEqual(candidatesFor([solo], config, "lead-f"), [
-    "lead-a",
-    "ann",
-    "bob",
-    "lead-b",
-    "cy",
-    "pa",
-    "pb",
-  ]);
+test("nobody on the roster can push, so nobody reviews", () => {
+  assert.deepEqual(rosterReviewers(roster, ["outsider"], "ann"), []);
 });
 
 test("picks the least-loaded member, not the lead", () => {
@@ -76,8 +61,8 @@ test("ties rotate on the seed, so a burst of PRs does not all land on one person
 });
 
 test("nobody left after excluding author and current assignee returns null", () => {
-  // Two-member team: one is the author, the other is the stale assignee.
-  const candidates = candidatesFor([team("pair")], config, "pa");
+  // Two people can push: one is the author, the other is the stale assignee.
+  const candidates = rosterReviewers(roster, ["pa", "pb"], "pa");
   assert.equal(
     pickLeastLoaded(candidates, new Map(), { exclude: ["pb"] }),
     null,
@@ -159,4 +144,44 @@ test("reassign is due after 4 working hours with no devflow review from the assi
     ),
     true,
   );
+});
+
+test("a request for the code-owner team is not a human request; any other is", () => {
+  const user = [{ login: "ann" }];
+  const owners = [{ slug: "internal-all-write" }];
+  const none = { requested_reviewers: [], requested_teams: [] };
+  assert.equal(hasHumanReviewRequest(none), false);
+  assert.equal(
+    hasHumanReviewRequest({ ...none, requested_teams: owners }),
+    false,
+  );
+  assert.equal(
+    hasHumanReviewRequest({
+      requested_reviewers: user,
+      requested_teams: owners,
+    }),
+    true,
+  );
+  assert.equal(
+    hasHumanReviewRequest({ ...none, requested_teams: [{ slug: "backend" }] }),
+    true,
+  );
+  assert.equal(
+    hasHumanReviewRequest({
+      ...none,
+      requested_teams: [...owners, { slug: "backend" }],
+    }),
+    true,
+  );
+});
+
+test("the assigner's comments are the App's and github-actions', nobody else's", () => {
+  const by = (login) => ({ user: { login } });
+  const app = "devflow-approver[bot]";
+  assert.equal(isAssignerComment(by("devflow-approver[bot]"), app), true);
+  assert.equal(isAssignerComment(by("Devflow-Approver[bot]"), app), true);
+  assert.equal(isAssignerComment(by("github-actions[bot]"), app), true);
+  assert.equal(isAssignerComment(by("someone"), app), false);
+  assert.equal(isAssignerComment(by("devflow-approver"), app), false);
+  assert.equal(isAssignerComment(by(""), ""), false);
 });

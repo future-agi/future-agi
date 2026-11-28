@@ -3353,6 +3353,8 @@ class DashboardQueryBuilder:
                 ).upper()
                 # Auto-detect output type from PG if missing
                 if not output_type and eval_template_id:
+                    from django.core.exceptions import ValidationError
+
                     try:
                         from model_hub.models.evals_metric import EvalTemplate
 
@@ -3364,8 +3366,9 @@ class DashboardQueryBuilder:
                                 .upper()
                                 .replace("/", "_")
                             )
-                    except Exception:
-                        pass
+                    except (ValueError, ValidationError):
+                        # A malformed legacy id cannot name a template.
+                        output_type = ""
 
                 alias = f"ev{ann_idx}"
                 param_key = f"_ev_bd_cfg_{ann_idx}"

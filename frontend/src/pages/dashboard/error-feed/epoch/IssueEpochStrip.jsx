@@ -9,7 +9,9 @@ import {
   useStopIssueEpoch,
 } from "src/api/errorFeed/epochFromIssue";
 import { fixErrorOf } from "src/api/simulate-environments/fixRuns";
+import { useCodingAgentAttemptsEnabled } from "src/api/simulate-environments/codingAgent";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
+import CopyForCodingAgentButton from "src/sections/simulate/environments/workspace/improvements/CopyForCodingAgentButton";
 
 import {
   epochHref,
@@ -51,8 +53,11 @@ StopJob.propTypes = { jobId: PropTypes.string.isRequired };
 export default function IssueEpochStrip({ clusterId, projectId, onRunAgain }) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
   const { status } = useIssueEpoch({ clusterId, projectId });
+  const codingAgent = useCodingAgentAttemptsEnabled();
   const key = epochKey(status);
   if (!allowed || !key) return null;
+  // Only the epoch's own read names its run; the job's summary of it does not.
+  const sourceRunId = codingAgent ? status.epoch?.source_run_id : null;
   const mark = epochIcon(status);
   return (
     <Stack
@@ -80,6 +85,12 @@ export default function IssueEpochStrip({ clusterId, projectId, onRunAgain }) {
       >
         {epochSentence(status)}
       </Typography>
+      {sourceRunId && (
+        <CopyForCodingAgentButton
+          sourceRunId={sourceRunId}
+          data-testid="issue-copy-for-coding-agent"
+        />
+      )}
       {secondaryActions(status).map((action) => {
         if (action.kind === "view") {
           return (

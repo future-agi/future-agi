@@ -94,8 +94,13 @@ class HostedHarnessJob(BaseModel):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
     cancel_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # db_default too: a build from before this column submits jobs without it.
     cancel_confirmed_by = models.CharField(
-        max_length=32, choices=CancelConfirmation.choices, blank=True, default=""
+        max_length=32,
+        choices=CancelConfirmation.choices,
+        blank=True,
+        default="",
+        db_default="",
     )
     terminal_at = models.DateTimeField(null=True, blank=True)
     content_updated_at = models.DateTimeField(null=True, blank=True)
@@ -192,6 +197,11 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="adopted_check_runs",
     )
+    # When a fix's winner started grading this check run: its claim. The claiming fix pays
+    # for the run's evals and keeps its read. A later outside attempt that reads the run
+    # again reads that grading, and its winner tops up any finished call that still lacks
+    # a verdict (runs_lacking_verdicts). Whether grading finished is never stored here.
+    graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

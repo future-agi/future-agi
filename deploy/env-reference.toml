@@ -816,13 +816,6 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     setups = ["S", "D", "H"]
     text = "Measured sandbox sizes, a JSON array of objects with `name`, `cpu_units`, `memory_mb`, `disk_gb`, `max_parallelism`, `connectors` (the agent connectors it serves) and, except for sandboxes built from `ALK_DAYTONA_DOCKERFILE`, `snapshot_name` and `snapshot_digest`. A run gets the profile that runs the most of its scenarios at once, and the smallest of those. A value that is not JSON, an empty one included, stops the app from starting; an invalid profile fails every hosted run."
 
-    [[part.section.row]]
-    keys = ["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "ALK_CAB_GUEST_POC_PIN"]
-    default = "empty: off"
-    setups = ["S", "D", "H"]
-    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed only to phone sandboxes whose submitted target exactly matches the configured number. Both values are required; leave empty when self-hosting."
-    audience = "internal"
-
   [[part.section]]
   heading = "Voice simulations (Distributed)"
   body = '''
@@ -1131,10 +1124,9 @@ a Mixpanel token.
 
     [[part.section.row]]
     keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
-    default = "empty: no organization restricted"
+    default = "`2026-10-28T00:00:00Z`"
     setups = ["S", "D", "H"]
-    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. A value without a zone is UTC. The app refuses to start on a value that is not a date and time, including a date alone. Set it to the start of the deploy that turns the restriction on, the same value in every region."
-    audience = "internal"
+    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. Organizations created before it keep every page. Upgrading to a release with this default hides those pages from organizations created since 2026-10-28. A value without a zone is UTC. Set it blank to show every Simulate page to every organization. The app refuses to start on a value that is not a date and time, including a date alone."
 
   [[part.section]]
   heading = "Sign-up and sign-in"
@@ -1812,6 +1804,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`minio`"
     setups = ["S", "D", "H"]
     text = "Object storage flavour: `minio`, `s3` or `gcs`. The compose files wire the bundled MinIO; the others need your own `S3_*` values in a compose override."
+
+    [[part.section.row]]
+    keys = ["STORAGE_BUNDLED"]
+    default = "`true` in both compose files; Helm: `true` with `objectStorage.mode=bundled`, else `false`; unset: `false`"
+    setups = ["S", "D", "H"]
+    text = "`true` says the MinIO is the bundled one, so the app owns its upload bucket's policy and keeps it current: agent source archives stay private to the app's own credentials. With `false`, the app adds nothing to an existing bucket's policy (on MinIO it still cuts anonymous writes and listings back to reads, as before); see [Object storage](repo:deploy/helm/futureagi/README.md#object-storage) for the statement to add yourself. A compose override that points `S3_*` at your own MinIO sets it `false`."
 
     [[part.section.row]]
     keys = ["PGSSLMODE"]
