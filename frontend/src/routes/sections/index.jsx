@@ -1,4 +1,5 @@
-import React, { Suspense, useMemo } from "react";
+import React, { Suspense, useLayoutEffect, useMemo } from "react";
+import { initGoogleAnalytics } from "src/utils/googleAnalytics";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import { registerPreloadRoutes } from "src/routes/preload";
 import { Navigate, useRoutes } from "react-router-dom";
@@ -49,7 +50,7 @@ export default function Router() {
     rootTarget = paths.ossSetup;
   }
 
-  const element = useRoutes([
+  const routes = [
     {
       path: "/",
       element: <Navigate to={rootTarget} replace />,
@@ -100,7 +101,15 @@ export default function Router() {
 
     // No match 404
     { path: "*", element: <Navigate to="/404" replace /> },
-  ]);
+  ];
+  const element = useRoutes(routes);
+
+  // Publish exactly the tree useRoutes committed, before passive redirects.
+  // Abandoned renders and the provisional deployment-mode tree never start GA.
+  useLayoutEffect(() => {
+    if (!isDeploymentModeLoading) return initGoogleAnalytics(routes);
+    return undefined;
+  });
 
   // Wait for deployment-mode resolution before rendering the route tree.
   // Otherwise the first render uses the hook's default (self-hosted), which

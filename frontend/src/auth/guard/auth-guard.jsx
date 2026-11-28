@@ -9,9 +9,9 @@ import { SplashScreen } from "src/components/loading-screen";
 
 import { useAuthContext } from "../hooks";
 import { useOrganization } from "src/contexts/OrganizationContext";
-// Ad-platform signup conversions are disabled; Google Analytics runs through
-// Google Tag Manager. To restore them, uncomment these imports and the calls
-// below (see src/utils/googleAds.js).
+// Ad-platform signup conversions are disabled; Google Analytics loads from
+// src/utils/googleAnalytics.js. To restore them, uncomment these imports and
+// the calls below (see src/utils/googleAds.js).
 // import { trackSignupConversion } from "src/utils/googleAds";
 // import { trackRedditSignup } from "src/utils/redditAds";
 // import { trackTwitterSignup } from "src/utils/twitterAds";
