@@ -11623,6 +11623,9 @@ export const ApiTracesSpanAttributeValuesListResponse = zod.object({
   query_window_end: zod.string().datetime({ offset: true }),
 });
 
+/**
+ * Internal relay. Requires the organization's system API key pair and a signed request.
+ */
 export const callWebsocketCreateBodySendToUuidDefault = false;
 
 export const callWebsocketCreateBodyUuidRegExp = new RegExp(
@@ -11631,7 +11634,10 @@ export const callWebsocketCreateBodyUuidRegExp = new RegExp(
 
 export const CallWebsocketCreateBody = zod
   .object({
-    message: zod.record(zod.string(), jsonValueSchema),
+    message: zod.union([
+      zod.string(),
+      zod.record(zod.string(), jsonValueSchema),
+    ]),
     send_to_uuid: zod
       .boolean()
       .default(callWebsocketCreateBodySendToUuidDefault),
@@ -35934,12 +35940,12 @@ export const simulateAgentsConnectCreateBodyCommitShaRegExp = new RegExp(
 export const simulateAgentsConnectCreateBodySubfolderMax = 512;
 
 export const simulateAgentsConnectCreateBodySubfolderRegExp = new RegExp(
-  "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+  "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
 );
 export const simulateAgentsConnectCreateBodyEntryMax = 512;
 
 export const simulateAgentsConnectCreateBodyEntryRegExp = new RegExp(
-  "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+  "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
 );
 export const simulateAgentsConnectCreateBodyEnvValuesMaxOne = 65536;
 
@@ -58108,7 +58114,7 @@ export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
 export const simulateApiHarnessJobsCreateBodySourceSubfolderMax = 512;
 
 export const simulateApiHarnessJobsCreateBodySourceSubfolderRegExp = new RegExp(
-  "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+  "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
 );
 
 export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
@@ -58473,7 +58479,7 @@ export const simulateApiHarnessJobsPreflightBodySourceSubfolderMax = 512;
 
 export const simulateApiHarnessJobsPreflightBodySourceSubfolderRegExp =
   new RegExp(
-    "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+    "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
   );
 
 export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;

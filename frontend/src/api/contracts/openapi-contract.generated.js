@@ -53261,14 +53261,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Subfolder",
           type: "string",
           pattern:
-            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
           maxLength: 512,
         },
         entry: {
           title: "Entry",
           type: "string",
           pattern:
-            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
           maxLength: 512,
         },
         env_values: {
@@ -61927,6 +61927,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-json-value": true,
             description: "Any valid JSON value.",
           },
+          "x-string-or-object": true,
         },
         send_to_uuid: {
           title: "Send to uuid",
@@ -119543,7 +119544,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Subfolder",
           type: "string",
           pattern:
-            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "^(?:(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*)?$",
           maxLength: 512,
           "x-nullable": true,
         },
