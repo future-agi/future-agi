@@ -311,8 +311,14 @@ jobs:
           tools="$RUNNER_TEMP/e2e-db-tools" records="$RUNNER_TEMP/e2e-db-record"
           mkdir "$tools" "$records"
           for tool in e2e_db.py db_dump.py fetch_migrated_db.py; do
-            git show "$policy:futureagi/.ci/$tool" > "$tools/$tool"
+            git show "$policy:futureagi/.ci/$tool" > "$tools/$tool" 2> /dev/null || rm -f "$tools/$tool"
           done
+          # A base from before these tools: nothing to fetch or restore yet.
+          if ! [[ -s $tools/fetch_migrated_db.py ]] ||
+            ! python3 -I "$tools/e2e_db.py" plan --help > /dev/null 2>&1; then
+            echo "The policy commit cannot plan a restore yet: every leg migrates from zero."
+            exit 0
+          fi
           named=" $(python3 -I "$tools/e2e_db.py" named "$E2E_DB_REUSE") "
           db='{}'
           for stack in $(jq -r '.[]' <<< "$STACKS"); do
@@ -1133,7 +1139,9 @@ jobs:
     # in the run's summary. Nothing waits for this job.
     name: e2e saved database (${{ matrix.stack }})
     needs: [changes, e2e]
-    if: ${{ !cancelled() && fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
+    # A job's condition cannot read its matrix: any stack restoring starts
+    # the job, and each stack's steps check their own.
+    if: ${{ !cancelled() && contains(needs.changes.outputs.db || '', '"restore":true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1147,11 +1155,13 @@ jobs:
           persist-credentials: false
           sparse-checkout: futureagi/.ci
       - name: Download each leg's database result
+        if: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: db-reuse-${{ matrix.stack }}-*
           path: ${{ runner.temp }}/db-reuse
       - name: Count what each leg did with the saved database
+        if: ${{ fromJSON(needs.changes.outputs.db || '{}')[matrix.stack].restore == true }}
         env:
           STACK: ${{ matrix.stack }}
           SHARD_TOTAL: ${{ fromJSON(needs.changes.outputs.shard_totals)[matrix.stack] }}

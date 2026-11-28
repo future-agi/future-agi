@@ -482,6 +482,8 @@ class SwitchTest(Workspace):
             json.loads(out.read_text()),
             {"distributed": {"key": "kd", "found": True, "restore": True}},
         )
+        # Compact: the workflow finds '"restore":true' in it as text.
+        self.assertIn('"restore":true', out.read_text())
         self.assertIn("::warning", printed)
         self.assertEqual(
             run_tool("named", "standalone,nope, distributed"),
@@ -993,10 +995,17 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("policy=${BASE_SHA:-$GITHUB_SHA}\n", step)
         self.assertIn("policy=$(git rev-parse --verify 'HEAD^1^{commit}')\n", step)
         self.assertIn('git show "$policy:futureagi/.ci/$tool"', step)
+        # A base from before the tools ends the step quietly, before any fetch.
+        guard = step.index("The policy commit cannot plan a restore yet")
+        self.assertLess(guard, step.index('fetch_migrated_db.py" "$records'))
+        self.assertIn(
+            'python3 -I "$tools/e2e_db.py" plan --help > /dev/null 2>&1; then', step
+        )
         self.assertNotIn("$GITHUB_SHA:", step)
         self.assertEqual(
             re.findall(r"python3 .*", step),
             [
+                'python3 -I "$tools/e2e_db.py" plan --help > /dev/null 2>&1; then',
                 'python3 -I "$tools/e2e_db.py" named "$E2E_DB_REUSE") "',
                 'python3 -I "$tools/e2e_db.py" key "$stack" --root "$GITHUB_WORKSPACE")',
                 'python3 -I "$tools/fetch_migrated_db.py" "$records/$stack"'
@@ -1169,14 +1178,34 @@ class WorkflowTest(unittest.TestCase):
             )
             self.assertTrue(reads, job)
             for read in reads:
-                self.assertEqual(read, "needs.changes.outputs.db || '{}'", job)
+                self.assertIn(
+                    read,
+                    (
+                        "needs.changes.outputs.db || '{}'",
+                        "needs.changes.outputs.db || '', ",
+                    ),
+                    job,
+                )
 
     def test_a_job_nothing_waits_for_counts_each_restoring_runs_legs(self):
         job = self.job("db-reuse")
         self.assertIn("    needs: [changes, e2e]\n", job)
         self.assertIn(
-            f"    if: ${{{{ !cancelled() && {self.MINE}.restore == true }}}}\n", job
+            "    if: ${{ !cancelled() && contains(needs.changes.outputs.db || '',"
+            """ '"restore":true') }}\n""",
+            job,
         )
+        # A job's own condition cannot read its matrix: GitHub would refuse
+        # the whole file. Each step checks its stack instead.
+        condition = re.search(r"\n    if: (.*)\n", job).group(1)
+        self.assertNotIn("matrix.", condition)
+        for name in (
+            "Download each leg's database result",
+            "Count what each leg did with the saved database",
+        ):
+            self.assertIn(
+                f"if: ${{{{ {self.MINE}.restore == true }}}}\n", self.step(job, name)
+            )
         # The workflow's own read-only permissions; no token is used.
         self.assertNotIn("permissions:", job)
         self.assertNotRegex(job, r"secrets\.|github\.token|TOKEN")
