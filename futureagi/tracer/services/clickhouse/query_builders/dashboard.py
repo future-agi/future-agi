@@ -1145,6 +1145,9 @@ class DashboardQueryBuilder:
         tr = self.config.get("time_range") or self.config.get("timeRange") or {}
         if not (tr.get("custom_start") and tr.get("custom_end")):
             return sql, params
+        if tr.get("frozen_preset"):
+            # A rolling preset the request froze into concrete bounds.
+            return sql, params
         for name in ("start_date", "end_date"):
             if name in params:
                 bound = exact_datetime_bound_sql(params, name)

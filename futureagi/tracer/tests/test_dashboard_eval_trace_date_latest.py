@@ -1483,6 +1483,30 @@ def test_the_election_lookup_is_bounded_below_by_the_window(observe_project, see
     assert "_candidate.created_at >=" in query
 
 
+@pytest.mark.parametrize("lane", ["worker", "endpoint"])
+def test_a_rolling_preset_keeps_whole_second_bounds_through_the_public_path(
+    observe_project, seed, lane
+):
+    """Previous PR head fails: the dashboard view freezes a rolling preset into
+    custom bounds before building SQL, so item 6's sub-second rendering also
+    hit "last 7 days" and moved its boundary by up to a second. Fixed: the
+    view marks a frozen preset, and only a real custom window is rendered at
+    microsecond precision.
+    """
+
+    template = str(uuid4())
+    start = _day(datetime.now(UTC) - timedelta(days=2))
+    trace = seed.trace(observe_project, start + timedelta(hours=10))
+    seed.result(trace, template, start + timedelta(hours=11), value=0.5)
+    config = _config([observe_project], {"preset": "7D"}, [_eval_metric(template)])
+    run = _run_worker if lane == "worker" else _run_public
+    result = run(seed, config)
+    assert _points(result) == pytest.approx({start: 0.5})
+    query = "\n".join(seed.usage.queries)
+    assert "fromUnixTimestamp64Micro" not in query
+    assert "start_date_exact_us" not in query
+
+
 # ---------------------------------------------------------------------------
 # 7. Regression guards for the held candidate's findings (pass on dev)
 # ---------------------------------------------------------------------------
