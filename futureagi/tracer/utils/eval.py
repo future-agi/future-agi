@@ -534,9 +534,9 @@ class _SpanDerivedTrace:
 
     def __init__(self, trace_id: str):
         self.id = trace_id
-        self.created_at = None
-        self._root_name = None
-        self._earliest_name = None
+        self.created_at: datetime | None = None
+        self._root_name: str | None = None
+        self._earliest_name: str | None = None
 
     @property
     def name(self):
