@@ -118,6 +118,78 @@ class UnpackTest(unittest.TestCase):
                     )
 
 
+class AnotherWorkflowTest(unittest.TestCase):
+    """E2E saves its own dump, under its own name, from its own workflow."""
+
+    E2E = ".github/workflows/e2e-ci.yml"
+    E2E_NAME = "e2e-migrated-db-v1-" + "3" * 40
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.target = Path(tmp.name) / "record"
+        self.enterContext(mock.patch.dict("os.environ", GITHUB_REPOSITORY="owner/repo"))
+        # A given name is used as it is: the backend's key tool is not asked.
+        self.tool = self.enterContext(mock.patch.object(fetcher.subprocess, "run"))
+
+    def serve(self, run):
+        recipe = (self.E2E_NAME + "-pg160004\n").encode()
+        responses = {
+            f"{API}/artifacts?name={self.E2E_NAME}&per_page=100": {
+                "artifacts": [
+                    {
+                        **artifact(31, 301, record(recipe=recipe), 3),
+                        "name": self.E2E_NAME,
+                    }
+                ]
+            },
+            f"{API}/runs/301": run,
+            f"{API}/artifacts/31/zip": record(recipe=recipe),
+        }
+        self.enterContext(
+            mock.patch.object(
+                fetcher,
+                "api",
+                lambda endpoint: (
+                    responses[endpoint]
+                    if isinstance(responses[endpoint], bytes)
+                    else json.dumps(responses[endpoint]).encode()
+                ),
+            )
+        )
+
+    def test_a_dev_push_of_the_named_workflow_is_fetched_under_the_given_name(self):
+        self.serve(run_row(301, path=self.E2E))
+        recipe, _source = fetcher.fetch(
+            self.target, workflow=self.E2E, name=self.E2E_NAME
+        )
+        self.assertEqual(recipe, self.E2E_NAME + "-pg160004")
+        self.tool.assert_not_called()
+
+    def test_a_run_of_any_other_workflow_is_not_eligible(self):
+        self.assertTrue(
+            fetcher.eligible(run_row(1, path=self.E2E), "owner/repo", self.E2E)
+        )
+        self.assertFalse(fetcher.eligible(run_row(1), "owner/repo", self.E2E))
+        # A backend dev push saved it: not a dump the E2E control checked.
+        self.serve(run_row(301))
+        with self.assertRaises(fetcher.FetchError):
+            fetcher.fetch(self.target, workflow=self.E2E, name=self.E2E_NAME)
+
+    def test_the_command_line_takes_both_and_keeps_the_backend_defaults(self):
+        self.serve(run_row(301, path=self.E2E))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = fetcher.cli(
+                [str(self.target), "--workflow", self.E2E, "--name", self.E2E_NAME]
+            )
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertTrue((self.target / "dump.sql.gz").is_file())
+        with mock.patch.object(fetcher, "main", return_value=1) as main:
+            self.assertEqual(fetcher.cli(["somewhere"]), 1)
+        main.assert_called_once_with("somewhere", fetcher.WORKFLOW, None)
+
+
 class FetchTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

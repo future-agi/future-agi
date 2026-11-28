@@ -5,8 +5,12 @@ never one from a fork, a pull request, another branch or another workflow.
 Called once, by the plan job, which hands it to this run's jobs as a same-run
 artifact. Every job that restores it still checks the full recipe, and the
 control job checks it against a fresh migrate.
+
+E2E CI saves a dump of its own (.ci/e2e_db.py) and fetches it the same way:
+--workflow names the workflow whose dev pushes are trusted, --name the dump.
 """
 
+import argparse
 import hashlib
 import io
 import json
@@ -28,12 +32,12 @@ class FetchError(ValueError):
     """A diagnostic safe to include in a workflow annotation."""
 
 
-def eligible(run, repository):
+def eligible(run, repository, workflow=WORKFLOW):
     return (
         run["event"] == "push"
         and run["head_branch"] == "dev"
         and run["conclusion"] == "success"
-        and run["path"] == WORKFLOW
+        and run["path"] == workflow
         and (run.get("head_repository") or {}).get("full_name") == repository
         and (run.get("repository") or {}).get("full_name") == repository
     )
@@ -80,16 +84,17 @@ def api(endpoint):
     ).stdout
 
 
-def fetch(destination):
+def fetch(destination, workflow=WORKFLOW, name=None):
     repository = os.environ["GITHUB_REPOSITORY"]
     root = f"repos/{repository}/actions"
-    name = subprocess.run(
-        [sys.executable, "-I", str(TOOL), "inputs-key"],
-        capture_output=True,
-        check=True,
-        text=True,
-        timeout=60,
-    ).stdout.strip()
+    if name is None:
+        name = subprocess.run(
+            [sys.executable, "-I", str(TOOL), "inputs-key"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=60,
+        ).stdout.strip()
     listing = json.loads(api(f"{root}/artifacts?name={name}&per_page=100"))
     artifacts = sorted(
         (
@@ -102,7 +107,7 @@ def fetch(destination):
     )
     for artifact in artifacts[:CANDIDATES]:
         run = json.loads(api(f"{root}/runs/{int(artifact['workflow_run']['id'])}"))
-        if eligible(run, repository):
+        if eligible(run, repository, workflow):
             break
     else:
         raise FetchError(f"no dump from a successful dev push for `{name}`")
@@ -113,9 +118,9 @@ def fetch(destination):
     return recipe, f"dev run `{run['id']}` (`{artifact['digest']}`)"
 
 
-def main(destination):
+def main(destination, workflow=WORKFLOW, name=None):
     try:
-        recipe, source = fetch(Path(destination))
+        recipe, source = fetch(Path(destination), workflow, name)
     except Exception as exc:  # noqa: BLE001 - a missing dump must not fail the gate
         reason = str(exc) if isinstance(exc, FetchError) else type(exc).__name__
         sys.stdout.write(
@@ -126,5 +131,14 @@ def main(destination):
     return 0
 
 
+def cli(argv):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("destination")
+    parser.add_argument("--workflow", default=WORKFLOW)
+    parser.add_argument("--name")
+    args = parser.parse_args(argv)
+    return main(args.destination, args.workflow, args.name)
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(cli(sys.argv[1:]))
