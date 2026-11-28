@@ -1,6 +1,8 @@
 import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { SnackbarProvider } from "notistack";
+import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
+import { uploadFile } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
 import ChatInput from "../components/ChatInput";
 
@@ -46,9 +48,163 @@ vi.mock("../hooks/useFalconAPI", () => ({
 
 beforeEach(() => {
   useFalconStore.getState().resetAll();
+  vi.mocked(uploadFile).mockReset();
 });
 
 describe("ChatInput", () => {
+  it.each(["picker", "drop"])(
+    "shows the storage configuration error from %s and allows a retry",
+    async (method) => {
+      const detail =
+        "File upload failed because the server storage endpoint is not configured correctly. Contact your administrator.";
+      vi.mocked(uploadFile).mockRejectedValueOnce({
+        status: false,
+        statusCode: 503,
+        type: "service_unavailable",
+        code: "storage_configuration_error",
+        detail,
+      });
+      const { container } = render(
+        <SnackbarProvider>
+          <ChatInput onSend={vi.fn()} />
+        </SnackbarProvider>,
+      );
+      const file = new File(["Synthetic notes"], "notes.txt", {
+        type: "text/plain",
+      });
+      const select = () => {
+        if (method === "picker") {
+          fireEvent.change(container.querySelector('input[type="file"]'), {
+            target: { files: [file] },
+          });
+        } else {
+          fireEvent.drop(screen.getByPlaceholderText("Ask anything..."), {
+            dataTransfer: { files: [file] },
+          });
+        }
+      };
+      select();
+      expect(await screen.findByRole("alert")).toHaveTextContent(detail);
+      expect(useFalconStore.getState().attachedFiles).toEqual([]);
+      expect(screen.getByTitle("Attach file")).not.toBeDisabled();
+
+      vi.mocked(uploadFile).mockResolvedValueOnce({
+        status: true,
+        result: { id: "synthetic-file", name: file.name, size: file.size },
+      });
+      select();
+      await waitFor(() =>
+        expect(useFalconStore.getState().attachedFiles).toHaveLength(1),
+      );
+      expect(uploadFile).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  const oversizedFile = () => {
+    const file = new File(["too big"], "big.txt", { type: "text/plain" });
+    Object.defineProperty(file, "size", { value: 10 * 1024 * 1024 + 1 });
+    return file;
+  };
+
+  it("tells the user when a picked file is over 10 MB and keeps the chat usable", async () => {
+    const { container } = render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [oversizedFile()] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Files must be 10 MB or smaller.",
+    );
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(useFalconStore.getState().attachedFiles).toEqual([]);
+    expect(screen.getByTitle("Attach file")).not.toBeDisabled();
+    expect(screen.getByPlaceholderText("Ask anything...")).not.toBeDisabled();
+  });
+
+  it("accepts a picked file of exactly 10 MB", async () => {
+    const file = new File(["ok"], "limit.txt", { type: "text/plain" });
+    Object.defineProperty(file, "size", { value: 10 * 1024 * 1024 });
+    vi.mocked(uploadFile).mockResolvedValueOnce({
+      status: true,
+      result: { id: "limit-file", name: file.name, size: file.size },
+    });
+    const { container } = render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [file] },
+    });
+    await waitFor(() =>
+      expect(useFalconStore.getState().attachedFiles).toHaveLength(1),
+    );
+    expect(uploadFile).toHaveBeenCalledWith(file);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("tells the user when a dropped file is over 10 MB and still uploads the rest", async () => {
+    const small = new File(["notes"], "notes.txt", { type: "text/plain" });
+    vi.mocked(uploadFile).mockResolvedValueOnce({
+      status: true,
+      result: { id: "small-file", name: small.name, size: small.size },
+    });
+    render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.drop(screen.getByPlaceholderText("Ask anything..."), {
+      dataTransfer: { files: [oversizedFile(), small] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Files must be 10 MB or smaller.",
+    );
+    await waitFor(() =>
+      expect(useFalconStore.getState().attachedFiles).toHaveLength(1),
+    );
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(uploadFile).toHaveBeenCalledWith(small);
+  });
+
+  it("tells the user when every dropped file is over 10 MB", async () => {
+    render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.drop(screen.getByPlaceholderText("Ask anything..."), {
+      dataTransfer: { files: [oversizedFile()] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Files must be 10 MB or smaller.",
+    );
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(useFalconStore.getState().attachedFiles).toEqual([]);
+    expect(screen.getByTitle("Attach file")).not.toBeDisabled();
+  });
+
+  it("shows a fallback message when the upload has no server response", async () => {
+    vi.mocked(uploadFile).mockRejectedValueOnce(new Error("Network Error"));
+    const { container } = render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: {
+        files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
+      },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "File upload failed. Please try again.",
+    );
+    expect(useFalconStore.getState().attachedFiles).toEqual([]);
+  });
+
   it("renders the text input", () => {
     render(<ChatInput onSend={vi.fn()} />);
     const input = screen.getByPlaceholderText("Ask anything...");

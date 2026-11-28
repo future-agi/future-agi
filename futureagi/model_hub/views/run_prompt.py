@@ -33,7 +33,12 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
 # (available_models always available)
-from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from agentic_eval.core_evals.run_prompt.litellm_models import (  # noqa: E402
+    LiteLLMModelManager,
+    MissingProviderKeyError,
+    UnavailableModelError,
+    missing_provider_key_message,
+)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
@@ -108,6 +113,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.utils.storage import (
+    MediaToolUnavailable,
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
@@ -178,6 +184,35 @@ def _extract_tool_ids(tools):
         if tool_id:
             tool_ids.append(tool_id)
     return tool_ids
+
+
+def _resolve_tools_for_request(request, tools):
+    """Resolve the complete tool selection within the request's active scope."""
+    error_message = "One or more tools are unavailable for this workspace."
+    tool_ids = _extract_tool_ids(tools)
+    if len(tool_ids) != len(tools or []):
+        raise ValueError(error_message)
+    try:
+        requested_ids = {uuid.UUID(str(tool_id)) for tool_id in tool_ids}
+    except ValueError:
+        raise ValueError(error_message) from None
+    if not requested_ids:
+        return []
+
+    organization = _request_organization(request)
+    if not organization:
+        raise ValueError(error_message)
+    resolved_tools = list(
+        Tools.objects.filter(
+            _request_workspace_filter(request),
+            id__in=requested_ids,
+            organization=organization,
+            deleted=False,
+        )
+    )
+    if {tool.id for tool in resolved_tools} != requested_ids:
+        raise ValueError(error_message)
+    return resolved_tools
 
 
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
@@ -672,6 +707,9 @@ def process_list_content(
             # Handle other media types
             try:
                 processed_content.append(handle_media(item, model_name))
+            except MediaToolUnavailable:
+                # The original audio_url item is not a provider input format.
+                raise
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
                 # Keep original item if processing fails
@@ -1081,14 +1119,10 @@ class LitellmAPIView(CreateAPIView):
         )
         if not dataset:
             return self._gm.not_found("Dataset not found")
-        # Retrieve tools based on the IDs from the validated data
-        tool_ids = _extract_tool_ids(validated_data.get("tools"))
-        tools = Tools.objects.filter(
-            _request_workspace_filter(request),
-            id__in=tool_ids,
-            organization=organization,
-            deleted=False,
-        )
+        try:
+            tools = _resolve_tools_for_request(request, validated_data.get("tools"))
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
@@ -1757,6 +1791,11 @@ class AddRunPromptColumnView(APIView):
                     "Please select a supported model."
                 )
 
+            try:
+                tools = _resolve_tools_for_request(request, config.get("tools"))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+
             output_format = config.get("output_format")
             messages = config.get("messages", [])
             if output_format != "audio":
@@ -1802,13 +1841,8 @@ class AddRunPromptColumnView(APIView):
                     dataset.column_order = column_order
                     dataset.save()
 
-                # Handle tools if provided in config
-                tools = config.get("tools", [])
                 if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                    run_prompter.tools.set(tools)
 
                 run_prompter_id = str(run_prompter.id)
 
@@ -1905,13 +1939,11 @@ class PreviewRunPromptColumnView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("ROW_INDICES_NOT_EXIST"))
 
-            # Process tools if provided in config
-            tools_config = []
-            if config.get("tools"):
-                tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
-                if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.as_openai_tool() for tool in tools]
+            try:
+                tools = _resolve_tools_for_request(request, config.get("tools"))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+            tools_config = [tool.as_openai_tool() for tool in tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1922,7 +1954,25 @@ class PreviewRunPromptColumnView(APIView):
                 except Exception:
                     pass
 
+            # Use the execution scope, including custom-model credentials and
+            # workspace-over-organization precedence. Reject missing credentials
+            # before executing any rows; later failures must preserve completed work.
+            organization_id = dataset.organization_id
+            workspace_id = dataset.workspace_id
+            model_manager = LiteLLMModelManager(
+                config.get("model", ""), organization_id=organization_id
+            )
+            provider = model_manager.get_provider(
+                model_name=config.get("model", ""), organization_id=organization_id
+            )
+            model_manager.get_api_key(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                provider=provider,
+            )
+
             responses = []
+            value_infos: dict[str, Any] = {"metadata": {"usage": {}, "cost": {}}}
             for row in rows:
                 try:
                     output_format = config.get("output_format", "string")
@@ -1938,8 +1988,7 @@ class PreviewRunPromptColumnView(APIView):
 
                     run_prompt = RunPrompt(
                         model=config.get("model", ""),
-                        organization_id=getattr(request, "organization", None)
-                        or request.user.organization.id,
+                        organization_id=organization_id,
                         messages=messages,
                         temperature=config.get("temperature"),
                         frequency_penalty=config.get("frequency_penalty"),
@@ -1951,11 +2000,7 @@ class PreviewRunPromptColumnView(APIView):
                         tools=tools_config,
                         output_format=config.get("output_format", "string"),
                         run_prompt_config=config.get("run_prompt_config"),
-                        workspace_id=(
-                            dataset.workspace.id
-                            if dataset and dataset.workspace
-                            else None
-                        ),
+                        workspace_id=workspace_id,
                     )
                     response, value_infos = run_prompt.litellm_response()
 
@@ -1975,6 +2020,21 @@ class PreviewRunPromptColumnView(APIView):
                     else:
                         responses.append(response)
 
+                except MissingProviderKeyError as exc:
+                    # Provider calls cannot be rolled back. Retain completed
+                    # outputs and mark every remaining row without retrying it.
+                    remaining_rows = len(rows) - len(responses)
+                    logger.warning(
+                        "prompt_preview_configuration_changed",
+                        error_type=type(exc).__name__,
+                        processed_rows=len(responses),
+                        remaining_rows=remaining_rows,
+                    )
+                    responses.extend(
+                        [f"Error: {missing_provider_key_message(exc.provider)}"]
+                        * remaining_rows
+                    )
+                    break
                 except Exception as e:
                     responses.append(str(e))
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
@@ -1986,6 +2046,11 @@ class PreviewRunPromptColumnView(APIView):
                 }
             )
 
+        except (MissingProviderKeyError, UnavailableModelError) as exc:
+            logger.warning(
+                "prompt_preview_configuration_invalid", error_type=type(exc).__name__
+            )
+            return self._gm.bad_request(str(exc))
         except Exception as e:
             error_message = get_specific_error_message(e)
             logger.exception(f"Error in preview run prompt column: {error_message}")
@@ -2039,6 +2104,11 @@ class EditRunPromptColumnView(APIView):
             # Verify column is a run prompt column
             if column.source != SourceChoices.RUN_PROMPT.value:
                 return self._gm.bad_request(get_error_message("COLUMN_IS_IN_VALID"))
+
+            try:
+                tools = _resolve_tools_for_request(request, config.get("tools"))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             # Lock the RunPrompter row to prevent race conditions
             # Use of=('self',) to avoid issues with nullable foreign keys causing outer joins
@@ -2112,16 +2182,7 @@ class EditRunPromptColumnView(APIView):
                     "run_prompt_config", run_prompter.run_prompt_config
                 )
 
-                # Handle tools update - first clear existing tools
-                run_prompter.tools.clear()
-
-                # Handle tools update if provided
-                tools = config.get("tools")
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                run_prompter.tools.set(tools)
 
                 run_prompter.save()
 
@@ -2278,7 +2339,10 @@ class RetrieveRunPromptOptionsView(APIView):
                 organization_id=getattr(self.request, "organization", None)
                 or self.request.user.organization.id,
             )
-            available_models = model_manager.models
+            available_models = []
+            for model in model_manager.models:
+                assert isinstance(model, dict)
+                available_models.append(model.copy())
 
             # Get provider status
             providers = LiteLlmModelProvider.get_choices()

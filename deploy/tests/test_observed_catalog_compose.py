@@ -33,7 +33,10 @@ DEV_OVERLAY_ENV = {
 
 
 def compose(
-    *overlays: str, base_file: str = "docker-compose.distributed.yml", **overrides: str
+    *overlays: str,
+    base_file: str = "docker-compose.distributed.yml",
+    env_file: str = os.devnull,
+    **overrides: str,
 ) -> dict:
     # Do not inherit credentials, .env contents or another running project's
     # transport configuration. 'config' does not contact the Docker daemon.
@@ -45,7 +48,7 @@ def compose(
         from .compose_test_tools import compose_command
     except ImportError:
         from compose_test_tools import compose_command
-    args = [*compose_command(), "--env-file", os.devnull, "-f", base_file]
+    args = [*compose_command(), "--env-file", env_file, "-f", base_file]
     for overlay in overlays:
         args.extend(["-f", overlay])
     result = subprocess.run(
@@ -397,6 +400,7 @@ class ComposeContractTests(unittest.TestCase):
                 "frontend",
                 "backend",
                 "worker",
+                "worker-reading",
                 "worker-exact-aggregation",
                 "worker-sql-workbench",
                 "code-executor",
@@ -412,6 +416,7 @@ class ComposeContractTests(unittest.TestCase):
                 "fi-property-catalog-consumer",
                 "mock-llm",
                 "mock-slack",
+                "mock-daytona",
                 "mock-google",
                 "peerdb-server",
                 "peerdb-flow-worker",
@@ -523,7 +528,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "worker-simulation-runner": "futureagi/future-agi-simulation-runner:contract-test",
         }
         for name in ("backend", "postgres-schema-bootstrap", "clickhouse-native-bootstrap",
-                     "clickhouse-cdc-bootstrap", "peerdb-init", "peerdb-temporal-init"):
+                     "clickhouse-cdc-bootstrap", "metrics-schema-bootstrap", "peerdb-init",
+                     "peerdb-temporal-init"):
             expected[name] = "futureagi/future-agi:contract-test"
         for name in services:
             if name.startswith("worker") and name != "worker-simulation-runner":
@@ -556,11 +562,28 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "peerdb-temporal-init": [],
             "peerdb-init": ["--wait-for-mirrors", "--timeout", "900"],
             "clickhouse-cdc-bootstrap": ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"],
+            "metrics-schema-bootstrap": ["--check", "--advisory"],
         }
         for name, command in expected.items():
             self.assertEqual(services[name]["command"], command)
         for name in ("postgres-schema-bootstrap", "backend", "worker", "worker-exact-aggregation"):
             self.assertEqual(services[name]["environment"]["NO_STARTUP_DB_MUTATIONS"], "true")
+
+    def test_blank_simulate_cutoff_in_the_env_file_reaches_the_app(self):
+        key = "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+        for line, expected in (("", "2026-10-28T00:00:00Z"), (f"{key}=\n", "")):
+            with self.subTest(line=line), tempfile.NamedTemporaryFile("w") as env_file:
+                env_file.write(line)
+                env_file.flush()
+                services = compose(
+                    "deploy/docker-compose.production.yml",
+                    env_file=env_file.name,
+                    **self.env,
+                )["services"]
+                for name in ("backend", "worker", "serving"):
+                    self.assertEqual(
+                        services[name]["environment"].get(key), expected, name
+                    )
 
     def test_live_and_backfill_services_share_default_and_overridden_extraction_limits(self):
         for overlays in ((), ("deploy/docker-compose.production.yml",)):

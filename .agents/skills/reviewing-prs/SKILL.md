@@ -116,8 +116,8 @@ The script returns exactly three verdicts:
 | `needs-marker` | P1 "E2E coverage undeclared" — name the classification, the area(s), and the `E2E:` line the author should add.                                                                                                                                                                                                                      |
 | `block`        | P1 "Declared exemption contradicts the diff" — quote the marker and the signal that contradicts it.                                                                                                                                                                                                                                  |
 
-**`NEW-FLOW` passes on exactly one marker kind: `E2E: new <ID>`, with the `FLOWS.md` diff adding that
-id.** `updated`, `covered-by` and `exempt` all come back `block`. `NEW-FLOW` answered with
+**`NEW-FLOW` passes on exactly one marker kind: `E2E: new <ID>`, with a spec under `e2e/flows` adding
+that id.** `updated`, `covered-by` and `exempt` all come back `block`. `NEW-FLOW` answered with
 `E2E: exempt (...)` is a reviewer override, not an author decision: ask the human one question —
 accept the override, or hold the PR for a flow — and put their answer in the review.
 
@@ -143,7 +143,11 @@ reported as pre-existing — not deleted from the review because CI happens not 
 | Frontend source files changed, and `frontend/package.json` defines the script     | `yarn lint` on the frontend.                                                                                                                                  |
 | Serializers or contracts changed, and `frontend/package.json` defines the scripts | The contract check the repo defines (`yarn contracts:check`).                                                                                                 |
 
-Never cite `yarn type-check` as evidence: without a `tsconfig.json` it is a no-op and proves nothing.
+When frontend sources or their type-check configuration change, inspect `frontend/package.json` and
+its referenced TypeScript project on the revisions under review. Run `yarn type-check` in `frontend/`
+through cloud CI and compare base and head diagnostics to identify any new errors. Cite the result
+for the TypeScript sources included on the tested revision. With `checkJs: false`, JavaScript is not
+type-checked by default. A missing project, a no-op script or a skipped run is not a pass.
 
 State in the review what you ran and what you did not run, with the predicate that decided it.
 
@@ -245,26 +249,26 @@ Nothing reaches GitHub until the user answers that question.
 
 Each of these means: go back to the step named and do it.
 
-| Rationalization                                                                         | Reality                                                                                                   |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| "Small diff, skip the standards pass."                                                  | Diff size predicts nothing about severity. A one-line guard is the classic P0. Step 5.                    |
-| "The body says it was tested."                                                          | A claim is not evidence. Step 2 lists it; step 4 runs it.                                                 |
-| "A flow exists in that area, so it's covered."                                          | Coverage is per pinned surface, not per area. Step 3 answers this; guessing does not.                     |
-| "It's only a refactor."                                                                 | Run `git diff -w`. A refactor that drops a handler, a prop or a branch is a behaviour change.             |
-| "The migration is trivial."                                                             | Trivial migrations take locks, dangle leaves, and depend on enterprise-only apps. Run the gate.           |
-| "Type-check passed."                                                                    | Without a `tsconfig.json` it is a no-op. Never cite it.                                                   |
-| "I'll post it and fix the wording later."                                               | It goes out under a human's name. Show it, get the yes, then post.                                        |
-| "Since this is already merged, these are tickets rather than findings."                 | Merge status changes the remedy, not the severity or the attribution. Report them at their real severity. |
-| "CI doesn't run that gate, so it's not on this PR."                                     | Attribute it, don't delete it. Pre-existing is a label; silence is a miss.                                |
-| "The PR's count presumably includes the file I didn't run."                             | Run it or say the number is unverified. Do not reconcile evidence by assumption.                          |
-| "This isn't an active leak, but the sibling has it — leaving it in."                    | Verification killed it. It does not go in the review. Step 6.                                             |
-| "It's pre-existing, but fix this first."                                                | Pre-existing findings do not lead the review and do not block. Rank by what this PR breaks.               |
-| "None of these block, but here are five follow-ups."                                    | On an exempt or tooling diff, the honest output is `No findings.` plus **Good**.                          |
-| "Unlikely — I confirmed the trigger doesn't exist — but free to close."                 | A finding whose trigger you proved absent is speculation. Drop it.                                        |
-| "It conflicts with the convention, but I didn't want to raise it on someone else's PR." | Attribution is how you raise it fairly. Write it at its real severity.                                    |
-| "The claim is unverifiable, so I'll suggest a body edit."                               | Unsupported body claims are findings, not copy-editing.                                                   |
-| "The gate didn't exist when this merged, so I'll drop it."                              | It changes the severity, not whether it is reported. Record it at P2 with the reason.                     |
-| "The review is written, so the job is done."                                            | The last line is the posting question. A review nobody was asked about cannot be posted.                  |
+| Rationalization                                                                         | Reality                                                                                                      |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| "Small diff, skip the standards pass."                                                  | Diff size predicts nothing about severity. A one-line guard is the classic P0. Step 5.                       |
+| "The body says it was tested."                                                          | A claim is not evidence. Step 2 lists it; step 4 runs it.                                                    |
+| "A flow exists in that area, so it's covered."                                          | Coverage is per pinned surface, not per area. Step 3 answers this; guessing does not.                        |
+| "It's only a refactor."                                                                 | Run `git diff -w`. A refactor that drops a handler, a prop or a branch is a behaviour change.                |
+| "The migration is trivial."                                                             | Trivial migrations take locks, dangle leaves, and depend on enterprise-only apps. Run the gate.              |
+| "Type-check passed, so the frontend is correct."                                        | A pass covers the configured type check only. It does not prove runtime behavior or that other gates passed. |
+| "I'll post it and fix the wording later."                                               | It goes out under a human's name. Show it, get the yes, then post.                                           |
+| "Since this is already merged, these are tickets rather than findings."                 | Merge status changes the remedy, not the severity or the attribution. Report them at their real severity.    |
+| "CI doesn't run that gate, so it's not on this PR."                                     | Attribute it, don't delete it. Pre-existing is a label; silence is a miss.                                   |
+| "The PR's count presumably includes the file I didn't run."                             | Run it or say the number is unverified. Do not reconcile evidence by assumption.                             |
+| "This isn't an active leak, but the sibling has it — leaving it in."                    | Verification killed it. It does not go in the review. Step 6.                                                |
+| "It's pre-existing, but fix this first."                                                | Pre-existing findings do not lead the review and do not block. Rank by what this PR breaks.                  |
+| "None of these block, but here are five follow-ups."                                    | On an exempt or tooling diff, the honest output is `No findings.` plus **Good**.                             |
+| "Unlikely — I confirmed the trigger doesn't exist — but free to close."                 | A finding whose trigger you proved absent is speculation. Drop it.                                           |
+| "It conflicts with the convention, but I didn't want to raise it on someone else's PR." | Attribution is how you raise it fairly. Write it at its real severity.                                       |
+| "The claim is unverifiable, so I'll suggest a body edit."                               | Unsupported body claims are findings, not copy-editing.                                                      |
+| "The gate didn't exist when this merged, so I'll drop it."                              | It changes the severity, not whether it is reported. Record it at P2 with the reason.                        |
+| "The review is written, so the job is done."                                            | The last line is the posting question. A review nobody was asked about cannot be posted.                     |
 
 ## Out of scope
 

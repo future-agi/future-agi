@@ -3,16 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { useWorkspaceChat } from "../workspaceChat";
-import { clearScenarioSelection, publishScenarioSelection } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+import {
+  clearScenarioSelection,
+  publishScenarioSelection,
+} from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
 
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: vi.fn(),
+  listHarnessChatHistory: vi.fn(),
   sendHarnessConversationMessage: vi.fn(),
   harnessIdempotencyKey: vi.fn(() => "req-test"),
 }));
 
 import {
   getHarnessJob,
+  listHarnessChatHistory,
   sendHarnessConversationMessage,
   harnessIdempotencyKey,
 } from "src/api/harness/harness";
@@ -42,7 +47,9 @@ const jobWith = (conversation) => ({
 });
 
 function wrapper() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   // eslint-disable-next-line react/prop-types
   const Wrapper = ({ children }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -54,7 +61,9 @@ const renderChat = (conversation, opts = {}) => {
   getHarnessJob.mockResolvedValue(jobWith(conversation));
   const { client, Wrapper } = wrapper();
   client.setQueryData(["harness-job", "job-1"], jobWith(conversation));
-  const view = renderHook(() => useWorkspaceChat(ENV, { source: "harness" }), { wrapper: Wrapper });
+  const view = renderHook(() => useWorkspaceChat(ENV, { source: "harness" }), {
+    wrapper: Wrapper,
+  });
   return { ...view, client, ...opts };
 };
 
@@ -63,29 +72,403 @@ describe("useWorkspaceChat (real)", () => {
     clearScenarioSelection();
     sendHarnessConversationMessage.mockReset();
     getHarnessJob.mockReset();
+    listHarnessChatHistory.mockReset();
     harnessIdempotencyKey.mockReset();
     harnessIdempotencyKey.mockReturnValue("req-test");
   });
   afterEach(() => clearScenarioSelection());
 
+  it("keeps the events already held when a send answers with fewer", async () => {
+    const event = (sequence) => ({ event_id: `e${sequence}`, sequence });
+    const { result, client } = renderChat(
+      conversationWith({ events: [event(1), event(2)] }),
+    );
+    sendHarnessConversationMessage.mockResolvedValue(
+      conversationWith({ events: [event(2), event(3)] }),
+    );
+    await act(async () => result.current.send("hi"));
+    await waitFor(() =>
+      expect(
+        client
+          .getQueryData(["harness-job", "job-1"])
+          .conversation.events.map((one) => one.sequence),
+      ).toEqual([1, 2, 3]),
+    );
+  });
+
+  describe("with older steps left to load", () => {
+    const tool = (sequence) => ({
+      event_id: `e${sequence}`,
+      sequence,
+      kind: "tool_started",
+      function_call_id: `call-${sequence}`,
+      payload: { tool: `tool ${sequence}` },
+      emitted_at: `2026-09-22T10:00:0${sequence}Z`,
+    });
+    const starts = (oldest_sequence, has_older) => ({
+      events: { oldest_sequence, has_older },
+    });
+    const conversation = conversationWith({
+      events: [tool(3), tool(4)],
+      history: starts(3, true),
+    });
+    const start = (result) =>
+      result.current.turns.find((turn) => turn.role === "history");
+    const tools = (result) =>
+      result.current.turns
+        .flatMap((turn) => turn.steps ?? [])
+        .map((step) => step.label);
+
+    it("loads the page before the held ones, after a retry, and says where they start", async () => {
+      const { result } = renderChat(conversation);
+      expect(start(result)).toMatchObject({ oldest: 3, hasOlder: true });
+
+      listHarnessChatHistory.mockRejectedValueOnce(new Error("offline"));
+      act(() => {
+        start(result).onLoad();
+      });
+      await waitFor(() => expect(start(result).failed).toBe(true));
+      expect(tools(result)).toEqual(["tool 3", "tool 4"]);
+
+      listHarnessChatHistory.mockResolvedValueOnce({
+        events: [tool(1), tool(2)],
+        oldest_sequence: 1,
+        has_older: false,
+      });
+      act(() => {
+        start(result).onLoad();
+      });
+      await waitFor(() =>
+        expect(start(result)).toMatchObject({
+          oldest: 1,
+          hasOlder: false,
+          failed: false,
+        }),
+      );
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "events",
+        before: 3,
+      });
+      expect(tools(result)).toEqual(["tool 1", "tool 2", "tool 3", "tool 4"]);
+    });
+
+    it("drops a page for events that started over while it loaded", async () => {
+      const { result, client } = renderChat(conversation);
+      let answer;
+      listHarnessChatHistory.mockReturnValueOnce(
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      );
+      act(() => {
+        start(result).onLoad();
+      });
+      await waitFor(() => expect(start(result).loading).toBe(true));
+      act(() => {
+        client.setQueryData(
+          ["harness-job", "job-1"],
+          jobWith(
+            conversationWith({
+              events: [tool(8), tool(9)],
+              history: starts(8, true),
+            }),
+          ),
+        );
+      });
+      await act(async () =>
+        answer({
+          events: [tool(1), tool(2)],
+          oldest_sequence: 1,
+          has_older: false,
+        }),
+      );
+      await waitFor(() => expect(start(result).loading).toBe(false));
+      expect(start(result)).toMatchObject({ oldest: 8, hasOlder: true });
+      expect(tools(result)).toEqual(["tool 8", "tool 9"]);
+    });
+  });
+
+  it("loads the messages before the held ones, without their old states stopping the chat", async () => {
+    const message = (sequence, over) => ({
+      message_id: `m${sequence}`,
+      sequence,
+      role: "user",
+      kind: "user_message",
+      state: "completed",
+      content: `message ${sequence}`,
+      created_at: `2026-09-22T10:00:0${sequence}Z`,
+      ...over,
+    });
+    const { result } = renderChat(
+      conversationWith({
+        messages: [message(4), message(5)],
+        history: { messages: { oldest_sequence: 4, has_older: true } },
+      }),
+    );
+    listHarnessChatHistory.mockResolvedValueOnce({
+      // A Stop the server never settled.
+      messages: [
+        message(2),
+        message(3, {
+          state: "delivered",
+          payload: { command_kind: "interrupt" },
+        }),
+      ],
+      events: [],
+      oldest_sequence: 2,
+      has_older: true,
+    });
+    const start = () =>
+      result.current.turns.find((turn) => turn.role === "history");
+    act(() => {
+      start().onLoad();
+    });
+    await waitFor(() =>
+      expect(result.current.turns.map((turn) => turn.text)).toEqual([
+        undefined,
+        "message 2",
+        "message 4",
+        "message 5",
+      ]),
+    );
+    expect(listHarnessChatHistory).toHaveBeenCalledWith("job-1", {
+      kind: "messages",
+      before: 4,
+    });
+    expect(start()).toMatchObject({ kind: "messages", hasOlder: true });
+    expect(result.current.stopping).toBe(false);
+  });
+
+  describe("opened at a message far back", () => {
+    const message = (sequence) => ({
+      message_id: `m${sequence}`,
+      sequence,
+      role: "user",
+      kind: "user_message",
+      state: "completed",
+      content: `message ${sequence}`,
+      created_at: `2026-09-22T10:00:0${sequence}Z`,
+    });
+    const page = (...sequences) => ({
+      messages: sequences.map(message),
+      events: [],
+      oldest_sequence: sequences[0],
+      newest_sequence: sequences.at(-1),
+      has_older: sequences[0] > 1,
+      has_newer: true,
+    });
+    const show = () =>
+      renderChat(
+        conversationWith({
+          messages: [message(8), message(9)],
+          history: { messages: { oldest_sequence: 8, has_older: true } },
+        }),
+      );
+    const mark = (result, id) =>
+      result.current.turns.find((turn) => turn.id === id);
+    const ids = (result) => result.current.turns.map((turn) => turn.id);
+    const openAt = async (result, answer, wanted = () => true) => {
+      listHarnessChatHistory.mockImplementationOnce(() => answer);
+      let found;
+      await act(async () => {
+        found = await mark(result, "older-messages")
+          .open("m4", wanted)
+          .catch(() => "failed");
+      });
+      return found;
+    };
+
+    it("reads the page around it, then on from both its ends until it joins the rest", async () => {
+      const { result } = show();
+      expect(await openAt(result, Promise.resolve(page(3, 4, 5)))).toBe(true);
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "messages",
+        around: "m4",
+      });
+      await waitFor(() => expect(ids(result)).toContain("gap"));
+
+      listHarnessChatHistory.mockResolvedValueOnce(page(1, 2));
+      act(() => {
+        mark(result, "older-around").onLoad();
+      });
+      await waitFor(() =>
+        expect(mark(result, "older-around").hasOlder).toBe(false),
+      );
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "messages",
+        before: 3,
+      });
+
+      listHarnessChatHistory.mockResolvedValueOnce(page(4, 5, 6, 7));
+      act(() => {
+        mark(result, "gap").onLoad();
+      });
+      await waitFor(() =>
+        expect(ids(result)).toEqual([
+          "older-messages",
+          ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((one) => `m${one}`),
+        ]),
+      );
+      expect(listHarnessChatHistory).toHaveBeenLastCalledWith("job-1", {
+        kind: "messages",
+        around: "m5",
+      });
+    });
+
+    it.each([
+      [
+        "the server doesn't have",
+        () => Promise.reject({ statusCode: 404 }),
+        false,
+      ],
+      [
+        "that couldn't be read",
+        () => Promise.reject(new Error("offline")),
+        "failed",
+      ],
+    ])("tells apart a message %s", async (_, answer, found) => {
+      const { result, client } = show();
+      expect(await openAt(result, answer())).toBe(found);
+      expect(ids(result)).toEqual(["older-messages", "m8", "m9"]);
+      // The chat says it itself, so the app-wide error toast stays quiet.
+      const [read] = client.getMutationCache().getAll();
+      expect(read.options.meta).toEqual({ errorHandled: true });
+    });
+
+    it("drops the page once the reader no longer wants it", async () => {
+      const { result } = show();
+      await openAt(result, Promise.resolve(page(3, 4, 5)), () => false);
+      expect(ids(result)).toEqual(["older-messages", "m8", "m9"]);
+    });
+  });
+
   it("projects turns from the polled conversation", () => {
     const { result } = renderChat(
       conversationWith({
         messages: [
-          { message_id: "u1", role: "user", kind: "message", state: "completed", content: "hi", created_at: "2026-09-22T10:00:00Z", sequence: 1 },
-          { message_id: "a1", role: "assistant", kind: "message", state: "completed", content: "hello", created_at: "2026-09-22T10:00:01Z", sequence: 2 },
+          {
+            message_id: "u1",
+            role: "user",
+            kind: "message",
+            state: "completed",
+            content: "hi",
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+          {
+            message_id: "a1",
+            role: "assistant",
+            kind: "message",
+            state: "completed",
+            content: "hello",
+            created_at: "2026-09-22T10:00:01Z",
+            sequence: 2,
+          },
         ],
       }),
     );
     expect(result.current.turns).toHaveLength(2);
     expect(result.current.turns[0]).toMatchObject({ role: "user", text: "hi" });
-    expect(result.current.turns[1].steps[0]).toMatchObject({ kind: "note", markdown: true });
+    expect(result.current.turns[1].steps[0]).toMatchObject({
+      kind: "note",
+      markdown: true,
+    });
     expect(result.current.running).toBe(false);
+  });
+
+  it("offers no Stop while the server waits on the person's answer, and offers it again once they answer", () => {
+    const rework = {
+      message_id: "u1",
+      role: "user",
+      kind: "message",
+      state: "delivered",
+      content: "Rework it",
+      created_at: "2026-09-22T10:00:00Z",
+      sequence: 1,
+    };
+    const question = {
+      message_id: "q2",
+      role: "assistant",
+      kind: "question",
+      state: "completed",
+      content: "Confirm this change",
+      created_at: "2026-09-22T10:00:02Z",
+      sequence: 3,
+    };
+    const waiting = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: { message_id: "q2", kind: "question_requested" },
+        messages: [rework, question],
+      }),
+    );
+    expect(waiting.result.current.canStop).toBe(false);
+    expect(waiting.result.current.working).toBe(false);
+    expect(waiting.result.current.waiting).toBe(true);
+
+    const answered = renderChat(
+      conversationWith({
+        state: "responding",
+        messages: [
+          rework,
+          question,
+          {
+            message_id: "u2",
+            role: "user",
+            kind: "message",
+            state: "queued",
+            content: "Yes, make this change",
+            reply_to: "q2",
+            created_at: "2026-09-22T10:00:09Z",
+            sequence: 4,
+          },
+        ],
+      }),
+    );
+    expect(answered.result.current.canStop).toBe(true);
+  });
+
+  it("holds free text only when the server serves an open question that takes its options alone", () => {
+    const question = {
+      message_id: "q2",
+      role: "assistant",
+      kind: "question",
+      state: "completed",
+      content: "Confirm this change",
+      created_at: "2026-09-22T10:00:02Z",
+      sequence: 3,
+    };
+    const asked = (blocking) =>
+      renderChat(
+        conversationWith({
+          state: "waiting_for_user",
+          blocking_input: blocking,
+          messages: [question],
+        }),
+      ).result.current.answerWithOptions;
+    expect(
+      asked({
+        message_id: "q2",
+        kind: "question_requested",
+        options_only: true,
+      }),
+    ).toBe(true);
+    expect(asked({ message_id: "q2", kind: "question_requested" })).toBe(false);
   });
 
   it("send posts a user_message and writes the returned conversation into the cache", async () => {
     const next = conversationWith({
-      messages: [{ message_id: "u1", role: "user", kind: "message", state: "queued", content: "add a scenario", created_at: "2026-09-22T10:00:05Z", sequence: 1 }],
+      messages: [
+        {
+          message_id: "u1",
+          role: "user",
+          kind: "message",
+          state: "queued",
+          content: "add a scenario",
+          created_at: "2026-09-22T10:00:05Z",
+          sequence: 1,
+        },
+      ],
     });
     sendHarnessConversationMessage.mockResolvedValue(next);
     const { result } = renderChat(conversationWith());
@@ -103,9 +486,15 @@ describe("useWorkspaceChat (real)", () => {
       }),
     );
     // reply_to must be absent for a plain message
-    expect(sendHarnessConversationMessage.mock.calls[0][1].reply_to).toBeUndefined();
+    expect(
+      sendHarnessConversationMessage.mock.calls[0][1].reply_to,
+    ).toBeUndefined();
     await waitFor(() =>
-      expect(result.current.turns.some((t) => t.role === "user" && t.text === "add a scenario")).toBe(true),
+      expect(
+        result.current.turns.some(
+          (t) => t.role === "user" && t.text === "add a scenario",
+        ),
+      ).toBe(true),
     );
   });
 
@@ -113,8 +502,22 @@ describe("useWorkspaceChat (real)", () => {
     const asked = renderChat(
       conversationWith({
         state: "waiting_for_user",
-        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
-        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+        blocking_input: {
+          message_id: "q1",
+          kind: "question_requested",
+          prompt: "How strict?",
+        },
+        messages: [
+          {
+            message_id: "q1",
+            role: "assistant",
+            kind: "question",
+            state: "completed",
+            content: "How strict?",
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+        ],
       }),
     );
     expect(asked.result.current.waiting).toBe(true);
@@ -132,8 +535,22 @@ describe("useWorkspaceChat (real)", () => {
       conversationWith({
         state: "waiting_for_user",
         runtime: { available: false },
-        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?" },
-        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+        blocking_input: {
+          message_id: "q1",
+          kind: "question_requested",
+          prompt: "How strict?",
+        },
+        messages: [
+          {
+            message_id: "q1",
+            role: "assistant",
+            kind: "question",
+            state: "completed",
+            content: "How strict?",
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+        ],
       }),
     );
     expect(result.current.frozen).toBe(true);
@@ -145,8 +562,24 @@ describe("useWorkspaceChat (real)", () => {
     const { result } = renderChat(
       conversationWith({
         state: "waiting_for_user",
-        blocking_input: { message_id: "q1", kind: "question_requested", prompt: "How strict?", options: ["Strict"] },
-        messages: [{ message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", payload: { options: ["Strict"] }, created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+        blocking_input: {
+          message_id: "q1",
+          kind: "question_requested",
+          prompt: "How strict?",
+          options: ["Strict"],
+        },
+        messages: [
+          {
+            message_id: "q1",
+            role: "assistant",
+            kind: "question",
+            state: "completed",
+            content: "How strict?",
+            payload: { options: ["Strict"] },
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+        ],
       }),
     );
 
@@ -156,7 +589,11 @@ describe("useWorkspaceChat (real)", () => {
 
     expect(sendHarnessConversationMessage).toHaveBeenCalledWith(
       "job-1",
-      expect.objectContaining({ kind: "user_response", reply_to: "q1", content: "Strict" }),
+      expect.objectContaining({
+        kind: "user_response",
+        reply_to: "q1",
+        content: "Strict",
+      }),
     );
   });
 
@@ -167,8 +604,26 @@ describe("useWorkspaceChat (real)", () => {
         state: "waiting_for_user",
         blocking_input: { message_id: "q1", kind: "question_requested" },
         messages: [
-          { message_id: "q1", role: "assistant", kind: "question", state: "completed", content: "How strict?", payload: { options: ["Strict"] }, created_at: "2026-09-22T10:00:00Z", sequence: 1 },
-          { message_id: "u1", role: "user", kind: "message", state: "queued", content: "Strict", reply_to: "q1", created_at: "2026-09-22T10:00:05Z", sequence: 2 },
+          {
+            message_id: "q1",
+            role: "assistant",
+            kind: "question",
+            state: "completed",
+            content: "How strict?",
+            payload: { options: ["Strict"] },
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+          {
+            message_id: "u1",
+            role: "user",
+            kind: "message",
+            state: "queued",
+            content: "Strict",
+            reply_to: "q1",
+            created_at: "2026-09-22T10:00:05Z",
+            sequence: 2,
+          },
         ],
       }),
     );
@@ -182,14 +637,19 @@ describe("useWorkspaceChat (real)", () => {
 
   it("carries selected scenario ids and clears the selection on send", async () => {
     sendHarnessConversationMessage.mockResolvedValue(conversationWith());
-    publishScenarioSelection({ ids: ["s1", "s2"], rows: [{ name: "a" }, { name: "b" }] });
+    publishScenarioSelection({
+      ids: ["s1", "s2"],
+      rows: [{ name: "a" }, { name: "b" }],
+    });
     const { result } = renderChat(conversationWith());
 
     await act(async () => {
       result.current.send("make them impatient");
     });
 
-    expect(sendHarnessConversationMessage.mock.calls[0][1].payload.scenario_ids).toEqual(["s1", "s2"]);
+    expect(
+      sendHarnessConversationMessage.mock.calls[0][1].payload.scenario_ids,
+    ).toEqual(["s1", "s2"]);
   });
 
   it("answers a confirmation with kind:approval", async () => {
@@ -198,7 +658,18 @@ describe("useWorkspaceChat (real)", () => {
       conversationWith({
         state: "waiting_for_user",
         blocking_input: { message_id: "cf1", kind: "confirmation_requested" },
-        messages: [{ message_id: "cf1", role: "assistant", kind: "confirmation", state: "completed", content: "Proceed?", payload: { options: ["Yes"] }, created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+        messages: [
+          {
+            message_id: "cf1",
+            role: "assistant",
+            kind: "confirmation",
+            state: "completed",
+            content: "Proceed?",
+            payload: { options: ["Yes"] },
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+        ],
       }),
     );
     await act(async () => result.current.send("Yes"));
@@ -208,12 +679,20 @@ describe("useWorkspaceChat (real)", () => {
   });
 
   it("surfaces the backend error message on a failed send and offers retry only when retryable", async () => {
-    sendHarnessConversationMessage.mockRejectedValue({ message: "reply_to does not identify the open harness question", retryable: false, statusCode: 409 });
+    sendHarnessConversationMessage.mockRejectedValue({
+      message: "reply_to does not identify the open harness question",
+      retryable: false,
+      statusCode: 409,
+    });
     const { result } = renderChat(conversationWith());
     await act(async () => result.current.send("hi"));
     await waitFor(() => {
-      const errStep = result.current.turns.flatMap((t) => t.steps || []).find((s) => s.kind === "error");
-      expect(errStep?.text).toContain("does not identify the open harness question");
+      const errStep = result.current.turns
+        .flatMap((t) => t.steps || [])
+        .find((s) => s.kind === "error");
+      expect(errStep?.text).toContain(
+        "does not identify the open harness question",
+      );
       expect(errStep?.onRetry).toBeUndefined();
     });
   });
@@ -222,24 +701,37 @@ describe("useWorkspaceChat (real)", () => {
     // The first send clears the scenario selection and mints a client_request_id.
     // A retry must replay THAT command — same scenario_ids, same id — so a lost
     // response can't post the turn twice or with a narrower scope.
-    harnessIdempotencyKey.mockReturnValueOnce("req-A").mockReturnValueOnce("req-B");
+    harnessIdempotencyKey
+      .mockReturnValueOnce("req-A")
+      .mockReturnValueOnce("req-B");
     sendHarnessConversationMessage
-      .mockRejectedValueOnce({ message: "network blip", retryable: true, statusCode: 503 })
+      .mockRejectedValueOnce({
+        message: "network blip",
+        retryable: true,
+        statusCode: 503,
+      })
       .mockResolvedValueOnce(conversationWith());
-    publishScenarioSelection({ ids: ["s1", "s2"], rows: [{ name: "a" }, { name: "b" }] });
+    publishScenarioSelection({
+      ids: ["s1", "s2"],
+      rows: [{ name: "a" }, { name: "b" }],
+    });
     const { result } = renderChat(conversationWith());
 
     await act(async () => result.current.send("make them impatient"));
 
     let errStep;
     await waitFor(() => {
-      errStep = result.current.turns.flatMap((t) => t.steps || []).find((s) => s.kind === "error");
+      errStep = result.current.turns
+        .flatMap((t) => t.steps || [])
+        .find((s) => s.kind === "error");
       expect(errStep?.onRetry).toBeInstanceOf(Function);
     });
 
     await act(async () => errStep.onRetry());
 
-    await waitFor(() => expect(sendHarnessConversationMessage).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(sendHarnessConversationMessage).toHaveBeenCalledTimes(2),
+    );
     const first = sendHarnessConversationMessage.mock.calls[0][1];
     const second = sendHarnessConversationMessage.mock.calls[1][1];
     expect(second.payload.scenario_ids).toEqual(["s1", "s2"]);
@@ -252,16 +744,29 @@ describe("useWorkspaceChat (real)", () => {
     // success handler must update A's ["harness-job", A] cache, never B's.
     let resolveSend;
     sendHarnessConversationMessage.mockImplementation(
-      () => new Promise((res) => { resolveSend = res; }),
+      () =>
+        new Promise((res) => {
+          resolveSend = res;
+        }),
     );
     const { client, Wrapper } = wrapper();
     // Per-id so the background poll for job-2 restores cB, not cA — isolating
     // the mutation write from the query refetch.
     getHarnessJob.mockImplementation((id) =>
-      Promise.resolve(jobWith(conversationWith({ conversation_id: id === "job-2" ? "cB" : "cA" }))),
+      Promise.resolve(
+        jobWith(
+          conversationWith({ conversation_id: id === "job-2" ? "cB" : "cA" }),
+        ),
+      ),
     );
-    client.setQueryData(["harness-job", "job-1"], jobWith(conversationWith({ conversation_id: "cA" })));
-    client.setQueryData(["harness-job", "job-2"], jobWith(conversationWith({ conversation_id: "cB" })));
+    client.setQueryData(
+      ["harness-job", "job-1"],
+      jobWith(conversationWith({ conversation_id: "cA" })),
+    );
+    client.setQueryData(
+      ["harness-job", "job-2"],
+      jobWith(conversationWith({ conversation_id: "cB" })),
+    );
 
     const { result, rerender } = renderHook(
       ({ env }) => useWorkspaceChat(env, { source: "harness" }),
@@ -277,22 +782,35 @@ describe("useWorkspaceChat (real)", () => {
     });
 
     await waitFor(() =>
-      expect(client.getQueryData(["harness-job", "job-1"]).conversation.conversation_id).toBe("cA-updated"),
+      expect(
+        client.getQueryData(["harness-job", "job-1"]).conversation
+          .conversation_id,
+      ).toBe("cA-updated"),
     );
-    expect(client.getQueryData(["harness-job", "job-2"]).conversation.conversation_id).toBe("cB");
+    expect(
+      client.getQueryData(["harness-job", "job-2"]).conversation
+        .conversation_id,
+    ).toBe("cB");
   });
 
   it("uses the no-workspace frozen reason for a terminal run with no runtime", () => {
-    const { result } = renderChat(conversationWith({ runtime: { available: false } }));
+    const { result } = renderChat(
+      conversationWith({ runtime: { available: false } }),
+    );
     expect(result.current.frozen).toBe(true);
     expect(result.current.frozenReason).toMatch(/no saved workspace/i);
   });
 
   it("freezes for a non-harness env and when the runtime is unavailable", () => {
-    const nonHarness = renderHook(() => useWorkspaceChat({ id: "x" }, { source: "template" }), { wrapper: wrapper().Wrapper });
+    const nonHarness = renderHook(
+      () => useWorkspaceChat({ id: "x" }, { source: "template" }),
+      { wrapper: wrapper().Wrapper },
+    );
     expect(nonHarness.result.current.frozen).toBe(true);
 
-    const { result } = renderChat(conversationWith({ runtime: { available: false } }));
+    const { result } = renderChat(
+      conversationWith({ runtime: { available: false } }),
+    );
     expect(result.current.frozen).toBe(true);
   });
 
@@ -305,7 +823,17 @@ describe("useWorkspaceChat (real)", () => {
   it("keeps a stable turns reference across a re-render with unchanged cache", () => {
     const { result, rerender } = renderChat(
       conversationWith({
-        messages: [{ message_id: "a1", role: "assistant", kind: "message", state: "completed", content: "hi", created_at: "2026-09-22T10:00:00Z", sequence: 1 }],
+        messages: [
+          {
+            message_id: "a1",
+            role: "assistant",
+            kind: "message",
+            state: "completed",
+            content: "hi",
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+        ],
       }),
     );
     const first = result.current.turns;
@@ -326,14 +854,21 @@ describe("useWorkspaceChat (real)", () => {
 });
 
 describe("useWorkspaceChat nudges", () => {
-  const VERSIONED = { ...ENV, versioning: { enabled: true, nudges_enabled: true } };
+  const VERSIONED = {
+    ...ENV,
+    versioning: { enabled: true, nudges_enabled: true },
+  };
   const card = (nudgeId, over = {}) => ({
     message_id: `m-${nudgeId}`,
     role: "system",
     kind: "status",
     state: "completed",
     content: "Agent v3 changed: prompt. Rebuild the environment?",
-    payload: { nudge_id: nudgeId, nudge_target: "environment", trigger_label: "v3" },
+    payload: {
+      nudge_id: nudgeId,
+      nudge_target: "environment",
+      trigger_label: "v3",
+    },
     created_at: "2026-09-22T10:00:00Z",
     sequence: 1,
     ...over,
@@ -347,7 +882,9 @@ describe("useWorkspaceChat nudges", () => {
     ...over,
   });
   const nudgeCalls = (spy) =>
-    spy.mock.calls.filter(([f]) => f.queryKey.join() === nudgesKey("job-1").join());
+    spy.mock.calls.filter(
+      ([f]) => f.queryKey.join() === nudgesKey("job-1").join(),
+    );
   const jobCalls = (spy) =>
     spy.mock.calls.filter(([f]) => f.queryKey.join() === "harness-job,job-1");
 
@@ -384,11 +921,17 @@ describe("useWorkspaceChat nudges", () => {
   });
 
   it("attaches the nudge and Skip to its card and answers no", async () => {
-    axios.post.mockResolvedValue({ data: nudge("n1", { state: "answered_no" }) });
+    axios.post.mockResolvedValue({
+      data: nudge("n1", { state: "answered_no" }),
+    });
     const { result } = renderNudges([card("n1")], [nudge("n1")]);
     await waitFor(() => expect(result.current.turns[0].nudge).toBeDefined());
     const turn = result.current.turns[0];
-    expect(turn).toMatchObject({ role: "system", nudgeId: "n1", nudgesEnabled: true });
+    expect(turn).toMatchObject({
+      role: "system",
+      nudgeId: "n1",
+      nudgesEnabled: true,
+    });
     expect(turn.nudge.facts.promptChanged).toBe(true);
     expect(result.current.nudgePending).toBe(true);
     await act(async () => turn.onSkipNudge());
@@ -406,19 +949,47 @@ describe("useWorkspaceChat nudges", () => {
     const { client, result, spy } = renderNudges([card("n9")], [nudge("n1")]);
     await waitFor(() => expect(nudgeCalls(spy)).toHaveLength(1));
     // The conversation moves on and the card is still unlisted: not asked again.
-    const reply = { message_id: "a1", role: "assistant", kind: "message", state: "completed", content: "hi", created_at: "2026-09-22T10:00:02Z", sequence: 2 };
-    act(() => client.setQueryData(["harness-job", "job-1"], jobWith(conversationWith({ messages: [card("n9"), reply] }))));
+    const reply = {
+      message_id: "a1",
+      role: "assistant",
+      kind: "message",
+      state: "completed",
+      content: "hi",
+      created_at: "2026-09-22T10:00:02Z",
+      sequence: 2,
+    };
+    act(() =>
+      client.setQueryData(
+        ["harness-job", "job-1"],
+        jobWith(conversationWith({ messages: [card("n9"), reply] })),
+      ),
+    );
     await waitFor(() => expect(result.current.turns).toHaveLength(2));
     expect(nudgeCalls(spy)).toHaveLength(1);
-    expect(result.current.turns.find((t) => t.nudgeId === "n9").nudge).toBeUndefined();
+    expect(
+      result.current.turns.find((t) => t.nudgeId === "n9").nudge,
+    ).toBeUndefined();
   });
 
   it("asks for the conversation again once for a nudge without its card", async () => {
     const { client, spy, result } = renderNudges([], [nudge("n1")]);
     await waitFor(() => expect(jobCalls(spy)).toHaveLength(1));
     // The conversation moves on, still without the card: not asked again.
-    const reply = { message_id: "a1", role: "assistant", kind: "message", state: "completed", content: "hi", created_at: "2026-09-22T10:00:02Z", sequence: 2 };
-    act(() => client.setQueryData(["harness-job", "job-1"], jobWith(conversationWith({ messages: [reply] }))));
+    const reply = {
+      message_id: "a1",
+      role: "assistant",
+      kind: "message",
+      state: "completed",
+      content: "hi",
+      created_at: "2026-09-22T10:00:02Z",
+      sequence: 2,
+    };
+    act(() =>
+      client.setQueryData(
+        ["harness-job", "job-1"],
+        jobWith(conversationWith({ messages: [reply] })),
+      ),
+    );
     await waitFor(() => expect(result.current.turns).toHaveLength(1));
     expect(jobCalls(spy)).toHaveLength(1);
   });
@@ -765,8 +1336,13 @@ describe("useWorkspaceChat nudges", () => {
   });
 
   it("isn't pending once the nudge is answered, and asks nothing while versioning is off", async () => {
-    const answered = renderNudges([card("n1")], [nudge("n1", { state: "answered_no" })]);
-    await waitFor(() => expect(answered.result.current.turns[0].nudge).toBeDefined());
+    const answered = renderNudges(
+      [card("n1")],
+      [nudge("n1", { state: "answered_no" })],
+    );
+    await waitFor(() =>
+      expect(answered.result.current.turns[0].nudge).toBeDefined(),
+    );
     expect(answered.result.current.nudgePending).toBe(false);
 
     axios.get.mockClear();

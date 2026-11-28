@@ -285,10 +285,16 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                     DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
                 )
             )
+            from tracer.views.observation_span import _project_workspace_scope_q
+
+            # Only the request's workspace, fresh or not. CustomEvalConfig has
+            # no workspace of its own, so its manager adds no workspace
+            # filter and the organization alone spans sibling workspaces.
+            # A join on the project's workspace works on either alias, and,
+            # unlike Project's manager, keeps configs on simulation and
+            # soft-deleted projects.
             queryset = manager.filter(
-                deleted=False,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                _project_workspace_scope_q(request), deleted=False
             ).all()
             project_id = query_data.get("project_id")
             if project_id:

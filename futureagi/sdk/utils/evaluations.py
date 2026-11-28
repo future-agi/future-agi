@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Any
 
 import structlog
 
@@ -230,15 +231,19 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
 
         logger.exception(f"Standalone Eval | Failed: user: {user.id}, error: {e}")
 
-        api_call_log_row.status = APICallStatusChoices.ERROR.value
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "output": {"output": None, "reason": jev_error_message(e) or str(e)},
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "output": {
+                        "output": None,
+                        "reason": jev_error_message(e) or str(e),
+                    },
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.save()
 
         raise StandaloneEvaluationError(e)  # noqa: B904
 
@@ -460,7 +465,7 @@ def _run_batched_standalone_eval(
     custom_eval_name,
     span_id,
 ):
-    results = []
+    results: list[Any] = []
     if not inputs or not isinstance(list(inputs.values())[0], list):
         raise ValueError("Inputs must be a list")
 
@@ -524,6 +529,9 @@ def _run_protect(
                     inputs=protect_inputs,
                     config_overrides=config or {},
                     model="protect_flash" if protect_flash else None,
+                    # SDK v1 is also the gateway's runtime guardrail API.
+                    # Preserve its verdict defaults, not evaluation errors.
+                    protect_runtime=True,
                     organization_id=str(user.organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                 )

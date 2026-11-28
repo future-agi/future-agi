@@ -8,7 +8,8 @@ from deploy.tests.test_update_compatibility import bind_proof, restore_release
 from deploy.update.compatibility import (CompatibilityError, estimate_automatic_update, schema, shape,
                                          transition_measurements, validate_release_proof)
 from deploy.update.contracts import (AUTOMATIC_VOLUMES, AutomationPolicy, BootstrapEnvelopeMeasurement,
-                                     HostSizeObservation, HostTableSize, ReasonCode)
+                                     HostSizeObservation, HostTableSize, ReasonCode,
+                                     pending_migration_plan_hash)
 
 
 def fixture(count=1, tables=True):
@@ -195,13 +196,101 @@ class BootstrapEnvelopeTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(CompatibilityError):
                 transition_measurements(row)
 
-    def test_repeated_scope_refused_but_disjoint_and_empty_scopes_allowed(self):
+    def test_repeated_scopes_share_one_reference_and_charge_whole_envelope_once(self):
+        for count in (2, 3):
+            with self.subTest(count=count):
+                target, proof, row = fixture(count)
+                env = row['migration_measurements']
+                baseline = estimate(row)
+                for scope in env['migration_tables'][1:]:
+                    scope['tables'] = copy.deepcopy(env['migration_tables'][0]['tables'])
+                validate_release_proof(bind_proof(target, proof), target, repository='future-agi/future-agi')
+                measurements = transition_measurements(row).migration_measurements
+                self.assertEqual(len(measurements.tables), 1)
+                self.assertEqual(len(measurements.migration_tables), count)
+                result = estimate(row, host(rows=100000, size=1000))
+                self.assertTrue(result.allowed, result.reason_codes)
+                self.assertEqual(result.estimate, baseline.estimate)
+                self.assertEqual((result.estimate.migration_seconds, result.estimate.extra_disk_bytes), (11, 3200))
+
+    def test_repeated_scopes_do_not_enlarge_reference_bounds_or_supply_missing_observations(self):
+        _, _, row = fixture(2)
+        env = row['migration_measurements']
+        env['migration_tables'][1]['tables'] = copy.deepcopy(env['migration_tables'][0]['tables'])
+        for observation in (host(rows=100001), host(size=1001), host(include=False)):
+            with self.subTest(observation=observation):
+                result = estimate(row, observation)
+                self.assertFalse(result.allowed)
+                self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+
+    def test_repeated_scopes_still_refuse_conflicting_or_missing_reference_evidence(self):
+        for mutation in ('duplicate', 'rows', 'bytes', 'missing', 'engine'):
+            target, proof, row = fixture(2)
+            env = row['migration_measurements']
+            env['migration_tables'][1]['tables'] = copy.deepcopy(env['migration_tables'][0]['tables'])
+            if mutation in ('duplicate', 'rows', 'bytes'):
+                duplicate = copy.deepcopy(env['tables'][0])
+                if mutation != 'duplicate':
+                    duplicate['reference_' + mutation] += 1
+                env['tables'].append(duplicate)
+            elif mutation == 'missing':
+                env['tables'] = []
+            else:
+                env['tables'][0]['engine'] = 'clickhouse'
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(CompatibilityError):
+                    transition_measurements(row)
+                with self.assertRaises(CompatibilityError):
+                    validate_release_proof(bind_proof(target, proof), target, repository='future-agi/future-agi')
+
+    def test_repeated_scopes_require_capacity_for_combined_envelope_growth(self):
+        _, _, row = fixture(2)
+        env = row['migration_measurements']
+        env['migration_tables'][1]['tables'] = copy.deepcopy(env['migration_tables'][0]['tables'])
+        full = estimate(row).estimate
+        # Disk growth, WAL and temp each fit alone, but their conservative sum
+        # (including the safety factor) is required even with a shared table.
+        constrained = replace(host(), docker_free_bytes=full.docker_required_free_bytes - 1)
+        result = estimate(row, constrained)
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason_codes, (ReasonCode.INSUFFICIENT_DISK_FOR_MIGRATION,))
+        self.assertTrue(estimate(row, replace(constrained, docker_free_bytes=full.docker_required_free_bytes)).allowed)
+        self.assertIn(ReasonCode.MIGRATION_EXCEEDS_WINDOW,
+                      estimate(row, window=full.total_seconds - 1).reason_codes)
+
+    def test_producer_shared_eval_task_scope_is_accepted_by_consumer(self):
+        from scripts.update_rehearsal_qualification import reference_scope
+        from scripts.update_rehearsal_resources import reduce_envelope
+
+        target, proof, row = fixture(2)
+        plan = [{'app_label': 'tracer', 'name': name}
+                for name in ('0117_cohort_sampling', '0118_instant_eval_answers')]
+        tables = [{'engine': 'postgres', 'table': 'public.tracer_eval_task',
+                   'reference_rows': 100000, 'reference_bytes': 4096000}]
+        scoped_table = {'engine': 'postgres', 'table': 'public.tracer_eval_task'}
+        scopes = [dict(identity, tables=[dict(scoped_table)]) for identity in plan]
+        scopes[0]['tables'].append({'engine': 'postgres', 'table': 'public.tracer_project'})
+        scope = reference_scope(plan, scopes, tables)
+        samples = [dict(monotonic=stamp, boundary=boundary, disk_bytes=disk,
+                        wal_bytes=300, temp_bytes=100, memory_bytes=4000)
+                   for stamp, boundary, disk in ((10., 'before_start', 1000),
+                                                (11., 'during', 2200), (12., 'after_end', 2000))]
+        row['migration_measurements'] = reduce_envelope(plan, tables, scope, samples, 1.5,
+            started_monotonic=10.25, completed_monotonic=11.75)
+        row['migration_evidence']['target_pending_plan_sha256'] = pending_migration_plan_hash(plan)
+        validate_release_proof(bind_proof(target, proof), target, repository='future-agi/future-agi')
+        self.assertEqual(row['migration_measurements']['tables'], tables)
+        self.assertEqual([item['tables'] for item in scope], [[scoped_table], [scoped_table]])
+        observation = replace(host(), table_sizes=(HostTableSize('postgres', 'public.tracer_eval_task',
+                                                                100000, 4096000),))
+        result = estimate(row, observation)
+        self.assertTrue(result.allowed, result.reason_codes)
+        self.assertEqual((result.estimate.migration_seconds, result.estimate.extra_disk_bytes), (3, 3200))
+
+    def test_disjoint_and_empty_scopes_allowed_with_exact_reference_union(self):
         _, _, row = fixture(2)
         env = row['migration_measurements']
         self.assertTrue(estimate(row).allowed)  # Second intersection is explicitly empty.
-        env['migration_tables'][1]['tables'] = copy.deepcopy(env['migration_tables'][0]['tables'])
-        result = estimate(row)
-        self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
         env['migration_tables'][1]['tables'] = [{'engine': 'clickhouse', 'table': 'default.other'}]
         env['tables'].append({'engine': 'clickhouse', 'table': 'default.other',
                               'reference_rows': 10, 'reference_bytes': 20})
@@ -209,7 +298,11 @@ class BootstrapEnvelopeTests(unittest.TestCase):
                               (HostTableSize('clickhouse', 'default.other', 10, 20),))
         self.assertTrue(estimate(row, observation).allowed)
         self.assertEqual(estimate(row, observation).estimate.migration_seconds, 11)
-        self.assertFalse(estimate(row, replace(observation, table_sizes=observation.table_sizes[:-1])).allowed)
+        for missing in (0, 1):
+            with self.subTest(missing=missing):
+                remaining = tuple(table for index, table in enumerate(observation.table_sizes) if index != missing)
+                result = estimate(row, replace(observation, table_sizes=remaining))
+                self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
         env['tables'] = []
         for scope in env['migration_tables']:
             scope['tables'] = []

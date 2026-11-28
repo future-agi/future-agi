@@ -54,6 +54,9 @@ import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
+import CustomTagInput from "./CustomTagInput";
+import { getEvalTags } from "./evalTags";
+import { withPendingTag } from "./tagUtils";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import {
@@ -265,6 +268,7 @@ const EvalCreatePage = () => {
   const errorLocalizerActive =
     errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
@@ -400,7 +404,7 @@ const EvalCreatePage = () => {
                 config.error_localizer_enabled ||
                 false,
             );
-            setTags(d.eval_tags || []);
+            setTags(getEvalTags(d));
             setTemplateFormat(
               d.template_format || config.template_format || "mustache",
             );
@@ -626,14 +630,18 @@ const EvalCreatePage = () => {
       return;
     }
     try {
+      const tagsToSave = withPendingTag(tags, customTagInput);
+
       // Publish the draft: set name, mark visible
       await updateDraft.mutateAsync({
         name: name.trim(),
         ...buildUpdatePayload(),
         description: description || null,
-        tags,
+        tags: tagsToSave,
         publish: true,
       });
+      setTags(tagsToSave);
+      setCustomTagInput("");
       publishedRef.current = true;
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
       navigate(`/dashboard/evaluations/${draftId}`);
@@ -648,6 +656,7 @@ const EvalCreatePage = () => {
     name,
     description,
     tags,
+    customTagInput,
     buildUpdatePayload,
     updateDraft,
     enqueueSnackbar,
@@ -1288,7 +1297,37 @@ const EvalCreatePage = () => {
                           />
                         );
                       })}
+                      {tags
+                        .filter(
+                          (tag) =>
+                            !EVAL_TAGS.some(
+                              (predefinedTag) => predefinedTag.value === tag,
+                            ),
+                        )
+                        .map((tag) => (
+                          <Chip
+                            key={tag}
+                            icon={<Iconify icon="mdi:tag-outline" width={14} />}
+                            label={tag}
+                            size="small"
+                            color="primary"
+                            onDelete={() =>
+                              setTags((prev) =>
+                                prev.filter((item) => item !== tag),
+                              )
+                            }
+                          />
+                        ))}
                     </Box>
+                    <CustomTagInput
+                      value={customTagInput}
+                      onChange={setCustomTagInput}
+                      onAdd={(newTag) =>
+                        setTags((prev) =>
+                          prev.includes(newTag) ? prev : [...prev, newTag],
+                        )
+                      }
+                    />
                   </Box>
                 </>
               ) : (

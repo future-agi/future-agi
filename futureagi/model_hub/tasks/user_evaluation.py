@@ -16,6 +16,7 @@ from django.db import (
 from django.db.models import Q
 
 from model_hub.services.localization_errors import LocalizationFailure
+from tfc.utils.media_tools import MediaToolUnavailable
 
 logger = structlog.get_logger(__name__)
 try:
@@ -1506,6 +1507,8 @@ def process_single_error_localization(task_id):
             failure_code = (
                 e.code.value
                 if isinstance(e, LocalizationFailure)
+                else e.code
+                if isinstance(e, MediaToolUnavailable)
                 else "unexpected_error"
             )
             logger.error(
@@ -1515,7 +1518,11 @@ def process_single_error_localization(task_id):
                 failure_code=failure_code,
                 error_type=type(e).__name__,
             )
-            task.mark_as_failed(f"Error localization failed ({failure_code}).")
+            reason = f"Error localization failed ({failure_code})."
+            if isinstance(e, MediaToolUnavailable):
+                # Our own text (tool, feature, image to use); no case content.
+                reason = f"{reason} {e}"
+            task.mark_as_failed(reason)
             if refund_cost_for_api_call is not None:
                 refund_cost_for_api_call(api_call_log_row)
             return
@@ -1691,7 +1698,10 @@ def process_single_error_localization(task_id):
                 logger.error(f"Error in updating span metadata: {str(e)}")
                 if refund_cost_for_api_call is not None:
                     refund_cost_for_api_call(api_call_log_row)
-                task.mark_as_failed(str(e))
+                # Observe shows this reason to users; keep driver/DB text in logs.
+                task.mark_as_failed(
+                    "Error localization finished but its result could not be saved."
+                )
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:

@@ -34,12 +34,12 @@ type MirrorRule struct {
 // ProductionInfo carries production-side data needed to build a ShadowResult.
 // Passed to ExecuteAsync so the goroutine can build the complete comparison.
 type ProductionInfo struct {
-	RequestID    string
-	Model        string
-	Response     string // first 2000 chars of response text
-	LatencyMs    int64
-	Tokens       int // total tokens
-	StatusCode   int
+	RequestID  string
+	Model      string
+	Response   string // first 2000 chars of response text
+	LatencyMs  int64
+	Tokens     int // total tokens
+	StatusCode int
 }
 
 // defaultMirrorConcurrency bounds in-flight mirror goroutines when the config
@@ -177,6 +177,10 @@ func (m *Mirror) ExecuteAsync(req *models.ChatCompletionRequest, sourceProvider,
 	// Copy the request to avoid mutation.
 	mirrorReq := *req
 	if rule.TargetModel != "" {
+		if mirrorReq.CallerModel == "" {
+			// The model this rule mirrors was the caller's; the target is ours.
+			mirrorReq.CallerModel = req.Model
+		}
 		mirrorReq.Model = rule.TargetModel
 	}
 	mirrorReq.Stream = false // Never stream mirrors.

@@ -47,6 +47,7 @@ type PIIGuardrail struct {
 	remediation  Remediation
 	maxEntities  int
 	enabledTypes map[string]bool
+	configErr    error
 }
 
 // New creates a PIIGuardrail from a rule config map.
@@ -54,6 +55,7 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 	g := &PIIGuardrail{
 		remediation: RemediationBlock,
 		maxEntities: 1,
+		configErr:   validateConfig(cfg),
 	}
 
 	if cfg != nil {
@@ -88,7 +90,35 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 	return g
 }
 
-func (g *PIIGuardrail) Name() string           { return "pii-detection" }
+// ValidateConfig reports constructor-time selector errors for selected policies.
+// Check remains permissive for legacy org/static callers; later config mutations
+// cannot change the validation result of an already constructed checker.
+func (g *PIIGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	value, present := cfg["entities"]
+	if !present {
+		return nil
+	}
+	list, ok := value.([]interface{})
+	if !ok {
+		return fmt.Errorf("pii-detection entities must be an array of supported detector names")
+	}
+	catalog := defaultPatterns()
+	for _, item := range list {
+		name, ok := item.(string)
+		if !ok {
+			return fmt.Errorf("pii-detection entities must contain only supported detector names")
+		}
+		if _, supported := catalog[name]; !supported {
+			return fmt.Errorf("pii-detection entities contains an unsupported detector name")
+		}
+	}
+	// An empty list intentionally keeps the constructor's default detector set.
+	return nil
+}
+
+func (g *PIIGuardrail) Name() string            { return "pii-detection" }
 func (g *PIIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // MutatesInput tells the dynamic scheduler to run remediation before parallel

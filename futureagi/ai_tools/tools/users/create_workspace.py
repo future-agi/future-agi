@@ -29,15 +29,12 @@ class CreateWorkspaceTool(BaseTool):
         from django.db import IntegrityError
 
         from accounts.models.workspace import OrganizationRoles, Workspace
+        from accounts.services.organization_access import is_organization_admin
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        if not is_organization_admin(actor, org):
             return ToolResult.error(
                 "You do not have permission to create workspaces. "
                 "Only Owner or Admin roles can create workspaces.",

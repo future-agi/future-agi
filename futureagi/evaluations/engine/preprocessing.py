@@ -11,6 +11,7 @@ network access or ML models inside the sandbox.
 import base64
 import json
 import os
+import subprocess
 
 import structlog
 
@@ -438,9 +439,22 @@ def _preprocess_dead_air_detection(inputs):
     try:
         y, sr = librosa.load(io.BytesIO(audio_bytes), sr=None)
     except Exception as e:
-        logger.warning("dead_air_preprocess_decode_failed", error=str(e))
-        inputs["_dead_air_error"] = f"Could not decode audio: {e}"
-        return inputs
+        # Raw uploads and own-bucket recordings aren't always readable by
+        # libsndfile. A PCM retry avoids adding an MP3 encoder delay.
+        from evaluations.engine.dead_air_audio import RecordingDecodeError, aac_to_wav
+        from tfc.utils.media_tools import MediaToolUnavailable
+
+        try:
+            y, sr = librosa.load(io.BytesIO(aac_to_wav(audio_bytes)), sr=None)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as retry:
+            reason = str(e)
+            if isinstance(retry, MediaToolUnavailable):
+                reason = f"{reason} {retry}"
+            elif isinstance(retry, RecordingDecodeError):
+                reason = str(retry)
+            logger.warning("dead_air_preprocess_decode_failed", error=reason)
+            inputs["_dead_air_error"] = f"Could not decode audio: {reason}"
+            return inputs
 
     duration = float(librosa.get_duration(y=y, sr=sr))
     if duration <= 0:

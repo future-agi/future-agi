@@ -707,21 +707,23 @@ def send_hubspot_notification(user):
         logger.info("Contact Created Successfully in HubSpot")
         updated = True
     except requests.exceptions.RequestException as e:
-        logger.error(
-            f"Failed to Create Contact in HubSpot: {str(e)}, Response: {response_text}"
-        )
-
         # Only attempt to update if contact already exists (409 Conflict)
         # Other errors (auth, validation, etc.) should not trigger an update attempt
         should_try_update = response is not None and response.status_code == 409
 
         if not should_try_update:
+            logger.error(
+                f"Failed to Create Contact in HubSpot: {str(e)}, Response: {response_text}"
+            )
             err = f"Create failed: {str(e)}, Response: {response_text}"
             return updated, err
 
         if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            logger.error("hubspot_contact_update_not_configured", status_code=409)
             err = f"Create failed: {str(e)}, and HUBSPOT_UPDATE_URL is not set"
             return updated, err
+
+        logger.info("hubspot_contact_exists", status_code=409, action="update")
 
         update_contact = {
             "properties": {

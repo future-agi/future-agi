@@ -2,11 +2,15 @@ import React, { useContext } from "react";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ user: null, navigate: vi.fn() }));
+const state = vi.hoisted(() => ({ user: null }));
 vi.mock("src/auth/hooks/use-auth-context", () => ({
   useSafeAuthContext: () => ({ authenticated: true, user: state.user }),
 }));
-vi.mock("react-router", () => ({ useNavigate: () => state.navigate }));
+vi.mock("src/utils/axios", () => ({
+  default: { get: vi.fn() },
+  endpoints: { auth: { me: "/accounts/user-info/" } },
+}));
+vi.mock("src/utils/recaptchaService", () => ({ getRecaptchaToken: vi.fn() }));
 vi.mock("src/config-global", () => ({ HOST_API: "http://localhost:8100" }));
 vi.mock("src/utils/logger", () => ({
   default: {
@@ -208,6 +212,7 @@ it("backs off while the server cannot complete authentication", () => {
   // Once authentication succeeds the backoff starts again from the beginning.
   act(() => {
     sockets[3].emit("open");
+    sockets[3].emit("message", { data: JSON.stringify({ type: "pong" }) });
   });
   act(() => {
     sockets[3].emit("close", { code: 1000 });

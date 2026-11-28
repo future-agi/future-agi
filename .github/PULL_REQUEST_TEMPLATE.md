@@ -44,13 +44,22 @@ AI use:
 ## E2E coverage
 
 <!-- One line. `yarn coverage` (from e2e/) tells you which to use:
-     E2E: new <ID>            a flow added in this PR (appears in the FLOWS.md diff)
+     E2E: new <ID>            a flow added in this PR (a new flow id in a spec under e2e/flows)
      E2E: updated <ID>        an existing flow changed in this PR
      E2E: covered-by <ID>     an existing, unchanged flow already proves this change
      E2E: exempt (<reason>)   docs | tooling | tests-only | not-in-stack | backend-internal |
                               gateway-internal | cosmetic | refactor | test-support | harness-gap <what> -->
 
 E2E:
+
+## Docs
+
+<!-- Required, one line; CI fails without it. Does a user see or do anything differently?
+     Then raise the docs PR now and link it:
+       Docs: future-agi/docs#<n>    the docs PR for this change (or its full URL)
+       Docs: none (<reason>)        e.g. none (internal refactor), none (tests only) -->
+
+Docs:
 
 ---
 
@@ -115,10 +124,8 @@ E2E:
 ```bash
 cd futureagi
 
-# Create venv with correct Python (one-time):
-uv venv --python 3.11
-source .venv/bin/activate
-uv pip install -r requirements-test.txt
+# Install locked test dependencies (see ../TESTING.md; CI adds --all-extras):
+uv sync --frozen
 
 # Full suite:
 bin/test

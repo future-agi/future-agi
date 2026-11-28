@@ -165,6 +165,7 @@ export const FILTER_CONTRACT = Object.freeze({
       "NORMAL",
       "PROMPT_METRIC",
       "PROMPT_METRIC_RUNS",
+      "METRIC_FIELD",
     ],
     aliases: {
       attribute: "SPAN_ATTRIBUTE",
@@ -173,6 +174,7 @@ export const FILTER_CONTRACT = Object.freeze({
       evaluation: "EVAL_METRIC",
       annotation: "ANNOTATION",
       custom_column: "CUSTOM_COLUMN",
+      metric: "METRIC_FIELD",
     },
   },
 });

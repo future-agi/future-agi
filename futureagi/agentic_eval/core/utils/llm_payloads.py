@@ -381,7 +381,7 @@ def build_user_message(content: Sequence[ContentBlock]) -> Message:
 _SUPPORTED_MEDIA = {"image", "images", "audio", "pdf"}
 
 _IMAGE_EXT_PAT = re.compile(
-    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|bmp|tiff|mp4)(\?|$)",
+    r"https?://\S+\.(png|jpg|jpeg|gif|webp|svg|bmp|tiff)(\?|$)",
     re.IGNORECASE,
 )
 

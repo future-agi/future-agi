@@ -690,6 +690,7 @@ def main() -> None:
     fingerprint = migrate_and_seed()
     set_phase("clickhouse")
     steps.clickhouse_native_schema(log, 600)
+    steps.metrics_schema(log)
     steps.property_catalog(log)
     set_phase("schedules")
     steps.with_retries(

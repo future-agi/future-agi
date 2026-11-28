@@ -636,6 +636,42 @@ class TestLogIngestion:
         count = ingest_request_logs([])
         assert count == 0
 
+    def test_ingest_keeps_an_unrounded_tiny_provider_reported_cost(self, organization):
+        """A vendor cost below the cost column's six places is stored without error,
+        rounded in the column, and kept unrounded in the row's metadata."""
+        from agentcc.models import AgentccRequestLog
+
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-tiny-cost",
+            name="tiny-cost-key",
+            organization=organization,
+        )
+        count = ingest_request_logs(
+            [
+                {
+                    "request_id": "ingest-tiny-cost",
+                    "model": "openai/gpt-4o-mini",
+                    "provider": "openrouter",
+                    "input_tokens": 10,
+                    "output_tokens": 1,
+                    "total_tokens": 11,
+                    "cost": 4e-07,
+                    "status_code": 200,
+                    "auth_key_id": "test-key-tiny-cost",
+                    "metadata": {
+                        "cost": "0.0000004",
+                        "cost_source": "provider_reported",
+                    },
+                }
+            ]
+        )
+        assert count == 1
+        row = AgentccRequestLog.no_workspace_objects.get(request_id="ingest-tiny-cost")
+        assert row.cost == 0
+        assert row.metadata["cost"] == "0.0000004"
+        assert row.metadata["cost_source"] == "provider_reported"
+        assert "cost_reported_zero" not in row.metadata
+
     @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
     def test_ingest_creates_request_completed_webhook_events(
         self, mock_deliver_webhook_events, organization

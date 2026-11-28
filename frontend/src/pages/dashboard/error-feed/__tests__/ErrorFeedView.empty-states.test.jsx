@@ -27,6 +27,18 @@ vi.mock("src/api/project/observe-project-list", () => ({
   fetchAllObserveProjects,
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+// The settings button's context hooks; their providers import the real snackbar.
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ currentWorkspaceId: "workspace-1" }),
+}));
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganizationId: "organization-1" }),
+}));
+// The rows' epoch icons read their own endpoint; these tests count feed reads only.
+vi.mock("src/api/errorFeed/epochFromIssue", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useIssueEpochs: () => ({ jobs: {}, isError: false, isLoading: false }),
+}));
 
 import ErrorFeedView from "../ErrorFeedView";
 import { useErrorFeedStore } from "../store";

@@ -6,10 +6,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 from django.urls import Resolver404, clear_url_caches, resolve
 from rest_framework.test import APIRequestFactory
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
+from tfc.capabilities.contracts import CapabilitiesResponseSerializer
 from tfc.capabilities.views import CapabilitiesView
 from tfc.licensing.types import (
     DeploymentFlavor,
@@ -18,6 +21,8 @@ from tfc.licensing.types import (
     LicenseState,
     LicenseType,
 )
+
+preserve_capability_service = capability_testing.preserve_capability_service
 
 
 class _FakeResolver:
@@ -28,7 +33,8 @@ class _FakeResolver:
         return self._snapshot
 
 
-def _configure_active_license() -> None:
+@pytest.fixture
+def active_license(preserve_capability_service):
     snapshot = LicenseSnapshot(
         state=LicenseState.ACTIVE,
         license_type=LicenseType.PRODUCTION,
@@ -45,8 +51,7 @@ def _configure_active_license() -> None:
     )
 
 
-def test_capabilities_view_handles_missing_organization_for_staff_user():
-    _configure_active_license()
+def test_capabilities_view_handles_missing_organization_for_staff_user(active_license):
     request = APIRequestFactory().get("/api/capabilities/")
     request.user = SimpleNamespace(is_authenticated=True, is_staff=True)
 
@@ -58,8 +63,7 @@ def test_capabilities_view_handles_missing_organization_for_staff_user():
     assert response.data["license"]["issued_to"] == "View Corp"
 
 
-def test_capabilities_view_hides_license_details_for_non_admin_user():
-    _configure_active_license()
+def test_capabilities_view_hides_license_details_for_non_admin_user(active_license):
     request = APIRequestFactory().get("/api/capabilities/")
     request.user = SimpleNamespace(is_authenticated=True, is_staff=False)
 
@@ -68,6 +72,21 @@ def test_capabilities_view_hides_license_details_for_non_admin_user():
     assert response.status_code == 200
     assert "license" not in response.data
     assert "instance_id" not in response.data
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_capabilities_view_exposes_the_coding_agent_attempts_setting(
+    active_license, enabled
+):
+    request = APIRequestFactory().get("/api/capabilities/")
+    request.user = SimpleNamespace(is_authenticated=True, is_staff=False)
+
+    with override_settings(AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED=enabled):
+        response = CapabilitiesView().get(request)
+
+    assert response.status_code == 200
+    assert response.data["coding_agent_attempts_enabled"] is enabled
+    assert CapabilitiesResponseSerializer(data=response.data).is_valid()
 
 
 def test_self_hosted_routes_expose_status_not_control_plane():

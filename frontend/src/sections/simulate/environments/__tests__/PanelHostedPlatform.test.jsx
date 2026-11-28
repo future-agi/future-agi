@@ -156,12 +156,12 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
   });
 
-  it("LiveKit asks for name, URL, key, secret and prompt, stays on web, and gates preflight on all five", () => {
+  it("LiveKit on Web asks for name, URL, key, secret and prompt, and gates preflight on all five", () => {
     render(<PanelHostedPlatform />);
     fireEvent.click(screen.getByText("LiveKit"));
 
-    expect(screen.queryByText("Web simulation (WebRTC)")).toBeNull();
-    expect(screen.queryByText("Phone")).toBeNull();
+    expect(screen.getByText("Web simulation (WebRTC)")).toBeInTheDocument();
+    expect(screen.getByText("Phone")).toBeInTheDocument();
     expect(screen.getByText("Agent speaks first")).toBeInTheDocument();
 
     const fields = [
@@ -229,6 +229,133 @@ describe("PanelHostedPlatform", () => {
     expect(staged).toMatchObject({ provider: "livekit", agentId: "returns-agent" });
     expect(staged.apiKey).toBeUndefined();
     expect(staged.apiSecret).toBeUndefined();
+    expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain("lk-secret");
+  });
+
+  it("LiveKit on Phone requires only the prompt and number, with Inbound Calls locked on", () => {
+    render(<PanelHostedPlatform />);
+    fireEvent.click(screen.getByText("LiveKit"));
+    fireEvent.click(screen.getByText("Phone"));
+
+    expect(screen.getByText("Telephony simulation (PSTN)")).toBeInTheDocument();
+    expect(screen.getByText("Check the number reaches your agent (optional)")).toBeInTheDocument();
+    const inbound = screen.getByRole("checkbox", { name: "Inbound Calls" });
+    expect(inbound).toBeChecked();
+    expect(inbound).toBeDisabled();
+
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText("You are a friendly returns agent for Acme…"), {
+      target: { value: "You handle returns." },
+    });
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText("Number to call for the simulation"), {
+      target: { value: "4155551234" },
+    });
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
+  });
+
+  it("LiveKit on Phone sends the number and prompt, always inbound, with no LiveKit name, URL or credentials", async () => {
+    preflightHarnessJob.mockResolvedValue(PASS);
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-lk-phone" } });
+    render(<PanelHostedPlatform />);
+    fireEvent.click(screen.getByText("LiveKit"));
+    fireEvent.click(screen.getByText("Phone"));
+    fireEvent.change(screen.getByPlaceholderText("You are a friendly returns agent for Acme…"), {
+      target: { value: "You handle returns." },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Number to call for the simulation"), {
+      target: { value: "4155551234" },
+    });
+    runPreflight();
+
+    await waitFor(() =>
+      expect(preflightHarnessJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: {
+            connector: "livekit",
+            mode: "connect_only",
+            config: {
+              phone_number: "+14155551234",
+              target_system_prompt: "You handle returns.",
+              inbound: true,
+              target_speaks_first: false,
+            },
+            secret_refs: {},
+            call_direction: "inbound",
+          },
+        }),
+      ),
+    );
+    expect(preflightHarnessJob.mock.calls[0][0].credential_values ?? {}).toEqual({});
+
+    await waitFor(() => expect(buildBtn()).toBeEnabled());
+    fireEvent.click(buildBtn());
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/job-lk-phone"),
+    );
+    expect(createdBody().credential_values ?? {}).toEqual({});
+  });
+
+  it("LiveKit on Phone checks routing with all four optional fields, at preflight only", async () => {
+    preflightHarnessJob.mockResolvedValue(PASS);
+    createHarnessJob.mockResolvedValue({ job: { job_id: "job-lk-route" } });
+    render(<PanelHostedPlatform />);
+    fireEvent.click(screen.getByText("LiveKit"));
+    fireEvent.click(screen.getByText("Phone"));
+    fireEvent.change(screen.getByPlaceholderText("You are a friendly returns agent for Acme…"), {
+      target: { value: "You handle returns." },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Number to call for the simulation"), {
+      target: { value: "4155551234" },
+    });
+    expect(screen.getByText("Check the number reaches your agent (optional)")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("returns-line-agent"), {
+      target: { value: "returns-agent" },
+    });
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
+    expect(
+      screen.getByText("Fill all four fields to run the check, or clear them to skip it"),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("wss://your-project.livekit.cloud"), {
+      target: { value: "wss://demo.livekit.cloud" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "lk-key" } });
+    fireEvent.change(screen.getByPlaceholderText("secret…"), { target: { value: "lk-secret" } });
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
+    runPreflight();
+
+    await waitFor(() =>
+      expect(preflightHarnessJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: {
+            connector: "livekit",
+            mode: "connect_only",
+            config: {
+              phone_number: "+14155551234",
+              target_system_prompt: "You handle returns.",
+              inbound: true,
+              target_speaks_first: false,
+            },
+            secret_refs: {},
+            call_direction: "inbound",
+          },
+          credential_values: {
+            LIVEKIT_API_KEY: "lk-key",
+            LIVEKIT_API_SECRET: "lk-secret",
+            LIVEKIT_URL: "wss://demo.livekit.cloud",
+            LIVEKIT_AGENT_NAME: "returns-agent",
+          },
+        }),
+      ),
+    );
+
+    await waitFor(() => expect(buildBtn()).toBeEnabled());
+    fireEvent.click(buildBtn());
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/job-lk-route"),
+    );
+    expect(createdBody().credential_values ?? {}).toEqual({});
     expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain("lk-secret");
   });
 

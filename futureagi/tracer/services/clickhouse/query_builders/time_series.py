@@ -25,7 +25,10 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypedDict
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import (
+    BaseQueryBuilder,
+    exact_datetime_bound_sql,
+)
 from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
     graph_monetary_rows_sql,
 )
@@ -164,6 +167,12 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # Denormalized raw table. Both the filtered scan and the unfiltered
     # aggregate-state read target it; only the shape of the aggregates differs.
     RAW_TABLE = "spans"
+
+    # Request-window bounds that may carry sub-second precision. Hour-rounded
+    # replacement-key scan bounds and the +/-1 day witness band keep dev text.
+    _EXACT_REQUEST_BOUND_PARAMS = frozenset(
+        {"start_date", "end_date", "graph_contribution_start", "graph_contribution_end"}
+    )
 
     def __init__(
         self,
@@ -515,6 +524,23 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
+    def _exact_bound_sql(self, name: str) -> str:
+        """Render a bound param; only request bounds keep sub-second precision."""
+
+        if name not in self._EXACT_REQUEST_BOUND_PARAMS:
+            return f"%({name})s"
+        return exact_datetime_bound_sql(self.params, name)
+
+    def _exact_window_sql(
+        self, start: str = "start_date", end: str = "end_date"
+    ) -> str:
+        """Half-open ``start_time`` window, exact at DateTime64(6) precision."""
+
+        return (
+            f"start_time >= {self._exact_bound_sql(start)} "
+            f"AND start_time < {self._exact_bound_sql(end)}"
+        )
+
     def _exact_span_candidate_plan(self) -> Any | None:
         """One necessary typed-Map leaf; never replace graph membership truth."""
         if not (
@@ -698,7 +724,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         monetary_rows = graph_monetary_rows_sql(
             source=latest_source,
             columns=tuple(scalar_aliases),
-            child_condition="start_time >= %(start_date)s AND start_time < %(end_date)s",
+            child_condition=self._exact_window_sql(),
         )
         return f"({monetary_rows}) AS graph_monetary_spans"
 
@@ -782,8 +808,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                   SELECT trace_id
                   FROM {candidate_source}
                   PREWHERE project_id = toUUID(%(project_id)s)
-                    AND start_time >= %({scan_start_param})s
-                    AND start_time < %({scan_end_param})s{replica_predicate}
+                    AND start_time >= {self._exact_bound_sql(scan_start_param)}
+                    AND start_time < {self._exact_bound_sql(scan_end_param)}{replica_predicate}
                   WHERE is_deleted = 0
                     AND ({self.raw_trace_candidate_predicate})
                   GROUP BY trace_id
@@ -794,8 +820,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 {projected_columns}
             FROM {source}
             PREWHERE {self.project_filter_sql()}
-              AND start_time >= %({scan_start_param})s
-              AND start_time < %({scan_end_param})s{replica_predicate}{candidate_trace_fragment}
+              AND start_time >= {self._exact_bound_sql(scan_start_param)}
+              AND start_time < {self._exact_bound_sql(scan_end_param)}{replica_predicate}{candidate_trace_fragment}
             WHERE is_deleted = 0
         ) AS graph_raw_spans"""
 
@@ -904,7 +930,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
         )
         self.params.update(exact_filter_plan.params)
-        output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
+        output_window = self._exact_window_sql()
         contribution_terms = [
             output_window,
             *(
@@ -1012,9 +1038,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         )
 
         contribution_terms = [
-            (
-                "start_time >= %(graph_contribution_start)s "
-                "AND start_time < %(graph_contribution_end)s"
+            self._exact_window_sql(
+                "graph_contribution_start", "graph_contribution_end"
             ),
             *(
                 f"graph_contribution_match_{index} = 1"
@@ -1148,7 +1173,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         ):
             raise AssertionError("exact graph match groups must reference predicates")
         bucket_fn = self.time_bucket_expr(self.interval)
-        output_window = "start_time >= %(start_date)s AND start_time < %(end_date)s"
+        output_window = self._exact_window_sql()
         contribution_terms = [
             output_window,
             *(

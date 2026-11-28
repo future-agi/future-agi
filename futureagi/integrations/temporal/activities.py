@@ -1,8 +1,9 @@
 import time
 import traceback as tb_module
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import structlog
+from django.db import DatabaseError
 from django.db.models import F, Q
 
 from tfc.temporal.drop_in.decorator import temporal_activity
@@ -24,14 +25,14 @@ def poll_active_integrations():
         IntegrationPlatform,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     connections = (
         IntegrationConnection.no_workspace_objects.filter(
             status=ConnectionStatus.ACTIVE,
             deleted=False,
         )
-        .exclude(platform=IntegrationPlatform.SLACK)
+        .exclude(platform__in=[IntegrationPlatform.SLACK, IntegrationPlatform.GITHUB])
         .filter(
             Q(last_synced_at__isnull=True)
             | Q(last_synced_at__lte=now - timedelta(seconds=60))
@@ -121,13 +122,11 @@ def sync_integration_connection(connection_id: str):
     connection.status = ConnectionStatus.SYNCING
     connection.save(update_fields=["status", "updated_at"])
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # For backfill: use backfill_from date if set, otherwise sync from epoch
     # For incremental: use last_synced_at with overlap buffer
     if not connection.last_synced_at:
-        sync_from = connection.backfill_from or datetime(
-            2020, 1, 1, tzinfo=timezone.utc
-        )
+        sync_from = connection.backfill_from or datetime(2020, 1, 1, tzinfo=UTC)
     else:
         # Overlap buffer: re-scan the last 5 minutes to catch traces that
         # were in-flight during the previous sync (some sources index async,
@@ -187,7 +186,7 @@ def sync_integration_connection(connection_id: str):
                     if total_traces_fetched > 0
                     else SyncStatus.FAILED
                 )
-                sync_log.completed_at = datetime.now(timezone.utc)
+                sync_log.completed_at = datetime.now(UTC)
                 sync_log.traces_fetched = total_traces_fetched
                 sync_log.traces_created = total_traces_created
                 sync_log.traces_updated = total_traces_updated
@@ -387,7 +386,7 @@ def sync_integration_connection(connection_id: str):
         sync_log.status = (
             SyncStatus.SUCCESS if total_traces_fetched > 0 else SyncStatus.NO_NEW_DATA
         )
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = total_traces_fetched
         sync_log.traces_created = total_traces_created
         sync_log.traces_updated = total_traces_updated
@@ -453,7 +452,7 @@ def sync_integration_connection(connection_id: str):
                 f"Partial sync: {total_traces_fetched} traces ingested before error. "
                 f"{error_msg[:200]}"
             )
-            connection.last_synced_at = datetime.now(timezone.utc)
+            connection.last_synced_at = datetime.now(UTC)
             sync_log.status = SyncStatus.PARTIAL
             IntegrationConnection.no_workspace_objects.filter(id=connection_id).update(
                 total_traces_synced=F("total_traces_synced")
@@ -473,7 +472,7 @@ def sync_integration_connection(connection_id: str):
             "type": type(e).__name__,
             "traceback": tb_module.format_exc(),
         }
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = total_traces_fetched
         sync_log.traces_created = total_traces_created
         sync_log.traces_updated = total_traces_updated
@@ -486,7 +485,6 @@ def _sync_export_integration(connection):
     """Export Agentcc request logs to a push-based integration (Datadog, PostHog, etc.)."""
     from integrations.models import (
         ConnectionStatus,
-        IntegrationConnection,
         SyncLog,
         SyncStatus,
     )
@@ -501,7 +499,7 @@ def _sync_export_integration(connection):
     connection.status = ConnectionStatus.SYNCING
     connection.save(update_fields=["status", "updated_at"])
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Determine time window for log export.
     if not connection.last_synced_at:
@@ -559,7 +557,7 @@ def _sync_export_integration(connection):
         sync_log.status = (
             SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
         )
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = logs_sent
         sync_log.traces_created = logs_sent
         sync_log.spans_synced = metrics_sent
@@ -611,7 +609,7 @@ def _sync_export_integration(connection):
             "type": type(e).__name__,
             "traceback": tb_module.format_exc(),
         }
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.save()
 
 
@@ -936,8 +934,8 @@ def check_integration_error_alerts():
     """Send email alerts for connections that have been in error state > 1 hour."""
     from integrations.models import ConnectionStatus, IntegrationConnection
 
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-    twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
     connections_in_error = IntegrationConnection.no_workspace_objects.filter(
         status=ConnectionStatus.ERROR,
@@ -949,32 +947,97 @@ def check_integration_error_alerts():
     )
 
     for conn in connections_in_error:
+        recipients = _reachable_admin_emails(conn)
+        if not recipients:
+            # Nobody to tell: no owner or admin, or every one of them has
+            # unsubscribed from integration error emails. Leave the
+            # connection out of this run instead of claiming a send that
+            # goes nowhere; a later run alerts whoever opts back in.
+            logger.info(
+                "integration_error_alert_no_recipients", connection_id=str(conn.id)
+            )
+            continue
+        # Stamp the connection before sending. A pass that outlives its time
+        # limit keeps working through the list it read while the next pass
+        # lists the connections it has not reached yet; only the pass whose
+        # update stamps the connection sends its email.
+        notified_at = datetime.now(UTC)
+        claimed = False
         try:
-            _send_error_notification(conn)
-            conn.last_error_notified_at = datetime.now(timezone.utc)
-            conn.save(update_fields=["last_error_notified_at"])
+            claimed = bool(
+                IntegrationConnection.no_workspace_objects.filter(id=conn.id)
+                .filter(
+                    Q(last_error_notified_at__isnull=True)
+                    | Q(last_error_notified_at__lte=twenty_four_hours_ago)
+                )
+                .update(last_error_notified_at=notified_at)
+            )
+            if not claimed:
+                continue
+            _send_error_notification(conn, recipients)
         except Exception as e:
+            # email_helper raises only when no admin was reached, so the stamp
+            # is given back below and a later pass retries.
             logger.warning(
                 "Failed to send error notification",
                 connection_id=str(conn.id),
                 error=str(e),
             )
+            if claimed:
+                _release_error_notified_at(conn, notified_at)
 
 
-def _send_error_notification(connection):
-    """Send email notification for a connection in error state."""
+def _release_error_notified_at(conn, notified_at):
+    """Give back a stamp whose email was not sent, so a later pass retries.
+
+    Left alone if another pass has stamped the connection since.
+    """
+    from integrations.models import IntegrationConnection
+
+    try:
+        IntegrationConnection.no_workspace_objects.filter(
+            id=conn.id, last_error_notified_at=notified_at
+        ).update(last_error_notified_at=conn.last_error_notified_at)
+    except DatabaseError:
+        logger.warning(
+            "Failed to release error notification stamp",
+            connection_id=str(conn.id),
+            exc_info=True,
+        )
+
+
+def _admin_emails(connection) -> list[str]:
+    """The org's active owners and admins, who get integration error alerts."""
     from accounts.models.user import User
     from tfc.constants.roles import OrganizationRoles
-    from tfc.utils.email import email_helper
 
-    # Get org admins and owners
-    admins = User.objects.filter(
-        organization=connection.organization,
-        organization_role__in=[OrganizationRoles.OWNER, OrganizationRoles.ADMIN],
-        is_active=True,
+    return list(
+        User.objects.filter(
+            organization=connection.organization,
+            organization_role__in=[OrganizationRoles.OWNER, OrganizationRoles.ADMIN],
+            is_active=True,
+        ).values_list("email", flat=True)
     )
 
-    recipient_emails = list(admins.values_list("email", flat=True))
+
+def _reachable_admin_emails(connection) -> list[str]:
+    """Admin addresses still subscribed to integration error emails."""
+    from tfc.utils.email_unsubscribe import INTEGRATION_ERRORS, recipient_links
+
+    return [
+        link.email
+        for link in recipient_links(_admin_emails(connection), INTEGRATION_ERRORS)
+    ]
+
+
+def _send_error_notification(connection, recipient_emails=None):
+    """Send email notification for a connection in error state, to the admin
+    addresses already resolved by the caller, else to every admin."""
+    from tfc.utils.email import email_helper
+    from tfc.utils.email_unsubscribe import INTEGRATION_ERRORS
+
+    if recipient_emails is None:
+        recipient_emails = _admin_emails(connection)
     if not recipient_emails:
         return
 
@@ -989,6 +1052,7 @@ def _send_error_notification(connection):
             "error_message": connection.status_message or "Unknown error",
         },
         recipient_emails,
+        notification_category=INTEGRATION_ERRORS,
     )
 
 

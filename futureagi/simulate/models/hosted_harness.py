@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
+from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
@@ -11,6 +13,9 @@ from tfc.utils.base_model import BaseModel
 
 # Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
 MAX_SCENARIOS_PER_JOB = 5000
+# A run's seed is drawn from 63 bits, so it always fits the signed BigInteger column; request validation reuses it.
+SEED_BITS = 63
+MAX_SEED = 2**SEED_BITS - 1
 
 
 class HostedHarnessJob(BaseModel):
@@ -26,6 +31,24 @@ class HostedHarnessJob(BaseModel):
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
         CANCELED = "canceled", "Canceled"
+
+    class CancelConfirmation(models.TextChoices):
+        SANDBOX_ABSENT = "sandbox_absent", "Sandbox absent"
+        PROVIDER_CALL_ENDED = "provider_call_ended", "Provider call ended"
+        CLEANUP_FAILED = "cleanup_failed", "Cleanup failed"
+        PROVIDER_CALL_OPEN = "provider_call_open", "Provider call still open"
+        PROVIDER_UNCHECKED = "provider_unchecked", "Provider calls not checked"
+        UNCHECKED_NO_KEY = "unchecked_no_key", "Not checked: no provider key"
+        UNCHECKED_KEY_REJECTED = (
+            "unchecked_key_rejected",
+            "Not checked: provider rejected the key",
+        )
+        UNCHECKED_NO_TARGET = "unchecked_no_target", "Not checked: no provider agent ID"
+        UNCHECKED_NO_CALLS = "unchecked_no_calls", "Not checked: no calls listed"
+        UNCHECKED_TOO_MANY_CALLS = (
+            "unchecked_too_many_calls",
+            "Not checked: more calls than one page",
+        )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -70,6 +93,10 @@ class HostedHarnessJob(BaseModel):
     deadline_at = models.DateTimeField()
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
+    cancel_confirmed_at = models.DateTimeField(null=True, blank=True)
+    cancel_confirmed_by = models.CharField(
+        max_length=32, choices=CancelConfirmation.choices, blank=True, default=""
+    )
     terminal_at = models.DateTimeField(null=True, blank=True)
     content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
@@ -148,6 +175,28 @@ class HostedHarnessJob(BaseModel):
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
     )
+    # A run's capability report as it was computed when the run was created, kept so the run's view never moves.
+    capability_snapshot = models.JSONField(null=True, blank=True)
+    # What the platform's evals of a fix's check run billed, in US dollars, added as each
+    # one bills. They run after the run's usage is sealed, so they are kept apart.
+    # db_default too: a build from before this column inserts jobs without it.
+    fix_eval_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0, db_default=0
+    )
+    # Set on a check run a retry read again from the failed fix it retries: the retry's
+    # winner grades it, so its evals count against the retry's limit. Null: its own fix's.
+    graded_for = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="adopted_check_runs",
+    )
+    # When a fix's winner started grading this check run: its claim. The claiming fix pays
+    # for the run's evals and keeps its read. A later outside attempt that reads the run
+    # again reads that grading, and its winner tops up any finished call that still lacks
+    # a verdict (runs_lacking_verdicts). Whether grading finished is never stored here.
+    graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_job"
@@ -254,6 +303,10 @@ class HostedHarnessAttempt(BaseModel):
 
 
 class HostedHarnessScenario(BaseModel):
+    # Set only on the unsaved rows a draft lists, never stored: the change the draft makes and what the case cites.
+    draft_change: str | None
+    draft_sources: list[Any]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(
         HostedHarnessJob,
@@ -298,9 +351,27 @@ class HostedHarnessScenario(BaseModel):
     persona = models.JSONField(null=True, blank=True)
     coverage = models.JSONField(null=True, blank=True)
     sub_goals = models.JSONField(null=True, blank=True)
+    actors = models.JSONField(null=True, blank=True)
+    # The scenario's test conditions: the faults the world gives the agent's calls in it.
+    faults = models.JSONField(null=True, blank=True)
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)
+    # Archived: out of future selection, identity, runs and evidence kept; restore puts it back.
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    archive_reason = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+    archived_content = models.JSONField(null=True, blank=True)
+    # The document's sources, plus each file source's stored resolution and matched digest.
+    sources = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_scenario"
@@ -311,6 +382,9 @@ class HostedHarnessScenario(BaseModel):
         ]
         indexes = [
             models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
+            models.Index(
+                fields=["job", "archived_at"], name="idx_harness_scenario_archived"
+            ),
             GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
             GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
             GinIndex(fields=["keywords"], name="idx_harness_scenario_keywords"),
@@ -641,6 +715,41 @@ class HostedHarnessConversationMessage(BaseModel):
             ),
             models.Index(fields=["conversation", "state"], name="idx_hconv_msg_state"),
         ]
+
+
+class HostedHarnessBuilderTurnUsage(BaseModel):
+    """What a builder chat turn after a build spent, and what it billed.
+
+    Such a turn runs in a chat sandbox of its own, outside any attempt, so no attempt's
+    ledger covers it. One row per command: a replayed ending finds the row and bills nothing
+    new. ``report`` is frozen once written, and None when the turn could not be priced.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usages",
+    )
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    command_message = models.OneToOneField(
+        HostedHarnessConversationMessage,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usage",
+    )
+    outcome = models.CharField(max_length=16, default="")
+    # The turn's usage as the guest reported it: tokens, USD, unpriced turns and its models.
+    usage = models.JSONField(default=dict)
+    report = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_builder_turn_usage"
+        indexes = [models.Index(fields=["job"], name="idx_hbturn_job")]
 
 
 class HostedHarnessConversationEvent(BaseModel):

@@ -6,15 +6,21 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, CancelledError
 
-from simulate.temporal.constants import AGENT_FIX_WATCH_TICK_SECONDS, QUEUE_RUNNER
+from simulate.temporal.constants import (
+    AGENT_FIX_VARIATIONS_TICK_SECONDS,
+    AGENT_FIX_WATCH_TICK_SECONDS,
+    QUEUE_RUNNER,
+)
 from simulate.temporal.types.agent_fix import (
     AgentFixCloseInput,
     AgentFixInput,
     AgentFixLaunch,
     AgentFixOutput,
+    AgentFixVariations,
     AgentFixWatch,
     AgentFixWatchInput,
     Observation,
+    VariationsStep,
 )
 
 _LAUNCH_RETRY = RetryPolicy(
@@ -39,13 +45,17 @@ _WATCH_PAUSE = timedelta(seconds=15)
 _RELAUNCH_PAUSE = timedelta(minutes=2)
 # Before a fix held back by the running-fix caps asks again.
 _QUEUE_PAUSE = timedelta(minutes=1)
+# Fixes started before the first step existed replay without it.
+_VARIATIONS_PATCH = "agent-fix-variations"
 
 
 @workflow.defn
 class AgentFixWorkflow:
     """Owns the sandbox of one "Fix my agent" run: starts the engine, watches it, starts it
-    again after a pause when it dies, and always deletes the sandbox at the end.
-    simulate.services.agent_fix_sandbox decides what each step saw."""
+    again after a pause when it dies, and always deletes the sandbox at the end. A run
+    with too few failing cases first writes variations of them, on a clock of its own.
+    simulate.services.agent_fix_sandbox and agent_fix_variations decide what each step
+    saw."""
 
     def __init__(self) -> None:
         self.cancel_requested = False
@@ -57,12 +67,65 @@ class AgentFixWorkflow:
     @workflow.run
     async def run(self, input: AgentFixInput) -> AgentFixOutput:
         try:
-            observation = await self._drive(input)
+            observation = None
+            if workflow.patched(_VARIATIONS_PATCH):
+                observation = await self._variations(input)
+            if observation is None:
+                observation = await self._drive(input)
         finally:
             await self._release(input)
         if observation == Observation.STOPPING:
             await self._close(input, "stopped")
         return AgentFixOutput(fix_run_id=input.fix_run_id, observation=observation)
+
+    async def _variations(self, input: AgentFixInput) -> Observation | None:
+        """The fix's first step, when its run had too few failing cases; None once the fix
+        goes on to its engine. The step's time is its own, and each look says how much of
+        it the step may have used by then (step_minutes)."""
+        began = None
+        while not self.cancel_requested:
+            try:
+                result = await workflow.execute_activity(
+                    "advance_agent_fix_variations",
+                    input,
+                    task_queue=QUEUE_RUNNER,
+                    # A builder message, or a check run's creation, and the database.
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=_WATCH_RETRY,
+                    result_type=AgentFixVariations,
+                )
+            except ActivityError as exc:
+                if isinstance(exc.cause, CancelledError):
+                    raise
+                # An outage: the step's caps still end it once the database answers.
+                workflow.logger.warning(
+                    "Agent fix %s variations unavailable: %s", input.fix_run_id, exc
+                )
+                await workflow.sleep(_WATCH_PAUSE)
+                continue
+            step = result.step
+            if step == VariationsStep.DONE:
+                return None
+            if step == VariationsStep.ENDED:
+                return Observation.ENDED
+            if step == VariationsStep.STOPPING:
+                return Observation.STOPPING
+            if step == VariationsStep.WAITING:
+                await self._wait(_QUEUE_PAUSE)
+                continue
+            began = began or workflow.now()
+            cap = result.minutes
+            if workflow.now() - began >= timedelta(minutes=cap):
+                await self._close(
+                    input,
+                    "failed",
+                    "fix_variations_timeout",
+                    f"writing and checking variations of the failing cases took over"
+                    f" {cap} minutes",
+                )
+                return Observation.ENDED
+            await self._wait(timedelta(seconds=AGENT_FIX_VARIATIONS_TICK_SECONDS))
+        return Observation.STOPPING
 
     async def _drive(self, input: AgentFixInput) -> Observation:
         """Keep an engine running until the run ends or the user stops it."""

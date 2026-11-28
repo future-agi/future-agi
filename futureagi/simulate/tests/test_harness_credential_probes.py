@@ -1,13 +1,41 @@
+import json as jsonlib
+import socket
 from unittest.mock import Mock, patch
 
+import jwt
 import pytest
 import requests
+from google.protobuf import json_format
 
 from simulate.services.harness_credential_probes import (
     LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS,
+    LIVEKIT_MAX_RESPONSE_BYTES,
+    _cloud_phone_numbers,
+    _phone_routing_verdict,
+    probe,
+    probe_livekit_phone_routing,
     probe_provider_target,
 )
-from simulate.services.harness_provider import _preflight_credential_probe
+from simulate.services.harness_provider import (
+    _preflight_checks,
+    _preflight_credential_probe,
+)
+
+
+@pytest.fixture(autouse=True)
+def public_hosts():
+    with patch(
+        "simulate.services.harness_credential_probes.assert_url_host_public"
+    ) as guard:
+        yield guard
+
+
+def _answer(response, payload):
+    response.raw.read.return_value = (
+        jsonlib.dumps(payload).encode() if payload is not None else b""
+    )
+    return response
+
 
 LIVEKIT_VALUES = {
     "LIVEKIT_URL": "wss://demo.livekit.cloud",
@@ -94,7 +122,7 @@ def _livekit_server(
     job_polls = iter(jobs)
     participant_polls = iter(participants)
 
-    def post(url, headers, json, timeout):
+    def post(url, headers, json, timeout, **kwargs):
         method = url.rsplit("/", 1)[-1]
         calls.append((method, json))
         if error is not None:
@@ -111,8 +139,7 @@ def _livekit_server(
             "ListDispatch": lambda: _dispatch_listing(next(job_polls, []), camel),
             "ListParticipants": lambda: {"participants": next(participant_polls, [])},
         }
-        response.json.return_value = responses.get(method, dict)()
-        return response
+        return _answer(response, responses.get(method, dict)())
 
     return post, calls
 
@@ -263,11 +290,11 @@ def test_livekit_target_probe_still_reports_the_join_when_cleanup_fails(sleep):
         jobs=[[TARGET_IDENTITY]], participants=[[{"identity": TARGET_IDENTITY}]]
     )
 
-    def post_with_failing_delete(url, headers, json, timeout):
+    def post_with_failing_delete(url, headers, json, timeout, **kwargs):
         if url.endswith("/DeleteRoom"):
             calls.append(("DeleteRoom", json))
             raise requests.ConnectionError("gone")
-        return post(url, headers, json, timeout)
+        return post(url, headers, json, timeout, **kwargs)
 
     with patch(
         "simulate.services.harness_credential_probes.requests.post",
@@ -346,3 +373,885 @@ def test_preflight_does_not_dispatch_a_livekit_agent_built_from_source(
 ):
     assert _preflight_credential_probe(_livekit_preflight_payload(mode=None)) == []
     probe_agent.assert_not_called()
+
+
+GATEWAY_HOSTS = {
+    "gateway.example.com": "93.184.215.14",
+    "metadata.example.com": "169.254.169.254",
+    "127.0.0.1": "127.0.0.1",
+}
+
+
+@pytest.fixture
+def gateway_dns():
+    def resolve(host, *_args, **_kwargs):
+        if host not in GATEWAY_HOSTS:
+            raise socket.gaierror(socket.EAI_NONAME, "no such host")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (GATEWAY_HOSTS[host], 0))]
+
+    with patch("agentcc.services.url_safety.socket.getaddrinfo", resolve):
+        yield
+
+
+@pytest.fixture
+def provider_request():
+    with patch("simulate.services.harness_credential_probes._request") as request:
+        request.return_value = Mock(status_code=200)
+        yield request
+
+
+@pytest.mark.parametrize(
+    ("provider", "values", "url"),
+    [
+        ("openai", {"OPENAI_API_KEY": "k"}, "https://api.openai.com/v1/models"),
+        (
+            "anthropic",
+            {"ANTHROPIC_API_KEY": "k"},
+            "https://api.anthropic.com/v1/models?limit=1",
+        ),
+    ],
+)
+def test_probe_without_a_base_calls_the_provider(
+    provider_request, provider, values, url
+):
+    result = probe(provider, values)
+
+    assert result.ok is True
+    assert provider_request.call_args.args[1] == url
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base_values", "url"),
+    [
+        (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1"},
+            "https://gateway.example.com/v1/models",
+        ),
+        (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1/"},
+            "https://gateway.example.com/v1/models",
+        ),
+        (
+            {"OPENAI_API_BASE": "https://gateway.example.com/v1"},
+            "https://gateway.example.com/v1/models",
+        ),
+        (
+            {"OPENAI_API_BASE": "https://gateway.example.com/api/"},
+            "https://gateway.example.com/api/models",
+        ),
+        (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1?tenant=x"},
+            "https://gateway.example.com/v1/models?tenant=x",
+        ),
+        (
+            {
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+                "OPENAI_API_BASE": "https://other.example.com",
+            },
+            "https://gateway.example.com/v1/models",
+        ),
+    ],
+)
+def test_openai_probe_honours_the_agent_base(provider_request, base_values, url):
+    result = probe("openai", {"OPENAI_API_KEY": "gateway-key", **base_values})
+
+    assert result.ok is True
+    name = next(iter(base_values))
+    assert result.message == f"OpenAI at {name} accepted OPENAI_API_KEY"
+    assert provider_request.call_args.args[1] == url
+    assert provider_request.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer gateway-key"
+    }
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://gateway.example.com",
+        "https://gateway.example.com/",
+        "https://gateway.example.com/v1/",
+        "https://gateway.example.com?tenant=x",
+    ],
+)
+def test_anthropic_probe_honours_the_agent_base(provider_request, base):
+    result = probe(
+        "anthropic", {"ANTHROPIC_API_KEY": "gateway-key", "ANTHROPIC_BASE_URL": base}
+    )
+
+    assert result.ok is True
+    expected = "https://gateway.example.com/v1/models?limit=1"
+    if "?" in base:
+        expected = "https://gateway.example.com/v1/models?tenant=x&limit=1"
+    assert provider_request.call_args.args[1] == expected
+    assert provider_request.call_args.kwargs["headers"] == {
+        "x-api-key": "gateway-key",
+        "anthropic-version": "2023-06-01",
+    }
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (401, "OpenAI at OPENAI_BASE_URL rejected OPENAI_API_KEY (HTTP 401)"),
+        (
+            302,
+            "OpenAI at OPENAI_BASE_URL redirected the check (HTTP 302); check OPENAI_BASE_URL",
+        ),
+    ],
+)
+def test_a_gateway_refusal_or_redirect_fails_the_probe(
+    provider_request, status, message
+):
+    provider_request.return_value = Mock(status_code=status)
+
+    result = probe(
+        "openai",
+        {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "https://gateway.example.com/v1"},
+    )
+
+    assert result.ok is False
+    assert result.message == message
+    assert provider_request.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.usefixtures("gateway_dns")
+def test_an_unreachable_gateway_names_the_base_variable(provider_request):
+    provider_request.side_effect = requests.ConnectionError("refused")
+
+    result = probe(
+        "anthropic",
+        {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_BASE_URL": "https://gateway.example.com"},
+    )
+
+    assert result.ok is False
+    assert result.message == (
+        "Anthropic is unreachable at ANTHROPIC_BASE_URL (ConnectionError); check ANTHROPIC_BASE_URL"
+    )
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base", "reason"),
+    [
+        ("gateway.example.com/v1", "is not an http(s) URL"),
+        ("ftp://gateway.example.com/v1", "is not an http(s) URL"),
+        ("https://gateway.example.com:port/v1", "is not an http(s) URL"),
+        (
+            "https://unknown.example.com/v1",
+            "does not resolve to an address this check may call",
+        ),
+        (
+            "https://metadata.example.com/v1",
+            "does not resolve to an address this check may call",
+        ),
+        (
+            "http://127.0.0.1:8080/v1",
+            "does not resolve to an address this check may call",
+        ),
+        ("https://gateway.example.com/v1#x", "has a fragment (#...); remove it"),
+        ("https://gateway.example.com/v1#", "has a fragment (#...); remove it"),
+        (
+            "http://0x7f000001/v1",
+            "spells its host as a number; use a name or a plain IP address",
+        ),
+        (
+            "http://2130706433/v1",
+            "spells its host as a number; use a name or a plain IP address",
+        ),
+    ],
+)
+def test_a_malformed_or_refused_base_is_not_called(provider_request, base, reason):
+    result = probe("openai", {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": base})
+
+    assert result.ok is False
+    assert result.message == f"OpenAI check could not run: OPENAI_BASE_URL {reason}"
+    provider_request.assert_not_called()
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base", "answer", "at_fault"),
+    [
+        ("https://gateway.example.com/v1", Mock(status_code=401), ("OPENAI_API_KEY",)),
+        ("https://gateway.example.com/v1", Mock(status_code=404), ("OPENAI_BASE_URL",)),
+        ("https://gateway.example.com/v1", Mock(status_code=302), ("OPENAI_BASE_URL",)),
+        (
+            "https://gateway.example.com/v1",
+            requests.ConnectionError("refused"),
+            ("OPENAI_BASE_URL",),
+        ),
+        ("https://metadata.example.com/v1", None, ("OPENAI_BASE_URL",)),
+    ],
+)
+def test_a_failure_names_the_variable_at_fault(
+    provider_request, base, answer, at_fault
+):
+    if isinstance(answer, Exception):
+        provider_request.side_effect = answer
+    elif answer is not None:
+        provider_request.return_value = answer
+
+    result = probe("openai", {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": base})
+
+    assert result.ok is False
+    assert result.aliases == at_fault
+
+
+NUMBER = "+14844815043"
+CALLER = "+13125557682"
+ROUTING_VALUES = {**LIVEKIT_VALUES, "LIVEKIT_AGENT_NAME": "Morgan-467"}
+CLOUD_NUMBER = {"e164_format": NUMBER, "sip_dispatch_rule_ids": []}
+
+
+def _rule(
+    rule_id="SDR_1", agents=("Morgan-467",), trunks=(), numbers=(), callers=(), pin=""
+):
+    return {
+        "sip_dispatch_rule_id": rule_id,
+        "trunk_ids": list(trunks),
+        "numbers": list(numbers),
+        "inbound_numbers": list(callers),
+        "rule": {"dispatch_rule_individual": {"room_prefix": "call-", "pin": pin}},
+        "room_config": {"agents": [{"agent_name": name} for name in agents]},
+    }
+
+
+def _trunk(trunk_id="ST_1", numbers=(NUMBER,), allowed=(), addresses=()):
+    return {
+        "sip_trunk_id": trunk_id,
+        "name": trunk_id.lower(),
+        "numbers": list(numbers),
+        "allowed_numbers": list(allowed),
+        "allowed_addresses": list(addresses),
+    }
+
+
+def _parsed(cloud, trunks, rules):
+    from livekit import api as livekit_api
+
+    return (
+        _cloud_phone_numbers(list(cloud)),
+        json_format.ParseDict(
+            {"items": list(trunks)},
+            livekit_api.ListSIPInboundTrunkResponse(),
+            ignore_unknown_fields=True,
+        ).items,
+        json_format.ParseDict(
+            {"items": list(rules)},
+            livekit_api.ListSIPDispatchRuleResponse(),
+            ignore_unknown_fields=True,
+        ).items,
+    )
+
+
+@pytest.mark.parametrize(
+    "cloud, trunks, rules, caller, ok, message",
+    [
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule()],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="cloud-number-catch-all-rule",
+        ),
+        pytest.param(
+            [],
+            [_trunk()],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            True,
+            "your carrier must also forward this number",
+            id="carrier-number-on-one-trunk",
+        ),
+        pytest.param(
+            [],
+            [_trunk(numbers=(), addresses=("1.2.3.4/32",))],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="default-trunk-accepts-any-number",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [_trunk()],
+            [_rule()],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="number-on-cloud-and-trunk",
+        ),
+        pytest.param(
+            [],
+            [_trunk()],
+            [_rule(trunks=("ST_2",), numbers=(NUMBER,))],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="rule-lists-the-number-under-another-trunk",
+        ),
+        pytest.param(
+            [],
+            [_trunk(allowed=("+15550001111",))],
+            [_rule(trunks=("ST_1",))],
+            "",
+            True,
+            "to 'Morgan-467' only",
+            id="no-caller-number-configured-skips-the-allow-list",
+        ),
+        pytest.param(
+            [{**CLOUD_NUMBER, "sip_dispatch_rule_ids": ["SDR_1"]}],
+            [],
+            [_rule(), _rule("SDR_2", agents=("Riley-1",))],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="assigned-rule-wins-over-catch-all",
+        ),
+        pytest.param(
+            [],
+            [_trunk(numbers=("+15550000000",))],
+            [_rule()],
+            CALLER,
+            False,
+            "lists or accepts it",
+            id="number-not-on-project",
+        ),
+        pytest.param(
+            [],
+            [],
+            [_rule()],
+            CALLER,
+            False,
+            "lists or accepts it",
+            id="empty-project",
+        ),
+        pytest.param(
+            [],
+            [_trunk("ST_1"), _trunk("ST_2")],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            False,
+            "2 inbound trunks list +14844815043 (st_1, st_2)",
+            id="number-on-two-trunks",
+        ),
+        pytest.param(
+            [],
+            [_trunk("ST_1", numbers=()), _trunk("ST_2", numbers=())],
+            [_rule()],
+            CALLER,
+            False,
+            "2 inbound trunks accept any number",
+            id="two-default-trunks",
+        ),
+        pytest.param(
+            [],
+            [_trunk(allowed=("+15550001111",))],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            False,
+            "add +13125557682, the number we call from",
+            id="trunk-refuses-our-caller",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [],
+            CALLER,
+            False,
+            "ring into an empty room",
+            id="no-dispatch-rule",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(callers=("+15550001111",))],
+            CALLER,
+            False,
+            "ring into an empty room",
+            id="rule-only-for-other-callers",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(pin="1234")],
+            CALLER,
+            False,
+            "asks callers for a PIN",
+            id="rule-needs-a-pin",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(agents=())],
+            CALLER,
+            False,
+            "names no agent",
+            id="rule-names-no-agent",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(agents=("Riley-1",))],
+            CALLER,
+            False,
+            "go to Riley-1, not 'Morgan-467'",
+            id="rule-sends-to-another-agent",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(agents=("Morgan-467", "Riley-1"))],
+            CALLER,
+            False,
+            "also go to Riley-1",
+            id="rule-sends-to-two-agents",
+        ),
+        pytest.param(
+            [],
+            [_trunk()],
+            [
+                _rule(trunks=("ST_1",)),
+                _rule("SDR_2", agents=("Riley-1",), numbers=(NUMBER,)),
+            ],
+            CALLER,
+            False,
+            "also go to Riley-1",
+            id="two-rules-send-to-different-agents",
+        ),
+    ],
+)
+def test_phone_routing_verdict(cloud, trunks, rules, caller, ok, message):
+    passed, detail = _phone_routing_verdict(
+        NUMBER, "Morgan-467", caller, *_parsed(cloud, trunks, rules)
+    )
+
+    assert passed is ok
+    assert message in detail
+
+
+def _livekit_sip_server(
+    trunks=(), rules=(), cloud=(), cloud_status=200, status=200, error=None
+):
+    calls = []
+
+    def post(url, headers, json, timeout, **kwargs):
+        method = url.rsplit("/", 1)[-1]
+        calls.append(method)
+        if error is not None:
+            raise error
+        code = cloud_status if method == "ListPhoneNumbers" else status
+        response = Mock(status_code=code, content=b"{}")
+        if code >= 400:
+            response.raise_for_status.side_effect = requests.HTTPError(
+                response=response
+            )
+            return response
+        response.raise_for_status.return_value = None
+        listings = {
+            "ListSIPInboundTrunk": trunks,
+            "ListSIPDispatchRule": rules,
+            "ListPhoneNumbers": cloud,
+        }
+        return _answer(response, {"items": list(listings[method])})
+
+    return post, calls
+
+
+def test_routing_probe_reads_the_project_and_names_the_agent_it_reaches():
+    post, calls = _livekit_sip_server(cloud=[CLOUD_NUMBER], rules=[_rule()])
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is True
+    assert result.provider == "livekit_routing"
+    assert result.target_name == "Morgan-467"
+    assert calls == ["ListSIPInboundTrunk", "ListSIPDispatchRule", "ListPhoneNumbers"]
+
+
+@pytest.mark.parametrize("cloud_status", [401, 403, 404, 501])
+def test_routing_probe_uses_trunks_on_a_server_without_phone_numbers(cloud_status):
+    post, _calls = _livekit_sip_server(
+        trunks=[_trunk()], rules=[_rule(trunks=("ST_1",))], cloud_status=cloud_status
+    )
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is True
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_routing_probe_reports_rejected_credentials(status):
+    post, calls = _livekit_sip_server(status=status)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == (
+        f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})"
+    )
+    assert calls == ["ListSIPInboundTrunk"]
+
+
+def test_routing_probe_reports_other_http_errors():
+    post, _calls = _livekit_sip_server(status=500)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == f"LiveKit returned HTTP 500 while checking {NUMBER}"
+
+
+def test_routing_probe_reports_an_unreadable_response():
+    post, _calls = _livekit_sip_server()
+
+    def post_with_bad_json(url, headers, json, timeout, **kwargs):
+        response = post(url, headers, json, timeout, **kwargs)
+        response.raw.read.return_value = b"not json"
+        return response
+
+    with patch(
+        "simulate.services.harness_credential_probes.requests.post", post_with_bad_json
+    ):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == (
+        "LiveKit returned an unreadable response (JSONDecodeError); retry Preflight"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        [{"e164_format": NUMBER}],
+        b"{" + b" " * LIVEKIT_MAX_RESPONSE_BYTES + b"}",
+    ],
+    ids=["a-json-list", "over-the-size-cap"],
+)
+def test_routing_probe_treats_a_list_or_oversized_reply_as_unreadable(body):
+    post, _calls = _livekit_sip_server()
+
+    def post_with_body(url, headers, json, timeout, **kwargs):
+        response = post(url, headers, json, timeout, **kwargs)
+        if url.endswith("/ListPhoneNumbers"):
+            response.raw.read.return_value = (
+                body if isinstance(body, bytes) else jsonlib.dumps(body).encode()
+            )
+        return response
+
+    with patch(
+        "simulate.services.harness_credential_probes.requests.post", post_with_body
+    ):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == (
+        "LiveKit returned an unreadable response (LiveKitUnreadable); retry Preflight"
+    )
+
+
+def test_livekit_requests_never_follow_redirects_and_read_a_capped_body():
+    post, _calls = _livekit_sip_server(cloud=[CLOUD_NUMBER], rules=[_rule()])
+    seen = []
+
+    def recording(url, headers, json, timeout, **kwargs):
+        seen.append((kwargs, headers))
+        return post(url, headers, json, timeout, **kwargs)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", recording):
+        probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert seen and all(
+        kwargs == {"allow_redirects": False, "stream": True} for kwargs, _h in seen
+    )
+    token = seen[0][1]["Authorization"].removeprefix("Bearer ")
+    claims = jwt.decode(token, options={"verify_signature": False})
+    assert claims["exp"] - claims["nbf"] <= 60
+
+
+@pytest.mark.parametrize("status", [301, 302, 307])
+def test_a_livekit_redirect_is_a_failure_not_followed(status):
+    post, calls = _livekit_sip_server(status=status)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == f"LiveKit returned HTTP {status} while checking {NUMBER}"
+    assert calls == ["ListSIPInboundTrunk"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://demo.livekit.cloud",
+        "ws://demo.livekit.cloud",
+        "https://user:pw@demo.livekit.cloud",
+        "wss://[::1",
+        "demo.livekit.cloud",
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.post")
+@patch("simulate.services.harness_credential_probes._request")
+def test_every_livekit_probe_refuses_a_url_that_is_not_https_or_wss(request, post, url):
+    values = {**ROUTING_VALUES, "LIVEKIT_URL": url}
+
+    results = [
+        probe("livekit", values),
+        probe_provider_target("livekit", "returns-agent", values),
+        probe_livekit_phone_routing(NUMBER, values, CALLER),
+    ]
+
+    assert [one.ok for one in results] == [False, False, False]
+    assert all("URL refused" in one.message for one in results)
+    request.assert_not_called()
+    post.assert_not_called()
+
+
+@patch("simulate.services.harness_credential_probes.requests.post")
+@patch("simulate.services.harness_credential_probes._request")
+def test_every_livekit_probe_refuses_an_internal_host(request, post, public_hosts):
+    from tfc.utils.ssrf_guard import assert_url_host_public
+
+    public_hosts.side_effect = assert_url_host_public
+    values = {**ROUTING_VALUES, "LIVEKIT_URL": "wss://127.0.0.1:7880"}
+
+    results = [
+        probe("livekit", values),
+        probe_provider_target("livekit", "returns-agent", values),
+        probe_livekit_phone_routing(NUMBER, values, CALLER),
+    ]
+
+    assert [one.ok for one in results] == [False, False, False]
+    assert all("private/internal address" in one.message for one in results)
+    request.assert_not_called()
+    post.assert_not_called()
+
+
+def test_routing_results_get_their_own_preflight_check():
+    probe = [
+        {"provider": "livekit", "ok": True, "message": "key ok", "aliases": []},
+        {
+            "provider": "livekit_routing",
+            "ok": False,
+            "message": "no dispatch rule routes calls to +14844815043",
+            "aliases": ["LIVEKIT_URL"],
+        },
+    ]
+
+    checks = {
+        check["id"]: check
+        for check in _preflight_checks("provider", None, 0, [], [], probe, "phone")
+    }
+
+    assert checks["provider_target"]["status"] == "skipped"
+    assert checks["phone_routing"]["status"] == "failed"
+    assert "no dispatch rule" in checks["phone_routing"]["detail"]
+    assert checks["phone_routing"]["fix"] == (
+        "Fix the number, trunk or dispatch rule named above on your LiveKit project"
+    )
+    assert "phone_routing" not in {
+        check["id"]
+        for check in _preflight_checks("provider", None, 0, [], [], probe[:1], "phone")
+    }
+
+
+def test_routing_probe_reports_an_unreachable_server():
+    post, _calls = _livekit_sip_server(error=requests.ConnectionError("refused"))
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == "LiveKit is unreachable (ConnectionError); retry Preflight"
+
+
+@patch(
+    "simulate.services.harness_credential_probes.load_extra",
+    side_effect=ImportError("install the voice extra"),
+)
+@patch("simulate.services.harness_credential_probes.requests.post")
+def test_routing_probe_reports_a_missing_voice_extra(post, _load_extra):
+    result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == "install the voice extra"
+    post.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "number, values",
+    [
+        ("", ROUTING_VALUES),
+        (NUMBER, {**ROUTING_VALUES, "LIVEKIT_AGENT_NAME": " "}),
+        (NUMBER, {**ROUTING_VALUES, "LIVEKIT_API_SECRET": ""}),
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.post")
+def test_routing_probe_skips_without_a_number_agent_or_full_credentials(
+    post, number, values
+):
+    assert probe_livekit_phone_routing(number, values, CALLER) is None
+    post.assert_not_called()
+
+
+@patch(
+    "simulate.services.phone_telephony.platform_phone_telephony",
+    return_value={"SIP_OUTBOUND_FROM_NUMBER": CALLER},
+)
+@patch("simulate.services.harness_credential_probes.probe_all", return_value=[])
+@patch("simulate.services.harness_credential_probes.probe_livekit_phone_routing")
+def test_preflight_checks_a_phone_target_routing_from_our_caller_number(
+    probe_routing, _probe_all, _telephony
+):
+    probe_routing.return_value = Mock(as_dict=lambda: {"provider": "livekit_target"})
+    payload = {
+        "source": {"kind": "provider"},
+        "agent": {
+            "connector": "phone",
+            "mode": "connect_only",
+            "config": {"phone_number": NUMBER, "target_system_prompt": "Help."},
+        },
+        "credential_values": ROUTING_VALUES,
+    }
+
+    assert _preflight_credential_probe(payload) == [{"provider": "livekit_target"}]
+    number, values, caller = probe_routing.call_args.args
+    assert (number, values, caller) == (NUMBER, ROUTING_VALUES, CALLER)
+
+
+def _answers(*addresses):
+    """A name that answers each lookup with the next address, the last one after."""
+    answers = iter(addresses)
+
+    def resolve(host, *_args, **_kwargs):
+        address = next(answers, addresses[-1])
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))]
+
+    return resolve
+
+
+def test_a_base_that_resolves_privately_at_send_is_refused_after_passing_the_check():
+    """The base is checked again as the probe is sent: a name that answers with a public address at the
+    check and a private one at the send (rebinding) is refused, naming the variable."""
+    with patch(
+        "agentcc.services.url_safety.socket.getaddrinfo",
+        _answers("93.184.215.14", "169.254.169.254"),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert result.ok is False
+    assert result.message == (
+        "OpenAI check could not run: OPENAI_BASE_URL does not resolve to an address"
+        " this check may call"
+    )
+
+
+def test_the_probe_connects_to_the_address_it_checked_whatever_the_name_answers_next():
+    """Rebinding after both checks: the third lookup would answer a private address, but the connection
+    goes to the address the send checked, with no lookup of its own."""
+    connected = []
+
+    def connect(address, *_args, **_kwargs):
+        connected.append(address)
+        raise OSError("stop here")
+
+    with (
+        patch(
+            "agentcc.services.url_safety.socket.getaddrinfo",
+            _answers("93.184.215.14", "93.184.215.14", "169.254.169.254"),
+        ),
+        patch("urllib3.util.connection.create_connection", connect),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert connected == [("93.184.215.14", 443)]
+    assert result.ok is False
+    assert result.message == (
+        "OpenAI is unreachable at OPENAI_BASE_URL (ConnectionError); check OPENAI_BASE_URL"
+    )
+
+
+@pytest.mark.parametrize("address", ["10.0.0.5", "169.254.169.254", "fd00:ec2::254"])
+def test_safe_fetch_called_as_before_still_refuses_private_and_metadata(address):
+    """Every other caller passes neither new option: it refuses what it refused before."""
+    from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
+
+    with (
+        patch("agentcc.services.url_safety.socket.getaddrinfo", _answers(address)),
+        pytest.raises(SsrfBlocked),
+    ):
+        safe_fetch("https://files.example.com/a.txt", method="GET")
+
+
+@pytest.mark.parametrize(
+    ("allowed", "address", "connected"),
+    [
+        (False, "10.0.0.5", False),
+        (True, "10.0.0.5", True),
+        (True, "169.254.169.254", False),
+        (True, "fd00:ec2::254", False),
+    ],
+)
+def test_the_private_opt_in_reaches_a_private_gateway_but_never_metadata(
+    monkeypatch, allowed, address, connected
+):
+    """Only the deployment's opt-in (off by default, as on dev) lets a configured base reach a
+    private address; a metadata address is refused at send even then."""
+    from agentcc.services.url_safety import ALLOW_PRIVATE_PROVIDER_URLS_ENV
+
+    if allowed:
+        monkeypatch.setenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, "true")
+    else:
+        monkeypatch.delenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, raising=False)
+    reached = []
+
+    def connect(address, *_args, **_kwargs):
+        reached.append(address[0])
+        raise OSError("stop here")
+
+    with (
+        # The check sees a public address; the send's own lookup sees ``address``.
+        patch(
+            "agentcc.services.url_safety.socket.getaddrinfo",
+            _answers("93.184.215.14", address),
+        ),
+        patch("urllib3.util.connection.create_connection", connect),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert result.ok is False
+    assert reached == ([address] if connected else [])
+    if not connected:
+        assert result.message == (
+            "OpenAI check could not run: OPENAI_BASE_URL does not resolve to an address"
+            " this check may call"
+        )

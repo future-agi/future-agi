@@ -2,12 +2,16 @@
 
 import json
 import re
-from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections import Counter, defaultdict
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from hashlib import sha256
+from statistics import median
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
+import structlog
 from django.conf import settings
 from django.db.models import (
     Case,
@@ -16,6 +20,7 @@ from django.db.models import (
     Exists,
     ExpressionWrapper,
     F,
+    IntegerField,
     Max,
     OuterRef,
     Prefetch,
@@ -23,37 +28,50 @@ from django.db.models import (
     QuerySet,
     Subquery,
     Sum,
+    UUIDField,
     Value,
     When,
 )
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
+    AgentFixIssueJob,
     AgentFixRun,
     AgentVersion,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HarnessSuiteMember,
+    HarnessSuiteVersion,
+    HostedHarnessConversation,
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessScenario,
+    TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.models.harness_versioning import TaskSplit
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
+    HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
+    MARGIN_PCT_DEFAULT,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
+    VARIATIONS_PER_CASE,
     AgentIdentity,
     CheckFailure,
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
+    EvalGrading,
+    EvalReview,
     EvalWarning,
     FailureOwner,
     FixRequest,
+    FixStep,
     InventoryScenario,
     LaunchBlocked,
     LaunchDefaults,
@@ -64,20 +82,57 @@ from simulate.pydantic_schemas.agent_fix import (
     LaunchSourceRun,
     LaunchSuggested,
     LaunchSurface,
+    ShipPath,
+    ShipReadiness,
     Surface,
+    VerdictTier,
+    VerdictTierPart,
 )
+from simulate.selectors.evidence_import import evidence_origins
 from simulate.selectors.runs import user_executions
-from simulate.services.agent_fix_agents import AgentKind, agent_kind
+from simulate.services.agent_fix_agents import (
+    AgentKind,
+    agent_kind,
+    not_editable,
+    pickable_kind,
+)
 from simulate.services.harness_environment import environment_name
-from simulate.services.harness_github import short_ref
+from simulate.services.harness_evals import (
+    runnable_eval_config_ids,
+    runnable_eval_configs,
+)
+from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.harness_usage import check_harness_action
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    run_max_duration_seconds,
+)
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    graded_call_receipt,
+    sub_goal_result,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
     judge_stored_eval,
     live_eval_specs,
 )
+from simulate.services.run_traces_v3 import CallUsage, run_traces_source, run_usage
+from simulate.temporal.constants import (
+    AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
+    AGENT_FIX_VARIATIONS_WRITE_MINUTES,
+)
+from simulate.types import is_worker_subject
+from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
+from tracer.services.clickhouse.client import CHError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.locked_versions import (
+        LockedVersionSplits,
+    )
+
+logger = structlog.get_logger(__name__)
 
 TRANSCRIPT_CHARS = 8000
 # A lost model is skipped for this long after it was lost: a short outage may be over.
@@ -87,6 +142,8 @@ FINISHED_RUN_STATES = {
     HostedHarnessJob.State.FAILED,
     HostedHarnessJob.State.CANCELED,
 }
+# The fix's check run of the base version on its failing cases and their variations.
+VARIATIONS_LABEL = "variations"
 
 
 def sub_goal_names(raw: Any) -> list[str]:
@@ -99,16 +156,32 @@ def sub_goal_names(raw: Any) -> list[str]:
     return names
 
 
+def written_variations(suite_version: HarnessSuiteVersion | None) -> dict[str, str]:
+    """The variations a fix's builder wrote into the fix's private suite version, each
+    with the failing case it varies; none on any other suite version."""
+    if suite_version is None or suite_version.fix_run_id is None:
+        return {}
+    return dict((suite_version.documents or {}).get("variations") or {})
+
+
 def inventory(fix_run: AgentFixRun) -> list[InventoryScenario]:
-    """Every scenario a check run may select: the source run's pinned suite, or the
-    environment's own scenarios when the source run was not pinned."""
-    suite_version_id = (
+    """Every scenario a check run may select: the fix's suite (the source run's pinned
+    suite, or the fix's own when it wrote variations), or the environment's own
+    scenarios when the source run was not pinned. A variation the base version passed is
+    not a case of the fix, so it is left out."""
+    suite_version_id = fix_run.suite_version_id or (
         fix_run.source_run.suite_version_id if fix_run.source_run else None
     )
     if suite_version_id:
-        members = HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=suite_version_id
-        ).select_related("scenario")
+        kept = FixRequest.model_validate(fix_run.request).variation_parents
+        dropped = set(written_variations(fix_run.suite_version)) - set(kept)
+        members = (
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=suite_version_id
+            )
+            .exclude(scenario_key__in=dropped)
+            .select_related("scenario")
+        )
         return [
             _scenario(member.scenario_key, member.content or {}, member.scenario)
             for member in members.order_by("number")
@@ -137,9 +210,42 @@ def _scenario(
 
 
 def fix_deadline(fix_run: AgentFixRun) -> datetime:
-    """When the fix must have ended: its start plus the minutes the user allowed."""
-    minutes = FixRequest.model_validate(fix_run.request).max_minutes
+    """When the fix must have ended: its start plus the minutes the user allowed. While its
+    first step writes variations, that step's own cap comes on top: the fix's minutes start
+    once the step ends."""
+    request = FixRequest.model_validate(fix_run.request)
+    minutes = request.max_minutes
+    if request.variations_pending:
+        minutes += variations_minutes(fix_run)
     return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
+
+
+def variations_minutes(fix_run: AgentFixRun) -> int:
+    """The time of a fix's first step: the builder's cap to write the variations, then the
+    current version's run on the failing cases and their variations within that run's own
+    time limit, and a grace for the run to start and report. Until the run exists, its
+    limit is the one a run of every target and its variations would get."""
+    run = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run=fix_run, fix_label=VARIATIONS_LABEL
+        )
+        .order_by("-created_at")
+        .only("payload")
+        .first()
+    )
+    if run is not None:
+        seconds = int(run.payload["runtime"]["max_duration_seconds"])
+    else:
+        targets = len(FixRequest.model_validate(fix_run.request).target_scenario_keys)
+        seconds = run_max_duration_seconds(
+            int(fix_run.environment.payload["runtime"]["max_duration_seconds"]),
+            targets * (1 + VARIATIONS_PER_CASE),
+        )
+    return (
+        AGENT_FIX_VARIATIONS_WRITE_MINUTES
+        + -(-seconds // 60)
+        + AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES
+    )
 
 
 def queue_deadline(fix_run: AgentFixRun) -> datetime:
@@ -166,50 +272,81 @@ def recent_lost_models(engine_notes: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
+def base_commit(source_run: HostedHarnessJob) -> str:
+    """The commit a GitHub agent's run ran; "" for an uploaded agent."""
+    source = (source_run.payload or {}).get("source") or {}
+    return str(source.get("commit_sha") or "")
+
+
 def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
     if fix_run.source_run is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
-    source = (fix_run.source_run.payload or {}).get("source") or {}
     request = FixRequest.model_validate(fix_run.request)
     return EngineBrief(
         fix_run_id=str(fix_run.id),
         environment_name=environment_name(fix_run.environment),
         base_agent_version_id=str(fix_run.base_agent_version_id),
-        base_commit=str(source.get("commit_sha") or ""),
+        base_commit=base_commit(fix_run.source_run),
         request=request,
         inventory=inventory(fix_run),
         lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
+        worst_case_usd_per_execution=float(
+            worst_case_usd_per_execution(fix_run, graded=False)
+        ),
+        worst_case_usd_per_graded_execution=float(
+            worst_case_usd_per_execution(fix_run, graded=True)
+        ),
         deadline_at=fix_deadline(fix_run).isoformat(),
-        source_failures=source_failures(fix_run.source_run, request),
+        source_failures=source_failures(
+            fix_run.source_run, request, variations_run(fix_run)
+        ),
+    )
+
+
+def variations_run(fix_run: AgentFixRun) -> HostedHarnessJob | None:
+    """The base version's finished run on the fix's failing cases and their variations,
+    which kept the variations it failed; a retry reads the one its failed fix finished."""
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(fix_run),
+            fix_label=VARIATIONS_LABEL,
+            state=HostedHarnessJob.State.COMPLETED,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
     )
 
 
 def source_failures(
-    source_run: HostedHarnessJob, request: FixRequest
+    source_run: HostedHarnessJob,
+    request: FixRequest,
+    variations_run: HostedHarnessJob | None = None,
 ) -> list[CheckRecord]:
     """The source run's evidence on each target the engine searches: the first trial it
-    judged in full that failed a sub-goal, as a check record. The engine reads one such
-    trial a scenario, so the brief holds at most one record for each. The held-back targets
-    stay out, as they do from everything the engine reads."""
+    judged in full that failed a sub-goal, as a check record. A variation's evidence is its
+    trial in ``variations_run``, the run that kept it. The engine reads one such trial a
+    scenario, so the brief holds at most one record for each. The held-back targets stay
+    out, as they do from everything the engine reads."""
     searched = set(request.target_scenario_keys) - set(request.held_back_scenario_keys)
+    variations = searched & set(request.variation_parents)
+    runs = Q(job=source_run, source_scenario__scenario_key__in=searched - variations)
+    if variations_run is not None:
+        runs |= Q(job=variations_run, source_scenario__scenario_key__in=variations)
     found: dict[str, tuple[Any, CheckRecord]] = {}
     for execution in (
-        HostedHarnessExecution.no_workspace_objects.filter(
-            job=source_run, source_scenario__scenario_key__in=searched
-        )
+        HostedHarnessExecution.no_workspace_objects.filter(runs)
         .select_related("source_scenario", "call_execution")
         .order_by("trial_index", "execution_key")
     ):
         key = execution.source_scenario.scenario_key
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if key in found or not isinstance(receipt, Mapping):
             continue
         record = _record(key, execution.trial_index, receipt, "")
@@ -222,9 +359,20 @@ def source_failures(
     ]
 
 
-def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
+def check_run_status(
+    run: HostedHarnessJob, reader: AgentFixRun | None = None
+) -> CheckRunStatus:
     """A check run's finished trials as engine records. A trial without a receipt yet is
-    left out; ``finished`` says when no more will come."""
+    left out; ``finished`` says when no more will come. ``reader`` is the fix that reads
+    it, when that is not the run's own: a retry reads the runs its failed fix finished,
+    and its request and budget are what its engine works to."""
+    reader = reader or run.fix_run
+    if reader is None:
+        raise HostedHarnessError(
+            "fix_check_run_unknown",
+            "this run is not an epoch's check run",
+            status_code=404,
+        )
     executions = list(
         HostedHarnessExecution.no_workspace_objects.filter(job=run)
         .select_related("source_scenario", "call_execution")
@@ -235,11 +383,20 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     # transcripts, the heavy part, come only then.
     calls = [execution.call_execution for execution in executions]
     transcripts = _transcripts(call.id for call in calls) if finished else {}
+    # Only a fix whose source run exported the agent's model calls reads its runs' spans.
+    request = FixRequest.model_validate(reader.request)
+    traced = request.observes_models or request.meters_agent_cost
+    usage, unreadable = {}, False
+    if finished and traced:
+        try:
+            usage = _read_usage(run)
+        except CHError:
+            logger.warning("agent_fix_span_read_failed", run=str(run.id), exc_info=True)
+            unreadable = True
+    latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         records.append(
@@ -248,6 +405,8 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
                 execution.trial_index,
                 receipt,
                 transcripts.get(execution.call_execution_id, ""),
+                usage=usage.get(str(execution.call_execution_id)),
+                reply_latency_ms=latencies.get(execution.call_execution_id),
             )
         )
     return CheckRunStatus(
@@ -262,6 +421,8 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         ),
         records=records,
         parallelism=ran_at(run, len(executions)) if finished else None,
+        committed_usd=float(committed_usd(reader)),
+        usage_unreadable=unreadable,
     )
 
 
@@ -312,20 +473,67 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     )
 
 
+# What a trial failed on when no check of its did: a write the world committed twice, or another failure of the agent's.
+REPEATED_WRITE = "committed_a_write_twice"
+FAILED_BEYOND_CHECKS = "failed_beyond_its_checks"
+
+
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
-    """Each sub-goal of a receipt and whether it held, None when nothing decided it. A
-    conversation the agent itself broke fails every goal it left undecided."""
-    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
-    judged = {str(one["name"]): one.get("held") for one in checks if one.get("name")}
+    """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
+    Not applicable and inconclusive sub-goals are left out, and a trial that ended on a failure of ours judges none."""
+    failure = (
+        receipt.get("failure") if isinstance(receipt.get("failure"), Mapping) else None
+    )
+    if (
+        receipt.get("status") == "errored"
+        and failure is not None
+        and failure.get("domain") != "agent"
+    ):
+        return {}
+    # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
+    checks = [
+        one
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping) and not is_worker_subject(one.get("subject"))
+    ]
+    results = {
+        str(one["name"]): sub_goal_result(dict(one))
+        for one in checks
+        if one.get("name")
+    }
+    judged = {
+        name: SUB_GOAL_PASSED.get(result)
+        for name, result in results.items()
+        if result is None or result in SUB_GOAL_PASSED
+    }
     if (receipt.get("failure") or {}).get("domain") == "agent":
         judged = {name: held is True for name, held in judged.items()}
+    # A check never verified for this scenario is undecided: never the agent's pass, never its failure.
+    judged.update(
+        {name: None for name, result in results.items() if result == "unmeasured"}
+    )
+    # A trial graded failed with no check failing failed beyond its checks: the world committed a write twice.
+    found = receipt.get("call")
+    call: Mapping[str, Any] = found if isinstance(found, Mapping) else {}
+    if (
+        call.get("duplicate_commits") or receipt.get("status") == "failed"
+    ) and False not in judged.values():
+        judged[
+            REPEATED_WRITE if call.get("duplicate_commits") else FAILED_BEYOND_CHECKS
+        ] = False
     return {
         name: held if isinstance(held, bool) else None for name, held in judged.items()
     }
 
 
 def _record(
-    scenario_key: str, trial: int, receipt: Mapping[str, Any], transcript: str
+    scenario_key: str,
+    trial: int,
+    receipt: Mapping[str, Any],
+    transcript: str,
+    *,
+    usage: CallUsage | None = None,
+    reply_latency_ms: float | None = None,
 ) -> CheckRecord:
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
     judged = judged_sub_goals(receipt)
@@ -357,7 +565,140 @@ def _record(
         },
         transcript=transcript,
         duration_s=duration_ms / 1000 if duration_ms else None,
+        models=usage.models if usage else [],
+        spans_seen=usage.llm_spans if usage else 0,
+        agent_cost_usd=usage.cost_usd if usage else None,
+        unpriced_models=usage.unpriced_models if usage else [],
+        instrumentation_partial=usage.partial if usage else False,
+        reply_latency_ms=reply_latency_ms,
     )
+
+
+def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
+    execution = run.test_execution
+    if execution is None:
+        return {}
+    return run_usage(execution) or {}
+
+
+def measured_automatically(run: HostedHarnessJob) -> bool:
+    """Whether only the sandbox's own measuring could see the run's model calls: its agent
+    names no tracing, so any span carries the model, tokens and timing, never a prompt or
+    a reply."""
+    execution = run.test_execution
+    source = run_traces_source(execution) if execution is not None else None
+    return source is not None and source.measured_automatically
+
+
+def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
+    """``_read_usage`` for the run a fix starts from, whose spans set what the fix can
+    check for good. A read that fails refuses the launch, to be tried again: a fix
+    frozen as untraced would never check what it could have."""
+    try:
+        return _read_usage(source_run)
+    except CHError as exc:
+        logger.warning(
+            "agent_fix_source_span_read_failed", run=str(source_run.id), exc_info=True
+        )
+        raise HostedHarnessError(
+            "fix_traces_unreadable",
+            "could not read this run's traces; try again",
+            status_code=503,
+            retryable=True,
+        ) from exc
+
+
+def model_key(name: str) -> str:
+    """A model's name as the lock compares it, without its provider: the engine counts
+    "vertex_ai/gemini-3.8-flash" as the allowed "gemini-3.8-flash"."""
+    return name.lower().rsplit("/", 1)[-1]
+
+
+def models_called(usage: Mapping[str, CallUsage]) -> list[str]:
+    return sorted({model for one in usage.values() for model in one.models})
+
+
+def _first_time_ms(content: Any, *, text_only: bool = False) -> int | None:
+    """When a chat row's first timed item was said, or with ``text_only`` its first
+    text, not a tool call or its result: hosted chat stores each segment's start time
+    on its item."""
+    return next(
+        (
+            item["start_time_ms"]
+            for item in content or []
+            if isinstance(item, Mapping)
+            and isinstance(item.get("start_time_ms"), int)
+            and not (text_only and (item.get("kind") or not item.get("content")))
+        ),
+        None,
+    )
+
+
+def _reply_latencies(calls: Iterable[CallExecution]) -> dict[Any, float | None]:
+    """Each call's reply latency in ms. A voice call has its agent's average latency. A
+    chat has the median, over its user turns, of the time from the user's message to
+    the agent's first text after it: a tool loop before the answer is time the user
+    waits. An agent's greeting before any user turn, and a last user turn the agent
+    never answered in text, have no reply."""
+    latencies: dict[Any, float | None] = {}
+    chats = []
+    for call in calls:
+        if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+            chats.append(call.id)
+        else:
+            latencies[call.id] = (
+                float(call.avg_agent_latency_ms)
+                if call.avg_agent_latency_ms is not None
+                else None
+            )
+    turns: dict[Any, list[tuple[int | None, Any, str, str, int | None]]] = defaultdict(
+        list
+    )
+    for (
+        call_id,
+        created_at,
+        row_id,
+        role,
+        content,
+    ) in ChatMessageModel.no_workspace_objects.filter(
+        call_execution_id__in=chats,
+        role__in=[
+            ChatMessageModel.RoleChoices.USER,
+            ChatMessageModel.RoleChoices.ASSISTANT,
+        ],
+    ).values_list("call_execution_id", "created_at", "id", "role", "content"):
+        turns[call_id].append(
+            (
+                _first_time_ms(content),
+                created_at,
+                str(row_id),
+                role,
+                _first_time_ms(content, text_only=True),
+            )
+        )
+    for call_id in chats:
+        rows = turns[call_id]
+        # The conversation's order: its own times when every row has one, else the
+        # order the rows were stored in (each row's created_at is its own).
+        if all(at is not None for at, *_ in rows):
+            rows.sort(key=lambda row: (row[0], row[1], row[2]))
+        else:
+            rows.sort(key=lambda row: (row[1], row[2]))
+        gaps = []
+        asked: int | None = None
+        waiting = False
+        for at, _created_at, _row_id, role, answered in rows:
+            if role == ChatMessageModel.RoleChoices.USER:
+                asked, waiting = at, True
+                continue
+            # Rows of tool calls alone keep the user waiting for the text.
+            if not waiting or answered is None:
+                continue
+            if asked is not None and answered >= asked:
+                gaps.append(answered - asked)
+            waiting = False
+        latencies[call_id] = float(median(gaps)) if gaps else None
+    return latencies
 
 
 # The engine's speaker for a chat row's role.
@@ -458,9 +799,7 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
                 failing_sub_goals=[],
             ),
         )
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         for name, held in judged_sub_goals(receipt).items():
@@ -471,41 +810,243 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
     return list(results.values())
 
 
-def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
-    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
-    plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
-    each check run still unsealed; it is what the fix's limit is held against."""
+# A check run whose TestExecution ended: its evals are not grading, and a winner's grading
+# moves it back to evaluating until they are.
+_SETTLED_RUN_STATUSES = (
+    TestExecution.ExecutionStatus.COMPLETED,
+    TestExecution.ExecutionStatus.FAILED,
+    TestExecution.ExecutionStatus.CANCELLED,
+)
+
+
+def _worst_case(evals: Any) -> Any:
+    """What one execution of a check run may cost: its simulation, and each billed eval a
+    winner's grading may run on it. ``evals`` is a count or an expression of one."""
+    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION) + evals * Decimal(
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL
+    )
+
+
+def is_graded_label(label: str) -> bool:
+    """Whether a winner's grading reads a check run with this label: the base version's
+    baseline repeats and a candidate's final check. No other check run is ever graded."""
+    return bool(_BASELINE_LABEL.match(label) or _FINALIST_LABEL.match(label))
+
+
+def worst_case_usd_per_execution(fix_run: AgentFixRun, *, graded: bool) -> Decimal:
+    """What a check run reserves of the fix's budget for each execution: its simulation,
+    and each billed eval only when a winner's grading reads the run."""
+    evals = (
+        len(runnable_eval_config_ids(fix_run.environment.run_test_id)) if graded else 0
+    )
+    return _worst_case(evals)
+
+
+# The repeats of the baseline and of the final check an outside attempt is sized for.
+OUTSIDE_REPEATS = 3
+
+
+def inventory_size(source_run: HostedHarnessJob) -> int:
+    """How many scenarios a fix from this run may check, as ``inventory`` reads them: the
+    run's pinned suite, or its environment's scenarios when the run was not pinned."""
+    if source_run.suite_version_id:
+        return HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=source_run.suite_version_id
+        ).count()
+    return HostedHarnessScenario.no_workspace_objects.filter(
+        job_id=source_run.environment_id
+    ).count()
+
+
+def outside_attempt_hold_usd(
+    source_run: HostedHarnessJob,
+    request: FixRequest,
+    attempt_of: AgentFixRun | None,
+) -> Decimal:
+    """The most an outside attempt's check runs hold of its budget, so an attempt with this
+    budget is never refused for its own runs. A hold, not spend: what a check run reserves
+    until its usage is sealed (with_spend).
+
+    The screen runs each searched target twice at most and each held-back case once,
+    ungraded. The final check runs every scenario OUTSIDE_REPEATS times, graded, and its
+    must-pass check may re-run every scenario OUTSIDE_REPEATS times more, ungraded: a
+    re-run the budget refused would read as broken and refuse a good fix. The baseline
+    runs every scenario OUTSIDE_REPEATS times, graded, except for a repeat an earlier
+    attempt on the run finished that the next one reads again (_reused_baselines): it
+    still holds its evals, which a winner's grading runs, unless an earlier winner claimed
+    it and every finished call holds a verdict of every eval. A claimed run stays with
+    its claim (start_check_run), so the repeat then holds nothing; one that lacks a
+    verdict is topped up by this attempt's winner, so it holds its evals."""
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    config_ids = runnable_eval_config_ids(environment.run_test_id)
+    ungraded: Decimal = _worst_case(0)
+    graded: Decimal = _worst_case(len(config_ids))
+    every = inventory_size(source_run)
+    held_back = set(request.held_back_scenario_keys)
+    searched = len(set(request.target_scenario_keys) - held_back)
+    reused = [] if attempt_of is None else _reused_baselines(attempt_of)
+    lacking = runs_lacking_verdicts(reused, config_ids)
+    to_grade = sum(1 for run in reused if run.graded_at is None or run.id in lacking)
+    screen = (2 * searched + len(held_back)) * ungraded
+    final = every * OUTSIDE_REPEATS * graded
+    confirm = every * OUTSIDE_REPEATS * ungraded
+    baseline = every * (
+        (OUTSIDE_REPEATS - len(reused)) * graded + to_grade * (graded - ungraded)
+    )
+    return screen + final + confirm + baseline
+
+
+def with_spend(
+    runs: QuerySet[AgentFixRun], *, eval_count: int | None = None
+) -> QuerySet[AgentFixRun]:
+    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
+    every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
+    fix's limit is held against: a check run not settled yet (usage not sealed, or evals
+    still grading) holds at least a worst case for each execution, and a settled run a
+    winner's grading may read still holds its evals' worst case while the fix goes on.
+
+    A retry reads again the runs the failed fix finished, and grades them: their evals count
+    for the retry (``graded_for``), never for the failed fix that paid their simulation.
+
+    ``eval_count`` replaces the environment's live count of billed evals in the holds: a
+    winner's grading passes 0 to read what is held without them, and prices the evals it
+    queues itself."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
-    sealed = Coalesce(
-        Sum("check_runs__fix_cost_usd", filter=live),
+    actual = ExpressionWrapper(
+        Coalesce(F("check_runs__fix_cost_usd"), Value(Decimal(0)))
+        + Case(
+            When(
+                check_runs__graded_for__isnull=True,
+                then=F("check_runs__fix_eval_cost_usd"),
+            ),
+            default=Value(Decimal(0)),
+            output_field=money,
+        ),
+        output_field=money,
+    )
+    evals: Any = (
+        eval_count
+        if eval_count is not None
+        else Coalesce(
+            Subquery(
+                runnable_eval_configs(OuterRef("environment__run_test_id"))
+                .values("run_test_id")
+                .annotate(total=Count("id"))
+                .values("total")
+            ),
+            0,
+        )
+    )
+    graded = Q(check_runs__fix_label__regex=_BASELINE_LABEL.pattern) | Q(
+        check_runs__fix_label__regex=_FINALIST_LABEL.pattern
+    )
+    per_execution = Case(
+        When(graded, then=_worst_case(evals)),
+        default=Value(_worst_case(0)),
+        output_field=money,
+    )
+    held = Greatest(
+        actual,
+        ExpressionWrapper(
+            F("check_runs__scenario_count") * per_execution, output_field=money
+        ),
+        output_field=money,
+    )
+    # A run a retry adopted holds its simulation's bill here; its evals are the retry's.
+    settled = Q(check_runs__fix_cost_usd__isnull=False) & (
+        Q(check_runs__test_execution__status__in=_SETTLED_RUN_STATUSES)
+        | Q(check_runs__graded_for__isnull=False)
+    )
+    # A graded run settles before its fix has a winner, and the winner's grading runs its
+    # evals later. So while the fix goes on, they stay held on top of what it billed.
+    # Only a run that completed is ever graded.
+    awaiting_grading = (
+        graded
+        & Q(state__in=AgentFixRun.ACTIVE_STATES)
+        & Q(check_runs__test_execution__status=TestExecution.ExecutionStatus.COMPLETED)
+        & Q(check_runs__graded_for__isnull=True)
+    )
+    pending_evals = Case(
+        When(
+            awaiting_grading,
+            then=ExpressionWrapper(
+                F("check_runs__scenario_count") * (_worst_case(evals) - _worst_case(0)),
+                output_field=money,
+            ),
+        ),
+        default=Value(Decimal(0)),
+        output_field=money,
+    )
+    spent = Coalesce(Sum(actual, filter=live), Value(Decimal(0)), output_field=money)
+    committed = Coalesce(
+        Sum(
+            Case(
+                When(
+                    settled,
+                    then=ExpressionWrapper(actual + pending_evals, output_field=money),
+                ),
+                default=held,
+                output_field=money,
+            ),
+            filter=live,
+        ),
         Value(Decimal(0)),
         output_field=money,
     )
-    unsealed = Coalesce(
-        Sum(
-            "check_runs__scenario_count",
-            filter=live & Q(check_runs__fix_cost_usd__isnull=True),
-        ),
-        0,
+    # The runs it read again: what their evals billed, and the worst case of the evals its
+    # winner's grading runs on them, while it goes on and while that grading runs.
+    adopted = HostedHarnessJob.no_workspace_objects.filter(
+        graded_for=OuterRef("pk"), deleted=False
+    ).values("graded_for")
+    adopted_billed = Coalesce(
+        Subquery(adopted.annotate(total=Sum("fix_eval_cost_usd")).values("total")),
+        Value(Decimal(0)),
+        output_field=money,
     )
-    worst_case = Value(Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION))
+
+    def adopted_executions(runs: QuerySet[HostedHarnessJob, Any]) -> Coalesce:
+        return Coalesce(
+            Subquery(runs.annotate(total=Sum("scenario_count")).values("total")), 0
+        )
+
+    grading = adopted.exclude(test_execution__status__in=_SETTLED_RUN_STATUSES)
+    adopted_held = ExpressionWrapper(
+        Case(
+            When(state__in=AgentFixRun.ACTIVE_STATES, then=adopted_executions(adopted)),
+            default=adopted_executions(grading),
+        )
+        * (_worst_case(evals) - _worst_case(0)),
+        output_field=money,
+    )
     return runs.annotate(
-        fix_spent_usd=ExpressionWrapper(F("spent_usd") + sealed, output_field=money),
+        fix_spent_usd=ExpressionWrapper(
+            F("spent_usd") + spent + adopted_billed, output_field=money
+        ),
         committed_usd=ExpressionWrapper(
-            F("spent_usd") + sealed + unsealed * worst_case, output_field=money
+            F("spent_usd") + committed + adopted_billed + adopted_held,
+            output_field=money,
         ),
     )
 
 
-def committed_usd(fix_run: AgentFixRun) -> Decimal:
+def committed_usd(fix_run: AgentFixRun, *, eval_count: int | None = None) -> Decimal:
     """What the fix's limit is held against: its spend, and a worst case for each check run
-    whose usage is not sealed yet."""
-    return (
-        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))
+    whose usage is not sealed yet. ``eval_count`` is ``with_spend``'s."""
+    # committed_usd is with_spend's annotation, which the Django plugin cannot see.
+    committed: Decimal = (
+        with_spend(  # type: ignore[misc]
+            AgentFixRun.no_workspace_objects.filter(id=fix_run.id),
+            eval_count=eval_count,
+        )
         .values_list("committed_usd", flat=True)
         .get()
     )
+    return committed
 
 
 def run_number(path: str = "") -> Subquery:
@@ -564,13 +1105,32 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         .annotate(total=Count("id"))
         .values("total")
     )
+    # A deleted run keeps its row, but its page no longer opens: the fix names no run.
+    source_live = Q(
+        source_run__deleted=False, source_run__test_execution__deleted=False
+    )
     return (
         with_spend(runs)
         .annotate(
             number=Subquery(number),
-            source_run_number=run_number("source_run__"),
-            retried=Exists(
-                AgentFixRun.no_workspace_objects.filter(retried_from=OuterRef("pk"))
+            source_execution_id=Case(
+                When(source_live, then=F("source_run__test_execution_id")),
+                default=None,
+                output_field=UUIDField(),
+            ),
+            source_run_number=Case(
+                When(source_live, then=run_number("source_run__")),
+                default=None,
+                output_field=IntegerField(),
+            ),
+            retry_taken=Exists(
+                retries_taking_the_retry(
+                    Coalesce(
+                        OuterRef("retried_from_id"),
+                        OuterRef("pk"),
+                        output_field=UUIDField(),
+                    )
+                )
             ),
         )
         .select_related(
@@ -587,14 +1147,87 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+def fix_step(fix_run: AgentFixRun) -> str | None:
+    """The user's step the fix is on. A finished fix is done, whatever the engine last said."""
+    if fix_run.state not in AgentFixRun.ACTIVE_STATES:
+        return FixStep.DONE.value
+    return fix_run.step or None
+
+
+def held_back_cases(fix_run: AgentFixRun) -> int:
+    """The different cases of the run the fix held back, a variation counting as the case
+    it varies."""
+    request = FixRequest.model_validate(fix_run.request)
+    return len(
+        {
+            request.variation_parents.get(key, key)
+            for key in request.held_back_scenario_keys
+        }
+    )
+
+
+def too_few_held_back(fix_run: AgentFixRun) -> bool:
+    """Whether too few cases were held back to call this fix verified, however it scored,
+    none included: they must come from HELD_BACK_VERIFIED_MIN different cases of the run.
+    Its pull request opens as a draft."""
+    return held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
+
+
 def limited_validation(fix_run: AgentFixRun) -> bool:
-    """Whether too few cases were held back to call this fix verified, however it scored."""
-    held_back = fix_run.request.get("held_back_scenario_keys") or []
-    return len(held_back) < HELD_BACK_VERIFIED_MIN
+    """Whether some cases were held back, but too few to call this fix verified. A fix with
+    none held back is proven on the targets only instead."""
+    return held_back_cases(fix_run) > 0 and too_few_held_back(fix_run)
 
 
 # The tiers the engine's final check records for a finalist, in order.
-VERDICT_TIERS = ("static", "target", "held-back", "must-pass", "repeats", "ceilings")
+VERDICT_TIERS = (
+    "static",
+    "target",
+    "held-back",
+    "must-pass",
+    "repeats",
+    "ceilings",
+    "model-lock",
+)
+# The tiers that read skipped when what they check could not be measured. That proves
+# nothing either way, and refuses no candidate.
+UNVERIFIED_TIERS = frozenset({"ceilings", "model-lock"})
+
+
+def verdict_tiers(candidate: AgentFixCandidate) -> list[VerdictTier]:
+    """A candidate's checks as the fix page and the pull request read them, parsed from its
+    stored verdict: a check stored before a field existed reads that field's default.
+
+    An older engine gave the cost and latency check one status. For an agent whose cost the
+    platform does not meter, that status judged the reply time alone and the cost was never
+    measured. So the check reads as its reply time with that status, a cost unknown, and
+    not verified."""
+    tiers = [
+        VerdictTier.model_validate(tier)
+        for tier in (candidate.verdict or {}).get("tiers") or []
+    ]
+    if FixRequest.model_validate(candidate.fix_run.request).meters_agent_cost:
+        return tiers
+    return [
+        _unmetered_ceilings(tier)
+        if tier.name == "ceilings" and not tier.parts
+        else tier
+        for tier in tiers
+    ]
+
+
+def _unmetered_ceilings(tier: VerdictTier) -> VerdictTier:
+    cost = VerdictTierPart(name="agent cost", status="skipped")
+    # A skipped tier may not have measured the reply time either, so it says none.
+    if tier.status not in ("passed", "failed"):
+        return tier.model_copy(update={"parts": [cost]})
+    latency = VerdictTierPart(name="reply latency", status=tier.status)
+    return tier.model_copy(
+        update={
+            "status": "failed" if tier.status == "failed" else "skipped",
+            "parts": [latency, cost],
+        }
+    )
 
 
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
@@ -606,8 +1239,20 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
         return []
     verdict = candidate.verdict or {}
     # Fail closed: a verdict missing a tier, or naming one twice, proves too little.
-    tiers = [
+    recorded = [
         (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
+    ]
+    # An engine before the model-lock tier checked the lock inside the screens' tiers,
+    # and every tier it skipped went unrun: its verdicts are read as they always were.
+    locked = any(name == "model-lock" for name, _ in recorded)
+    tiers = [
+        (
+            name,
+            "passed"
+            if locked and name in UNVERIFIED_TIERS and status == "skipped"
+            else status,
+        )
+        for name, status in recorded
     ]
     # The frozen plan, not the verdict being checked, says whether the final check owed a
     # held-back tier: the engine drops that tier when it froze no held-back case.
@@ -617,7 +1262,7 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     expected = [
         (name, "failed" if name == "must-pass" else "passed")
         for name in VERDICT_TIERS
-        if held_back or name != "held-back"
+        if (held_back or name != "held-back") and (locked or name != "model-lock")
     ]
     regressions = verdict.get("must_pass_regressions") or []
     # The engine names a lost protected case only in prose, so every regression on a
@@ -630,25 +1275,56 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     return list(regressions)
 
 
+def retries_taking_the_retry(original_id: Any) -> QuerySet[AgentFixRun]:
+    """The retries of a failed fix that took its one retry: each that started, or still
+    waits to start. One that ended before it started (it could not be scheduled, or waited
+    too long for a slot) spent nothing, so the retry stays free."""
+    return AgentFixRun.no_workspace_objects.filter(
+        Q(started_at__isnull=False) | Q(state__in=AgentFixRun.ACTIVE_STATES),
+        retried_from_id=original_id,
+    )
+
+
+def was_the_retry(fix_run: AgentFixRun) -> bool:
+    """A retry that started, so it took its failed fix's one retry."""
+    return fix_run.retried_from_id is not None and fix_run.started_at is not None
+
+
 def is_retryable(fix_run: AgentFixRun) -> bool:
-    """A failed fix not started again yet. Whatever failed it, the user may try once more;
-    a fix that came through fix_runs_for_read answers without a query."""
-    if fix_run.state != AgentFixRun.State.FAILED:
+    """Whether Retry starts this failed fix again, or the one it retried when it never
+    started. Whatever failed it, the user may try once more, and only once: a retry that
+    started and fails is not retried again. An outside attempt is never retried: its coding
+    agent submits again. A fix that came through fix_runs_for_read answers without a query."""
+    if (
+        fix_run.state != AgentFixRun.State.FAILED
+        or was_the_retry(fix_run)
+        or is_outside_attempt(fix_run)
+    ):
         return False
-    retried = getattr(fix_run, "retried", None)
-    return not (fix_run.retries.exists() if retried is None else retried)
+    taken = getattr(fix_run, "retry_taken", None)
+    if taken is None:
+        original_id = fix_run.retried_from_id or fix_run.id
+        taken = retries_taking_the_retry(original_id).exists()
+    return not taken
+
+
+def is_outside_attempt(fix_run: AgentFixRun) -> bool:
+    """Whether the fix verifies a tree a person's own coding agent submitted."""
+    return bool((fix_run.request or {}).get("outside_candidate"))
 
 
 def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
-    """The fix's id, then the ids of the failed fixes it retries, newest first."""
-    ids, earlier = [fix_run.id], fix_run.retried_from_id
+    """The fix's id, then the ids of the fixes whose check runs it reuses, newest first:
+    the failed fixes it retries, or the outside attempts on its run before it."""
+    ids, earlier = [fix_run.id], fix_run.retried_from_id or fix_run.attempt_of_id
     while earlier is not None:
         ids.append(earlier)
-        earlier = (
+        before = (
             AgentFixRun.no_workspace_objects.filter(id=earlier)
-            .values_list("retried_from_id", flat=True)
+            .values_list("retried_from_id", "attempt_of_id")
             .first()
         )
+        earlier = (before[0] or before[1]) if before else None
     return ids
 
 
@@ -669,6 +1345,55 @@ def check_run_parallelism(fix_run: AgentFixRun) -> int:
     if baseline is None:
         return settings.AGENT_FIX_CHECK_RUN_PARALLELISM
     return ran_at(baseline)
+
+
+def answers_request(
+    run: HostedHarnessJob,
+    *,
+    scenario_keys: Sequence[str],
+    trials: int | None,
+    parallelism: int,
+) -> bool:
+    """Whether a finished check run answers a request for these scenarios (in the order
+    sent), trials and parallelism, so a fix reads it again instead of running it. A run
+    at another parallelism is not comparable (ran_at), so it runs again."""
+    metadata = (run.payload or {}).get("metadata") or {}
+    return (
+        metadata.get("selected_scenario_keys") == list(scenario_keys)
+        and metadata.get("trials") == trials
+        and ran_at(run) == parallelism
+    )
+
+
+def _reused_baselines(attempt_of: AgentFixRun) -> list[HostedHarnessJob]:
+    """The baseline repeats the next outside attempt after ``attempt_of`` reads again.
+    The next attempt asks what the last asked, so each finished baseline is matched to
+    the newest one's scenarios and trials, at the parallelism the next one runs at. This
+    mirrors _finished_earlier's criteria (answers_request), so the hold never counts a
+    run start_check_run runs again."""
+    finished = list(
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(attempt_of),
+            fix_label__regex=_BASELINE_LABEL.pattern,
+            state=HostedHarnessJob.State.COMPLETED,
+            deleted=False,
+        ).order_by("created_at")
+    )
+    if not finished:
+        return []
+    newest = (finished[-1].payload or {}).get("metadata") or {}
+    parallelism = check_run_parallelism(attempt_of)
+    matching = [
+        run
+        for run in finished
+        if answers_request(
+            run,
+            scenario_keys=newest.get("selected_scenario_keys") or [],
+            trials=newest.get("trials"),
+            parallelism=parallelism,
+        )
+    ]
+    return _each_repeat(matching, _BASELINE_LABEL)[:OUTSIDE_REPEATS]
 
 
 def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
@@ -720,11 +1445,34 @@ def _pooled(
     return sum(one[0] for one in rows), sum(one[1] for one in rows)
 
 
-def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
-    """The platform evals the winner does worse on than the base version, on the scenarios
-    both ran. They do not decide a fix's verdict, so the person who reviews it reads them
-    here. Evals land after their call ends, so this reads them rather than a snapshot."""
-    winner = next(
+# The base version's repeats and a candidate's final check, the runs a winner's evals compare.
+# A repeat that failed on our side is asked for once more as ``<label>-again``.
+_BASELINE_LABEL = re.compile(r"^baseline-r(\d+)(?:-again)?$")
+_FINALIST_LABEL = re.compile(r"^c\d+-finalist-r(\d+)(?:-again)?$")
+
+
+_UNGRADED_STATES = (HostedHarnessJob.State.FAILED, HostedHarnessJob.State.CANCELED)
+
+
+def _each_repeat(
+    runs: Iterable[HostedHarnessJob], label: re.Pattern[str]
+) -> list[HostedHarnessJob]:
+    """Each repeat's run: its replacement when the first failed and the engine asked for it
+    again, else the first. A run that failed or was cancelled is never one, so a repeat
+    with no other is left out."""
+    chosen: dict[str, HostedHarnessJob] = {}
+    for run in runs:
+        found = label.match(run.fix_label)
+        if found is None or run.state in _UNGRADED_STATES:
+            continue
+        repeat = found.group(1)
+        if repeat not in chosen or run.fix_label.endswith("-again"):
+            chosen[repeat] = run
+    return [chosen[repeat] for repeat in sorted(chosen, key=int)]
+
+
+def fix_winner(fix_run: AgentFixRun) -> AgentFixCandidate | None:
+    return next(
         (
             one
             for one in fix_run.candidates.all()
@@ -732,23 +1480,117 @@ def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
         ),
         None,
     )
-    if winner is None:
-        return []
-    evals = live_eval_specs(fix_run.environment.run_test_id)
-    mine = _eval_trials(
-        [
-            run.id
-            for run in fix_run.check_run_list
-            if run.agent_version_id == winner.agent_version_id
-        ],
-        evals,
+
+
+def graded_check_runs(
+    fix_run: AgentFixRun, winner: AgentFixCandidate
+) -> tuple[list[HostedHarnessJob], list[HostedHarnessJob]]:
+    """The base version's baseline repeats and the winner's final check: the runs a fix's
+    evals grade once it has a winner, and all they compare. A retry's baselines include the
+    ones it read again from the failed fix, and only those: what its limit holds. A later
+    outside attempt's include the baselines an earlier attempt's winner claimed, which keep
+    that claim (start_check_run): they are read, and topped up only where a finished call
+    lacks a verdict (runs_lacking_verdicts)."""
+    check_runs: list[HostedHarnessJob] | None = getattr(fix_run, "check_run_list", None)
+    if check_runs is None:
+        check_runs = list(HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run))
+        fix_run.check_run_list = check_runs
+    own = [
+        run
+        for run in check_runs
+        if run.agent_version_id == fix_run.base_agent_version_id
+    ]
+    adopted = list(
+        HostedHarnessJob.no_workspace_objects.filter(
+            graded_for=fix_run, deleted=False
+        ).order_by("created_at")
     )
-    base = _eval_trials([run.id for run in base_check_runs(fix_run)], evals)
+    labels = {run.fix_label for run in [*own, *adopted]}
+    # Newest first, as _finished_earlier reads again: parallelism only falls along
+    # a lineage, so each repeat's newest claimed run is the one this fix compared.
+    graded_earlier = [
+        run
+        for run in HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(fix_run)[1:],
+            agent_version_id=fix_run.base_agent_version_id,
+            state=HostedHarnessJob.State.COMPLETED,
+            graded_at__isnull=False,
+            deleted=False,
+        )
+        .exclude(fix_label__in=labels)
+        .order_by("-created_at")
+        if _BASELINE_LABEL.match(run.fix_label)
+    ]
+    base = _each_repeat([*own, *adopted, *graded_earlier], _BASELINE_LABEL)
+    final = _each_repeat(
+        (run for run in check_runs if run.agent_version_id == winner.agent_version_id),
+        _FINALIST_LABEL,
+    )
+    return base, final
+
+
+def _graded_calls(runs: Iterable[HostedHarnessJob]) -> list[tuple[Any, dict[str, Any]]]:
+    """Each finished call of ``runs``, as its run's id and its stored eval outputs: the
+    calls a winner's grading queues (queue_evals_for_finished_calls) and its read reads."""
+    return [
+        (job_id, outputs if isinstance(outputs, dict) else {})
+        for job_id, outputs in HostedHarnessExecution.no_workspace_objects.filter(
+            job_id__in=[run.id for run in runs],
+            call_execution__status=CallExecution.CallStatus.COMPLETED,
+        ).values_list("job_id", "call_execution__eval_outputs")
+    ]
+
+
+def _lacking(
+    calls: Iterable[tuple[Any, dict[str, Any]]], config_ids: Collection[str]
+) -> set[Any]:
+    return {
+        job_id
+        for job_id, outputs in calls
+        if not all(is_sealed_verdict(outputs.get(one)) for one in config_ids)
+    }
+
+
+def runs_lacking_verdicts(
+    runs: Iterable[HostedHarnessJob], config_ids: Collection[str]
+) -> set[UUID]:
+    """The runs with a finished call that holds no sealed verdict of one of
+    ``config_ids``: never graded, a grading that failed or was put back, one still
+    pending, or an eval added since. Derived, never stored; empty for no evals or no
+    finished call. A winner's grading tops these up, and their hold keeps their evals."""
+    if not config_ids:
+        return set()
+    return _lacking(_graded_calls(runs), config_ids)
+
+
+def eval_review(fix_run: AgentFixRun) -> EvalReview:
+    """The platform evals the winner does worse on than the base version, on the scenarios
+    both ran, and how far their grading is. A fix grades only its winner's final check and
+    the baseline, so these are all it compares. They do not decide its verdict; the person
+    who ships it reads them, once no grading is pending."""
+    winner = fix_winner(fix_run)
+    if winner is None:
+        return EvalReview(grading=EvalGrading.NONE)
+    run_test_id = fix_run.environment.run_test_id
+    base, final = graded_check_runs(fix_run, winner)
+    billed = set(runnable_eval_config_ids(run_test_id))
+    base_calls, final_calls = _graded_calls(base), _graded_calls(final)
+    calls = base_calls + final_calls
+    rows = [outputs.get(one) for _, outputs in calls for one in billed]
+    scoring = TestExecution.objects.filter(
+        id__in=[run.test_execution_id for run in (*base, *final)],
+        status=TestExecution.ExecutionStatus.EVALUATING,
+    ).exists()
+    if scoring or any(is_pending_placeholder(row) for row in rows):
+        return EvalReview(grading=EvalGrading.PENDING)
+    evals = live_eval_specs(run_test_id)
+    mine = _eval_trials([run.id for run in final], evals)
+    theirs = _eval_trials([run.id for run in base], evals)
     warnings = []
     for config_id, live in evals.items():
-        shared = mine[config_id].keys() & base[config_id].keys()
+        shared = mine[config_id].keys() & theirs[config_id].keys()
         passed, trials = _pooled(mine[config_id], shared)
-        base_passed, base_trials = _pooled(base[config_id], shared)
+        base_passed, base_trials = _pooled(theirs[config_id], shared)
         if verdict(passed, trials, base_passed, base_trials)[0] == REGRESSED:
             warnings.append(
                 EvalWarning(
@@ -759,13 +1601,29 @@ def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
                     base_trials=base_trials,
                 )
             )
-    return warnings
+    # Grading with an arm that has no graded call compared nothing: it is not done.
+    compared_both = not billed or bool(base_calls and final_calls)
+    # Done is what a winner's grading reads as nothing left to top up (runs_lacking_verdicts).
+    return EvalReview(
+        grading=(
+            EvalGrading.DONE
+            if compared_both and not _lacking(calls, billed)
+            else EvalGrading.INCOMPLETE
+        ),
+        warnings=warnings,
+        compared=len(evals),
+    )
 
 
-def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
+def fix_runs_for_environment(
+    environment: HostedHarnessJob, states: list[str] | None = None
+) -> QuerySet[AgentFixRun]:
+    """An environment's fixes, newest first; with `states`, only those in them."""
+    fixes = AgentFixRun.no_workspace_objects.filter(environment=environment)
+    if states:
+        fixes = fixes.filter(state__in=states)
     return fix_runs_for_read(
-        AgentFixRun.no_workspace_objects.filter(environment=environment)
-        .select_related("base_agent_version", "source_run")
+        fixes.select_related("base_agent_version", "source_run")
         # The id breaks ties, so a page holds still while fixes are added.
         .order_by("-created_at", "-id")
     )
@@ -798,19 +1656,44 @@ def launch_blocker(
     when nothing would. Launch checks usage itself, to answer with the usage refusal."""
     if source_run.state not in FINISHED_RUN_STATES:
         return HostedHarnessError(
-            "fix_source_running", "wait for the run to finish", status_code=409
-        )
-    try:
-        agent_kind(source_run.environment).require_available()
-    except HostedHarnessError as exc:
-        return exc
-    if AgentFixRun.no_workspace_objects.filter(
-        environment=source_run.environment, state__in=AgentFixRun.ACTIVE_STATES
-    ).exists():
-        return HostedHarnessError(
-            "fix_run_active",
-            "this environment already has a fix in progress",
+            "fix_source_running",
+            "This run is still going. Run an epoch once it finishes.",
             status_code=409,
+        )
+    environment = source_run.environment
+    if environment is None:
+        # As launch_fix_run and variations_blocker refuse one.
+        return HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    if blocked := agent_blocker(environment) or unversioned_blocker(environment):
+        return blocked
+    if blocked := active_fix_blocker(environment):
+        return blocked
+    # An issue's baseline holds the environment for the epoch launched from it.
+    measuring = (
+        AgentFixIssueJob.no_workspace_objects.filter(
+            environment=source_run.environment,
+            baseline_run__isnull=False,
+            fix_run__isnull=True,
+            ending__isnull=True,
+        )
+        .exclude(baseline_run=source_run)
+        .select_related("evidence_import__source_issue")
+        .first()
+    )
+    if measuring is not None:
+        # selectors.agent_fix_issue imports this module.
+        from simulate.selectors.agent_fix_issue import live_issue
+
+        issue = live_issue(measuring.evidence_import.source_issue)
+        return HostedHarnessError(
+            "issue_epoch_measuring",
+            "An epoch from an Error Feed issue is starting in this environment. Wait"
+            " for it, or open it.",
+            status_code=409,
+            # Its issue's page shows it, as the issue's own refusal links it.
+            details={"cluster_id": issue.cluster_id if issue else None},
         )
     if usage:
         decision = check_harness_action(str(source_run.organization_id), "agent_fix")
@@ -823,6 +1706,397 @@ def launch_blocker(
     return None
 
 
+def active_fix_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
+    """The refusal while an Epoch is already running in the environment: one at a time."""
+    if not AgentFixRun.no_workspace_objects.filter(
+        environment=environment, state__in=AgentFixRun.ACTIVE_STATES
+    ).exists():
+        return None
+    return HostedHarnessError(
+        "fix_run_active",
+        "An epoch is already running in this environment. Open it, or wait for it to"
+        " finish.",
+        status_code=409,
+    )
+
+
+HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
+
+
+def split_held_back(
+    seed: str,
+    failing: Mapping[str, list[str]],
+    parents: Mapping[str, str] | None = None,
+) -> list[str]:
+    """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
+    the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
+    and never the last cases left to search on for a failing sub-goal. None below twelve.
+
+    A variation (a key of ``parents``) goes with the case it varies: a case and its
+    variations are held back together or not at all."""
+    parents = parents or {}
+    cases = [key for key, names in failing.items() if names]
+    if len(cases) < HELD_BACK_MIN_CASES:
+        return []
+    families: dict[str, list[str]] = {}
+    for key in cases:
+        families.setdefault(parents.get(key, key), []).append(key)
+    quota = len(cases) // HELD_BACK_SHARE
+    searched = Counter(name for key in cases for name in failing[key])
+    held: list[str] = []
+    for parent in sorted(
+        families, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
+    ):
+        if len(held) == quota:
+            break
+        family = families[parent]
+        names = Counter(name for key in family for name in failing[key])
+        if len(held) + len(family) <= quota and all(
+            searched[name] > count for name, count in names.items()
+        ):
+            held.extend(family)
+            searched.subtract(names)
+    return held
+
+
+def held_back_keys(
+    source_run: HostedHarnessJob,
+    failing: Mapping[str, list[str]],
+    locked_version: "LockedVersionSplits | None",
+) -> list[str]:
+    """The failing cases the worker never sees. On a run of a locked version they are the
+    failing cases of its test split, however few. On any other run, split_held_back
+    samples them."""
+    if locked_version is None:
+        return split_held_back(str(source_run.id), failing)
+    return [
+        key
+        for key, names in failing.items()
+        if names and key in locked_version.test_keys
+    ]
+
+
+def agent_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
+    """Why Epoch can't change the environment's agent here, checked first on every way
+    an epoch starts: an agent no kind can change, then a deployment that can't change it.
+    Read without the agent version, which unversioned_blocker asks for."""
+    kind = pickable_kind(environment)
+    if kind is None:
+        return not_editable()
+    try:
+        kind.require_available()
+    except HostedHarnessError as exc:
+        return exc
+    return None
+
+
+def unversioned_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
+    """An environment with no agent version (made before they were kept, or its version
+    was deleted) has none for an epoch to change, and every later step works on it. More
+    scenarios may pin one, but no later chat, edit or extend saves the first environment
+    versions drafting needs; a new environment's build makes both."""
+    if environment.agent_version_id is not None:
+        return None
+    return HostedHarnessError(
+        "environment_agent_unversioned",
+        "This environment has no saved version of its agent, so Epoch can't change"
+        " it. Build a new environment from the same upload or GitHub repository,"
+        " then Run Epoch there.",
+        status_code=422,
+    )
+
+
+def environment_state_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """Why the environment can't take an epoch's work now by its own state, in words that
+    say what to do; None when it can. An environment is built once its first build saved
+    its versions: before that its build is running or did not finish, and after it an
+    update (a rebuild, more scenarios, or a re-run of its calls) is. More scenarios run
+    the environment again, so its state says so; a settled environment's leftover
+    ``scenario_extend`` marker is not an update. A settled one with no agent version
+    answers unversioned_blocker."""
+    from simulate.services.harness_versioning import drafts
+
+    built = environment.environment_version_id is not None
+    ended = environment.state in (
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    )
+    if not built and ended:
+        return HostedHarnessError(
+            "environment_build_failed",
+            "This environment's build didn't finish. Open the environment to build it"
+            " again, then Run Epoch.",
+            status_code=409,
+        )
+    if not built and environment.state != HostedHarnessJob.State.COMPLETED:
+        return HostedHarnessError(
+            "environment_not_built",
+            "This environment is still being built. Run Epoch once its build finishes.",
+            status_code=409,
+        )
+    if built and ended:
+        return HostedHarnessError(
+            "environment_update_failed",
+            "This environment's last update didn't finish. Open the environment to run"
+            " it again, then Run Epoch.",
+            status_code=409,
+        )
+    if blocked := unversioned_blocker(environment):
+        return blocked
+    if not built:
+        # Built before versions were saved: the checks after this one say why.
+        return None
+    updating = environment.state != HostedHarnessJob.State.COMPLETED
+    if not updating:
+        try:
+            drafts.require_no_rebuild(environment)
+        except HostedHarnessError:
+            updating = True
+    if updating:
+        return HostedHarnessError(
+            "environment_updating",
+            "This environment is updating. Run Epoch once the update finishes.",
+            status_code=409,
+        )
+    return None
+
+
+# What a pull request still needs, said before launch: the route's own refusal offers the
+# patch, which exists only once there is a winner.
+_SHIP_BEFORE_LAUNCH = {
+    "fix_github_not_connected": "This agent version isn't connected through the Future"
+    " AGI GitHub App. To get pull requests, connect GitHub, update the agent from its"
+    " repository, and run Epoch on the new version.",
+    "fix_github_commit_unknown": "The commit this run checked out isn't known, so a"
+    " pull request can't be opened from it.",
+    "github_repository_invalid": "The agent's repository name can't be read, so a pull"
+    " request can't be opened.",
+}
+
+
+def _agent_runtime(agent_version_id: Any) -> HarnessAgentVersionRuntime | None:
+    return HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=agent_version_id
+    ).first()
+
+
+def github_ship_source(
+    agent_version_id: Any, run: HostedHarnessJob | None
+) -> tuple[str, str, str, str]:
+    """The installation, repository, ref and commit a pull request for this GitHub agent
+    version opens from ``run``'s checkout, or the refusal."""
+    return _pull_request_source(_agent_runtime(agent_version_id), run, before_run=False)
+
+
+def _pull_request_source(
+    runtime: HarnessAgentVersionRuntime | None,
+    run: HostedHarnessJob | None,
+    *,
+    before_run: bool,
+) -> tuple[str, str, str, str]:
+    """``github_ship_source`` from the version's runtime, read once. ``before_run``, before
+    the run a fix starts from exists, reads no commit and gives it back empty."""
+    access = (
+        (runtime.agent_payload or {}).get("source_access") or {}
+        if runtime is not None
+        and runtime.source_kind == HarnessAgentVersionRuntime.SourceKind.GITHUB
+        else {}
+    )
+    installation_id = str(access.get("installation_id") or "")
+    if runtime is None or not installation_id:
+        raise HostedHarnessError(
+            "fix_github_not_connected",
+            "A pull request needs the agent's repository connected through the Future AGI"
+            " GitHub App; download the patch instead",
+            status_code=422,
+        )
+    source = runtime.source or {}
+    repository = str(source.get("repository") or "")
+    if not safe_repository(repository):
+        raise HostedHarnessError(
+            "github_repository_invalid", "invalid GitHub repository", status_code=422
+        )
+    commit = ""
+    if not before_run:
+        run_source = ((run.payload if run else None) or {}).get("source") or {}
+        commit = str(run_source.get("commit_sha") or "")
+        if not commit:
+            # The patch was made on the commit the run checked out; a branch tip may differ.
+            raise HostedHarnessError(
+                "fix_github_commit_unknown",
+                "the commit the run checked out is not known; download the patch instead",
+                status_code=409,
+            )
+    return installation_id, repository, str(source.get("ref") or ""), commit
+
+
+_SHIP_PATHS: dict[str, ShipPath] = {
+    HarnessAgentVersionRuntime.SourceKind.GITHUB: ShipPath.PULL_REQUEST,
+    HarnessAgentVersionRuntime.SourceKind.ARCHIVE: ShipPath.MAKE_DEFAULT,
+}
+
+
+def ship_readiness(
+    agent_version_id: Any, run: HostedHarnessJob | None
+) -> ShipReadiness | None:
+    """How a winner of an epoch on this agent version, from ``run`` or from a run still to
+    come (None), would ship: a GitHub agent's as a pull request, with why one couldn't open
+    now; an uploaded one's as the default. None for an agent Epoch can't change."""
+    runtime = _agent_runtime(agent_version_id)
+    path = _SHIP_PATHS.get(runtime.source_kind) if runtime else None
+    if path != ShipPath.PULL_REQUEST:
+        return ShipReadiness(path=path) if path else None
+    try:
+        _pull_request_source(runtime, run, before_run=run is None)
+    except HostedHarnessError as exc:
+        return ShipReadiness(
+            path=ShipPath.PULL_REQUEST,
+            blocked=LaunchBlocked(
+                code=exc.code, message=_SHIP_BEFORE_LAUNCH.get(exc.code, exc.message)
+            ),
+        )
+    return ShipReadiness(path=ShipPath.PULL_REQUEST)
+
+
+def fewest_failing_cases() -> int:
+    """The fewest failing cases a fix starts from: below the floor it writes variations of
+    each, and with every variation failing these just reach it."""
+    floor = settings.AGENT_FIX_MIN_FAILING_CASES
+    return -(-floor // (1 + VARIATIONS_PER_CASE))
+
+
+def verified_cases_min() -> int:
+    """The fewest failing cases a fix that writes variations can end verified from. Its
+    held-back cases must come from HELD_BACK_VERIFIED_MIN cases, held back each with its
+    variations, within one in HELD_BACK_SHARE of all its cases; every case brings at most
+    VARIATIONS_PER_CASE variations, so the cases kept to search on hold at least
+    (HELD_BACK_SHARE - 1) times what is held back."""
+    held = HELD_BACK_VERIFIED_MIN
+    return held + -(-(HELD_BACK_SHARE - 1) * held // (1 + VARIATIONS_PER_CASE))
+
+
+_UNSAVED_WORDS = {"suite": "scenario", "environment": "setup"}
+
+
+def unsaved_changes(pieces: Iterable[str]) -> str | None:
+    """The unsaved changes the given draft pieces hold, in the words the user sees
+    ("scenario", "setup", or both); None when there are none."""
+    held = set(pieces)
+    words = [word for piece, word in _UNSAVED_WORDS.items() if piece in held]
+    return " and ".join(words) or None
+
+
+def fresh_draft_pieces(environment: HostedHarnessJob) -> list[str]:
+    """The pieces with an unsaved draft on the environment's current versions."""
+    from simulate.services.harness_versioning import drafts
+
+    return [
+        piece
+        for piece, ref in drafts.draft_refs(environment).items()
+        if ref.id is not None
+    ]
+
+
+def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | None:
+    """What would refuse a fix that first writes variations of its failing cases, on top of
+    launch_blocker; None when nothing would. The environment's builder writes them in its
+    chat's workspace, which holds any unsaved scenario or setup changes, so those must be
+    saved or discarded first: the variations are written from the run's cases only."""
+    environment = source_run.environment
+    if environment is None:
+        return HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    # As launch_blocker says it: a run on an environment with no agent version is
+    # unpinned too, and running it again would not change that.
+    if blocked := agent_blocker(environment) or unversioned_blocker(environment):
+        return blocked
+    if source_run.suite_version_id is None or source_run.environment_version_id is None:
+        return HostedHarnessError(
+            "fix_variations_unpinned",
+            "This run was made before versions were saved. Run the environment again,"
+            " then run the epoch.",
+            status_code=409,
+        )
+    if blocked := environment_state_blocker(environment):
+        return blocked
+    moved = variations_source_moved(environment, source_run)
+    if moved is not None:
+        return moved
+    return environment_variations_blocker(environment)
+
+
+def environment_variations_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """What of the environment itself would stop its builder writing variations: its
+    chat's saved files are gone, a rebuild is pending, or unsaved changes are open.
+    A launch that writes variations asks it (variations_blocker), and so does Run
+    Epoch from an issue before its baseline is paid for."""
+    from simulate.services.harness_versioning import drafts
+
+    if HostedHarnessConversation.no_workspace_objects.filter(
+        job=environment, state=HostedHarnessConversation.State.RETIRED
+    ).exists():
+        return HostedHarnessError(
+            "conversation_workspace_not_ready",
+            "This environment's saved files are no longer available; rebuild it to"
+            " write variations.",
+            status_code=409,
+        )
+    try:
+        drafts.require_no_rebuild(environment, piece="suite")
+    except HostedHarnessError as exc:
+        return exc
+    if unsaved := unsaved_changes(fresh_draft_pieces(environment)):
+        return HostedHarnessError(
+            "fix_draft_open",
+            f"This environment has unsaved {unsaved} changes. Save or discard them,"
+            " then run Epoch.",
+            status_code=409,
+        )
+    return None
+
+
+def variations_source_moved(
+    environment: HostedHarnessJob, source_run: HostedHarnessJob
+) -> HostedHarnessError | None:
+    """Why variations can't be written from this run now, if its environment's scenarios
+    or setup moved since it ran: the builder writes them from the environment as it is,
+    and the fix's suite holds the run's cases as they ran, so both must be one basis."""
+    if (environment.suite_version_id, environment.environment_version_id) == (
+        source_run.suite_version_id,
+        source_run.environment_version_id,
+    ):
+        return None
+    return HostedHarnessError(
+        "fix_variations_source_moved",
+        "The environment's scenarios or setup changed since this run. Run the"
+        " environment again and start the epoch from that run: its variations are"
+        " written from the cases as they ran.",
+        status_code=409,
+    )
+
+
+def launch_surfaces(offered: Iterable[Surface]) -> list[LaunchSurface]:
+    """Each part of an agent the launch form names, and whether an epoch may change it
+    on this kind of agent."""
+    allowed = set(offered)
+    return [
+        LaunchSurface(
+            id=surface,
+            label=label,
+            allowed=surface in allowed,
+            reason=None
+            if surface in allowed
+            else f"Epoch can't change the {label.lower()} of this kind of agent.",
+        )
+        for surface, label in SURFACE_LABELS.items()
+    ]
+
+
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
     try:
         return agent_kind(environment)
@@ -832,6 +2106,9 @@ def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
 
 def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     """Everything the launch form shows and prefills for a finished run of an environment."""
+    # Imported here, as drafts is above.
+    from simulate.services.harness_versioning.locked_versions import run_locked_version
+
     environment = source_run.environment
     kind = _kind_or_none(environment)
     version_id = (
@@ -839,10 +2116,45 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         if kind
         else source_run.agent_version_id or environment.agent_version_id
     )
-    version = AgentVersion.no_workspace_objects.select_related(
-        "agent_definition", "harness_runtime"
-    ).get(id=version_id)
+    # None with no agent version on the run or its environment: launch_blocker says so.
+    version = (
+        AgentVersion.no_workspace_objects.select_related(
+            "agent_definition", "harness_runtime"
+        )
+        .filter(id=version_id)
+        .first()
+    )
     scenarios = scenario_results(source_run)
+    # A scenario an evidence import added offers Run Epoch from that evidence.
+    origins = (
+        evidence_origins(environment, [one.key for one in scenarios])
+        if environment is not None
+        else []
+    )
+    imported = {
+        key: origin.import_id for origin in origins for key in origin.scenario_keys
+    }
+    locked_version = run_locked_version(source_run)
+    splits = locked_version.splits if locked_version else {}
+    scenarios = [
+        one.model_copy(
+            update={
+                "evidence_import_id": imported.get(one.key),
+                "split": splits.get(one.key),
+            }
+        )
+        for one in scenarios
+    ]
+    targets = {
+        one.key: one.failing_sub_goals for one in scenarios if one.failing_sub_goals
+    }
+    failing = len(targets)
+    # Below the floor a fix's suite also holds the variations it writes.
+    variations = (
+        VARIATIONS_PER_CASE * failing
+        if failing < settings.AGENT_FIX_MIN_FAILING_CASES
+        else 0
+    )
     offered = kind.surfaces if kind else frozenset()
     number = (
         HostedHarnessJob.no_workspace_objects.filter(id=source_run.id)
@@ -854,6 +2166,14 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         source_run.environment_version or environment.environment_version
     )
     blocked = launch_blocker(source_run)
+    variations_blocked = variations_blocker(source_run)
+    try:
+        usage = source_run_usage(source_run)
+    except HostedHarnessError as exc:
+        # The launch would be refused the same way: the form says so, rather than call
+        # the agent untraced.
+        usage = {}
+        blocked = blocked or exc
     return LaunchOptions(
         source_run=LaunchSourceRun(
             id=str(source_run.test_execution_id),
@@ -868,37 +2188,59 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             name=environment_name(environment),
             version=environment_version.version_number if environment_version else None,
         ),
-        agent=agent_identity(version),
+        agent=agent_identity(version) if version else None,
         scenarios=scenarios,
         suggested=LaunchSuggested(
             target_scenario_keys=[
                 one.key for one in scenarios if one.failing_sub_goals
             ],
-            protected_scenario_keys=[one.key for one in scenarios if one.passed],
+            # A test-split case can't be must-pass: the search would learn from it.
+            protected_scenario_keys=[
+                one.key
+                for one in scenarios
+                if one.passed and one.split != TaskSplit.TEST.value
+            ],
         ),
-        surfaces=[
-            LaunchSurface(
-                id=surface,
-                label=label,
-                allowed=surface in offered,
-                reason=None
-                if surface in offered
-                else "this kind of agent does not let a fix change it",
-            )
-            for surface, label in SURFACE_LABELS.items()
-        ],
+        surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
-            max_minutes=default_max_minutes(len(scenarios)),
+            max_minutes=default_max_minutes(len(scenarios) + variations),
+            allowed_models=models_called(usage),
+            agent_cost_metered=bool(usage),
+            agent_calls_unmeasured=bool(usage)
+            and all(one.partial for one in usage.values()),
+            reply_latency_margin_pct=MARGIN_PCT_DEFAULT,
+            cost_margin_pct=MARGIN_PCT_DEFAULT,
         ),
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,
             max_minutes_max=MAX_MINUTES_MAX,
-            scenarios_min=settings.AGENT_FIX_MIN_FAILING_CASES,
+            scenarios_min=fewest_failing_cases(),
+            cases_min=settings.AGENT_FIX_MIN_FAILING_CASES,
+            variations_per_case=VARIATIONS_PER_CASE,
+            verified_cases_min=verified_cases_min(),
             scenarios_max=SCENARIOS_MAX,
         ),
-        blocked=LaunchBlocked(code=blocked.code, message=blocked.message)
+        blocked=LaunchBlocked(
+            code=blocked.code,
+            message=blocked.message,
+            cluster_id=(blocked.details or {}).get("cluster_id"),
+        )
         if blocked
         else None,
+        variations_blocked=LaunchBlocked(
+            code=variations_blocked.code, message=variations_blocked.message
+        )
+        if variations_blocked
+        else None,
+        # As launch picks them for the suggested targets. On a locked pair they are the
+        # failing cases of its test split, known now. Off one, with variations to write
+        # first, they are picked after, with the variations.
+        held_back_scenario_keys=held_back_keys(source_run, targets, locked_version)
+        if locked_version or not variations
+        else None,
+        held_back_from="locked_version" if locked_version else "sample",
+        locked_version_label=locked_version.label if locked_version else None,
+        ship=ship_readiness(version_id, source_run),
     )

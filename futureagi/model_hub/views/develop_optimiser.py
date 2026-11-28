@@ -2,6 +2,7 @@ import concurrent.futures
 import json
 import re
 import time
+from typing import Any, NoReturn
 
 import pandas as pd
 import structlog
@@ -64,11 +65,11 @@ class DevelopOptimizer:
         self.dataset = self.optimize_dataset.dataset
         self.messages = self.optimize_dataset.messages
         if (
-            self.optimize_dataset.column_id
+            self.optimize_dataset.column is not None
             and self.optimize_dataset.column.dataset_id != self.dataset.id
         ):
             raise ValueError("Optimization column must belong to its dataset.")
-        self.api_call_log_row = None
+        self.api_call_log_row: Any = None
         if not avoid_cost:
             self._calculate_tokens_and_deduct()
         self.column = self.optimize_dataset.column
@@ -85,43 +86,45 @@ class DevelopOptimizer:
             }
         self.old_column = None
         self.new_column = None
-        self.prompt = None
+        self.prompt: str | None = None
 
     def _calculate_tokens_and_deduct(self):
         try:
-            column = Column.objects.get(
-                id=self.optimize_dataset.column_id, dataset=self.dataset
-            )
-            column_id = str(column.id)
+            column_id = ""
             opt_column_token_count = 0
-            cells = Cell.objects.filter(
-                column=column,
-                dataset=self.dataset,
-                row__dataset=self.dataset,
-                deleted=False,
-            )
-            cell_values_strings = []
-            cell_values_image_urls = []
-            for cell in cells:
-                if cell.status == CellStatus.ERROR.value:
-                    continue
-                try:
-                    if cell.column.data_type == DataTypeChoices.IMAGE.value:
-                        cell_values_image_urls.append(cell.value)
-                    else:
-                        cell_values_strings.append(cell.value)
-                except Exception:
-                    logger.error(f"cell not found for column id : {column_id}")
-                    cell_values_strings.append("")
-
-            input_words_string = " ".join(cell_values_strings)
-            opt_column_token_count = (
-                count_tiktoken_tokens(
-                    input_words_string, input_image_urls=cell_values_image_urls
+            if self.optimize_dataset.column_id is not None:
+                column = Column.objects.get(
+                    id=self.optimize_dataset.column_id, dataset=self.dataset
                 )
-                if count_tiktoken_tokens
-                else 0
-            )
+                column_id = str(column.id)
+                cells = Cell.objects.filter(
+                    column=column,
+                    dataset=self.dataset,
+                    row__dataset=self.dataset,
+                    deleted=False,
+                )
+                cell_values_strings = []
+                cell_values_image_urls = []
+                for cell in cells:
+                    if cell.status == CellStatus.ERROR.value:
+                        continue
+                    try:
+                        if cell.column.data_type == DataTypeChoices.IMAGE.value:
+                            cell_values_image_urls.append(cell.value)
+                        else:
+                            cell_values_strings.append(cell.value)
+                    except Exception:
+                        logger.error(f"cell not found for column id : {column_id}")
+                        cell_values_strings.append("")
+
+                input_words_string = " ".join(cell_values_strings)
+                opt_column_token_count = (
+                    count_tiktoken_tokens(
+                        input_words_string, input_image_urls=cell_values_image_urls
+                    )
+                    if count_tiktoken_tokens
+                    else 0
+                )
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -131,7 +134,7 @@ class DevelopOptimizer:
                 "reference_id": reference_id,
                 "input": column_id,
             }
-            organization = column.dataset.organization
+            organization = self.dataset.organization
             api_call_type = APICallTypeChoices.DATASET_OPTIMIZATION.value
             if log_and_deduct_cost_for_api_request is not None:
                 self.api_call_log_row = log_and_deduct_cost_for_api_request(
@@ -139,7 +142,7 @@ class DevelopOptimizer:
                     api_call_type,
                     config,
                     source="optimisation",
-                    workspace=column.dataset.workspace,
+                    workspace=self.dataset.workspace,
                 )
 
             # Non-chargeable tracking event — optimisation uses user's own API keys.
@@ -234,7 +237,7 @@ class DevelopOptimizer:
     def _get_optimization_dataset(self) -> OptimizationDataset:
         return OptimizationDataset.objects.filter(id=self.optim_obj_id).get()
 
-    def _handle_failure(self, error_message: str):
+    def _handle_failure(self, error_message: str) -> NoReturn:
         self.optimize_dataset.status = StatusType.FAILED.value
         self.optimize_dataset.optimized_k_prompts = [error_message]
         self.optimize_dataset.save()
@@ -363,16 +366,18 @@ class DevelopOptimizer:
         return [str(user_eval.template.description) for user_eval in user_eval_metrics]
 
     def _create_llm_client(self, config: dict | None = None) -> LLM:
-        config = config or self.model_config
+        resolved_config: dict = config or self.model_config or {}
+        temperature = resolved_config.get("temperature")
+        max_tokens = resolved_config.get("max_tokens")
         return LLM(
-            model_name=config.get("model_name", ""),
-            temperature=float(config.get("temperature", 0.7)),
-            max_tokens=int(config.get("max_tokens", 1000)),
+            model_name=resolved_config.get("model_name", ""),
+            temperature=float(0.7 if temperature is None else temperature),
+            max_tokens=int(1000 if max_tokens is None else max_tokens),
             provider="openai",
             config={
-                "frequency_penalty": config.get("frequency_penalty", 0),
-                "presence_penalty": config.get("presence_penalty", 0),
-                "top_p": config.get("top_p", 0),
+                "frequency_penalty": resolved_config.get("frequency_penalty", 0),
+                "presence_penalty": resolved_config.get("presence_penalty", 0),
+                "top_p": resolved_config.get("top_p", 0),
             },
         )
 
@@ -515,7 +520,7 @@ class DevelopOptimizer:
             # self.optimize_dataset.criteria_breakdown = self._create_criteria_breakdown()
             # self.optimize_dataset.save()
 
-            config = self.model_config
+            config: dict = self.model_config or {}
             time.time()
 
             model_manager = LiteLLMModelManager(config["model_name"])
@@ -527,8 +532,8 @@ class DevelopOptimizer:
                 prompt=self.prompt,
                 train_data=df_temp,
                 model_name=config["model_name"],
-                temperature=config["temperature"],
-                max_tokens=config["max_tokens"],
+                temperature=config.get("temperature") or 0.0,
+                max_tokens=config.get("max_tokens") or 4000,
                 provider=provider,
                 optimizer=self.optimize_dataset,
                 config={

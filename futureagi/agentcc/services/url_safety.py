@@ -95,6 +95,7 @@ def ensure_public_http_url(
     *,
     allow_private: bool = False,
     private_message: str | None = None,
+    allow_unresolvable: bool = False,
 ) -> None:
     _raise_if_unsafe_url(
         url,
@@ -102,6 +103,7 @@ def ensure_public_http_url(
         ValueError,
         allow_private=allow_private,
         private_message=private_message,
+        allow_unresolvable=allow_unresolvable,
     )
 
 

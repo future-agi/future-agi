@@ -46,5 +46,9 @@ class CapabilitiesResponseSerializer(serializers.Serializer):
         choices=[state.value for state in LicenseState],
     )
     features = serializers.DictField(child=CapabilityFeatureSerializer())
+    # Rollout availability, not a paid-plan entitlement.
+    metrics_enabled = serializers.BooleanField(default=False)
+    # A person's own coding agent can submit an Epoch attempt (rollout, not plan).
+    coding_agent_attempts_enabled = serializers.BooleanField(default=False)
     license = LicenseDetailsSerializer(required=False, allow_null=True)
     instance_id = serializers.UUIDField(required=False, allow_null=True)

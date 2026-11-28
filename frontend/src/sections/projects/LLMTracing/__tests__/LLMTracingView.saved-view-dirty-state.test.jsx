@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({
   filterChipsProps: null,
   filterSetters: {},
   selectedTab: "trace",
+  viewMode: "graph",
   attributes: [],
   dashboardFilterValues: [],
   emptyFilters: [],
@@ -105,7 +106,9 @@ vi.mock("../states", async () => {
   const ReactModule = await import("react");
   const llmState = {
     resetStates: vi.fn(),
-    viewMode: "graph",
+    get viewMode() {
+      return harness.viewMode;
+    },
     setViewMode: vi.fn(),
   };
   const gridState = {
@@ -132,7 +135,14 @@ vi.mock("../states", async () => {
 
 vi.mock("../TraceGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef(({ compareType, enabled }, _ref) => (
+      <div
+        data-testid={`${compareType}-trace-grid`}
+        data-enabled={String(enabled)}
+      />
+    )),
+  };
 });
 
 vi.mock("../SpanGrid", async () => {
@@ -294,6 +304,7 @@ beforeEach(() => {
   harness.filterSetters = {};
   harness.filterChipsProps = null;
   harness.selectedTab = "trace";
+  harness.viewMode = "graph";
 });
 afterEach(() => {
   cleanup();
@@ -345,6 +356,53 @@ async function editCustomRange() {
   );
 }
 
+describe("LLMTracingView rendered compare-pane labels", () => {
+  it.each([
+    ["table", "Data"],
+    ["agentGraph", "Data"],
+    ["agentPath", "Data"],
+    ["graph", "Graph"],
+  ])("labels %s panes and preserves tab selection", async (viewMode, noun) => {
+    harness.viewMode = viewMode;
+    harness.observeHeader.activeViewConfig = savedView({
+      display: { viewMode, showCompare: true },
+    });
+    await mountView();
+
+    const primary = screen.getByRole("tab", { name: `Primary ${noun}` });
+    const compare = screen.getByRole("tab", { name: `Comparison ${noun}` });
+    expect(primary).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+    expect(screen.getByTestId("compare-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
+
+    const filtersBefore = viewConfig().filters;
+    fireEvent.click(compare);
+    expect(compare).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("compare-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+    expect(screen.getByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
+    expect(viewConfig().filters).toEqual(filtersBefore);
+
+    fireEvent.click(primary);
+    expect(primary).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+  });
+});
+
 describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
   it("keeps Save view hidden for an untouched hydrated custom range", async () => {
     await mountView();
@@ -357,7 +415,9 @@ describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }),
     );
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Custom range" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Custom range" }),
+    );
     expect(screen.getByLabelText("Start Date")).toHaveValue("2026-09-01");
     expect(screen.getByLabelText("End Date")).toHaveValue("2026-09-09");
     fireEvent.click(screen.getByRole("button", { name: "Done" }));

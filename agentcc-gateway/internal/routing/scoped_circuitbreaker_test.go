@@ -182,23 +182,41 @@ func TestOrgBreakerCountsRejectedKeysByDefault(t *testing.T) {
 		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 			err := &models.APIError{Status: status, Type: "upstream_error", Message: "synthetic rejected key"}
 			org := orgs.Get(fmt.Sprintf("org-%d", status), "byok")
-			org.RecordFailure(err)
+			recordAdmittedFailure(t, org, err)
 			if org.State() != StateOpen {
 				t.Fatalf("codes=%v: org breaker ignored %d", codes, status)
 			}
 			op := shared.Get(fmt.Sprintf("operator-%d", status))
-			op.RecordFailure(err)
+			recordAdmittedFailure(t, op, err)
 			if op.State() != StateClosed {
 				t.Fatalf("codes=%v: shared breaker counted %d", codes, status)
 			}
 		}
 		org := orgs.Get("org-404", "byok")
-		org.RecordFailure(&models.APIError{Status: http.StatusNotFound, Type: "upstream_error", Message: "synthetic not found"})
+		recordAdmittedFailure(t, org, &models.APIError{Status: http.StatusNotFound, Type: "upstream_error", Message: "synthetic not found"})
 		if org.State() != StateClosed {
 			t.Fatalf("codes=%v: org breaker counted 404", codes)
 		}
 		if len(cfg.OnStatusCodes) != len(codes) {
 			t.Fatalf("config codes changed: %v", cfg.OnStatusCodes)
 		}
+	}
+}
+
+func TestScopedTraversalIgnoresOnlyOperatorHealth(t *testing.T) {
+	f := newOrgBreakerFixture(t, time.Hour)
+	f.failover.router.SetHealthy("byok", false)
+	if !f.orgAttempt("org-a", true) || !f.orgAttempt("org-a", true) || f.orgAttempt("org-a", false) {
+		t.Fatal("expected two org A calls before its own breaker opened")
+	}
+	if !f.orgAttempt("org-b", false) {
+		t.Fatal("operator health or org A's breaker refused org B")
+	}
+	_, err := f.failover.Execute(context.Background(), "model", func(context.Context, string, string) error {
+		t.Error("scope exception escaped into operator routing")
+		return nil
+	})
+	if !IsAdmissionRefusal(err) || f.shared.Get("byok").State() != StateClosed {
+		t.Fatalf("operator prefilter: err=%v circuit=%v", err, f.shared.Get("byok").State())
 	}
 }

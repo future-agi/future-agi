@@ -35,6 +35,7 @@ from agentic_eval.core.embeddings.serving_client import (
 from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalSetupError
 from agentic_eval.core_evals.run_prompt.litellm_models import (
     MissingProviderKeyError,
+    UnavailableModelError,
     missing_provider_key_message,
 )
 from model_hub.constants import (
@@ -139,6 +140,7 @@ from model_hub.services.eval_log_source_navigation import (
     resolve_eval_log_source_navigation,
 )
 from model_hub.utils.api_log_config import parse_api_log_config
+from model_hub.utils.eval_input_validation import EvalConfigError
 from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )
@@ -6923,6 +6925,28 @@ class TraceEvalView(APIView):
             except EvaluationDenied as denial:
                 logger.warning("trace_evaluation_denied", code=denial.code)
                 return denial.response(self._gm)
+            except (
+                EvalConfigError,
+                MissingProviderKeyError,
+                UnavailableModelError,
+            ) as eval_error:
+                from tfc.ee_gates import jev_error_message
+
+                # Trace runs keep their explicit failed-result contract (HTTP 200).
+                # The shared runner already emitted the configuration warning.
+                response = TraceEvalResponse(
+                    template_id=str(template_id),
+                    trace_id=req.trace_id,
+                    status="failed",
+                    reason=(
+                        jev_error_message(eval_error)
+                        or (
+                            missing_provider_key_message(eval_error.provider)
+                            if isinstance(eval_error, MissingProviderKeyError)
+                            else str(eval_error)
+                        )
+                    ),
+                )
             except Exception as eval_error:
                 from tfc.ee_gates import jev_error_message
 
@@ -7523,6 +7547,14 @@ class EvalPlayGroundAPIView(APIView):
                 return self._gm.success_response(
                     response if response else "Evaluation has been updated."
                 )
+            except EvalConfigError as exc:
+                # The runner records the failed call and logs this once at WARNING.
+                return self._gm.bad_request(str(exc))
+            except UnavailableModelError as exc:
+                # The saved model was retired from the catalog: name it so the
+                # user can pick another; retrying cannot help. The runner logs
+                # this once at WARNING.
+                return self._gm.bad_request(str(exc))
             except CodeEvalSetupError as exc:
                 # This install cannot run the code eval (no executor, or no
                 # Node.js for JavaScript); the sandbox's message says how to
@@ -8119,7 +8151,17 @@ class TestEvaluationTemplateAPIView(APIView):
             if not template_type:
                 return self._gm.bad_request(get_error_message("MISSING_TEMPLATE_TYPE"))
 
-            config = prepare_user_eval_config(validated_data, True)
+            try:
+                config = prepare_user_eval_config(validated_data, True)
+            except UnavailableModelError as exc:
+                # An LLM judge's provider is resolved here, before the runner
+                # (which logs the catalog misses it raises itself).
+                logger.warning(
+                    "evaluation_configuration_invalid",
+                    error_type=type(exc).__name__,
+                    model=exc.model_name,
+                )
+                return self._gm.bad_request(str(exc))
             template_eval_type = "llm"
             if template_type == EvalTemplateType.FUTUREAGI.value:
                 eval_id = "DeterministicEvaluator"
@@ -8246,6 +8288,12 @@ class TestEvaluationTemplateAPIView(APIView):
 
             return self._gm.success_response(response)
 
+        except EvalConfigError as exc:
+            return self._gm.bad_request(str(exc))
+        except UnavailableModelError as exc:
+            # As in the eval playground: name the retired model. The runner
+            # already logged it at WARNING.
+            return self._gm.bad_request(str(exc))
         except CodeEvalSetupError as exc:
             # As in the eval playground: the sandbox's setup hint is safe to show.
             logger.warning(

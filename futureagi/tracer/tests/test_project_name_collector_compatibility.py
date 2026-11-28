@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 from django.core.exceptions import ValidationError as ModelValidationError
 from rest_framework.exceptions import ValidationError
+from rest_framework.test import APIRequestFactory
 
 from tracer.models.project import Project
 from tracer.serializers.project import ProjectNameUpdateSerializer, ProjectSerializer
@@ -56,17 +57,21 @@ def test_actual_project_create_and_rename_preserve_unicode(name):
     assert rename.validated_data["name"] == expected
     assert Project._meta.get_field("name").clean(expected, None) == expected
 
-    request = SimpleNamespace(
-        method="POST",
-        data={
-            "name": name,
-            "model_type": Project._meta.get_field("model_type").choices[0][0],
-            "trace_type": "observe",
-        },
-        organization=SimpleNamespace(),
-        workspace=SimpleNamespace(),
-    )
     view = ProjectView()
+    view.action_map = {"post": "create"}
+    request = view.initialize_request(
+        APIRequestFactory().post(
+            "/projects/",
+            {
+                "name": name,
+                "model_type": Project._meta.get_field("model_type").choices[0][0],
+                "trace_type": "observe",
+            },
+            format="json",
+        )
+    )
+    request.organization = SimpleNamespace()
+    request.workspace = SimpleNamespace()
     view.request = request
     view.format_kwarg = None
     captured = {}
@@ -82,7 +87,16 @@ def test_actual_project_create_and_rename_preserve_unicode(name):
     assert response.data["result"]["name"] == expected
 
     project = SimpleNamespace(name="old", save=Mock())
-    request.data = {"project_id": str(uuid.uuid4()), "name": name}
+    request = view.initialize_request(
+        APIRequestFactory().post(
+            "/projects/update_project_name/",
+            {"project_id": str(uuid.uuid4()), "name": name},
+            format="json",
+        )
+    )
+    request.organization = SimpleNamespace()
+    request.workspace = SimpleNamespace()
+    view.request = request
     with patch.object(view, "_get_project_in_scope", return_value=project):
         response = view.update_project_name(request)
     assert response.status_code == 200, response.data

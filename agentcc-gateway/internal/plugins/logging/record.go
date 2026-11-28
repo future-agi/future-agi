@@ -87,7 +87,7 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 
 		CacheHit:           rc.Flags.CacheHit,
 		FallbackUsed:       rc.Flags.FallbackUsed,
-		GuardrailTriggered: rc.Flags.GuardrailTriggered,
+		GuardrailTriggered: rc.Flags.GuardrailTriggered || rc.Flags.GuardrailMonitored,
 		ShortCircuited:     rc.Flags.ShortCircuited,
 		Timeout:            rc.Flags.Timeout,
 	}

@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { STATUS_META } from "../runs.constants";
 import EmptyState from "../../../components/EmptyState";
 import {
   Bars,
@@ -137,7 +138,9 @@ const OUTCOMES = [
   { key: "passed", label: "Passed", role: "success" },
   { key: "failed", label: "Failed", role: "danger" },
   { key: "error", label: "Error", role: "warning" },
+  { key: "cancelled", label: STATUS_META.cancelled.label, role: "neutral" },
   { key: "inconclusive", label: "Inconclusive", role: "neutral" },
+  { key: "no_score", label: STATUS_META.no_score.label, role: "neutral" },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],
@@ -265,7 +268,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const metricsByKey = Object.fromEntries(
     dashboard.metrics.map((metric) => [metric.key, metric]),
   );
-  const passRate = metricsByKey.pass_rate;
+  const trialPass = metricsByKey.trial_pass;
   const dropOff = metricsByKey.drop_off;
   const costPerPass = metricsByKey.cost_per_pass;
   const comparison = dashboard.comparison;
@@ -318,15 +321,19 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   ].filter(Boolean);
   const headlines = [
     {
-      key: "pass_rate",
-      label: "Calls passed",
-      value: format(passRate?.value, "percent"),
-      reported: passRate?.value != null,
+      key: "trial_pass",
+      // The run's one trial pass, as its header and the runs list read it; label and note served with it.
+      label: trialPass?.label,
+      // no_score means nothing to score, not missing data.
+      value: trialPass?.no_score
+        ? STATUS_META.no_score.label
+        : format(trialPass?.value, "percent"),
+      reported: trialPass?.value != null || Boolean(trialPass?.no_score),
       // No range here: pass^1's range brackets the scenario average, which this
       // pooled rate need not sit inside.
       detail: null,
-      coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
-      note: passRate?.note,
+      coverage: `${summary.trials_passed} / ${summary.trials_evaluated} evaluated · ${summary.trials_inconclusive} inconclusive`,
+      note: trialPass?.note,
     },
     {
       key: "drop_off",
@@ -643,7 +650,12 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         <Bars
           rows={dashboard.use_case_risk}
           xKey="scenario"
-          series={OUTCOMES}
+          series={OUTCOMES.filter(
+            // No score and Cancelled appear only in a run that has them.
+            (outcome) =>
+              !["no_score", "cancelled"].includes(outcome.key) ||
+              summary.outcomes?.[outcome.key],
+          )}
           horizontal
           height={330}
           legend

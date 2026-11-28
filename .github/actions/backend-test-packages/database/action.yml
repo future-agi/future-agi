@@ -1,0 +1,60 @@
+name: Fresh backend database control
+description: Migrate from zero, check the saved dump this run's shards restored, and save a public dump on dev pushes.
+inputs:
+  profile:
+    description: Backend setup profile
+    default: baseline
+  artifact:
+    description: The plan job's same-run copy of the saved dump, empty when it found none
+    default: ""
+  recipe:
+    description: The recipe of that saved dump
+    default: ""
+  save:
+    description: Publish a qualified public dump for later runs (dev pushes only)
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/backend-test-packages/environment
+      with:
+        profile: ${{ inputs.profile }}
+    - id: key
+      shell: bash
+      working-directory: futureagi
+      run: |
+        key=$(bash "$GITHUB_ACTION_PATH/key.sh")
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+        # The recipe without its runtime part: the migrate inputs alone.
+        echo "name=${key%-*}" >> "$GITHUB_OUTPUT"
+    # Whenever the plan job handed out a saved dump, check it here, even if
+    # this job's own recipe differs: any shard of this run (or of a re-run of
+    # failed jobs) may have restored it.
+    - if: inputs.artifact != ''
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/migrated-db
+    - shell: bash
+      working-directory: futureagi
+      env:
+        FOUND: ${{ inputs.artifact != '' }}
+        PRODUCE: ${{ inputs.save }}
+        SAVED: ${{ inputs.recipe }}
+        RECIPE: ${{ steps.key.outputs.key }}
+      run: bash "$GITHUB_ACTION_PATH/producer.sh"
+    - id: record
+      if: inputs.save == 'true'
+      shell: bash
+      run: if [[ -f $RUNNER_TEMP/migrated-db/recipe ]]; then echo "saved=true" >> "$GITHUB_OUTPUT"; fi
+    # Every successful dev push carries a record, a reused one included, so
+    # the newest dev push always has one while the migrate inputs are unchanged.
+    - if: steps.record.outputs.saved == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ steps.key.outputs.name }}
+        path: ${{ runner.temp }}/migrated-db/
+        if-no-files-found: error
+        overwrite: true
+        retention-days: 7
+        compression-level: 0

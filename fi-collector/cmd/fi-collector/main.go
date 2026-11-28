@@ -13,7 +13,7 @@
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
 //     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
 //     FI_OTLP_MAX_CONNECTIONS, FI_INGEST_MAX_WAIT, FI_INSERT_CONCURRENCY,
-//     FI_DEAD_LETTER_FILE, ...)
+//     FI_DEAD_LETTER_FILE, FI_ADMIN_ADDR, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -59,6 +59,16 @@ type rootConfig struct {
 	PropertyCatalog struct {
 		Mode string `yaml:"mode"`
 	} `yaml:"property_catalog"`
+	Admin struct {
+		Addr string `yaml:"addr"`
+	} `yaml:"admin"`
+}
+
+func resolveAdminAddr(cfg rootConfig) string {
+	if addr := strings.TrimSpace(cfg.Admin.Addr); addr != "" {
+		return addr
+	}
+	return ":9464"
 }
 
 func main() {
@@ -126,6 +136,16 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Sync a newer price table in the background; boot never waits on it.
+	if pricer != nil {
+		url, interval := catalogueSyncSettings(log, os.LookupEnv)
+		if syncer := pricing.NewSyncer(pricer, priceTable, url, interval, log); syncer != nil {
+			go syncer.Run(ctx)
+		} else {
+			log.Info("pricing catalogue sync off; pricing from the loaded table")
+		}
+	}
+
 	opts := []server.Option{server.WithLogger(log)}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
@@ -181,7 +201,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, authenticator, srv, log)
+	go runAdmin(resolveAdminAddr(cfg), writer, authenticator, srv, log)
 
 	startAuthWatchers(ctx, authenticator)
 
@@ -243,6 +263,30 @@ func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
 	return table
 }
 
+// catalogueSyncSettings reads FI_PRICING_CATALOGUE_URL and
+// FI_PRICING_SYNC_INTERVAL. An unset URL syncs from pricing.DefaultCatalogueURL,
+// unless FI_PRICING_JSON pins a file, which the sync would otherwise replace.
+// A URL set to "" turns the sync off.
+func catalogueSyncSettings(log *slog.Logger, lookup func(string) (string, bool)) (string, time.Duration) {
+	url, set := lookup("FI_PRICING_CATALOGUE_URL")
+	if !set {
+		if pinned, _ := lookup("FI_PRICING_JSON"); pinned != "" {
+			url = ""
+		} else {
+			url = pricing.DefaultCatalogueURL
+		}
+	}
+	var interval time.Duration
+	if v, _ := lookup("FI_PRICING_SYNC_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			log.Warn("FI_PRICING_SYNC_INTERVAL is not a duration; using the default", "value", v, "err", err)
+		}
+		interval = d
+	}
+	return url, interval
+}
+
 func loadConfig(log *slog.Logger, path string) rootConfig {
 	cfg := rootConfig{}
 	b, err := os.ReadFile(path)
@@ -271,6 +315,7 @@ func logStarting(log *slog.Logger, cfg rootConfig) {
 	log.Info("starting",
 		"grpc_addr", cfg.Server.GRPCAddr,
 		"http_addr", cfg.Server.HTTPAddr,
+		"admin_addr", resolveAdminAddr(cfg),
 		"ch_url", chURL,
 	)
 }
@@ -321,6 +366,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	// would otherwise shrink the whole budget.
 	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
 		log.Warn("FI_GZIP_INFLIGHT_MIB is no longer read; the ingest budget for every OTLP request is FI_INGEST_BUDGET_MIB", "value", v)
+	}
+	if v := strings.TrimSpace(os.Getenv("FI_ADMIN_ADDR")); v != "" {
+		c.Admin.Addr = v
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v

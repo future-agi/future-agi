@@ -69,6 +69,10 @@ class ContinuousDrainState:
     workflow_confirmed_stopped: bool = False
     # See ``EvalTaskWorkflowInput.lost_entry_ids``.
     lost_entry_ids: list[str] = field(default_factory=list)
+    # A DB outage during pause cleanup must not lose the known, unstarted IDs
+    # or the pause signal when the deferred loop rolls its history over.
+    pending_requeue_ids: list[str] = field(default_factory=list)
+    pause_requested: bool = False
 
 
 @dataclass
@@ -77,11 +81,18 @@ class ReconcileActivityInput:
 
 
 @dataclass
+class CheckedReconcileInput(ReconcileActivityInput):
+    # Missing on historical commands. Only a patched first pass sends True.
+    require_running: bool = False
+
+
+@dataclass
 class ReconcileActivityOutput:
     task_id: str
     created: int
     requeued: int
     dropped: int
+    inactive_status: str | None = None
 
 
 @dataclass
@@ -124,9 +135,15 @@ class ReapInput:
 
 
 @dataclass
+class CheckedReapInput(ReapInput):
+    require_running: bool = False
+
+
+@dataclass
 class ReapOutput:
     requeued: int
     failed: int
+    inactive_status: str | None = None
 
 
 @dataclass
@@ -167,6 +184,7 @@ class SetStatusOutput:
     task_id: str
     changed: bool
     status: str
+    first_reconcile_at: str | None = None
 
 
 @dataclass
@@ -206,12 +224,14 @@ __all__ = [
     "EvalTaskWorkflowInput",
     "EvalTaskWorkflowOutput",
     "ContinuousDrainState",
+    "CheckedReconcileInput",
     "ReconcileActivityInput",
     "ReconcileActivityOutput",
     "ClaimBatchInput",
     "ClaimBatchOutput",
     "RunEntryInput",
     "RunEntryOutput",
+    "CheckedReapInput",
     "ReapInput",
     "ReapOutput",
     "TaskStateInput",

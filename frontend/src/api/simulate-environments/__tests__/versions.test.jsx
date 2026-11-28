@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
 }));
 // Save keys are counted so a test can tell a reused key from a fresh one.
 let keyCount = 0;
@@ -19,6 +19,10 @@ vi.mock("src/api/harness/harness", async (importOriginal) => ({
 const { default: axios } = await import("src/utils/axios");
 const {
   useEnvironmentVersions,
+  useLockPreview,
+  useLockVersion,
+  useUnlockVersion,
+  lockPreviewKey,
   useVersionDiff,
   useSuiteMembers,
   useRunPlan,
@@ -33,7 +37,14 @@ const {
   useStopNudge,
   useDrafts,
   useSaveDrafts,
+  useSaveCandidates,
+  useValidateDrafts,
   useDiscardDraft,
+  useEditActor,
+  useSetFileRole,
+  useActorCheck,
+  checkActor,
+  actorsKey,
   draftsKey,
   toDrafts,
   nudgesKey,
@@ -48,6 +59,9 @@ const {
   versionFromApi,
   isVersioningDisabled,
   isStuck,
+  movingAgent,
+  refreshDrafts,
+  draftReviewKey,
 } = await import("../versions");
 const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
@@ -74,6 +88,7 @@ const RESPONSE = {
     {
       id: "e2",
       label: "v2",
+      name: "Refunds 14 days",
       status: "active",
       is_default: true,
       created_by: { id: "u1", name: "Asha" },
@@ -117,6 +132,7 @@ describe("versionFromApi / toVersions", () => {
     expect(versionFromApi(RESPONSE.environment[0])).toEqual({
       id: "e2",
       label: "v2",
+      name: "Refunds 14 days",
       status: "active",
       isDefault: true,
       createdAt: null,
@@ -139,6 +155,7 @@ describe("versionFromApi / toVersions", () => {
       requestedHere: false,
       pickable: false,
       discardable: false,
+      savedWithoutCheck: false,
     });
   });
 
@@ -231,6 +248,130 @@ describe("useEnvironmentVersions", () => {
     });
     renderHook(() => useEnvironmentVersions(undefined), { wrapper });
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("useLockPreview", () => {
+  const PREVIEW = {
+    environment_version_id: "e2",
+    suite_version_id: "s3",
+    proved: false,
+    can_lock: true,
+    refusal: null,
+    train: 14,
+    test: 6,
+    test_target: 6,
+  };
+  // A read of the preview, cached and fresh, to see which actions mark it stale.
+  const cachedPreview = () => {
+    client.setQueryData(lockPreviewKey("env-1"), PREVIEW);
+    return () => client.getQueryState(lockPreviewKey("env-1")).isInvalidated;
+  };
+
+  it("reads the preview from lock-preview, under the versions", async () => {
+    axios.get.mockResolvedValue({ data: PREVIEW });
+    const { result } = renderHook(() => useLockPreview("env-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/versions/lock-preview/",
+    );
+    expect(result.current.data).toEqual({
+      environmentVersionId: "e2",
+      suiteVersionId: "s3",
+      proved: false,
+      canLock: true,
+      refusal: null,
+      train: 14,
+      test: 6,
+      testTarget: 6,
+    });
+    expect(lockPreviewKey("env-1")).toEqual([
+      ...environmentVersionsKey("env-1"),
+      "lock-preview",
+    ]);
+  });
+
+  it("asks nothing while versioning is off or without an id", () => {
+    renderHook(() => useLockPreview("env-1", { enabled: false }), { wrapper });
+    renderHook(() => useLockPreview(undefined), { wrapper });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("leaves the preview out of the versions", () => {
+    expect(toVersions({ ...RESPONSE, lock: PREVIEW })).not.toHaveProperty(
+      "lock",
+    );
+  });
+
+  it.each([
+    [
+      "a lock",
+      () => useLockVersion("env-1"),
+      { environmentVersionId: "e2", suiteVersionId: "s3" },
+    ],
+    ["an unlock", () => useUnlockVersion("env-1"), { lockedVersionId: "l1" }],
+  ])(
+    "%s seeds the versions and asks for the preview again",
+    async (_action, hook, variables) => {
+      axios.post.mockResolvedValue({ data: RESPONSE });
+      const stale = cachedPreview();
+      const { result } = renderHook(hook, { wrapper });
+
+      await act(() => result.current.mutateAsync(variables));
+
+      expect(client.getQueryData(environmentVersionsKey("env-1"))).toEqual(
+        RESPONSE,
+      );
+      expect(stale()).toBe(true);
+    },
+  );
+
+  it("a default move asks for the preview again", async () => {
+    axios.post.mockResolvedValue({ data: RESPONSE });
+    const stale = cachedPreview();
+    const { result } = renderHook(() => useMoveDefault("env-1"), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        piece: "suite",
+        versionId: "s1",
+        expectedDefaultId: "s3",
+      }),
+    );
+
+    expect(stale()).toBe(true);
+  });
+
+  it("a draft save asks for the preview again", async () => {
+    axios.post.mockResolvedValue({ data: { saved: {}, versions: RESPONSE } });
+    const stale = cachedPreview();
+    const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        drafts: [{ piece: "suite", parentId: "s3" }],
+      }),
+    );
+
+    expect(stale()).toBe(true);
+  });
+
+  it("a refused lock asks for the preview again, for the current reason", async () => {
+    axios.post.mockRejectedValue({
+      statusCode: 409,
+      error: "version_already_locked",
+    });
+    const stale = cachedPreview();
+    const { result } = renderHook(() => useLockVersion("env-1"), { wrapper });
+
+    await act(() =>
+      result.current
+        .mutateAsync({ environmentVersionId: "e2", suiteVersionId: "s3" })
+        .catch(() => {}),
+    );
+
+    expect(stale()).toBe(true);
   });
 });
 
@@ -350,10 +491,24 @@ describe("useRunPlan", () => {
       null,
       "e1",
       null,
+      null,
     ]);
     expect(
       client.getQueryData(runPlanKey("env-1", { environment: "e1" })),
     ).toEqual(PLAN);
+  });
+
+  it("asks about the chosen scenarios only, by their keys", async () => {
+    axios.get.mockResolvedValue({ data: PLAN });
+    const { result } = renderHook(
+      () => useRunPlan("env-1", {}, { scenarioKeys: ["k1", "k2"] }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/run-plan/",
+      { params: { scenario_keys: "k1,k2" } },
+    );
   });
 
   it("asks with no params for the defaults", async () => {
@@ -423,6 +578,25 @@ describe("useMoveDefault", () => {
     // Prefixes, never exact: the run plan, diffs and members sit under them.
     expect(invalidated(spy)).toEqual(
       FOLLOWERS.map((queryKey) => ({ queryKey })),
+    );
+  });
+
+  it("seeds the versions from an agent move that waits for its check", async () => {
+    axios.post.mockResolvedValue({
+      data: { versions: RESPONSE, validation: { state: "validating" } },
+    });
+    const { result } = renderHook(() => useMoveDefault("env-1"), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        piece: "agent",
+        versionId: "a2",
+        expectedDefaultId: "a1",
+      }),
+    );
+
+    expect(client.getQueryData(environmentVersionsKey("env-1"))).toEqual(
+      RESPONSE,
     );
   });
 
@@ -747,7 +921,7 @@ describe("agent version checks", () => {
     },
   );
 
-  it("refreshes the detail and the job once the last check lands", () => {
+  it("refreshes the detail, the job and the lock preview once the last check lands", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const pending = [
       versionFromApi(
@@ -765,9 +939,64 @@ describe("agent version checks", () => {
       { queryKey: harnessEnvironmentKey("env-1") },
       { queryKey: harnessJobQuery("env-1").queryKey },
       { queryKey: nudgesKey("env-1") },
+      // The landed check may have moved the default agent, whose bundle the
+      // lock preview plans with.
+      { queryKey: lockPreviewKey("env-1") },
     ]);
     rerender({ versions: passed });
-    expect(spy).toHaveBeenCalledTimes(3);
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  const moving = (overrides) =>
+    agentItem({
+      status: "active",
+      preflight_status: "passed",
+      activation_outcome: "validating",
+      ...overrides,
+    });
+
+  it("asks again every 15 seconds while an agent move waits on its check", async () => {
+    expect(await intervalFor([moving()])).toBe(15000);
+    expect(await intervalFor([pendingHere({ id: "a6" }), moving()])).toBe(5000);
+    expect(await intervalFor([moving({ is_default: true })])).toBe(false);
+  });
+
+  it("names the newest active version a move waits on", () => {
+    const list = (...items) => items.map(versionFromApi);
+    expect(
+      movingAgent(list(moving({ id: "a7" }), moving({ id: "a6" })))?.id,
+    ).toBe("a7");
+    expect(movingAgent(list(moving({ is_default: true })))).toBeNull();
+    expect(movingAgent(list(moving({ status: "discarded" })))).toBeNull();
+  });
+
+  it("refreshes what follows the default once a move's check ends", () => {
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { rerender } = renderHook(
+      ({ versions }) => useRefreshWhenChecked("env-1", versions),
+      {
+        wrapper,
+        initialProps: { versions: [versionFromApi(moving())] },
+      },
+    );
+    expect(spy).not.toHaveBeenCalled();
+    rerender({
+      versions: [
+        versionFromApi(
+          moving({ is_default: true, activation_outcome: "activated" }),
+        ),
+      ],
+    });
+    const keys = spy.mock.calls.map(([filters]) => filters.queryKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        environmentVersionsKey("env-1"),
+        harnessEnvironmentKey("env-1"),
+        harnessJobQuery("env-1").queryKey,
+        ["harness-scenarios", "env-1"],
+        nudgesKey("env-1"),
+      ]),
+    );
   });
 
   it("refreshes nothing when nothing was pending", () => {
@@ -1310,6 +1539,32 @@ describe("drafts", () => {
     });
   });
 
+  it("says when a save must go through Validate", () => {
+    expect(toDrafts({ validation_required: true }).validationRequired).toBe(
+      true,
+    );
+    // A server from before the flag: a plain Save is tried, and its refusal asks for Validate.
+    expect(toDrafts({}).validationRequired).toBe(false);
+  });
+
+  it("sends the reviewed digest and the name with a plain save", async () => {
+    axios.post.mockResolvedValue({ data: { saved: {}, versions: RESPONSE } });
+    const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
+    await act(() =>
+      result.current.mutateAsync({
+        drafts: PIECES,
+        reviewDigest: "d-1",
+        name: "Refund window",
+      }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(SAVE_PATH, {
+      drafts: BODY,
+      idempotency_key: "key-1",
+      expected_review_digest: "d-1",
+      name: "Refund window",
+    });
+  });
+
   it("reads the drafts under their key, and not while versioning is off", async () => {
     axios.get.mockResolvedValue({ data: DRAFTS });
     const { result } = renderHook(() => useDrafts("env-1"), { wrapper });
@@ -1331,7 +1586,7 @@ describe("drafts", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES));
+    await act(() => result.current.mutateAsync({ drafts: PIECES }));
 
     expect(axios.post).toHaveBeenCalledWith(SAVE_PATH, {
       drafts: BODY,
@@ -1353,7 +1608,9 @@ describe("drafts", () => {
     axios.post.mockResolvedValue({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
     await act(() =>
-      result.current.mutateAsync([{ piece: "suite", parentId: null }]),
+      result.current.mutateAsync({
+        drafts: [{ piece: "suite", parentId: null }],
+      }),
     );
     expect(axios.post.mock.calls[0][1].drafts).toEqual([
       { piece: "suite", expected_parent_id: null },
@@ -1365,8 +1622,10 @@ describe("drafts", () => {
     axios.post.mockResolvedValueOnce({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() => result.current.mutateAsync({ drafts: PIECES }));
 
     const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
     expect(keys).toEqual(["key-1", "key-1"]);
@@ -1381,9 +1640,13 @@ describe("drafts", () => {
     axios.post.mockResolvedValue({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES.slice(0, 1)));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() => result.current.mutateAsync({ drafts: PIECES.slice(0, 1) }));
 
     const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
     expect(keys).toEqual(["key-1", "key-2", "key-3"]);
@@ -1397,7 +1660,9 @@ describe("drafts", () => {
       const { result } = renderHook(() => useSaveDrafts("env-1"), {
         wrapper,
       });
-      await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+      await act(() =>
+        result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+      );
       expect(invalidated(spy)).toEqual([{ queryKey: draftsKey("env-1") }]);
     },
   );
@@ -1413,12 +1678,16 @@ describe("drafts", () => {
     });
     const spy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
     expect(invalidated(spy)).toEqual([
       { queryKey: environmentVersionsKey("env-1") },
     ]);
     spy.mockClear();
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -1462,5 +1731,271 @@ describe("drafts", () => {
     expect(invalidated(spy)).toContainEqual({
       queryKey: environmentVersionsKey("env-1"),
     });
+  });
+});
+
+describe("useEditActor", () => {
+  const ACTORS = "/simulate/api/harness-environments/env-1/actors/";
+  const edit = async (change) => {
+    const { result } = renderHook(() => useEditActor("env-1"), { wrapper });
+    await act(() => result.current.mutateAsync(change).catch(() => {}));
+    return result;
+  };
+
+  it("sends each change as typed changes with the revision it was read at, a create's own id when typed, and seeds the cast with the answer", async () => {
+    const answer = { actors: [], revision: 4 };
+    const changes = { name: "Priya" };
+    axios.post.mockResolvedValue({ data: answer });
+    axios.put.mockResolvedValue({ data: answer });
+    axios.delete.mockResolvedValue({ data: answer });
+
+    await edit({ op: "create", changes, id: "manager", revision: 3 });
+    await edit({ op: "create", changes, revision: 3 });
+    await edit({ op: "replace", changes, actorId: "manager", revision: 3 });
+    await edit({ op: "delete", actorId: "manager", revision: 3 });
+
+    expect(axios.post).toHaveBeenNthCalledWith(1, ACTORS, {
+      changes,
+      id: "manager",
+      expected_revision: 3,
+    });
+    expect(axios.post).toHaveBeenNthCalledWith(2, ACTORS, {
+      changes,
+      expected_revision: 3,
+    });
+    expect(axios.put).toHaveBeenCalledWith(`${ACTORS}manager/`, {
+      changes,
+      expected_revision: 3,
+    });
+    expect(axios.delete).toHaveBeenCalledWith(`${ACTORS}manager/`, {
+      params: { expected_revision: 3 },
+    });
+    expect(client.getQueryData(actorsKey("env-1"))).toEqual(answer);
+  });
+
+  it("refreshes the cast and the Save bar on a draft_changed refusal, and keeps its code for the form", async () => {
+    const refusal = { error: "draft_changed", message: "m", statusCode: 409 };
+    axios.put.mockRejectedValue(refusal);
+    const spy = vi.spyOn(client, "invalidateQueries");
+
+    const result = await edit({
+      op: "replace",
+      changes: {},
+      actorId: "manager",
+      revision: 3,
+    });
+
+    await waitFor(() => expect(result.current.error).toEqual(refusal));
+    expect(spy).toHaveBeenCalledWith({ queryKey: draftsKey("env-1") });
+    expect(actorsKey("env-1").slice(0, draftsKey("env-1").length)).toEqual(
+      draftsKey("env-1"),
+    );
+  });
+
+  it("leaves the drafts alone when the actor itself was refused", async () => {
+    axios.put.mockRejectedValue({ error: "actor_invalid", statusCode: 400 });
+    const spy = vi.spyOn(client, "invalidateQueries");
+    await edit({ op: "replace", changes: {}, actorId: "manager", revision: 3 });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("validate before save requests", () => {
+  beforeEach(() => {
+    keyCount = 0;
+    axios.post.mockReset();
+    axios.post.mockResolvedValue({ data: {} });
+  });
+
+  it("validates the reviewed revisions with the digest seen", async () => {
+    const { result } = renderHook(() => useValidateDrafts("env-1"), {
+      wrapper,
+    });
+
+    await act(() =>
+      result.current.mutateAsync({
+        expectedRevisions: { environment: 3, suite: 1 },
+        expectedReviewDigest: "sha256:review",
+      }),
+    );
+
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/drafts/validate/",
+      {
+        expected_revisions: { environment: 3, suite: 1 },
+        expected_review_digest: "sha256:review",
+      },
+    );
+  });
+
+  it("saves the validated candidates under one key per click", async () => {
+    const { result } = renderHook(() => useSaveCandidates("env-1"), {
+      wrapper,
+    });
+
+    await act(() =>
+      result.current.mutateAsync({
+        candidates: { environmentVersionId: "e9", suiteVersionId: "s9" },
+        expectedReviewDigest: "sha256:review",
+      }),
+    );
+
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/drafts/save/",
+      {
+        candidates: { environment_version_id: "e9", suite_version_id: "s9" },
+        expected_review_digest: "sha256:review",
+        idempotency_key: "key-1",
+      },
+    );
+  });
+
+  it("keeps the key for a retry of the same candidates, and not after a refusal", async () => {
+    const CANDIDATES = { environmentVersionId: "e9", suiteVersionId: "s9" };
+    axios.post.mockRejectedValueOnce({ message: "Network Error" });
+    axios.post.mockRejectedValueOnce({
+      statusCode: 409,
+      error: "review_stale",
+    });
+    axios.post.mockResolvedValue({ data: {} });
+    const { result } = renderHook(() => useSaveCandidates("env-1"), {
+      wrapper,
+    });
+    const click = () =>
+      act(() =>
+        result.current.mutateAsync({ candidates: CANDIDATES }).catch(() => {}),
+      );
+
+    await click();
+    await click();
+    await click();
+
+    const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[1]);
+  });
+
+  it("maps the validation and candidates on the drafts", () => {
+    const drafts = toDrafts({
+      environment: null,
+      suite: null,
+      set_aside: [],
+      validation: { state: "failed", affected_scenarios: ["refund-1"] },
+      candidates: { environment_version_id: "e9", suite_version_id: "s9" },
+    });
+
+    expect(drafts.validation).toEqual({
+      state: "failed",
+      affectedScenarios: ["refund-1"],
+    });
+    expect(drafts.candidates).toEqual({
+      environmentVersionId: "e9",
+      suiteVersionId: "s9",
+    });
+  });
+});
+
+describe("useActorCheck", () => {
+  it("asks on open, then once typing pauses about the latest request only, and counts only a verdict on that request", async () => {
+    const verdict = {
+      problems: [],
+      conflicts: [],
+      suggested_id: "sam",
+      over_by: 0,
+    };
+    axios.post.mockResolvedValue({ data: verdict });
+    const { result, rerender } = renderHook(
+      ({ request }) => useActorCheck("env-1", request),
+      {
+        wrapper,
+        initialProps: { request: { op: "create", changes: { name: "S" } } },
+      },
+    );
+    rerender({ request: { op: "create", changes: { name: "Sa" } } });
+    rerender({ request: { op: "create", changes: { name: "Sam" } } });
+    expect(result.current.verdict).toBeNull();
+    expect(result.current.pending).toBe(true);
+    await waitFor(() => expect(result.current.verdict).toEqual(verdict));
+    // The form's first request is asked at once; the keystrokes after it, once they pause.
+    expect(
+      axios.post.mock.calls.map(([url, body]) => [url, body.changes.name]),
+    ).toEqual([
+      ["/simulate/api/harness-environments/env-1/actor-validation/", "S"],
+      ["/simulate/api/harness-environments/env-1/actor-validation/", "Sam"],
+    ]);
+    rerender({ request: { op: "create", changes: { name: "Samir" } } });
+    expect(result.current.verdict).toBeNull();
+  });
+
+  it("asks nothing for a request the form cannot build", () => {
+    const { result } = renderHook(() => useActorCheck("env-1", null), {
+      wrapper,
+    });
+    expect(result.current).toMatchObject({ verdict: null, pending: false });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkActor", () => {
+  it("names the actor for a replace or delete, sends no changes for a delete, and no revision", async () => {
+    axios.post.mockResolvedValue({ data: {} });
+    await checkActor("env-1", {
+      op: "replace",
+      actorId: "manager",
+      changes: { role: "lead" },
+      shareActions: ["crm.approve"],
+    });
+    await checkActor("env-1", { op: "delete", actorId: "manager" });
+    expect(axios.post.mock.calls.map(([, body]) => body)).toEqual([
+      {
+        op: "replace",
+        actor_id: "manager",
+        changes: { role: "lead" },
+        share_actions: ["crm.approve"],
+      },
+      { op: "delete", actor_id: "manager" },
+    ]);
+  });
+});
+
+describe("useSetFileRole", () => {
+  it("sends the path, role and expected revision, and seeds the cast with the answer", async () => {
+    const cast = { actors: [], revision: 8 };
+    axios.post.mockResolvedValue({ data: cast });
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useSetFileRole("env-1"), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+    await act(() =>
+      result.current.mutateAsync({
+        path: "knowledge/refunds.md",
+        role: "evaluator_only",
+        revision: 7,
+      }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/files/role/",
+      {
+        path: "knowledge/refunds.md",
+        role: "evaluator_only",
+        expected_revision: 7,
+      },
+    );
+    expect(queryClient.getQueryData(actorsKey("env-1"))).toEqual(cast);
+  });
+});
+
+describe("draft review cache", () => {
+  it("reads the review again whenever the drafts are refreshed", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(draftReviewKey("env-1"), { changes: [] });
+    refreshDrafts(queryClient, "env-1");
+    expect(
+      queryClient.getQueryState(draftReviewKey("env-1")).isInvalidated,
+    ).toBe(true);
   });
 });

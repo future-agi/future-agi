@@ -14,12 +14,14 @@ URL routing:
 import ipaddress
 import json
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import certifi
+import idna
 import structlog
 import urllib3
 from minio import Minio
+from minio.error import S3Error
 from requests.utils import (
     get_auth_from_url,
     get_environ_proxies,
@@ -30,14 +32,99 @@ from requests.utils import (
 logger = structlog.get_logger(__name__)
 
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "s3").lower()
+# The MinIO that the compose files and the Helm chart (bundled mode) run: only
+# there does the app keep agent source private in an existing bucket's policy.
+STORAGE_BUNDLED = os.getenv("STORAGE_BUNDLED", "false").lower() == "true"
 _client = None
 
 
+_ENDPOINT_ERROR = "Storage endpoint must be a host[:port] or an HTTP(S) URL"
+
+
+def _split_endpoint(raw_endpoint: str):
+    """(urlsplit result, whether a scheme was given) for an endpoint setting.
+
+    Surrounding whitespace is not part of the setting: a value read from a
+    secret file or a YAML block scalar ends in a newline.
+    """
+    endpoint = raw_endpoint.strip() if isinstance(raw_endpoint, str) else ""
+    if not endpoint or any(c.isspace() for c in endpoint):
+        raise ValueError(_ENDPOINT_ERROR)
+    has_scheme = "://" in endpoint
+    return urlsplit(endpoint if has_scheme else "//" + endpoint), has_scheme
+
+
 def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
-    if "://" in raw_endpoint:
-        parsed = urlparse(raw_endpoint)
-        return parsed.netloc or parsed.path, parsed.scheme == "https"
-    return raw_endpoint, None
+    """Parse a storage authority, optionally prefixed by HTTP(S).
+
+    A bare host:port is not a URL scheme. Only the authority is used: anything
+    after it (a trailing slash, a path prefix, a query or fragment) is
+    ignored, as it always was. Minio addresses buckets at the endpoint's root,
+    and generated object URLs are path-style at the root of MINIO_URL's
+    authority, the shape tfc.utils.storage.is_own_storage_url recognises.
+    Reject what cannot name a usable authority (an empty host, credentials,
+    a scheme other than HTTP(S), a bad port) rather than deferring it to the
+    first network request. Never include configuration in the error.
+    """
+    error = _ENDPOINT_ERROR
+    try:
+        parsed, has_scheme = _split_endpoint(raw_endpoint)
+        if (
+            (has_scheme and parsed.scheme not in ("http", "https"))
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.netloc.endswith(":")
+            or parsed.port == 0
+        ):
+            raise ValueError(error)
+        host = parsed.hostname
+        if ":" in host:
+            ipaddress.IPv6Address(host)
+            host = f"[{host}]"
+        else:
+            # Public MinIO hosts may be internationalized even when the SDK
+            # connects to an ASCII internal endpoint. Validate the IDNA form;
+            # the SDK connection and server_reachable_url's host comparison use
+            # it. Generated object URLs keep the configured form instead (see
+            # _configured_authority).
+            if not host.isascii():
+                host = idna.encode(host, uts46=True).decode("ascii")
+            if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
+                raise ValueError(error)
+            if not host.strip("."):
+                raise ValueError(error)
+    except ValueError:
+        raise ValueError(error) from None
+    authority = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return authority, parsed.scheme == "https" if has_scheme else None
+
+
+def _configured_authority(raw_endpoint: str) -> tuple[str, bool | None]:
+    """Validate like _parse_endpoint, but keep the host[:port] as configured.
+
+    Stored object URLs are recognised as first-party by comparing their host
+    with the raw MINIO_URL setting (tfc.utils.storage.is_own_storage_url), and
+    Falcon builds its upload URLs from that setting (public_base_url). An IDN MINIO_URL
+    must therefore stay in its configured (Unicode) form in generated URLs;
+    HTTP clients and browsers apply IDNA themselves when they connect.
+    """
+    _, scheme_hint = _parse_endpoint(raw_endpoint)
+    parsed, _ = _split_endpoint(raw_endpoint)
+    return parsed.netloc, scheme_hint
+
+
+def public_base_url(raw_endpoint: str) -> str:
+    """MINIO_URL as a base to append /<bucket>/<key> to, validated first.
+
+    Falcon has always built its upload URLs this way, keeping MINIO_URL's
+    path prefix and configured host form. Surrounding whitespace, trailing
+    slashes and any query or fragment are dropped so the result is one URL.
+    """
+    _parse_endpoint(raw_endpoint)
+    parsed, has_scheme = _split_endpoint(raw_endpoint)
+    base = parsed.netloc + parsed.path.rstrip("/")
+    return f"{parsed.scheme}://{base}" if has_scheme else base
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -172,7 +259,7 @@ def get_object_url(bucket_name: str, object_key: str) -> str:
         return f"https://storage.googleapis.com/{bucket_name}/{object_key}"
 
     if STORAGE_BACKEND == "minio":
-        host, scheme_hint = _parse_endpoint(
+        host, scheme_hint = _configured_authority(
             os.getenv("MINIO_URL", "http://localhost:9005")
         )
         scheme = "https" if scheme_hint else "http"
@@ -190,14 +277,25 @@ def server_reachable_url(file_url: str) -> str:
     """
     if STORAGE_BACKEND != "minio":
         return file_url
-    browser_host, _ = _parse_endpoint(os.getenv("MINIO_URL", "http://localhost:9005"))
-    internal_host, internal_secure = _parse_endpoint(
-        os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
-    )
-    if not browser_host or not internal_host or browser_host == internal_host:
+    try:
+        browser_host, _ = _parse_endpoint(
+            os.getenv("MINIO_URL", "http://localhost:9005")
+        )
+        internal_host, internal_secure = _parse_endpoint(
+            os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
+        )
+    except ValueError:
+        # Without both endpoints there is nothing to rewrite to; leave the URL
+        # as stored rather than failing the caller.
+        return file_url
+    if browser_host == internal_host:
         return file_url
     parsed = urlparse(file_url)
-    if parsed.netloc != browser_host:
+    try:
+        stored_host, _ = _parse_endpoint(parsed.netloc)
+    except ValueError:
+        return file_url
+    if stored_host != browser_host:
         return file_url
     scheme = "https" if internal_secure else "http"
     return parsed._replace(scheme=scheme, netloc=internal_host).geturl()
@@ -217,6 +315,30 @@ def extract_object_key(file_url: str, bucket_name: str) -> str:
 
 ANONYMOUS_READ_ACTION = "s3:GetObject"
 
+# Everything the app reads only with its own keys is private; prefixes served by
+# public URL (get_object_url) are the exceptions: run recordings and artifacts
+# (alk-harness/, alk-sim/), Falcon attachments (falcon-ai/) and user uploads. A
+# new prefix read only with the app's keys goes here.
+PRIVATE_PREFIXES = (
+    # Agent code: fix runs, uploaded sources, connected repository checkouts,
+    # chat workspaces and the contracts read from them.
+    "agent-fix/",
+    "harness-sources/",
+    "code-archives/",
+    "harness-conversations/",
+    "agent-contracts/",
+    # Harness archives and records built around the agent.
+    "harness-environments/",
+    "harness-suites/",
+    "harness-authoring/",
+    "harness-sealed/",
+    "harness-assembled/",
+    "harness-bundles/",
+    "harness-releases/",
+    "harness-diagnostics/",
+)
+PRIVATE_OBJECTS_SID = "PrivateObjectsNotAnonymous"
+
 # Buckets whose anonymous policy this process has already checked.
 _checked_bucket_policies: set[str] = set()
 
@@ -226,13 +348,43 @@ def _anonymous_read_statement(bucket_name: str) -> dict:
 
     Stored files reach browsers as plain object URLs (get_object_url), so
     anonymous reads are needed. Uploads, overwrites, deletes and listings all
-    go through the backend's own credentials.
+    go through the backend's own credentials. _private_objects_statement takes
+    agent source back out.
     """
     return {
         "Effect": "Allow",
         "Principal": {"AWS": ["*"]},
         "Action": [ANONYMOUS_READ_ACTION],
         "Resource": [f"arn:aws:s3:::{bucket_name}/*"],
+    }
+
+
+def _private_objects_statement(bucket_name: str) -> dict:
+    """Nobody may download agent source by its URL, whatever an Allow says.
+
+    Anonymous callers only: on S3 a Deny for "*" with no condition also refuses
+    the backend's own signed and presigned reads. Keep the key lowercase: MinIO
+    refuses "aws:PrincipalType" as a MalformedPolicy and accepts only
+    "aws:principaltype"; AWS key names are case-insensitive. Values are lists,
+    as MinIO stores them.
+    """
+    return {
+        "Sid": PRIVATE_OBJECTS_SID,
+        "Effect": "Deny",
+        "Principal": {"AWS": ["*"]},
+        "Action": [ANONYMOUS_READ_ACTION],
+        "Resource": [
+            f"arn:aws:s3:::{bucket_name}/{prefix}*" for prefix in PRIVATE_PREFIXES
+        ],
+        "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}},
+    }
+
+
+def _same_statement(stored: dict, wanted: dict) -> bool:
+    # MinIO keeps resources as a set, so their order comes back changed.
+    return {**stored, "Resource": sorted(stored.get("Resource") or [])} == {
+        **wanted,
+        "Resource": sorted(wanted["Resource"]),
     }
 
 
@@ -245,14 +397,25 @@ def _is_anonymous(principal) -> bool:
     return False
 
 
-def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
+def _restrict_anonymous_access(
+    policy: dict, bucket_name: str, *, private_objects: bool
+) -> dict | None:
     """The policy with anonymous access cut down to object reads, or None if it
-    already grants nothing more. Statements for named principals are kept."""
+    already is. With private_objects, reads of agent source are refused too.
+    Statements for named principals are kept."""
     statements = policy.get("Statement") or []
     if isinstance(statements, dict):
         statements = [statements]
+    private = _private_objects_statement(bucket_name)
+    ours = [s for s in statements if s.get("Sid") == PRIVATE_OBJECTS_SID]
+    private_current = not private_objects or (
+        len(ours) == 1 and _same_statement(ours[0], private)
+    )
     kept, too_broad = [], False
     for statement in statements:
+        if private_objects and statement.get("Sid") == PRIVATE_OBJECTS_SID:
+            # Put back below with today's prefixes, so there is only ever one.
+            continue
         if statement.get("Effect") == "Allow" and _is_anonymous(
             statement.get("Principal")
         ):
@@ -263,62 +426,84 @@ def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
                 too_broad = True
                 continue
         kept.append(statement)
-    if not too_broad:
+    if not too_broad and private_current:
         return None
-    if not any(
+    if too_broad and not any(
         statement.get("Effect") == "Allow" and _is_anonymous(statement.get("Principal"))
         for statement in kept
     ):
         kept.append(_anonymous_read_statement(bucket_name))
+    if private_objects:
+        kept.append(private)
     return {**policy, "Statement": kept}
 
 
-def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
+def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> bool:
     """Buckets created by earlier releases let anyone list, overwrite and delete
-    every object. Cut that back to reads once per process; never fail the caller."""
+    every object; on the bundled MinIO, also read agent source by URL. Cut that
+    back; never fail the caller. False when the policy could not be read or
+    written for a reason that may pass, so the next call tries again."""
     try:
         current = client.get_bucket_policy(bucket_name)
-    except Exception as exc:  # NoSuchBucketPolicy, or a policy we may not read
+    except Exception as exc:
+        # The storage's own answer (NoSuchBucketPolicy, AccessDenied) stays the
+        # same on the next call; a dropped connection may not.
         logger.debug(
             "storage_bucket_policy_unreadable", bucket=bucket_name, error=str(exc)
         )
-        return
+        return isinstance(exc, S3Error)
     try:
-        restricted = _restrict_anonymous_access(json.loads(current), bucket_name)
+        restricted = _restrict_anonymous_access(
+            json.loads(current), bucket_name, private_objects=STORAGE_BUNDLED
+        )
     except (TypeError, ValueError, AttributeError):
-        return
+        return True
     if restricted is None:
-        return
+        return True
     try:
         client.set_bucket_policy(bucket_name, json.dumps(restricted))
     except Exception as exc:
         logger.warning(
             "storage_bucket_policy_tighten_failed", bucket=bucket_name, error=str(exc)
         )
-        return
+        return False
     logger.warning(
         "storage_bucket_policy_tightened",
         bucket=bucket_name,
-        detail="anonymous access is now limited to reading objects by URL",
+        detail="anonymous access is limited to object reads",
     )
+    return True
 
 
 def ensure_bucket(client: Minio, bucket_name: str) -> None:
-    """Create the bucket if needed, readable (not writable or listable) by URL.
-    Policy only applies on S3/MinIO."""
+    """Create the bucket if needed, readable (not writable or listable) by URL,
+    except agent source. Policy only applies on S3/MinIO."""
     if STORAGE_BACKEND == "gcs":
         # GCS buckets are pre-created via Terraform with IAM — skip
         return
     if not client.bucket_exists(bucket_name):
-        client.make_bucket(bucket_name)
+        try:
+            client.make_bucket(bucket_name)
+        except S3Error as exc:
+            # Another worker created it between the check and here. Only this
+            # code means ours: BucketAlreadyExists is someone else's bucket.
+            if exc.code != "BucketAlreadyOwnedByYou":
+                raise
         policy = {
             "Version": "2012-10-17",
-            "Statement": [_anonymous_read_statement(bucket_name)],
+            "Statement": [
+                _anonymous_read_statement(bucket_name),
+                _private_objects_statement(bucket_name),
+            ],
         }
         client.set_bucket_policy(bucket_name, json.dumps(policy))
         _checked_bucket_policies.add(bucket_name)
         return
-    # Only the bundled MinIO: an operator's own S3 bucket policy is theirs.
-    if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
+    # MinIO only: an operator's own S3 bucket policy is theirs. Once per process,
+    # counted only when the policy is known to be as tight as it gets.
+    if (
+        STORAGE_BACKEND == "minio"
+        and bucket_name not in _checked_bucket_policies
+        and _tighten_existing_bucket_policy(client, bucket_name)
+    ):
         _checked_bucket_policies.add(bucket_name)
-        _tighten_existing_bucket_policy(client, bucket_name)

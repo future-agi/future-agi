@@ -1,4 +1,5 @@
 import { test, type APIRequestContext } from '@playwright/test';
+import { firstHopOptions } from './backend-transport';
 
 type Method = 'get' | 'head' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -8,7 +9,7 @@ function errorSummary(error: unknown): string {
   return error instanceof Error ? error.message.split('\n')[0] : String(error);
 }
 
-function isResponseLessReset(error: unknown): boolean {
+export function isResponseLessReset(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (('status' in error && error.status != null) || ('statusCode' in error && error.statusCode != null)) return false;
   // Playwright buffers the body before resolving the request, so rejection
@@ -19,7 +20,7 @@ function isResponseLessReset(error: unknown): boolean {
   return !/timeout|timed out/i.test(summary) && /socket hang up|\bECONNRESET\b|\bEPIPE\b/i.test(summary);
 }
 
-function annotateRetry(method: Method, path: string, error: unknown): void {
+export function annotateRetry(method: Method, path: string, error: unknown): void {
   const description = `${method.toUpperCase()} ${path}: ${errorSummary(error)}`;
   let info;
   try { info = test.info(); } catch {
@@ -38,6 +39,12 @@ export class ApiError extends Error {
   }
 }
 
+interface RequestOptions {
+  params?: Record<string, string | number>;
+  data?: unknown;
+  headers?: Record<string, string>;
+}
+
 export class ApiClient {
   constructor(
     private req: APIRequestContext,
@@ -53,14 +60,15 @@ export class ApiClient {
     });
   }
 
-  private async send<T>(method: Method, path: string,
-                        opts: { params?: Record<string, string | number>; data?: unknown } = {}): Promise<T> {
-    const request = () => this.req[method](`${this.baseURL}${path}`, {
-      headers: this.headers,
+  /** The status and body whatever the status, for a flow that asserts a refusal or a 202. */
+  async request<T = unknown>(method: Method, path: string, opts: RequestOptions = {}): Promise<{ status: number; body: T }> {
+    const url = `${this.baseURL}${path}`;
+    const request = () => this.req[method](url, firstHopOptions(url, this.baseURL, {
+      headers: { ...this.headers, ...opts.headers },
       params: opts.params,
       data: opts.data,
       maxRetries: 0, // This wrapper owns the one retry; never nest Playwright retries.
-    });
+    }));
     let res;
     try {
       res = await request();
@@ -81,8 +89,13 @@ export class ApiClient {
     const raw = await res.text();
     let body: unknown;
     try { body = JSON.parse(raw); } catch { body = { raw }; }
-    if (res.status() >= 400) throw new ApiError(res.status(), path, body);
-    return body as T;
+    return { status: res.status(), body: body as T };
+  }
+
+  private async send<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
+    const { status, body } = await this.request<T>(method, path, opts);
+    if (status >= 400) throw new ApiError(status, path, body);
+    return body;
   }
 
   get<T>(path: string, params?: Record<string, string | number>) { return this.send<T>('get', path, { params }); }

@@ -273,13 +273,23 @@ def test_mutable_timestamp_winner_controls_membership_and_usage(
     ]
 
 
-@pytest.mark.parametrize("dimension", ["created_day", "service", "type", "hour"])
+# CDC has no service, observation type or hour in its replacement key.
+@pytest.mark.parametrize(
+    ("replay_database", "dimension"),
+    [
+        ("v1", "created_day"),
+        ("v2", "created_day"),
+        ("v2", "service"),
+        ("v2", "type"),
+        ("v2", "hour"),
+    ],
+    indirect=["replay_database"],
+    scope="module",
+)
 def test_replacement_key_distinguishes_actual_schema_dimensions(
     replay_database, dimension
 ):
     client, cls = replay_database
-    if cls is SessionListQueryBuilder and dimension != "created_day":
-        pytest.skip("service/type/hour are native key dimensions, not CDC key columns")
     project, session = uuid4(), uuid4()
     original = span(project, session)
     second = {

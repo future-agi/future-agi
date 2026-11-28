@@ -1,11 +1,32 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
-import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/material";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  Box,
+  Stack,
+  Typography,
+  Tab,
+  TextField,
+  InputAdornment,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import CallParticipants from "src/components/VoiceDetailDrawerV2/CallParticipants";
+import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
+import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorAction";
+import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
+import { isOtherRole } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
+import { seriesColor } from "src/theme/data-colors";
+import { OutcomeReason } from "./chatDrawerCells";
 
-const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
+// `task`: a scenario's start message no person or actor sent.
+const ROLE_LABEL = {
+  agent: "Assistant",
+  customer: "Customer",
+  task: "Task",
+  tool: "Tool call",
+};
+const TOOL_SERIES = 1;
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -29,14 +50,31 @@ function ToolCall({ call }) {
       direction="row"
       spacing={1}
       alignItems="flex-start"
-      sx={{ mt: 0.5, px: 1, py: 0.5, borderRadius: "4px", bgcolor: "background.neutral" }}
+      sx={{
+        mt: 0.5,
+        px: 1,
+        py: 0.5,
+        borderRadius: "4px",
+        bgcolor: "background.neutral",
+      }}
     >
-      <Iconify icon="solar:code-linear" width={13} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
+      <Iconify
+        icon="solar:code-linear"
+        width={13}
+        sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }}
+      />
       <Typography
-        sx={{ typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary", wordBreak: "break-word" }}
+        sx={{
+          typography: "s3",
+          fontFamily: "ui-monospace, Menlo, monospace",
+          color: "text.secondary",
+          wordBreak: "break-word",
+        }}
       >
         {name || "tool"}
-        {args ? `(${typeof args === "string" ? args : JSON.stringify(args)})` : "()"}
+        {args
+          ? `(${typeof args === "string" ? args : JSON.stringify(args)})`
+          : "()"}
       </Typography>
     </Stack>
   );
@@ -46,19 +84,79 @@ ToolCall.propTypes = { call: PropTypes.any };
 // The left pane: the conversation, in order, filterable by speaker and text.
 // Tool calls hang under the turn that issued them so a "said, not done" gap is
 // visible in the transcript itself rather than buried in a side tab.
-export default function ChatTranscriptPane({ turns }) {
+export default function ChatTranscriptPane({
+  turns,
+  customerName,
+  participants,
+  hasCustomer,
+  focusTurn = null,
+  notice = null,
+}) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const rowRefs = useRef({});
+  // Turn n starts at the caller's nth message; turn 0, before the caller spoke, is the top.
+  const focusIndex = !focusTurn
+    ? -1
+    : focusTurn.turn < 1
+      ? turns.length
+        ? 0
+        : -1
+      : turns.reduce(
+          (found, s, i) =>
+            found.index >= 0 || s.role !== "customer"
+              ? found
+              : found.seen + 1 === focusTurn.turn
+                ? { seen: found.seen + 1, index: i }
+                : { seen: found.seen + 1, index: -1 },
+          { seen: 0, index: -1 },
+        ).index;
+  useEffect(() => {
+    if (focusIndex < 0) return;
+    setRoleFilter("all");
+    setQuery("");
+    rowRefs.current[focusIndex]?.scrollIntoView?.({ block: "center" });
+  }, [focusIndex, focusTurn]);
+  // The pane stays mounted across calls; the next call may have no others.
+  const activeFilter =
+    roleFilter === "others" && !participants.length ? "all" : roleFilter;
 
-  const shown = turns.filter((s) => {
-    if (roleFilter !== "all" && s.role !== roleFilter) return false;
-    if (query && !s.text?.toLowerCase().includes(query.toLowerCase())) return false;
-    return true;
-  });
+  const shown = turns
+    .map((s, index) => ({ ...s, index }))
+    .filter((s) => {
+      if (
+        activeFilter === "others"
+          ? !isOtherRole(s.role)
+          : activeFilter !== "all" && s.role !== activeFilter
+      )
+        return false;
+      if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
+        return false;
+      return true;
+    });
 
   return (
     <>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25 }}>
+      {notice && (
+        <Box sx={{ pt: 1.5 }}>
+          <OutcomeReason reason={notice} />
+        </Box>
+      )}
+      {participants.length > 0 && (
+        <Box sx={{ px: 2, pt: 1.25 }}>
+          <CallParticipants
+            participants={participants}
+            customerName={customerName}
+            withCustomer={hasCustomer}
+          />
+        </Box>
+      )}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1.25 }}
+      >
         <TextField
           size="small"
           fullWidth
@@ -68,43 +166,106 @@ export default function ChatTranscriptPane({ turns }) {
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.subtitle" }} />
+                <Iconify
+                  icon="solar:magnifer-linear"
+                  width={14}
+                  sx={{ color: "text.subtitle" }}
+                />
               </InputAdornment>
             ),
           }}
         />
-        <SegmentedTabs value={roleFilter} onChange={(_, v) => setRoleFilter(v)} sx={{ flexShrink: 0 }}>
+        <SegmentedTabs
+          value={activeFilter}
+          onChange={(_, v) => setRoleFilter(v)}
+          sx={{ flexShrink: 0 }}
+        >
           <Tab value="all" label="All" />
           <Tab value="agent" label="Assistant" />
-          <Tab value="customer" label="Customer" />
+          {(hasCustomer || !turns.some((s) => s.role === "task")) && (
+            <Tab value="customer" label="Customer" />
+          )}
+          {participants.length > 0 && (
+            <Tab value="others" label={DEFAULT_ROLE_LABELS.others} />
+          )}
         </SegmentedTabs>
       </Stack>
 
       <Stack sx={{ px: 2, pb: 2 }}>
         {shown.map((s, i) => (
           <Box
-            key={i}
+            key={s.index}
+            ref={(el) => {
+              rowRefs.current[s.index] = el;
+            }}
+            data-focused={String(s.index === focusIndex)}
             sx={{
+              ...(s.index === focusIndex && {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: -2,
+              }),
               borderLeft: "2px solid",
-              borderColor: s.role === "agent" ? "text.secondary" : "text.disabled",
-              bgcolor: s.role === "agent" ? "action.hover" : "background.neutral",
+              // Each speaker keeps its own mark, so a tool call never reads as the customer.
+              borderColor: (t) =>
+                s.role === "agent"
+                  ? t.palette.text.secondary
+                  : s.role === "tool"
+                    ? seriesColor(t, TOOL_SERIES)
+                    : t.palette.text.disabled,
+              bgcolor:
+                s.role === "agent"
+                  ? "action.hover"
+                  : s.role === "tool"
+                    ? "transparent"
+                    : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}
           >
             <Typography
-              sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                fontVariantNumeric: "tabular-nums",
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                whiteSpace: "nowrap",
+              }}
             >
-              {turnStamp(s, i)} · {ROLE_LABEL[s.role] || s.role}
+              {turnStamp(s, i)} ·{" "}
+              {/* A row of tool calls is named by the server, by what its calls recorded. */}
+              {s.role === "tool" && s.toolLabel ? (
+                s.toolLabel
+              ) : isOtherRole(s.role) ? (
+                <OtherPartyName party={s} color="text.subtitle" />
+              ) : (
+                ROLE_LABEL[s.role] || s.role
+              )}
             </Typography>
-            {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
+            {s.role === "world_actor" && s.text ? (
+              <Box sx={{ mt: 0.25 }}>
+                <WorldActorAction text={s.text} query={query} />
+              </Box>
+            ) : (
+              s.text && (
+                <Typography sx={{ typography: "s1", mt: 0.25 }}>
+                  {s.text}
+                </Typography>
+              )
+            )}
             {Array.isArray(s.toolCalls) &&
               s.toolCalls.map((c, ci) => <ToolCall key={ci} call={c} />)}
           </Box>
         ))}
         {shown.length === 0 && (
-          <Typography sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}>
-            {turns.length === 0 ? "No messages captured for this conversation." : "No turns match that filter."}
+          <Typography
+            sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}
+          >
+            {turns.length === 0
+              ? "No messages captured for this conversation."
+              : "No turns match that filter."}
           </Typography>
         )}
       </Stack>
@@ -112,11 +273,32 @@ export default function ChatTranscriptPane({ turns }) {
   );
 }
 ChatTranscriptPane.propTypes = {
+  // The server's reason the conversation itself was not kept, said above what the pane can still show.
+  notice: PropTypes.string,
+  customerName: PropTypes.string,
+  // A turn to bring into view and mark: `{ turn }`, a new object each time it is asked for.
+  focusTurn: PropTypes.shape({ turn: PropTypes.number }),
+  // Who took part, as the server says: one with no channel only acted in the world.
+  participants: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string,
+      name: PropTypes.string,
+      role: PropTypes.string,
+      channel: PropTypes.string,
+    }),
+  ).isRequired,
+  // False for a run started by someone's message.
+  hasCustomer: PropTypes.bool,
   turns: PropTypes.arrayOf(
     PropTypes.shape({
       role: PropTypes.string,
+      speakerName: PropTypes.string,
+      actorId: PropTypes.string,
+      actorRole: PropTypes.string,
+      channel: PropTypes.string,
       text: PropTypes.string,
       toolCalls: PropTypes.any,
+      toolLabel: PropTypes.string,
     }),
   ).isRequired,
 };

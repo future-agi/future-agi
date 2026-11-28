@@ -26,7 +26,7 @@ func NewLatencyTracker(alpha float64) *LatencyTracker {
 
 // Record updates the EWMA for a provider with a new latency observation.
 func (t *LatencyTracker) Record(providerID string, d time.Duration) {
-	ms := float64(d.Milliseconds())
+	ms := float64(d) / float64(time.Millisecond)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -42,7 +42,7 @@ func (t *LatencyTracker) Record(providerID string, d time.Duration) {
 // least-latency moves off a provider that starts failing, while a fast
 // failure never makes a provider look faster than it is.
 func (t *LatencyTracker) RecordFailure(providerID string, elapsed time.Duration) {
-	ms := float64(elapsed.Milliseconds())
+	ms := float64(elapsed) / float64(time.Millisecond)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

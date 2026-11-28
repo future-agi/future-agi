@@ -145,7 +145,7 @@ export default function EditDrawer({
           }}
         >
           <Box sx={{ flex: 1 }}>
-            <Typography variant="subtitle1" component="h2">
+            <Typography variant="m2" component="h2" fontWeight={600}>
               Edit report
             </Typography>
             <Typography variant="caption" color="text.secondary">
@@ -153,7 +153,7 @@ export default function EditDrawer({
             </Typography>
           </Box>
           <IconButton aria-label="Close" onClick={onClose} size="small">
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={18} />
           </IconButton>
         </Stack>
         <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 2.5 }}>
@@ -325,7 +325,12 @@ export default function EditDrawer({
                 <Alert
                   severity="success"
                   action={
-                    <Button color="inherit" size="small" onClick={onRunNow}>
+                    <Button
+                      variant="outlined"
+                      color="inherit"
+                      size="small"
+                      onClick={onRunNow}
+                    >
                       Run now
                     </Button>
                   }
@@ -358,6 +363,7 @@ export default function EditDrawer({
           </Button>
           <Button
             variant="contained"
+            color="primary"
             onClick={save}
             disabled={busy || Boolean(problem)}
           >

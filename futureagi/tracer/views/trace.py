@@ -38,6 +38,7 @@ from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
@@ -55,6 +56,7 @@ from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.renderers import TraceDetailJSONRenderer
 from tracer.selectors.trace_filter_reads import (
     CURSOR_REQUIRED_CODE,
     CURSOR_REQUIRED_MESSAGE,
@@ -2122,6 +2124,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
+
+    def get_renderers(self):
+        renderers = super().get_renderers()
+        if getattr(self, "action", None) != "retrieve":
+            return renderers
+        # The same negotiation list. The trace-detail span tree can nest past
+        # the recursion limit, which the stock JSON encoder cannot render.
+        return [
+            TraceDetailJSONRenderer() if type(renderer) is JSONRenderer else renderer
+            for renderer in renderers
+        ]
 
     @validated_request(
         query_serializer=TraceDetailQuerySerializer,
@@ -7605,9 +7618,8 @@ with using_attributes(
     user_id="newuser@example.com",
 ):
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-6.1-terra",
         messages=[{{"role": "user", "content": "Write a haiku."}}],
-        max_tokens=20,
     )
         """
         return self._gm.success_response(code_example)

@@ -7,6 +7,7 @@ no tool calls — just prompt + context → text response.
 """
 
 import asyncio
+from contextlib import aclosing
 
 import structlog
 from drf_yasg.utils import swagger_auto_schema
@@ -40,17 +41,20 @@ async def _run_analysis(prompt):
     messages = [{"role": "user", "content": prompt}]
 
     content = ""
-    async for chunk in client.stream_completion(messages, tools=None):
-        choices = chunk.get("choices", [])
-        if not choices:
-            continue
-        delta = choices[0].get("delta", {})
-        text = delta.get("content", "")
-        if text:
-            content += text
-        finish = choices[0].get("finish_reason")
-        if finish == "stop":
-            break
+    # Bound the operation inside its event loop, including trailing metadata.
+    # A Future.result timeout alone still waits for the executor on exit.
+    async with asyncio.timeout(45):
+        async with aclosing(client.stream_completion(messages, tools=None)) as stream:
+            async for chunk in stream:
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                text = delta.get("content", "")
+                if text:
+                    content += text
+                # finish_reason ends the choice, not the transport. Drain usage
+                # and gateway metadata through [DONE] before closing the loop.
 
     return content
 
@@ -77,9 +81,7 @@ class QuickAnalysisView(APIView):
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                content = pool.submit(asyncio.run, _run_analysis(prompt)).result(
-                    timeout=45
-                )
+                content = pool.submit(asyncio.run, _run_analysis(prompt)).result()
 
             return Response({"status": True, "result": content})
 

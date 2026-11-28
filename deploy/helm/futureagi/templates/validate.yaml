@@ -112,6 +112,62 @@ Renders nothing when the values are consistent.
 {{- end -}}
 {{- end -}}
 {{- $gw := $v.agentccGateway -}}
+{{- range $component := list "agentccGateway" "frontend" -}}
+{{- $tls := (index $v $component).tls -}}
+{{- if and $tls.enabled (not $tls.existingSecret) -}}
+{{- $errors = append $errors (printf "%s.tls.existingSecret is required when %s.tls.enabled=true" $component $component) -}}
+{{- end -}}
+{{- if and (not $tls.httpEnabled) (not $tls.enabled) -}}
+{{- $errors = append $errors (printf "%s.tls.httpEnabled=false requires %s.tls.enabled=true: at least one listener must be on" $component $component) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $v.frontend.tls.enabled $v.frontend.tls.httpEnabled (eq (int $v.frontend.tls.port) 8080) -}}
+{{- $errors = append $errors "frontend.tls.port must differ from the HTTP container port 8080 while frontend.tls.httpEnabled=true" -}}
+{{- end -}}
+{{- if and $gw.tls.enabled $gw.tls.httpEnabled (eq (int $gw.tls.port) (include "futureagi.gateway.port" . | int)) -}}
+{{- $errors = append $errors "agentccGateway.tls.port must differ from the configured HTTP container port while agentccGateway.tls.httpEnabled=true" -}}
+{{- end -}}
+{{- range $component := list "agentccGateway" "frontend" -}}
+{{- $service := (index $v $component).service -}}
+{{- $tls := (index $v $component).tls -}}
+{{- if and $tls.enabled $tls.httpEnabled (eq (int $tls.servicePort) (int $service.port)) -}}
+{{- $errors = append $errors (printf "%s.tls.servicePort must differ from %s.service.port while HTTP is on" $component $component) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $gw.tls.httpEnabled) $v.gatewayApi.enabled $v.gatewayApi.llmGateway.enabled -}}
+{{- $errors = append $errors "agentccGateway.tls.httpEnabled=false cannot be used with gatewayApi.llmGateway.enabled: that route targets plain HTTP" -}}
+{{- end -}}
+{{- if and (not $v.frontend.tls.httpEnabled) (or $v.ingress.enabled $v.gatewayApi.enabled) -}}
+{{- $errors = append $errors "frontend.tls.httpEnabled=false cannot be used with ingress.enabled or gatewayApi.enabled: their routes target plain HTTP" -}}
+{{- end -}}
+{{- if and (not $gw.tls.httpEnabled) (not (or $v.global.caBundle.configMap $v.global.caBundle.secret)) -}}
+{{- $errors = append $errors "agentccGateway.tls.httpEnabled=false requires global.caBundle.configMap or global.caBundle.secret: backend and workers call the gateway in-cluster and must trust its certificate. As SSL_CERT_FILE and REQUESTS_CA_BUNDLE it replaces the pods' trust store, so it must hold the public roots as well as the gateway CA, e.g. the system ca-certificates bundle with the issuing CA appended (see global.caBundle in the chart README)" -}}
+{{- end -}}
+{{- $apiUrl := include "futureagi.url.api" . -}}
+{{- if and $v.frontend.tls.enabled (hasPrefix "http://" (lower $apiUrl)) (eq (include "futureagi.isLocalUrl" $apiUrl) "") -}}
+{{- $errors = append $errors "frontend.tls.enabled needs an HTTPS urls.api: a non-local HTTP API URL causes mixed content in the dashboard" -}}
+{{- end -}}
+{{- $appUrl := include "futureagi.url.app" . -}}
+{{- if and $v.frontend.tls.enabled (hasPrefix "http://" (lower $appUrl)) (eq (include "futureagi.isLocalUrl" $appUrl) "") -}}
+{{- $errors = append $errors "frontend.tls.enabled needs an HTTPS urls.app: CORS and CSRF allow only that origin, so the API would refuse the HTTPS dashboard. While frontend.tls.httpEnabled=true, add the http:// origin to config.extraCsrfOrigins for users still on the HTTP listener" -}}
+{{- end -}}
+{{- /* The gateway's own check: a Go duration above zero and at most 1m. The
+schema has already matched the syntax; sum its number-and-unit elements. */ -}}
+{{- $interval := toString $gw.tls.reloadInterval -}}
+{{- /* Empty: the gateway keeps its 30s default. */ -}}
+{{- if and $gw.tls.enabled $interval -}}
+{{- $seconds := 0.0 -}}
+{{- $units := dict "ns" 0.000000001 "us" 0.000001 "µs" 0.000001 "μs" 0.000001 "ms" 0.001 "s" 1.0 "m" 60.0 "h" 3600.0 -}}
+{{- range $element := regexFindAll "([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h)" $interval -1 -}}
+{{- $unit := regexFind "(ns|us|µs|μs|ms|s|m|h)$" $element -}}
+{{- $number := trimSuffix $unit $element | trimSuffix "." -}}
+{{- if hasPrefix "." $number }}{{ $number = printf "0%s" $number }}{{ end -}}
+{{- $seconds = addf $seconds (mulf (float64 $number) (get $units $unit)) -}}
+{{- end -}}
+{{- if or (le $seconds 0.0) (gt $seconds 60.0) -}}
+{{- $errors = append $errors (printf "agentccGateway.tls.reloadInterval must be above zero and at most 1m, as the gateway requires (got %q)" $interval) -}}
+{{- end -}}
+{{- end -}}
 {{- $gwRedis := dig "redis" "enabled" "auto" $gw | toString -}}
 {{- if not (has $gwRedis (list "auto" "true" "false")) -}}
 {{- $errors = append $errors (printf "agentccGateway.redis.enabled must be auto, true or false (got %q)" $gwRedis) -}}

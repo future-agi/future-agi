@@ -162,6 +162,46 @@ describe("AddProviderDialog validation", () => {
     expect(updateMutate.mock.calls[0][0].config.default_timeout).toBe(30);
   });
 
+  it.each([
+    [-1, 0],
+    [0, 0],
+    [7, 7],
+  ])(
+    "preserves the effective stored concurrency %i on a model-only edit",
+    async (stored, expected) => {
+      renderEditDialog({
+        models: ["old-model"],
+        default_timeout: 60,
+        max_concurrent: stored,
+      });
+      await userEvent.type(
+        await screen.findByPlaceholderText(/Select models/i),
+        "new-model",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Save Changes" }),
+      );
+      expect(updateMutate.mock.calls[0][0].config).toMatchObject({
+        models: ["old-model", "new-model"],
+        max_concurrent: expected,
+        default_timeout: 60,
+      });
+    },
+  );
+
+  it("does not normalize a newly entered negative concurrency on submit", async () => {
+    renderEditDialog({
+      models: ["existing"],
+      default_timeout: 60,
+      max_concurrent: 9,
+    });
+    fireEvent.change(screen.getByLabelText("Max Concurrent"), {
+      target: { value: "-5" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.max_concurrent).toBe(-5);
+  });
+
   const saveEditedProvider = async () => {
     renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
     await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
@@ -613,6 +653,103 @@ describe("AddProviderDialog validation", () => {
 
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
+  });
+
+  it.each(["Add", "Edit"])(
+    "%s commits typed text on blur instead of a hovered model",
+    async (mode) => {
+      if (mode === "Add") {
+        renderCreateDialog();
+        await userEvent.type(screen.getByLabelText(/API Key/i), "sk-good");
+      } else {
+        renderEditDialog({ models: ["gpt-4o-mini"] });
+      }
+      const input = await screen.findByPlaceholderText(/Select models/i);
+      await userEvent.type(input, "gpt");
+      await userEvent.hover(screen.getByRole("option", { name: "gpt-4o" }));
+      await userEvent.click(screen.getByLabelText(/Timeout/));
+
+      expect(input).toHaveValue("");
+      expect(screen.getByText("gpt")).toBeTruthy();
+      expect(screen.queryByText("gpt-4o")).toBeNull();
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: mode === "Add" ? "Add Provider" : "Save Changes",
+        }),
+      );
+      expect(updateMutate.mock.calls[0][0].config.models).toEqual(
+        mode === "Add" ? ["gpt"] : ["gpt-4o-mini", "gpt"],
+      );
+    },
+  );
+
+  it("keeps an already-selected model when hovered before blur", async () => {
+    renderEditDialog({ models: ["gpt-4o", "gpt-4o-mini"] });
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.click(input);
+    await userEvent.hover(screen.getByRole("option", { name: "gpt-4o" }));
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+    ]);
+  });
+
+  it("trims typed model IDs and does not duplicate a selected model on blur", async () => {
+    renderEditDialog({ models: ["gpt-4o"] });
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.type(input, "  local-model  ");
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+    await userEvent.type(input, "gpt-4o");
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+    await userEvent.type(input, "   ");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(input).toHaveValue("");
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "local-model",
+    ]);
+  });
+
+  it("includes a typed custom model when clicking Save directly", async () => {
+    renderEditDialog({ models: ["gpt-4o"] });
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.type(input, "local-model");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "local-model",
+    ]);
+  });
+
+  it("does not select a merely-hovered option when the field loses focus", async () => {
+    // `autoSelect` resolves blur against whichever option the mouse last
+    // passed over, not what was checked — so scrolling/hovering past a third
+    // row before tabbing away silently added it as a pick nobody clicked.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        }),
+      ),
+    );
+    renderCreateDialog();
+    await userEvent.type(screen.getByLabelText(/API Key/i), "sk-good");
+
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.click(input);
+    await userEvent.click(screen.getByRole("option", { name: "gpt-4o" }));
+    await userEvent.click(screen.getByRole("option", { name: "gpt-4o-mini" }));
+
+    // Hover the third, unclicked option, then move focus elsewhere without
+    // clicking it.
+    await userEvent.hover(screen.getByRole("option", { name: "gpt-4-turbo" }));
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+
+    expect(screen.getAllByText("gpt-4o").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("gpt-4o-mini").length).toBeGreaterThan(0);
+    expect(screen.queryByText("gpt-4-turbo")).toBeNull();
   });
 });
 
@@ -1103,10 +1240,8 @@ describe("AddProviderDialog System One presets", () => {
 
   it("does not offer System One for a chat preset", async () => {
     renderCreateDialog();
-    await userEvent.click(apiFormatField());
-
-    const formats = screen.getAllByRole("option").map((o) => o.textContent);
-    expect(formats).toEqual(["openai", "anthropic"]);
+    expect(apiFormatField()).toHaveTextContent("openai");
+    expect(apiFormatField()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("opens a saved TypeSafe provider without listing models", async () => {
@@ -1408,6 +1543,29 @@ describe("AddProviderDialog provider names", () => {
     const payload = updateMutate.mock.calls[0][0];
     expect(payload.name).toBe("perplexity");
     expect(payload.config.base_url).toBe("https://api.perplexity.ai/v1");
+    expect(payload.config.api_path_prefix).toBe("/v1");
+  });
+
+  it("offers API Route on its OpenAI-compatible endpoint with one /v1 prefix", async () => {
+    renderWithNames([]);
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "API Route" }));
+
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.getByLabelText(/Base URL/).value).toBe(
+      "https://global.api-route.com/v1",
+    );
+    expect(screen.getByLabelText(/API Path Prefix/i).value).toBe("/v1");
+    await userEvent.type(screen.getByLabelText(/API Key/i), "synthetic-key");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await addModel("example-model");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("api-route");
+    expect(payload.config.api_format).toBe("openai");
+    expect(payload.config.base_url).toBe("https://global.api-route.com/v1");
     expect(payload.config.api_path_prefix).toBe("/v1");
   });
 });

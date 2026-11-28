@@ -78,6 +78,7 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid, readOnly = false }) => {
       hasPrev={hasPrev}
       hasNext={hasNext}
       initialEvalFocus={evalFocus === true}
+      initialSpanId={traceDetailDrawerOpen?.spanId || null}
       refreshParentGrid={refreshGrid}
       readOnly={readOnly}
     />

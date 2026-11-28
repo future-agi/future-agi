@@ -166,8 +166,8 @@ async function send(payload, token, workspaceId) {
   ws.send(JSON.stringify(payload));
 }
 
-// Open + heartbeat-warm the socket ahead of time (called when the Fix tab
-// mounts) so the first run's chat frame lands on a live connection instead of
+// Open + heartbeat-warm the socket ahead of time (called when the Root cause
+// tab mounts) so the first run's chat frame lands on a live connection instead of
 // a cold/stale one — that cold-socket round-trip was the 20-30s-to-first-paint.
 // Idempotent: reuses an already-open socket.
 export function prewarmSocket({ token, workspaceId }) {

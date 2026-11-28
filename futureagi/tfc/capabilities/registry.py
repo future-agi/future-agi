@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ExecutionLocation(str, Enum):
+class ExecutionLocation(StrEnum):
     LOCAL = "local"
     FUTUREAGI_SERVICE = "futureagi_service"
     HYBRID = "hybrid"
 
 
-class GraceBehavior(str, Enum):
+class GraceBehavior(StrEnum):
     ALLOWED = "allowed"
     DENIED = "denied"
 
 
-class AirGapBehavior(str, Enum):
+class AirGapBehavior(StrEnum):
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
     DEGRADED = "degraded"
@@ -194,7 +194,7 @@ FEATURE_INSIGHTS = FeatureDefinition(
 
 FEATURE_FIX_MY_AGENT = FeatureDefinition(
     id="fix_my_agent",
-    display_name="Fix My Agent",
+    display_name="Epoch",
     oss_baseline=False,
     requires_license=True,
     execution_location=ExecutionLocation.LOCAL,

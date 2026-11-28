@@ -18,7 +18,10 @@ class EvaluationDenied(Exception):
         return {**self.details, "code": self.code, "message": str(self)}
 
     def response(self, general_methods):
-        response = self._response(general_methods)
+        # Only the subclasses define _response. A bare EvaluationDenied
+        # (raise_if_evaluation_denied) has none, so this call raises
+        # AttributeError on it.
+        response = self._response(general_methods)  # type: ignore[attr-defined]
         if self.completed_results is not None:
             # Earlier items have already executed and may have been charged.
             # Callers must resume at failed_index, not retry the entire batch.

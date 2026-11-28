@@ -18,8 +18,9 @@
 case "${IMAGE_VARIANT:=standard}" in
     standard)
         # The groups that were base dependencies before the image-size split
-        # (pyproject.toml [project.optional-dependencies]).
-        : "${EXTRAS:=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer}"
+        # (pyproject.toml [project.optional-dependencies]), and pii: Presidio
+        # and spaCy's en_core_web_sm, which a project's PII redaction needs.
+        : "${EXTRAS:=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,pii}"
         : "${FFMPEG_FLAVOR:=debian}"
         : "${WITH_GIT:=true}"
         : "${WITH_UV:=true}"

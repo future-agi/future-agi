@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import structlog
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.db.models import Count, Exists, Max, Min, OuterRef, Q
 from django.http import Http404
 from django.utils import timezone
@@ -13,6 +14,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
@@ -28,11 +30,14 @@ from tracer.models.monitor import (
     UserAlertMonitorLog,
 )
 from tracer.models.project import Project
+from tracer.permissions.metrics import MonitorWritePermission
 from tracer.serializers.monitor import (
     UserAlertMonitorBulkMuteRequestSerializer,
+    UserAlertMonitorCreateResponseSerializer,
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
+    UserAlertMonitorEntitlementResponseSerializer,
     UserAlertMonitorGraphResponseSerializer,
     UserAlertMonitorListQuerySerializer,
     UserAlertMonitorListResponseSerializer,
@@ -73,7 +78,7 @@ def _parse_page_params(query_params, default_size: int = 30) -> tuple[int, int]:
 
 class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, MonitorWritePermission]
     serializer_class = UserAlertMonitorSerializer
 
     def _current_organization(self):
@@ -353,11 +358,21 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
     def _update_monitor(self, request, *, partial):
         try:
-            instance = self.get_object()
-            data = self._scope_safe_update_data(request, instance, partial=partial)
+            with transaction.atomic():
+                instance = self.get_object()
+                # Lock and re-read the row: the save below writes every
+                # column, so a recipient removed by an unsubscribe link while
+                # this request ran would otherwise be put back.
+                instance = (
+                    UserAlertMonitor.no_workspace_objects.select_for_update().get(
+                        pk=instance.pk
+                    )
+                )
+                data = self._scope_safe_update_data(request, instance, partial=partial)
 
-            serializer = self.get_serializer(instance, data=data, partial=partial)
-            if serializer.is_valid():
+                serializer = self.get_serializer(instance, data=data, partial=partial)
+                if not serializer.is_valid():
+                    return self._gm.bad_request(serializer.errors)
                 updated_instance = serializer.save()
                 updated_instance.logs.append(
                     {
@@ -368,8 +383,6 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
                 updated_instance.save(update_fields=["logs"])
                 return self._gm.success_response(serializer.data)
-            else:
-                return self._gm.bad_request(serializer.errors)
         except Exception as e:
             traceback.print_exc()
             logger.info(f"Error occurred while updating Alert Monitor: {str(e)}")
@@ -537,6 +550,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @validated_request(
         request_serializer=UserAlertMonitorSerializer,
         strict_request_validation=False,
+        responses={
+            200: UserAlertMonitorCreateResponseSerializer,
+            402: UserAlertMonitorEntitlementResponseSerializer,
+        },
     )
     def create(self, request, *args, **kwargs):
         from tfc.ee_gating import EEResource, check_ee_can_create
@@ -713,7 +730,11 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "output_type": "system_metric",
                 }
                 for value, label in MonitorMetricTypeChoices.choices
-                if value != MonitorMetricTypeChoices.EVALUATION_METRICS.value
+                if value
+                not in {
+                    MonitorMetricTypeChoices.EVALUATION_METRICS.value,
+                    MonitorMetricTypeChoices.DERIVED_METRIC.value,
+                }
             ]
 
             eval_options = [
@@ -896,7 +917,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
 class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, MonitorWritePermission]
     serializer_class = UserAlertMonitorLogSerializer
 
     def _current_organization(self):

@@ -54,7 +54,6 @@ const BillingInfoModal = ({ open, onClose }) => {
     watchedState,
     watchedPostalCode,
     watchedTaxId,
-    watchedCity,
   ] = useWatch({
     control,
     name: [
@@ -66,25 +65,18 @@ const BillingInfoModal = ({ open, onClose }) => {
       "state",
       "postalCode",
       "taxId",
-      "city",
     ],
   });
 
-  // All previous useEffect hooks for tracking remain the same
   useEffect(() => {
-    const name = watchedName;
-    if (formState.isDirty && name) {
-      debouncedTrackEvent(Events.billingNameEntered, {
-        billing_contact_name: name,
-      });
+    if (formState.isDirty && watchedName) {
+      debouncedTrackEvent(Events.billingNameEntered, {});
     }
   }, [watchedName, formState.isDirty, debouncedTrackEvent]);
 
   useEffect(() => {
     if (formState.isDirty && watchedEmail) {
-      debouncedTrackEvent(Events.billingEmailEntered, {
-        billing_email_id: watchedEmail,
-      });
+      debouncedTrackEvent(Events.billingEmailEntered, {});
     }
   }, [watchedEmail, formState.isDirty, debouncedTrackEvent]);
 
@@ -101,10 +93,7 @@ const BillingInfoModal = ({ open, onClose }) => {
       formState.isDirty &&
       (watchedBillingAddress1 || watchedBillingAddress2)
     ) {
-      debouncedTrackEvent(Events.billingAddressEntered, {
-        billing_address: watchedBillingAddress1,
-        billing_address2: watchedBillingAddress2,
-      });
+      debouncedTrackEvent(Events.billingAddressEntered, {});
     }
   }, [
     watchedBillingAddress1,
@@ -131,23 +120,15 @@ const BillingInfoModal = ({ open, onClose }) => {
 
   useEffect(() => {
     if (formState.isDirty && watchedPostalCode) {
-      debouncedTrackEvent(Events.postalCodeEntered, {
-        postal_code: watchedPostalCode,
-      });
+      debouncedTrackEvent(Events.postalCodeEntered, {});
     }
   }, [watchedPostalCode, formState.isDirty, debouncedTrackEvent]);
 
   useEffect(() => {
     if (formState.isDirty && watchedTaxId) {
-      debouncedTrackEvent(Events.taxIdEntered, { tax_Id: watchedTaxId });
+      debouncedTrackEvent(Events.taxIdEntered, {});
     }
   }, [watchedTaxId, formState.isDirty, debouncedTrackEvent]);
-
-  useEffect(() => {
-    if (formState.isDirty && watchedCity) {
-      debouncedTrackEvent(Events.citySelectionClicked, { city: watchedCity });
-    }
-  }, [watchedCity, formState.isDirty, debouncedTrackEvent]);
 
   const handleGetBillingDetails = async () => {
     try {
@@ -228,20 +209,13 @@ const BillingInfoModal = ({ open, onClose }) => {
     };
     trackEvent(Events.updateBillingClicked, {
       [PropertyName.formFields]: {
-        billing_contact_name: formValues.name,
-        billing_email_id: formValues.email,
-        company: formValues.company,
-        billing_address: formValues.billingAddress1,
-        city: formValues.city,
         country: formValues.country,
         state: formValues.state,
-        postal_code: formValues.postalCode,
+        has_company: Boolean(formValues.company),
+        has_billing_address2: Boolean(formValues.billingAddress2),
+        has_tax_id: Boolean(formValues.taxId),
       },
-      email: formValues.email,
-      name: formValues.name,
-      company_name: formValues.company,
       Country: formValues.country,
-      tax_Id: formValues.taxId,
     });
 
     try {

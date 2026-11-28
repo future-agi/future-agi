@@ -99,3 +99,12 @@ export function isUnsupportedTaskNativePath(
 export function taskNativeMappingMessage(path) {
   return `Native field "${path}" is not supported for task evaluation. Map this variable to a supported field such as input, output or a span attribute.`;
 }
+
+// A task binding has one flat variable-to-path map shared by its children.
+// Only the current schema may contribute paths to validation, preview or save.
+export function activeTaskCompositeMapping(keys, draft) {
+  return Object.fromEntries(keys.flatMap((key) => {
+    const path = draft[key];
+    return typeof path === "string" && path.trim() ? [[key, path]] : [];
+  }));
+}

@@ -15,6 +15,7 @@ LLM instrumentation uses traceAI (https://github.com/future-agi/traceAI).
 """
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -171,13 +172,20 @@ def instrument_mistralai() -> bool:
 
 def instrument_litellm() -> bool:
     """Instrument LiteLLM for unified LLM provider tracing (100+ providers)."""
-    return _instrument_library(
+    instrumented = _instrument_library(
         "litellm",
         "traceai_litellm",
         "LiteLLMInstrumentor",
         use_tracer_provider=True,
         via="traceai",
     )
+    if instrumented:
+        # Older traceai-litellm stream wrappers raise IndexError on chunks
+        # with no choices (e.g. Azure's prompt-filter chunk); let those through.
+        from .traceai_litellm_compat import patch_traceai_litellm_stream_wrappers
+
+        patch_traceai_litellm_stream_wrappers()
+    return instrumented
 
 
 # =============================================================================
@@ -396,6 +404,19 @@ def instrument_all_vector_dbs() -> None:
 
 # Global tracer for custom instrumentation
 _clickhouse_tracer = None
+_suppress_clickhouse_query_span = ContextVar(
+    "suppress_clickhouse_query_span", default=False
+)
+
+
+@contextmanager
+def suppress_clickhouse_query_span():
+    """Omit synchronous query spans in this call context, not on the pooled client."""
+    token = _suppress_clickhouse_query_span.set(True)
+    try:
+        yield
+    finally:
+        _suppress_clickhouse_query_span.reset(token)
 
 
 def _get_clickhouse_tracer():
@@ -423,6 +444,8 @@ def trace_clickhouse_query(func: Callable) -> Callable:
 
     @wraps(func)
     def wrapper(*args, **kwargs):
+        if _suppress_clickhouse_query_span.get():
+            return func(*args, **kwargs)
         name, kind, attributes = _clickhouse_span_args(args, kwargs)
         with _get_clickhouse_tracer().start_as_current_span(
             name, kind=kind, attributes=attributes

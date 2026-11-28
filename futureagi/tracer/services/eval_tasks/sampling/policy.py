@@ -13,10 +13,19 @@ import re
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, cast
 
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
+
+
+class NormalizedRule(TypedDict, total=False):
+    target_n: int
+    min_n: int
+    max_n: int
+    rare_below: int
+    rate: int | float
+
 
 RATE_SCALE = 1_000_000
 RATE_DENOMINATOR = 100 * RATE_SCALE
@@ -220,8 +229,10 @@ def validate_policy(
         raise InvalidSamplingPolicy("mode must be closed or live.")
     policy["mode"] = mode
     window = policy.get("window")
+    if not isinstance(window, dict):
+        raise InvalidSamplingPolicy("Invalid or unknown window fields.")
     _keys(window, {"start", "end"}, "window")
-    start = parse_time(window.get("start"))
+    start = parse_time(cast(str, window.get("start")))
     current = now or datetime.now(UTC)
     if mode == "live":
         if window.get("end") is not None:
@@ -232,7 +243,7 @@ def validate_policy(
             raise InvalidSamplingPolicy("Live sampling cannot start in the future.")
         policy["window"] = {"start": start.isoformat(), "end": None}
     else:
-        end = parse_time(window.get("end"))
+        end = parse_time(cast(str, window.get("end")))
         if not timedelta(0) < end - start <= MAX_WINDOW:
             raise InvalidSamplingPolicy(
                 "Use a positive event-time window of at most 31 days."
@@ -301,7 +312,7 @@ def _cell_quotas(policy: dict) -> None:
         policy.pop("cell_quotas")
 
 
-def cell_rule(policy: dict, stratum: str, rule: dict) -> dict:
+def cell_rule(policy: dict, stratum: str, rule: dict | None) -> dict | None:
     """An explicit target replaces all quota controls for this cell only."""
     if stratum in policy.get("cell_quotas", {}):
         return {"target_n": policy["cell_quotas"][stratum]}
@@ -421,7 +432,7 @@ def rate_units(rate: float) -> int:
     return int(value)
 
 
-def target_size(rule: dict, population: int) -> int:
+def target_size(rule: NormalizedRule, population: int) -> int:
     target = rule.get("target_n")
     if target is None:
         target = (
@@ -434,7 +445,7 @@ def target_size(rule: dict, population: int) -> int:
     )
 
 
-def quota_target(rule: dict, population: int) -> int:
+def quota_target(rule: NormalizedRule, population: int) -> int:
     """The closed quota a rule asks for in a cell of this size.
 
     Rate or target_n, raised to the floor (min_n), census below rare_below and
