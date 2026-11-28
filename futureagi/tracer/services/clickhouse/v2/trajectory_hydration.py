@@ -1225,7 +1225,9 @@ def _plan(
             )
             continue
 
-        def _resolve(prefixed_hash: str, _view: _RowView = view) -> str | None:
+        row_view: _RowView = view
+
+        def _resolve(prefixed_hash: str, _view: _RowView = row_view) -> str | None:
             s, raw = _resolve_scope_and_hash(prefixed_hash, _view.item_scope_id)
             return resolved.get((_view.project_id, s, raw))
 
