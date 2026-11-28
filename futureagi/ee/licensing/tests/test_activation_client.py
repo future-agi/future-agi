@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from django.core.exceptions import SynchronousOnlyOperation
 
 from ee.licensing.activation_client import (
     ManagedServiceError,
@@ -153,6 +155,23 @@ def activation(settings):
 
 
 class TestActivationBackoff:
+    @pytest.mark.asyncio
+    async def test_worker_can_activate_after_event_loop_lookup_fails(self, activation):
+        post, _ = activation
+        post.return_value = httpx.Response(200, json={"access_token": "service-token"})
+        with patch(
+            "tfc.deployment_telemetry.state.get_or_create_telemetry_state",
+            side_effect=[SynchronousOnlyOperation(), MagicMock(instance_id="worker")],
+        ):
+            assert get_service_token() is None
+            post.assert_not_called()
+            token = await asyncio.to_thread(get_service_token)
+
+        assert token is not None
+        assert token.access_token == "service-token"
+        post.assert_called_once()
+        assert post.call_args.kwargs["json"]["instance_id"] == "worker"
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("status", "reason", "message"),

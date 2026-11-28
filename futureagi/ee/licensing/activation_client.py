@@ -142,8 +142,6 @@ def _activate() -> ServiceToken | None:
     if previous and time.monotonic() < previous.retry_at:
         return None
 
-    retry_after = None
-    status = None
     try:
         import httpx
 
@@ -154,6 +152,15 @@ def _activate() -> ServiceToken | None:
         payload = {"instance_id": str(state.instance_id), "version": get_version()}
         if key_hash:
             payload["license_key_hash"] = key_hash
+    except Exception as exc:
+        # A worker can read telemetry even if an event-loop caller could not.
+        _last_failure = None
+        logger.error("activation_preparation_failed", error_type=type(exc).__name__)
+        return None
+
+    retry_after = None
+    status = None
+    try:
         response = httpx.post(url, json=payload, timeout=10.0)
         status = response.status_code
         if status == 200:
