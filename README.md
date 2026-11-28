@@ -86,10 +86,20 @@ Around the loop, **[Build](#build)** gives you Prompts, Agent Playground, Knowle
 
 **1. Get your keys.** [Create a free Cloud account](https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=quickstart_cloud), or run it on your machine with Docker (Compose v2.24+, 2 vCPUs and 4 GB for Docker):
 
+macOS / Linux / WSL:
+
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-./bin/install          # Windows (PowerShell): .\bin\install.ps1
+./bin/install
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
 The installer writes this install's secrets to `.env`, pulls the images (about 800 MB) and waits until everything is up; the first boot takes a few minutes. Then open <http://localhost:3000> and create your account.
