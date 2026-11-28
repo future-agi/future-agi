@@ -384,8 +384,8 @@
     },
     {
       "pattern": "fi-collector/pkg/server/trajectory_integration_test.go",
-      "reason": "Inspected testing.T disposable ClickHouse trajectory fixtures: CREATE USER/DROP USER only for a per-run insert-only test user in the isolated integration fixture, not a shipping entrypoint.",
-      "sha256": "516b8f1b90904d2e1ccf0e768e82133434a8639337d7b2c39b07bc44143505bc"
+      "reason": "Inspected testing.T disposable ClickHouse trajectory fixtures, not a shipping entrypoint: per-test databases with the rendered 002/040 schema, a per-test span_rows table and materialized view inside such a database, and CREATE USER/DROP USER for a per-run insert-only test user, all in the isolated integration fixture and dropped when the test ends.",
+      "sha256": "c2e41549ffc7f60765378f101716bd181be2afc9e2d926ec0436982c67f1f7ac"
     },
     {
       "pattern": "futureagi/conftest.py",
