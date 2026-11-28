@@ -625,9 +625,13 @@ def _prepare_trace_update_data(
 
     if not parent_span_id:
         if observation_span_data.get("input"):
-            traces_to_update[trace_id_str]["input"] = observation_span_data["input"]
+            traces_to_update[trace_id_str]["input"] = _strip_null_chars(
+                observation_span_data["input"]
+            )
         if observation_span_data.get("output"):
-            traces_to_update[trace_id_str]["output"] = observation_span_data["output"]
+            traces_to_update[trace_id_str]["output"] = _strip_null_chars(
+                observation_span_data["output"]
+            )
 
     if parsed_data.get("session_name"):
         session_name = parsed_data["session_name"]
@@ -715,6 +719,16 @@ def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
             "observation_span_copy_pk_violation_falling_back",
             batch_size=len(spans_to_create),
         )
+        for span in spans_to_create:
+            for field in ObservationSpan._meta.concrete_fields:
+                if field.get_internal_type() == "JSONField" or isinstance(
+                    getattr(span, field.attname, None), str
+                ):
+                    setattr(
+                        span,
+                        field.attname,
+                        _strip_null_chars(getattr(span, field.attname)),
+                    )
         ObservationSpan.objects.bulk_create(
             spans_to_create,
             ignore_conflicts=True,
