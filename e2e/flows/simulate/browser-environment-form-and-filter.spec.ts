@@ -30,8 +30,10 @@ const CHAT = 'Chat';
 interface Refusal { error: string; message: string; positions: number[] }
 interface ListPage { count: number; results: { id: string; name: string; agent_type: string }[] }
 
-// Agent reading runs on worker-reading and mock-daytona, which only the distributed E2E stack starts.
-// Skipped when the suite is listed, not while it runs, so the standalone shards and their listing agree.
+// Can't run on the standalone stack: finding the agent reads the uploaded folder in a Daytona sandbox, and
+// only the distributed stack's worker-reading has one (DAYTONA_API_URL -> mock-daytona, stack/docker-compose.e2e.yml);
+// stack/docker-compose.standalone-e2e.yml starts no mock-daytona and sets no DAYTONA_API_URL. Skipped when the
+// suite is listed, not while it runs, so the standalone shards and their listing agree.
 const distributedOnly = process.env.E2E_STACK === 'standalone' ? test.skip : test;
 
 distributedOnly('SIM-E2E-045: a wrong browser site is refused by its position at preflight, before anything is built', {
