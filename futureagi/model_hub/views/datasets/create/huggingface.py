@@ -37,6 +37,7 @@ from model_hub.utils.utils import (
 )
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.hugginface import (
+    HuggingFaceDatasetInfoError,
     get_huggingface_dataset_info,
     process_huggingface_dataset,
 )
@@ -98,6 +99,22 @@ class GetHuggingFaceDatasetConfigView(APIView):
                         "message": "Dataset configuration retrieved successfully",
                         "dataset_info": dataset_info,
                     }
+                )
+            except HuggingFaceDatasetInfoError as e:
+                if 400 <= e.status_code < 500 or e.status_code == 501:
+                    logger.warning(
+                        f"huggingface: Error in fetching the dataset configurations: {dataset_path} returned {e.status_code}"
+                    )
+                else:
+                    logger.exception(
+                        f"huggingface: Error in fetching the dataset configurations: {str(e)}"
+                    )
+                if e.status_code == 501:
+                    return self._gm.bad_request(
+                        get_error_message("CONTAINS_ARBITRARY_CODE")
+                    )
+                return self._gm.bad_request(
+                    get_error_message("FAILED_TO_FETCH_DATASET")
                 )
             except Exception as e:
                 logger.exception(
