@@ -499,9 +499,8 @@ class SOSLoginAdmin(admin.ModelAdmin):
     """Custom admin view to start an SOS (support impersonation) session.
 
     Search for an active user and mint them a token pair, then hand off to the
-    frontend's /sos route which stores the tokens and flips on SOS Mode. Same
-    effect as the Appsmith-facing SOSLoginView, but gated on the operator's own
-    admin session instead of the shared API_KEY, so the operator is identifiable
+    frontend's /sos route which stores the tokens and flips on SOS Mode. It is
+    gated on the operator's own admin session, so the operator is identifiable
     and the handoff is audit-logged.
 
     Access requires an active staff account (`is_staff`) — see `has_sos_access`.

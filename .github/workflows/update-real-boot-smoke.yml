@@ -34,6 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
       A_VERSION: v1.53.0
       LATER_VERSIONS: v1.54.0 v1.55.0
       BOOT_LIMIT_SECONDS: "4200"
@@ -76,6 +78,10 @@ jobs:
             echo "FUTURE_AGI_VERSION=$A_VERSION" >> .env
           fi
           grep '^FUTURE_AGI_VERSION=' .env
+          # Check what the tagged app would receive without logging its other env.
+          docker compose config --format json | jq -e '
+            .services.app.environment |
+            .FUTURE_AGI_TELEMETRY_DISABLED == "true" and .FUTURE_AGI_TELEMETRY_URL == "http://127.0.0.1:9"' >/dev/null
 
       - name: Pull A and time it
         working-directory: ${{ runner.temp }}/a

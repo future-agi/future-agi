@@ -248,26 +248,11 @@ for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
 print(value)
 PY
 }
-env_set() { # file, key, value: replace the last KEY= line, or append
-  python3 - "$1" "$2" "$3" <<'PY'
-import os, re, sys
-path, key, value = sys.argv[1:4]
-lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
-hit = None
-for i, line in enumerate(lines):
-    if not line.lstrip().startswith("#") and re.match(r"^\s*(?:export\s+)?%s\s*=" % re.escape(key), line):
-        hit = i
-if hit is None:
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    lines.append(f"{key}={value}\n")
-else:
-    lines[hit] = f"{key}={value}\n"
-mode = os.stat(path).st_mode & 0o777
-with open(path, "w", encoding="utf-8") as handle:
-    handle.write("".join(lines))
-os.chmod(path, mode)
-PY
+source "$SCRIPT_DIR/standalone_rehearsal_env.sh" || exit 2
+
+require_standalone_telemetry() {
+  check_standalone_telemetry "$CHECKOUT" "$1" "${DC[@]}" ||
+    die "refusing to boot $1: retained app must disable telemetry and use the loopback URL"
 }
 env_changes() { # before, after: changed lines, secret-looking values redacted
   python3 - "$1" "$2" <<'PY'
@@ -701,6 +686,7 @@ CD_CHECKOUT="cd $(py_quote "$(cd "$CHECKOUT" && pwd -P)") && "
 # ------------------------------------------------------------- step 2 --
 log "Step 2: .env and the real installer"
 (umask 077 && cp "$CHECKOUT/.env.example" "$CHECKOUT/.env") || die "cannot create .env"
+pin_standalone_telemetry "$CHECKOUT/.env" || die "cannot pin telemetry in .env"
 env_set "$CHECKOUT/.env" FUTURE_AGI_VERSION "$FROM_VERSION"
 env_set "$CHECKOUT/.env" COMPOSE_PROJECT_NAME "$PROJECT"
 if [[ -n "${REHEARSAL_READY_MAX_SECONDS:-}" ]]; then
@@ -716,6 +702,7 @@ ADMIN_PASSWORD="Rh-$(python3 -c 'import secrets; print(secrets.token_urlsafe(18)
 (umask 077 && printf '%s\n%s\n' "$ADMIN_EMAIL" "$ADMIN_PASSWORD" >"$SECRETS/admin-$STAMP")
 
 if [[ "$MODE" == full ]]; then
+  require_standalone_telemetry "$FROM_VERSION"
   STACK_STARTED=1
   # Prefix assignments: the installer sees them, the command log does not.
   FAGI_ADMIN_EMAIL="$ADMIN_EMAIL" FAGI_ADMIN_NAME="$ADMIN_NAME" FAGI_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
@@ -886,6 +873,7 @@ project_containers >"$RUN_DIR/55-containers-before-apply.txt"
 backups_before=$(find "$BACKUPS" -type f | wc -l | tr -d ' ')
 touch "$RUN_DIR/55-marker"
 sleep 1
+require_standalone_telemetry "$TO_VERSION"
 run 55-apply.log ./bin/update apply
 check 5 "apply exits 0" "exit $RC (55-apply.log)" test "$RC" = 0
 record INFO 5 "apply duration" "${ELAPSED}s"
@@ -927,6 +915,7 @@ check 5 "the Standalone stack has no service to build" "58-compose-config.yml" \
 cp -p "$CHECKOUT/.env" "$RUN_DIR/env.before-install-again"
 project_containers >"$RUN_DIR/58-containers-before-install.txt"
 image_before=$(app_image_facts | cut -d'|' -f1)
+require_standalone_telemetry "$TO_VERSION"
 run 58-install-again.log ./bin/install -y
 record INFO 5 "a later ./bin/install -y duration" "${ELAPSED}s"
 check 5 "a later ./bin/install -y exits 0" "exit $RC (58-install-again.log)" test "$RC" = 0
@@ -987,6 +976,7 @@ run 73-rollback-no-yes.log ./bin/update rollback
 check 7 "rollback without --yes exits 3" "exit $RC" test "$RC" = 3
 check 7 "rollback without --yes asks for --yes" "73-rollback-no-yes.log" contains 73-rollback-no-yes.log "rerun with --yes"
 cp -p "$CHECKOUT/.env" "$RUN_DIR/env.before-rollback"
+require_standalone_telemetry "$FROM_VERSION"
 paste_command 74-rollback.log "$BASE" "$rerun_command"
 ROLLBACK_RC=$RC
 record INFO 7 "rollback duration" "${ELAPSED}s"
@@ -1074,6 +1064,7 @@ if ((ROLLBACK_RC == 0)); then
   backups_before=$(count_backups)
   touch "$RUN_DIR/85-marker"
   sleep 1
+  require_standalone_telemetry "$TO_VERSION"
   run 85-apply-staged.log ./bin/update apply
   check 8 "apply after the stage exits 0" "exit $RC (85-apply-staged.log)" test "$RC" = 0
   record INFO 8 "apply after the stage duration" "${ELAPSED}s"

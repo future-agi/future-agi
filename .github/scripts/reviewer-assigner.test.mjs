@@ -14,7 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const BOT = "approver-app[bot]";
 
 // Preloaded into the sweep: replaces fetch, logs every call, serves one or two
-// GraphQL pages and the write-access collaborators.
+// GraphQL pages and each login's repository permission.
 const FAKE_GITHUB = `
 import { appendFileSync, readFileSync } from "node:fs";
 const log = (c) => appendFileSync(process.env.CALL_LOG, JSON.stringify(c) + "\\n");
@@ -31,8 +31,12 @@ globalThis.fetch = async (url, init = {}) => {
     const more = pages === 1 && Boolean(process.env.FAKE_PRS_PAGE2);
     return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: more, endCursor: more ? "c1" : null }, nodes } } } });
   }
-  if (method === "GET" && path === "/repos/o/r/collaborators?permission=push&per_page=100")
-    return reply(JSON.parse(process.env.FAKE_WRITERS).map((login) => ({ login })));
+  const perm = path.match(/^\\/repos\\/o\\/r\\/collaborators\\/([^/]+)\\/permission$/);
+  if (method === "GET" && perm) {
+    const writers = JSON.parse(process.env.FAKE_WRITERS).map((l) => l.toLowerCase());
+    const login = decodeURIComponent(perm[1]).toLowerCase();
+    return reply({ permission: writers.includes(login) ? "write" : "read" });
+  }
   if (method !== "GET") return reply({});
   return { ok: false, status: 500, text: async () => "unexpected read " + path };
 };
@@ -104,7 +108,7 @@ function sweep(prs, writers = WRITERS, page2 = null) {
   }
 }
 
-test("a sweep of 50 open PRs reads once and writes only for the PRs that need it", () => {
+test("a sweep of 50 open PRs reads the PR list once and writes only for the PRs that need it", () => {
   const prs = [];
   const now = new Date().toISOString();
   // 1-3 drafts, 4-7 need an assignment, 8-10 are overdue, 11-50 are settled.
@@ -134,10 +138,25 @@ test("a sweep of 50 open PRs reads once and writes only for the PRs that need it
   const writes = calls.filter(
     (c) => c.method !== "GET" && c.path !== "/graphql",
   );
-  assert.ok(reads.length <= 2, `reads: ${reads.length}`);
+  // One PR list read, then each login's permission at most once.
+  assert.equal(reads.filter((c) => c.path === "/graphql").length, 1);
+  const permissionReads = reads.filter((c) => c.path.endsWith("/permission"));
+  assert.equal(
+    permissionReads.length,
+    new Set(permissionReads.map((c) => c.path)).size,
+  );
+  assert.ok(
+    permissionReads.length <= Object.keys(config.users).length + 1,
+    `permission reads: ${permissionReads.length}`,
+  );
+  assert.equal(reads.length, 1 + permissionReads.length);
   assert.ok(
     !calls.some((c) => c.path.startsWith("/search")),
     "no search calls",
+  );
+  assert.ok(
+    !calls.some((c) => c.path.includes("/collaborators?")),
+    "write access is read per login, never from the collaborators list",
   );
 
   const touched = new Set(

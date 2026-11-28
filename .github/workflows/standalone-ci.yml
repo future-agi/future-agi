@@ -48,6 +48,11 @@ on:
     branches: [dev, main]
     paths:
       - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/helm/futureagi/**"
+      - "scripts/update_rehearsal_milestone.py"
+      - "scripts/update_rehearsal_shipping.py"
+      - ".github/workflows/update-real-boot-smoke.yml"
       - "deploy/standalone/**"
       - "deploy/tests/**"
       - "bin/install*"
@@ -96,6 +101,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       install: ${{ steps.filter.outputs.install || steps.always.outputs.install }}
+      telemetry: ${{ steps.filter.outputs.telemetry }}
       arches: ${{ steps.arches.outputs.arches }}
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +131,12 @@ jobs:
               - 'scripts/test_install_smoke.py'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/standalone-ci.yml'
+            telemetry:
+              - 'docker-compose.distributed.yml'
+              - 'deploy/helm/futureagi/**'
+              - 'scripts/update_rehearsal_milestone.py'
+              - 'scripts/update_rehearsal_shipping.py'
+              - '.github/workflows/update-real-boot-smoke.yml'
             arm64:
               - 'deploy/standalone/**'
               - 'futureagi/Dockerfile.oss'
@@ -159,14 +171,23 @@ jobs:
   standalone-unit:
     name: standalone bootstrap unit tests
     needs: changes
-    if: needs.changes.outputs.install == 'true'
+    if: needs.changes.outputs.install == 'true' || needs.changes.outputs.telemetry == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Render the same retained tags that the boot jobs install.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: ./.github/actions/setup-helm-tools
+        with:
+          helm: "4"
+      - name: Render CI telemetry settings (Compose and Helm, no stack start)
+        run: |
+          python -m pip install PyYAML==6.0.3
+          python -m unittest deploy.tests.test_e2e_telemetry_env -v
       - name: deploy/tests (standalone bootstrap, first run, production setup) and install-smoke.sh
         run: |
           python -m unittest discover -s deploy/tests -p 'test_standalone_*.py' -v
@@ -202,6 +223,7 @@ jobs:
       FAGI_ADMIN_PASSWORD: Ci-Smoke-2026!x
       SMOKE_PROJECT: ci-smoke
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
     steps:
       - uses: actions/checkout@v4
 
@@ -519,6 +541,7 @@ jobs:
       FAGI_ADMIN_PASSWORD: Ci-Smoke-2026!x
       SMOKE_PROJECT: ci-upgrade
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
     steps:
       - uses: actions/checkout@v4
         with:
@@ -554,7 +577,13 @@ jobs:
           # does not try again.
           FAGI_ADMIN_NAME: CI Admin
         run: |
+          set -euo pipefail
           git -c advice.detachedHead=false checkout "$FROM_VERSION"
+          # Render with the retained installer's generated .env before it boots.
+          ./bin/install --no-up -y
+          docker compose config --format json | jq -e '
+            .services.backend.environment |
+            .FUTURE_AGI_TELEMETRY_DISABLED == "true" and .FUTURE_AGI_TELEMETRY_URL == "http://127.0.0.1:9"' >/dev/null
           ./bin/install -y
 
       - name: Send a trace to the v1.41.1 install
