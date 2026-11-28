@@ -15,6 +15,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import jwt
@@ -272,6 +273,21 @@ def test_google_callback_signs_in_with_google_issuer(
         ("POST", "/token"),
         ("GET", "/certs"),
     ]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "route", ["auth0_callback", "github-callback", "microsoft-callback"]
+)
+def test_oauth_login_identifies_the_account(identity_server, google_user, route):
+    with patch("analytics.posthog_util.posthog_tracker.client") as tracker_client:
+        response = APIClient().get(reverse(route), {"code": CODE})
+        assert "sso_token=" in response["Location"]
+        tracker_client.alias.assert_called_once_with(
+            previous_id=google_user.email, distinct_id=str(google_user.id)
+        )
+        tracker_client.set.assert_called_once()
+        assert tracker_client.set.call_args.kwargs["distinct_id"] == str(google_user.id)
 
 
 @pytest.mark.django_db

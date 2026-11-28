@@ -6,7 +6,7 @@ from posthog import Posthog
 
 logger = structlog.get_logger(__name__)
 
-_EMAIL_ALIAS_TIMEOUT_SECONDS = 400 * 24 * 60 * 60
+IDENTITY_CACHE_TIMEOUT = 400 * 24 * 60 * 60
 _token_warning_logged = False
 
 
@@ -36,10 +36,10 @@ class PostHogTracker:
 
     # ---- User Identification (v7: use set/set_once instead of identify) ----
 
-    def identify_user(self, user, org=None, workspace_id=None):
-        """Link the legacy email identity and update the account's person properties."""
+    def identify_user(self, user, org=None, workspace_id=None) -> bool:
+        """Link the legacy email and report whether the profile update was queued."""
         if self.client is None:
-            return
+            return False
         try:
             distinct_id = str(user.id)
             properties = {
@@ -55,17 +55,22 @@ class PostHogTracker:
                 properties["workspace_id"] = str(workspace_id)
 
             try:
-                if user.email and cache.add(
-                    f"posthog:email-alias:{distinct_id}",
-                    True,
-                    timeout=_EMAIL_ALIAS_TIMEOUT_SECONDS,
-                ):
-                    self.client.alias(previous_id=user.email, distinct_id=distinct_id)
+                alias_key = f"posthog:email-alias:{distinct_id}"
+                if user.email and cache.add(alias_key, True, IDENTITY_CACHE_TIMEOUT):
+                    try:
+                        self.client.alias(
+                            previous_id=user.email, distinct_id=distinct_id
+                        )
+                    except Exception:
+                        cache.delete(alias_key)
+                        raise
             finally:
                 # A cache or alias failure must not suppress the profile update.
                 self.client.set(distinct_id=distinct_id, properties=properties)
-        except Exception as e:
-            logger.exception("PostHog identify error", error=str(e))
+            return True
+        except Exception:
+            logger.warning("posthog_identify_failed", exc_info=True)
+            return False
 
     # ---- Group Analytics ----
 

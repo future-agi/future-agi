@@ -5,6 +5,7 @@ Tests for user authentication, token management, and user info endpoints.
 """
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
@@ -152,6 +153,64 @@ class TestTokenObtainAPI:
         )
         # API may return 200 (for org selection) or 400 depending on validation
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+
+
+@pytest.mark.django_db
+class TestPostHogLoginIdentity:
+    @staticmethod
+    def login(client, user, password="testpassword123"):
+        return client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": password},
+            format="json",
+        )
+
+    def test_only_first_success_identifies(self, api_client, user, workspace):
+        org = user.organization
+        user.update_config(orgWorkspaceMap={str(org.id): str(workspace.id)})
+        with patch("analytics.posthog_util.posthog_tracker.client") as client:
+            assert self.login(api_client, user, "wrong-password").status_code == 400
+            client.alias.assert_not_called()
+            client.set.assert_not_called()
+
+            assert self.login(api_client, user).status_code == 200
+            client.alias.assert_called_once_with(
+                previous_id=user.email, distinct_id=str(user.id)
+            )
+            client.set.assert_called_once_with(
+                distinct_id=str(user.id),
+                properties={
+                    "email": user.email,
+                    "name": user.name,
+                    "organization_id": str(org.id),
+                    "organization_name": org.display_name,
+                    "workspace_id": str(workspace.id),
+                },
+            )
+            client.reset_mock()
+            assert self.login(api_client, user).status_code == 200
+            client.alias.assert_not_called()
+            client.set.assert_not_called()
+
+    def test_identification_error_does_not_change_response(self, api_client, user):
+        with patch("analytics.posthog_util.posthog_tracker.client") as client:
+            with patch(
+                "analytics.posthog_util.posthog_tracker.identify_user",
+                side_effect=RuntimeError("tracker unavailable"),
+            ) as identify:
+                response = self.login(api_client, user)
+                identify.assert_called_once()
+            assert response.status_code == 200
+            assert response.json()["access"] and response.json()["refresh"]
+            assert "new_org" in response.json()
+            assert self.login(api_client, user).status_code == 200
+            client.set.assert_called_once()
+            client.alias.assert_called_once()
+
+    def test_disabled_login_does_not_claim_identity(self, api_client, user):
+        with patch("analytics.posthog_util.posthog_tracker.client", None):
+            assert self.login(api_client, user).status_code == 200
+        assert cache.get(f"posthog:identified:{user.id}") is None
 
 
 @pytest.mark.integration

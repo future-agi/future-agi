@@ -50,6 +50,15 @@ def test_profile_uses_the_app_user_id_and_aliases_email_once(client_spy, user):
     )
 
 
+def test_alias_failure_allows_retry_and_still_updates_profile(client_spy, user):
+    client_spy.alias.side_effect = [RuntimeError("tracker unavailable"), None]
+
+    assert not posthog_tracker.identify_user(user)
+    client_spy.set.assert_called_once()
+    assert posthog_tracker.identify_user(user)
+    assert client_spy.alias.call_count == 2
+
+
 def test_profile_without_email_does_not_send_an_alias(client_spy, user):
     user.email = ""
     posthog_tracker.identify_user(user)
