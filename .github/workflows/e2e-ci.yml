@@ -465,7 +465,7 @@ jobs:
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
               property-catalog-kafka property-catalog-topic-init
-              property-catalog-runtime-volume-init)
+              property-catalog-runtime-volume-init attachments-origin)
           fi
           : > /tmp/e2e-pull.log
           rm -f /tmp/e2e-pull.status
@@ -495,6 +495,11 @@ jobs:
           docker buildx bake -f e2e/stack/docker-bake.hcl --print "${targets[@]}"
           docker buildx bake -f e2e/stack/docker-bake.hcl "${targets[@]}"
 
+      - name: Verify the release image carries no E2E-only modules
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
+        run: |
+          docker run --rm --network none --entrypoint python "futureagi/future-agi:$IMAGE_TAG" -c 'from importlib.util import find_spec; assert find_spec("e2e_attachment_storage") is None and find_spec("tfc.settings.e2e") is None'
+
       - name: Add E2E-only fixtures and telemetry isolation to backend image
         if: env.BUILD_BACKEND == 'true'
         run: >
@@ -502,6 +507,12 @@ jobs:
           --build-arg BASE_TAG="$IMAGE_TAG"
           -t "futureagi/future-agi:$IMAGE_TAG"
           -f e2e/stack/backend/Dockerfile .
+
+      # After the overlay: the image handoff proof reads the first step that
+      # builds from e2e/stack/backend/Dockerfile as the overlay recipe.
+      - name: Build the local attachment byte store
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
+        run: docker build --target attachments-s3 -t "futureagi-e2e-attachments-s3:$IMAGE_TAG" -f e2e/stack/backend/Dockerfile .
 
       # Never select :latest for a PR: it cannot contain the unmerged source.
       - name: Select the source-built executor in both stacks

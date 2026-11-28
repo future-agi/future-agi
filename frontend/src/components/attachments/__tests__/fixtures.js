@@ -1,0 +1,217 @@
+// @ts-check
+// Synthetic fixtures checked against the runtime schemas; no live credentials.
+export const projectId = "10000000-0000-0000-0000-000000000001";
+export const occurrenceId = "20000000-0000-0000-0000-000000000002";
+// Non-secret media-session handle an exchange returns (F01 MediaSessionHandle).
+export const mediaSessionId = "e0000000-0000-0000-0000-00000000000e";
+/**
+ * Gateway path as playback.issue() builds it: session, occurrence, grant.
+ * @param {string} occurrence
+ * @param {string} token
+ * @param {string} [session]
+ */
+export const gatewayPath = (occurrence, token, session = mediaSessionId) =>
+  `/tracer/v1/attachment-media/${session}/${occurrence}/${token}`;
+/**
+ * The bodiless 204 exchange as Axios hands it over: lowercase header names,
+ * Python isoformat() expiry. The secret is only in Set-Cookie, never here.
+ * @param {string} [session]
+ * @param {number} [lifetimeMs]
+ */
+export const exchangeResponse = (
+  session = mediaSessionId,
+  lifetimeMs = 300000,
+) => ({
+  status: 204,
+  data: "",
+  headers: {
+    "x-attachment-media-session": session,
+    "x-attachment-media-expires-at": new Date(Date.now() + lifetimeMs)
+      .toISOString()
+      .replace("Z", "+00:00"),
+  },
+});
+/** The tab's axios defaults as setSession/OrganizationProvider leave them. */
+export const authDefaults = (
+  token = "synthetic-access-a",
+  organization = "50000000-0000-0000-0000-000000000005",
+) => ({
+  headers: {
+    common: {
+      Authorization: `Bearer ${token}`,
+      ...(organization ? { "X-Organization-Id": organization } : {}),
+    },
+  },
+});
+export const parent = {
+  trace_id: "30000000-0000-0000-0000-000000000003",
+  span_id: "4000000000000004",
+};
+export const scope = {
+  project_id: projectId,
+  organization_id: "50000000-0000-0000-0000-000000000005",
+  workspace_id: "60000000-0000-0000-0000-000000000006",
+};
+/** @satisfies {import("zod").infer<typeof import("../contract").manifestSchema>} */
+export const mixedManifest = {
+  schema_version: 1,
+  recording_id: "70000000-0000-0000-0000-000000000007",
+  timebase: "session_relative_ms",
+  sample_format: "s16le",
+  sample_rate_hz: 24000,
+  channels: 2,
+  codec: "pcm",
+  container: "wav",
+  layout: "mixed",
+  tracks: [
+    {
+      track_id: "80000000-0000-0000-0000-000000000008",
+      channels: [0, 1],
+      direction: "mixed",
+      role: "mixed",
+    },
+  ],
+  // view_enrichment anchors a logical recording on its first timeline segment.
+  segments: Array.from({ length: 240 }, (_, index) => ({
+    occurrence_id: index
+      ? `b0000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`
+      : occurrenceId,
+    index,
+    start_ms: index * 30000,
+    duration_ms: 30000,
+  })),
+  gaps: [],
+  playout: [],
+  capture_complete: true,
+  duration_ms: 7200000,
+};
+/** @satisfies {import("zod").infer<typeof import("../contract").manifestSchema>} */
+export const stereoManifest = {
+  ...mixedManifest,
+  layout: "stereo",
+  tracks: [
+    {
+      track_id: "80000000-0000-0000-0000-000000000008",
+      channels: [0],
+      direction: "output",
+      role: "assistant",
+    },
+    {
+      track_id: "90000000-0000-0000-0000-000000000009",
+      channels: [1],
+      direction: "input",
+      role: "user",
+    },
+  ],
+};
+/**
+ * A standalone upload as tracer view_enrichment.standalone_manifest projects
+ * it: one validated Ogg/Opus file (48 kHz, 3,190,416 frames = 66,467 ms),
+ * tiled into <= 30 s timeline segments that ALL name that one occurrence.
+ * recording_id is the occurrence; track_id is uuid5(occurrence,
+ * "fi.attachments.v1/standalone-mixed").
+ * @satisfies {import("zod").infer<typeof import("../contract").manifestSchema>}
+ */
+export const standaloneManifest = {
+  schema_version: 1,
+  recording_id: occurrenceId,
+  timebase: "session_relative_ms",
+  sample_format: "encoded",
+  sample_rate_hz: 48000,
+  channels: 1,
+  codec: "opus",
+  container: "ogg",
+  layout: "mixed",
+  tracks: [
+    {
+      track_id: "e4842675-627c-5375-878d-70f540d6708a",
+      channels: [0],
+      direction: "mixed",
+      role: "mixed",
+    },
+  ],
+  segments: [
+    { occurrence_id: occurrenceId, index: 0, start_ms: 0, duration_ms: 30000 },
+    {
+      occurrence_id: occurrenceId,
+      index: 1,
+      start_ms: 30000,
+      duration_ms: 30000,
+    },
+    {
+      occurrence_id: occurrenceId,
+      index: 2,
+      start_ms: 60000,
+      duration_ms: 6467,
+    },
+  ],
+  gaps: [],
+  playout: [],
+  capture_complete: true,
+  duration_ms: 66467,
+};
+/** @satisfies {import("zod").infer<typeof import("../contract").occurrenceSchema>} */
+export const occurrence = {
+  reference: {
+    attachment_id: "a0000000-0000-0000-0000-00000000000a",
+    occurrence_id: occurrenceId,
+    direction: "mixed",
+    modality: "audio",
+    mime_type: "audio/wav",
+  },
+  scope,
+  parent,
+  state: "ready",
+  binding: "bound",
+  capture_complete: true,
+  policy_version: "v1",
+  deletion_generation: 0,
+  // tracer.services.attachments.playback: expiry.isoformat(), UTC offset retained.
+  expires_at: "2099-01-01T00:00:00+00:00",
+};
+/** @satisfies {import("zod").infer<typeof import("../contract").resolveResultSchema>} */
+export const grant = {
+  occurrence_id: occurrenceId,
+  status: "ready",
+  gateway_path: gatewayPath(occurrenceId, "synthetic-grant"),
+  // tracer.services.attachments.playback: expiry.isoformat(), UTC offset retained.
+  expires_at: "2099-01-01T00:00:00+00:00",
+};
+// I04 as shipped by tracer view_enrichment: no origin, manifest only if ready.
+export const projection = {
+  occurrence_id: occurrenceId,
+  parent,
+  state: "ready",
+  manifest: mixedManifest,
+};
+/**
+ * A ready per-span attachment status as projected on observation spans.
+ * @param {number} index
+ * @param {{reference?: object, [key: string]: unknown}} [overrides]
+ */
+export function spanImage(index, { reference = {}, ...rest } = {}) {
+  const id = String(index + 1).padStart(12, "0");
+  return {
+    reference: {
+      attachment_id: `c0000000-0000-0000-0000-${id}`,
+      occurrence_id: `d0000000-0000-0000-0000-${id}`,
+      direction: "input",
+      modality: "image",
+      mime_type: "image/png",
+      purpose: "model_input",
+      message_index: 0,
+      part_index: index,
+      ...reference,
+    },
+    status: "ready",
+    capture_complete: true,
+    ...rest,
+  };
+}
+/** @param {string} occurrence_id */
+export const readyGrant = (occurrence_id) => ({
+  occurrence_id,
+  status: "ready",
+  gateway_path: gatewayPath(occurrence_id, `grant-${occurrence_id.slice(-4)}`),
+  expires_at: "2099-01-01T00:00:00+00:00",
+});

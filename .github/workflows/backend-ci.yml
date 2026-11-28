@@ -67,7 +67,7 @@ env:
   METRICS_SPLITS: "20"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
-  PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
+  PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker and not attachment_load"
 
 jobs:
   policy-self-test:
@@ -97,7 +97,10 @@ jobs:
       executor_base: ${{ steps.filter.outputs.executor_base }}
       metrics: ${{ steps.filter.outputs.metrics }}
       scope: ${{ steps.filter.outputs.scope }}
+      # Receipts compare only partitions of the same inventory. The additional
+      # isolated modules still gate the test job through the execution matrix.
       shards: ${{ steps.shards.outputs.matrix }}
+      test_matrix: ${{ steps.shards.outputs.test_matrix }}
       internal: ${{ steps.overlay.outputs.internal }}
     steps:
       - uses: actions/checkout@v4
@@ -206,10 +209,23 @@ jobs:
           [[ $SPLITS =~ ^[1-9][0-9]*$ && $METRICS_SPLITS =~ ^[1-9][0-9]*$ ]]
           main='[]' metrics='[]'
           if [[ $BACKEND == true ]]; then
-            main=$(legs main pytest "not metrics" 45 "$SPLITS")
+            main=$(legs main pytest "not metrics" 60 "$SPLITS")
             metrics=$(legs metrics metrics metrics 50 "$METRICS_SPLITS")
           fi
-          echo "matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" '{include: ($a + $b)}')" >> "$GITHUB_OUTPUT"
+          # These unsharded modules need their own database, gate and time budget.
+          attachments='[]'
+          if [[ $BACKEND == true ]]; then
+            attachments='[
+              {"group":"combined-review", "module":"test_attachment_simplify_combined_review",
+               "database":"test_att_combined_review_ci", "gate":"ATT_COMBINED_REVIEW"},
+              {"group":"imports-review", "module":"test_attachment_simplify_review_imports_db",
+               "database":"test_att_review_imports_ci", "gate":"ATT_REVIEW_IMPORTS"}
+            ]'
+          fi
+          matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" '{include: ($a + $b)}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "test_matrix=$(jq -c --argjson c "$attachments" \
+            '.include += ($c | map(. + {name:"pytest", suite:"attachments", timeout:60}))' <<<"$matrix")" >> "$GITHUB_OUTPUT"
 
   update-safety:
     name: OSS migrations and unattended update safety
@@ -453,7 +469,7 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.shards) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}
     defaults:
       run:
         working-directory: futureagi
@@ -492,6 +508,22 @@ jobs:
         # 60 s, so this timeout is only a backstop.
         timeout-minutes: 2
         run: python3 -I .ci/service_receipt.py "$RUNNER_TEMP/shard-receipt/services.json"
+
+      - name: Allow the attachment decoder sandbox to create user namespaces
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+        # Grant them to /usr/bin/bwrap only (the same per-application allowance
+        # production media workers need); the global restriction stays on and
+        # the product's bubblewrap/prlimit confinement is unchanged.
+        run: |
+          sudo tee /etc/apparmor.d/bwrap-attachment-sandbox >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap-attachment-sandbox /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
+          bwrap --ro-bind / / --unshare-all --die-with-parent true
 
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -535,6 +567,7 @@ jobs:
         run: uv run pytest .ci/migrated_db.py --create-db -q
 
       - name: Apply pinned sharding plan
+        if: matrix.module == ''
         uses: actions/download-artifact@v4
         with:
           name: test-durations-plan
@@ -573,6 +606,9 @@ jobs:
       - name: Run shard
         id: run-shard
         env:
+          ISOLATED_MODULE: ${{ matrix.module }}
+          ISOLATED_DB: ${{ matrix.database }}
+          ISOLATED_GATE: ${{ matrix.gate }}
           SUITE: ${{ matrix.suite }}
           GROUP: ${{ matrix.group }}
           SHARDS: ${{ needs.changes.outputs.shards }}
@@ -582,6 +618,13 @@ jobs:
           PYTHONPATH: .ci
         run: |
           set -euo pipefail
+          if [ -n "$ISOLATED_MODULE" ]; then
+            # The service creates only test_tfc; these modules assert their own ClickHouse database.
+            curl -sS --fail --max-time 30 "http://127.0.0.1:${FI_CH_TEST_SIDECAR_HTTP_PORT}/" \
+              --data-binary "CREATE DATABASE IF NOT EXISTS ${ISOLATED_DB}"
+            exec env "$ISOLATED_GATE=1" PG_TEST_DB="$ISOLATED_DB" CH_DATABASE="$ISOLATED_DB" CH25_DATABASE="$ISOLATED_DB" \
+              uv run pytest -q -ra "tracer/tests/$ISOLATED_MODULE.py" --junitxml="junit-${{ matrix.group }}.xml"
+          fi
           mkdir -p "$RUNNER_TEMP/shard-receipt"
           ee=oss
           if [[ $IS_INTERNAL_RUN == true ]]; then ee=$(git -C ee/cloud rev-parse HEAD); fi
@@ -619,7 +662,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload the record of what this shard collected
-        if: ${{ !cancelled() && steps.run-shard.conclusion != 'skipped' }}
+        if: ${{ !cancelled() && matrix.module == '' && steps.run-shard.conclusion != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
           name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}
@@ -629,7 +672,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload timing data (dev pushes only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: matrix.module == '' && github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@v4
         with:
           name: timing-data-${{ matrix.suite }}-${{ matrix.group }}
@@ -973,6 +1016,79 @@ jobs:
             *) echo "::error::Docker Hub answered HTTP ${code}; re-run the job"; exit 1 ;;
           esac
 
+
+  attachment-schema-isolated:
+    name: Attachment schema qualification
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      PG_HOST: 127.0.0.1
+      PG_PORT: "5432"
+      PG_USER: test_user
+      PG_PASSWORD: test_password
+      PG_DB: test_tfc
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install decoder sandbox and its per-app user namespace policy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo tee /etc/apparmor.d/bwrap-attachment-sandbox >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap-attachment-sandbox /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
+          bwrap --ro-bind / / --unshare-all --die-with-parent true
+      - name: Install backend dependencies
+        # Every extra except pii, without the dev group: neither holds a wheel these
+        # Postgres-only tests need, and both pull en-core-web-sm from GitHub. pytest
+        # comes at the version uv.lock pins for the dev group.
+        run: |
+          uv sync --frozen --no-dev --extra sandbox --extra billing --extra ops --extra gcp \
+            --extra langchain --extra localizer --extra audio --extra ml --extra voice \
+            --extra rabbitmq --extra prompt-opt --extra vectordb --extra dev
+          pin="$(uv export --frozen --only-group dev --no-hashes --no-emit-project | grep -E '^pytest==')"
+          test -n "$pin"
+          uv pip install "$pin"
+      - name: Run isolated schema review module
+        env:
+          ATT_SCHEMA_REVIEW_ISOLATED: "1"
+          PG_TEST_DB_PREFIX: test_att_review_schema_ci_
+        run: uv run --no-sync pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_simplify_review_schema_postgres.py -q
+      - name: Run completed import binding module
+        env:
+          ATT_SCHEMA_REVIEW_ISOLATED: "1"
+          PG_TEST_DB_PREFIX: test_att_import_binding_
+        run: uv run --no-sync pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_completed_import_binding_postgres.py -q
+
   timings:
     # Each shard of a dev push records its tests' times (--store-durations).
     # Save the merged .test_durations as both a cache and a run artifact:
@@ -1142,6 +1258,7 @@ jobs:
         update-safety,
         plan,
         test,
+        attachment-schema-isolated,
         collection,
         terminal-parity,
         saml-multiworker,
@@ -1169,6 +1286,6 @@ jobs:
             .changes.result == "success" and .["policy-self-test"].result == "success" and ($m == $b) and
             .["update-safety"].result == (($b or $u)|status) and
             .["code-executor-base-pin"].result == ($x|status) and
-            ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
+            ([.plan, .test, .["attachment-schema-isolated"], .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
               .["agentic-eval"], .["slim-smoke"]] | all(.result == ($b|status)))
           ' <<<"$NEEDS"

@@ -17,11 +17,40 @@ describe("trace drawer header keyboard shortcuts", () => {
   it("navigates with J/K and closes with Esc while open", () => {
     const handlers = callbacks();
     render(<DrawerHeader open {...handlers} />);
+    expect(
+      screen.getByRole("button", { name: "Next trace (J)" }),
+    ).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "j" });
     fireEvent.keyDown(document, { key: "k" });
     fireEvent.keyDown(document, { key: "Escape" });
     expect(handlers.onNext).toHaveBeenCalledOnce();
     expect(handlers.onPrev).toHaveBeenCalledOnce();
+    expect(handlers.onClose).toHaveBeenCalledOnce();
+  });
+
+  it("leaves J/K to the Conversation transcript and still closes with Esc", () => {
+    const handlers = callbacks();
+    render(<DrawerHeader open navigationShortcuts={false} {...handlers} />);
+    // The buttons no longer promise J/K while those keys belong elsewhere.
+    expect(
+      screen.getByRole("button", { name: "Previous trace" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next trace" }),
+    ).toBeInTheDocument();
+    for (const key of ["j", "J", "k", "K"]) {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(event);
+      // Not consumed, so the transcript's own J/K still sees it.
+      expect(event.defaultPrevented).toBe(false);
+    }
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(handlers.onNext).not.toHaveBeenCalled();
+    expect(handlers.onPrev).not.toHaveBeenCalled();
     expect(handlers.onClose).toHaveBeenCalledOnce();
   });
 

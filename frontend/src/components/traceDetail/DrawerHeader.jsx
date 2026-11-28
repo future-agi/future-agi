@@ -66,6 +66,9 @@ const DrawerHeader = ({
   onNext,
   hasPrev = true,
   hasNext = true,
+  // Off while another view owns J/K (the Conversation transcript). Escape
+  // still closes the drawer.
+  navigationShortcuts = true,
   onFullscreen,
   isFullscreen = false,
   onOpenNewTab,
@@ -99,6 +102,8 @@ const DrawerHeader = ({
         if (!closeOnEscape) return;
         e.preventDefault();
         onClose?.();
+      } else if (!navigationShortcuts) {
+        return;
       } else if ((e.key === "j" || e.key === "J") && hasNext) {
         e.preventDefault();
         onNext?.();
@@ -107,7 +112,15 @@ const DrawerHeader = ({
         onPrev?.();
       }
     },
-    [closeOnEscape, onClose, onPrev, onNext, hasPrev, hasNext],
+    [
+      closeOnEscape,
+      onClose,
+      onPrev,
+      onNext,
+      hasPrev,
+      hasNext,
+      navigationShortcuts,
+    ],
   );
 
   useEffect(() => {
@@ -192,13 +205,15 @@ const DrawerHeader = ({
         <Stack direction="row" spacing={0.5}>
           <NavButton
             icon="solar:alt-arrow-up-linear"
-            tooltip="Previous trace (K)"
+            tooltip={
+              navigationShortcuts ? "Previous trace (K)" : "Previous trace"
+            }
             onClick={onPrev}
             disabled={!hasPrev}
           />
           <NavButton
             icon="solar:alt-arrow-down-linear"
-            tooltip="Next trace (J)"
+            tooltip={navigationShortcuts ? "Next trace (J)" : "Next trace"}
             onClick={onNext}
             disabled={!hasNext}
           />
@@ -277,6 +292,7 @@ DrawerHeader.propTypes = {
   onNext: PropTypes.func,
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
+  navigationShortcuts: PropTypes.bool,
   onFullscreen: PropTypes.func,
   isFullscreen: PropTypes.bool,
   onOpenNewTab: PropTypes.func,

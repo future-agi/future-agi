@@ -4,6 +4,7 @@ Provides fixtures specific to tracer models and test data.
 """
 
 import json
+import os
 import uuid
 from datetime import timedelta
 from fnmatch import fnmatchcase
@@ -48,6 +49,26 @@ def is_metrics_suite_module(path: Path) -> bool:
         and any(fnmatchcase(path.name, pattern) for pattern in METRICS_SUITE_MODULES)
         and path.name not in NOT_METRICS_SUITE_MODULES
     )
+
+
+# Attachment modules that run only in their own Backend CI jobs, each with a
+# dedicated database. The value is the variable that job sets.
+ISOLATED_ATTACHMENT_MODULES = {
+    "test_attachment_simplify_review_schema_postgres.py": "ATT_SCHEMA_REVIEW_ISOLATED",
+    "test_attachment_completed_import_binding_postgres.py": "ATT_SCHEMA_REVIEW_ISOLATED",
+    "test_attachment_simplify_combined_review.py": "ATT_COMBINED_REVIEW",
+    "test_attachment_simplify_review_imports_db.py": "ATT_REVIEW_IMPORTS",
+}
+
+
+def pytest_ignore_collect(collection_path, config):
+    """Collect an isolated attachment module only in the job that sets its
+    variable, instead of skipping it at collection in every shard."""
+    path = Path(collection_path)
+    gate = ISOLATED_ATTACHMENT_MODULES.get(path.name)
+    if gate is None or path.resolve().parent != _TRACER_TESTS:
+        return None
+    return None if os.environ.get(gate) == "1" else True
 
 
 @pytest.hookimpl(tryfirst=True)

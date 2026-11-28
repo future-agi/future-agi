@@ -548,6 +548,14 @@ class WorkspaceManagementView(APIView):
         # Soft delete workspace
         workspace.is_active = False
         workspace.save()
+        from tracer.services.attachments.retention import (
+            fence_workspace,
+            run_deletion_hook,
+        )
+
+        # Deny attachment reads in every project of the workspace; the lifecycle
+        # sweep then tombstones their occurrences and the erase drain the bytes.
+        run_deletion_hook(fence_workspace, workspace_id=workspace.id)
 
         # Remove all workspace memberships
         WorkspaceMembership.no_workspace_objects.filter(workspace=workspace).update(

@@ -290,6 +290,13 @@ jobs:
           -t "futureagi/future-agi:$IMAGE_TAG"
           -f e2e/stack/backend/Dockerfile .
 
+      # Distributed boots attachments-s3 from this local image (pull_policy: never).
+      # After the overlay, as in e2e-ci.yml, so the overlay stays the first build
+      # from e2e/stack/backend/Dockerfile.
+      - name: Build the local attachment byte store
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
+        run: docker build --target attachments-s3 -t "futureagi-e2e-attachments-s3:$IMAGE_TAG" -f e2e/stack/backend/Dockerfile .
+
       # Both topologies exercise the mandatory executor's policy propagation.
       # Never select :latest for a PR: it cannot contain the unmerged source.
       - name: Build code-executor image from PR code

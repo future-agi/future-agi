@@ -815,6 +815,11 @@ def _soft_delete_trace_session_tree(trace_sessions):
     from django.db.models import Q
 
     from tracer.services.analysis_retention import retire_analysis_sources
+    from tracer.services.attachments.retention import (
+        run_deletion_hook,
+        tombstone_deleted_traces,
+    )
+    from tracer.services.attachments.session_deletion import sweep_deleted_sessions
 
     # Keep the request's project mapping before reading fresh database rows.
     authorized = {session.pk: session.project_id for session in trace_sessions}
@@ -886,7 +891,13 @@ def _soft_delete_trace_session_tree(trace_sessions):
                     trace_session__isnull=True,
                 ).order_by("pk")
             )
+            # Materialize before the soft-delete manager hides the updated rows.
+            deleted_traces = list(
+                traces.filter(pk__in=trace_ids).only("id", "project_id")
+            )
             traces.filter(pk__in=trace_ids).update(deleted=True, deleted_at=now)
+            # Only the locked, same-project parents may tombstone attachment media.
+            tombstone_deleted_traces(deleted_traces)
             soft_delete_eval_results(
                 EvalLogger.no_workspace_objects.filter(
                     config_scope,
@@ -908,6 +919,9 @@ def _soft_delete_trace_session_tree(trace_sessions):
                 trace_ids=project_trace_ids,
                 session_ids=session_ids,
             )
+
+            # The durable PG session marker denies grants even if CH cleanup fails.
+            run_deletion_hook(sweep_deleted_sessions, project_id=project_id)
 
 
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
@@ -1166,6 +1180,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 trace_session_id=str(trace_session_id),
                 error=str(e)[:200],
             )
+        from tracer.services.attachments.retention import run_deletion_hook
+        from tracer.services.attachments.session_deletion import sweep_deleted_sessions
+
+        # The committed PG marker denies existing grants, regardless of CH availability.
+        # Queue bounded erasure now; the lifecycle sweep retries outages and the tail.
+        run_deletion_hook(sweep_deleted_sessions, project_id=project_id)
+
         return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
     def perform_destroy(self, instance):

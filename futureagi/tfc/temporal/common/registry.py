@@ -60,10 +60,13 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
     "tracer.tasks.eval_task_sweeper",
+    # Attachment recording imports/derivatives/sweeps (no-op when disabled)
+    "tracer.tasks.attachment_recordings",
     "tracer.services.feed_escalation",
     # The sweep-lost-insight-runs schedule's activity
     "tfc.temporal.insights.activities",
     "tracer.tasks.outbox_cdc",
+    "tracer.tasks.attachment_binding",
     "tracer.sql_workbench.tasks",
     "tracer.utils.span",
     "tracer.utils.eval",
@@ -74,6 +77,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.utils.eval_tasks",
     "tracer.utils.monitor",
     "tracer.services.feed_alerts.events",
+    "tracer.tasks.attachment_lifecycle",
     # simulate tasks
     "simulate.tasks.eval_summary_tasks",
     "simulate.tasks.scenario_tasks",

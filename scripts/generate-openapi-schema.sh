@@ -49,8 +49,22 @@ const operationSet = (schema) => {
   }
   return operations;
 };
+// Reviewed unreleased F01 cutover: replace only this route, keeping the
+// generated GET operation ID (drf-yasg omits HEAD). This is not a blanket surface-shrink exemption; definitions
+// and every other path/operation remain subject to the original guard.
+const legacyMedia = "/tracer/v1/attachment-media/{occurrence_id}/{grant_id}";
+const boundMedia = "/tracer/v1/attachment-media/{media_session_id}/{occurrence_id}/{grant_id}";
+const mediaReplacement = previous.paths?.[legacyMedia] &&
+  !generated.paths?.[legacyMedia] &&
+  ["get"].every((method) =>
+    previous.paths[legacyMedia][method]?.operationId &&
+    previous.paths[legacyMedia][method].operationId === generated.paths?.[boundMedia]?.[method]?.operationId
+  ) &&
+  Object.keys(previous.paths[legacyMedia]).filter((method) => operationMethods.has(method)).length === 1;
+const reviewedReplacement = (entry) => mediaReplacement &&
+  [legacyMedia, `get ${legacyMedia}`].includes(entry);
 const missingFrom = (before, after) =>
-  [...before].filter((entry) => !after.has(entry));
+  [...before].filter((entry) => !after.has(entry) && !reviewedReplacement(entry));
 const missingPaths = missingFrom(
   new Set(Object.keys(previous.paths || {})),
   new Set(Object.keys(generated.paths || {})),

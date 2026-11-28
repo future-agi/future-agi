@@ -147,3 +147,57 @@ describe("VoiceLeftPanel when the selected tab goes away", () => {
     );
   });
 });
+
+// A traced call recorded as an attachment, with no transcript: today's
+// LiveKit and Pipecat shape.
+const tracedCall = {
+  module: "project",
+  id: "trace-1",
+  trace_id: "trace-1",
+  status: "completed",
+  transcript: [],
+  recording_attachment: null,
+};
+const toolRow = {
+  key: "tool-1",
+  spanId: "tool-1",
+  name: "lookup_order",
+  mcp: false,
+  failed: false,
+  startMs: 3000,
+  endMs: 4000,
+  interleaved: false,
+};
+
+describe("VoiceLeftPanel background activity", () => {
+  it("shows what ran under the recording when there is no transcript", async () => {
+    const user = userEvent.setup();
+    const onSelectActivity = vi.fn();
+    render(
+      <VoiceLeftPanel
+        data={tracedCall}
+        activity={[toolRow]}
+        onSelectActivity={onSelectActivity}
+      />,
+    );
+    const group = screen.getByRole("region", { name: "Background activity" });
+    expect(group).toHaveTextContent(
+      "Background activity · time from call startTool calllookup_order0:03.0–0:04.0",
+    );
+    expect(screen.getByText("Recording")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "View span lookup_order, tool call, from 0:03.0 to 0:04.0 after call start",
+      }),
+    );
+    expect(onSelectActivity).toHaveBeenCalledExactlyOnceWith("tool-1");
+  });
+
+  it("is unchanged without activity", () => {
+    render(<VoiceLeftPanel data={tracedCall} />);
+    expect(
+      screen.queryByRole("region", { name: "Background activity" }),
+    ).toBeNull();
+    expect(screen.queryByText("Recording")).toBeNull();
+  });
+});

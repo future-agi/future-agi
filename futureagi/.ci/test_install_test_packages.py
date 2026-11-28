@@ -84,7 +84,7 @@ class InstallTestPackagesTest(unittest.TestCase):
             '#!/bin/sh\nprintf "timeout %s\\n" "$1" >> "$CALLS"\nshift\nexec "$@"\n',
         )
         self.tool("sleep", '#!/bin/sh\nprintf "sleep %s\\n" "$1" >> "$CALLS"\n')
-        for name in ("ffmpeg", "ffprobe", "xmlsec1", "pgbouncer"):
+        for name in ("ffmpeg", "ffprobe", "xmlsec1", "pgbouncer", "bwrap"):
             self.tool(name, f'#!/bin/sh\necho "{name} stand-in"\n')
 
     def tool(self, name, source):

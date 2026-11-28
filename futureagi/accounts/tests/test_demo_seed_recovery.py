@@ -289,62 +289,109 @@ def test_recovery_continues_after_one_dispatch_fails(signup):
     assert {c.kwargs["task_id"] for c in start.call_args_list} == first_ids
 
 
+@pytest.fixture
+def legacy_seed_database():
+    """Route the seeder's ordinary default-ORM calls to a disposable database."""
+    from uuid import uuid4
+
+    from django.db import connections
+    from django.db.migrations.executor import MigrationExecutor
+    from psycopg import sql
+
+    shared = connections["default"]
+    historical = shared.copy()
+    name = f"test_legacy_demo_{uuid4().hex}"
+    historical.settings_dict["NAME"] = name
+    with shared.cursor() as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        try:
+            connections["default"] = historical
+            yield historical
+        finally:
+            connections["default"] = shared
+            historical.close()
+            admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
+    # The shared database remains at every app's latest migration.
+    executor = MigrationExecutor(shared)
+    assert executor.migration_plan(executor.loader.graph.leaf_nodes()) == []
+
+
 @pytest.mark.django_db(transaction=True)
-def test_legacy_reseed_works_before_publication_table_exists(signup):
+def test_legacy_reseed_works_before_publication_table_exists(legacy_seed_database):
     from importlib import import_module
 
-    from django.db import connection
     from django.db.migrations.executor import MigrationExecutor
 
     from accounts.user_onboard import create_demo_traces_and_spans
 
-    user = signup(seed_demo_data=False)
-    old = ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key")
+    connection = legacy_seed_database
+    old = [
+        ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
+        # Every tracer migration except the attachment chain, which is irreversible:
+        # the seeder's workspace signal needs the Error Feed escalation tables.
+        ("tracer", "0143_merge_feed_escalation_and_metrics"),
+    ]
     new = ("accounts", "0030_queue_existing_demo_trace_publications")
     executor = MigrationExecutor(connection)
-    try:
-        executor.migrate([old])
-        assert (
-            "accounts_demotracepublication"
-            not in connection.introspection.table_names()
+    apps = executor.migrate(old).apps
+    org = apps.get_model("accounts", "Organization").objects.create(name="Demo")
+    user = apps.get_model("accounts", "User").objects.create(
+        email="legacy@example.com", organization=org
+    )
+    apps.get_model("accounts", "OrganizationMembership").objects.create(
+        user=user, organization=org, role="Owner"
+    )
+    assert "accounts_demotracepublication" not in connection.introspection.table_names()
+    # The shipped accounts.0020 call shape, before the publication table exists.
+    assert create_demo_traces_and_spans(str(user.organization_id)) is None
+    trace_ids = identities(user)
+    assert len(trace_ids) == 2
+    executor = MigrationExecutor(connection)
+    executor.migrate([new])
+    assert (
+        set(DemoTracePublication.objects.values_list("trace_id", flat=True))
+        == trace_ids
+    )
+    # The data operation itself is idempotent.
+    operation = import_module(
+        "accounts.migrations.0030_queue_existing_demo_trace_publications"
+    )
+    with connection.schema_editor() as editor:
+        operation.queue_existing_demo_traces(
+            executor.loader.project_state([new]).apps, editor
         )
-        # The shipped accounts.0020 call shape, before the publication table exists.
-        assert create_demo_traces_and_spans(str(user.organization_id)) is None
-        trace_ids = identities(user)
-        assert len(trace_ids) == 2
-        executor = MigrationExecutor(connection)
-        executor.migrate([new])
-        assert (
-            set(DemoTracePublication.objects.values_list("trace_id", flat=True))
-            == trace_ids
-        )
-        # The data operation itself is idempotent.
-        operation = import_module(
-            "accounts.migrations.0030_queue_existing_demo_trace_publications"
-        )
-        with connection.schema_editor() as editor:
-            operation.queue_existing_demo_traces(
-                executor.loader.project_state([new]).apps, editor
-            )
-        assert DemoTracePublication.objects.count() == 2
-    finally:
-        # Back to every app's latest migration, not to 0030 or accounts alone:
-        # rolling accounts back also unapplies other apps' migrations that depend
-        # on it, and none may stay unapplied for the rest of the test session.
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
+    assert DemoTracePublication.objects.count() == 2
 
 
 @pytest.mark.django_db(transaction=True)
-def test_shipped_0020_reseeds_a_broken_demo_org_before_the_outbox_exists(signup):
+def test_shipped_0020_reseeds_a_broken_demo_org_before_the_outbox_exists(
+    legacy_seed_database,
+):
     from importlib import import_module
 
-    from django.db import connection
     from django.db.migrations.executor import MigrationExecutor
 
     from model_hub.models.develop_dataset import Dataset, Row
 
-    user = signup(seed_demo_data=False)
+    # A disposable database, as above: model_hub is at its latest migration
+    # here too, and the shared database never rolls attachments back.
+    connection = legacy_seed_database
+    old = [
+        ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
+        # Every tracer migration except the attachment chain, which is irreversible:
+        # the seeder's workspace signal needs the Error Feed escalation tables.
+        ("tracer", "0143_merge_feed_escalation_and_metrics"),
+    ]
+    executor = MigrationExecutor(connection)
+    apps = executor.migrate(old).apps
+    org = apps.get_model("accounts", "Organization").objects.create(name="Demo")
+    user = apps.get_model("accounts", "User").objects.create(
+        email="broken-demo@example.com", organization=org
+    )
+    apps.get_model("accounts", "OrganizationMembership").objects.create(
+        user=user, organization=org, role="Owner"
+    )
+    assert "accounts_demotracepublication" not in connection.introspection.table_names()
     broken = Dataset.objects.create(
         name="Demo-dataset", source="demo", organization_id=user.organization_id
     )
@@ -355,27 +402,16 @@ def test_shipped_0020_reseeds_a_broken_demo_org_before_the_outbox_exists(signup)
         )
         Row.objects.create(dataset=dataset, order=1, metadata={})
 
-    old = ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key")
-    executor = MigrationExecutor(connection)
-    try:
-        executor.migrate([old])
-        assert (
-            "accounts_demotracepublication"
-            not in connection.introspection.table_names()
+    operation = import_module("accounts.migrations.0020_reseed_broken_demo_data")
+    with (
+        patch("accounts.user_onboard.upload_demo_dataset", fake_upload),
+        connection.schema_editor() as editor,
+    ):
+        operation.reseed_broken_demo_data(
+            executor.loader.project_state(old).apps, editor
         )
-        operation = import_module("accounts.migrations.0020_reseed_broken_demo_data")
-        with (
-            patch("accounts.user_onboard.upload_demo_dataset", fake_upload),
-            connection.schema_editor() as editor,
-        ):
-            operation.reseed_broken_demo_data(
-                executor.loader.project_state([old]).apps, editor
-            )
-        assert len(identities(user)) == 2
-        assert not Dataset.objects.filter(pk=broken.pk, deleted=False).exists()
-    finally:
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
+    assert len(identities(user)) == 2
+    assert not Dataset.objects.filter(pk=broken.pk, deleted=False).exists()
 
 
 @pytest.mark.django_db(transaction=True)

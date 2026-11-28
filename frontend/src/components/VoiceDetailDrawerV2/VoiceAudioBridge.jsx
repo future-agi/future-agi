@@ -18,7 +18,7 @@ import useVoiceAudioStore from "./voiceAudioStore";
  * currentTime field; we poll multitrack.getCurrentTime() / isPlaying() via
  * our own rAF loop.
  */
-const VoiceAudioBridge = ({ data }) => {
+const VoiceAudioBridge = ({ data, recordingVariant }) => {
   const rafRef = useRef(null);
   const multitrackRef = useRef(null);
   const containerRef = useRef(null);
@@ -78,6 +78,13 @@ const VoiceAudioBridge = ({ data }) => {
       multitrackRef.current = multitrack;
       lastAppliedZoomRef.current = 0;
       setInstance({ multitrack, wavesurfers });
+      if (!multitrack) {
+        durationRef.current = 0;
+        setDuration(0);
+        setCurrentTime(0);
+        setIsPlaying(false);
+        return;
+      }
 
       // Seed duration from the longest wavesurfer.
       let maxDur = 0;
@@ -153,13 +160,18 @@ const VoiceAudioBridge = ({ data }) => {
 
   return (
     <Box ref={containerRef} sx={{ width: "100%", minWidth: 0 }}>
-      <AudioPlayerCustom data={data} onInstance={handleInstance} />
+      <AudioPlayerCustom
+        data={data}
+        onInstance={handleInstance}
+        recordingVariant={recordingVariant}
+      />
     </Box>
   );
 };
 
 VoiceAudioBridge.propTypes = {
   data: PropTypes.object,
+  recordingVariant: PropTypes.oneOf(["voice", "trace"]),
 };
 
 export default VoiceAudioBridge;

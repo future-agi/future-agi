@@ -1764,6 +1764,7 @@ class WorkflowTest(unittest.TestCase):
             "test",
             "collection",
             "terminal-parity",
+            "attachment-schema-isolated",
             "saml-multiworker",
             "migrated-database",
             "agentic-eval",

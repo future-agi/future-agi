@@ -18,6 +18,29 @@ export interface ScopeUserInfo {
 }
 export interface ScopeWorkspace { id: string; name: string }
 export interface ScopeResponse<T> { status: number; body: T }
+export interface ScopeContextOptions {
+  /** Only an owned localhost origin; HTTPS does not relax the host guard. */
+  appUrl?: string;
+  ignoreHTTPSErrors?: boolean;
+}
+
+export function scopeId(value: string): string {
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value)
+    || value === '00000000-0000-0000-0000-000000000000') {
+    throw new Error('H1 expected a non-secret canonical UUID');
+  }
+  return value;
+}
+
+export function ownedScopeOrigin(endpoint: string): string {
+  const url = new URL(endpoint);
+  if (url.hostname !== 'localhost' || !['http:', 'https:'].includes(url.protocol)
+    || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('H1 requires a credential-free localhost HTTP(S) origin');
+  }
+  return url.origin;
+}
+
 interface ScopeRequestReceipt {
   method: string; path: string; status: number;
   organizationId: string | null; workspaceId: string | null; authenticated: boolean;
@@ -33,6 +56,8 @@ export class ScopeActors {
   member!: ScopeActor;
   viewer!: ScopeActor;
   emptyWorkspace!: ScopeWorkspace;
+  memberInB?: ScopeActor;
+  foreign?: ScopeActor;
   readonly owners: TestActor[] = [];
   readonly receipts: ScopeRequestReceipt[] = [];
   readonly limitations: string[] = [];
@@ -40,10 +65,12 @@ export class ScopeActors {
   private readonly contexts = new Set<BrowserContext>();
 
   constructor(readonly prefix: string, readonly provisionOwner = provisionActor,
-    readonly invitationFromLocalMail?: (email: string) => Promise<string>) {
-    // This fixture is approved for the owned local stack only.
-    for (const endpoint of [E2E.apiUrl, E2E.appUrl]) {
-      if (new URL(endpoint).hostname !== 'localhost') throw new Error('H1 requires localhost endpoints');
+    readonly invitationFromLocalMail?: (email: string) => Promise<string>,
+    readonly options: ScopeContextOptions = {}) {
+    // This fixture is approved for the owned local stack only. Preserve the API
+    // and ordinary app guards even when selecting the HTTPS media origin.
+    for (const endpoint of [E2E.apiUrl, E2E.appUrl, options.appUrl ?? E2E.appUrl]) {
+      ownedScopeOrigin(endpoint);
     }
   }
 
@@ -69,16 +96,18 @@ export class ScopeActors {
     actor?: ScopeActor, params?: Record<string, string | number>): Promise<ScopeResponse<T>> {
     if (!path.startsWith('/') || path.startsWith('//')) throw new Error('H1 needs a relative public API path');
     const response = await req.fetch(`${E2E.apiUrl}${path}`, {
-      method, data, params, headers: this.headers(actor), maxRedirects: 0,
+      method, data, params, headers: this.headers(actor), maxRedirects: 0, maxRetries: 0,
     });
-    this.receipts.push({ method, path: path.replace(/accept-invitation\/.+/, 'accept-invitation/<redacted>/'),
+    this.receipts.push({ method, path: path.split('?')[0].replace(/accept-invitation\/.+/, 'accept-invitation/<redacted>/'),
       status: response.status(), organizationId: actor?.organizationId ?? null,
       workspaceId: actor?.workspaceId ?? null, authenticated: Boolean(actor) });
-    return { status: response.status(), body: await response.json() as T };
+    const raw = await response.text();
+    return { status: response.status(), body: (raw ? JSON.parse(raw) : undefined) as T };
   }
 
   private async newRequest(emailKey: string): Promise<APIRequestContext> {
-    const req = await pwRequest.newContext({ baseURL: E2E.apiUrl });
+    const req = await pwRequest.newContext({ baseURL: E2E.apiUrl,
+      ignoreHTTPSErrors: this.options.ignoreHTTPSErrors ?? false });
     this.requests.set(emailKey, req);
     return req;
   }
@@ -94,13 +123,17 @@ export class ScopeActors {
     const info = await this.send<ScopeUserInfo>(actor, 'GET', '/accounts/user-info/');
     expect(info.status).toBe(200);
     expect(info.body.organization.id).toBe(actor.organizationId);
-    actor.userId = info.body.id;
+    actor.userId = scopeId(info.body.id);
     return actor;
+  }
+
+  private inviteCredentials(label: string) {
+    return { email: `${this.prefix}-${label}@futureagi.com`, password: `H1-${this.prefix}-${label}!` };
   }
 
   private async invite(label: string, level: 1 | 3, workspaceIds: string[]): Promise<ScopeActor> {
     // accounts/serializers/rbac.py:34 and views/rbac_views.py:238.
-    const email = `${this.prefix}-${label}@futureagi.com`;
+    const { email, password } = this.inviteCredentials(label);
     const invited = await this.send<{ result: { invited: string[];
       invites?: { email: string; invite_link: string }[] } }>(
       this.ownerA, 'POST', '/accounts/organization/invite/', {
@@ -127,7 +160,6 @@ export class ScopeActors {
     expect(preview.status).toBe(200);
     expect(preview.body).toMatchObject({ valid: true, email });
     // accounts/serializers/contracts.py:414; views/signup.py:724,806.
-    const password = `H1-${this.prefix}-${label}!`;
     const accepted = await this.sendOn<Tokens>(req, 'POST', path,
       { new_password: password, repeat_password: password });
     expect(accepted.status).toBe(200);
@@ -140,7 +172,7 @@ export class ScopeActors {
     const info = await this.send<ScopeUserInfo>(actor, 'GET', '/accounts/user-info/');
     expect(info.status).toBe(200);
     expect(info.body).toMatchObject({ email, organization: { id: actor.organizationId }, org_level: level });
-    actor.userId = info.body.id;
+    actor.userId = scopeId(info.body.id);
     return actor;
   }
 
@@ -160,29 +192,95 @@ export class ScopeActors {
     this.viewer = await this.invite('viewer', 1, [this.ownerA.workspaceId]);
   }
 
+  /** Explicit JWT scope only. Never copies/rebinds an owner's organization keys. */
+  inOrganization(actor: ScopeActor, owner: ScopeActor): ScopeActor {
+    if (![this.ownerA, this.ownerB, this.foreign].includes(owner) || !this.requests.has(actor.email)) {
+      throw new Error('H1 requires test-owned actors and organization');
+    }
+    const organizationId = scopeId(owner.organizationId), workspaceId = scopeId(owner.workspaceId);
+    return { ...actor, organizationId, workspaceId,
+      api: new ApiClient(this.requests.get(actor.email)!, E2E.apiUrl)
+        .withAuth(actor.tokens, organizationId, workspaceId) };
+  }
+
+  /** Opt-in: existing harness cases retain their original single-org memberships.
+   * Source pin at 69567785f: accounts/serializers/rbac.py InviteCreateSerializer;
+   * views/rbac_views.py InviteCreateAPIView.post/_dual_write_legacy (164-369).
+   * Existing ACTIVE users are accepted immediately, with the same User row and
+   * tokens. AcceptInvitationRequestSerializer (contracts.py) is ONLY for inactive users;
+   * calling that password-setting endpoint here would replace real authority.
+   */
+  async provisionTwoOrganizationMember(): Promise<{ a: ScopeActor; b: ScopeActor; foreign: ScopeActor }> {
+    if (this.memberInB) throw new Error('H1 two-organization membership already provisioned');
+    this.foreign = await this.owner(`${this.prefix}-foreign`);
+    const invited = await this.send<{ result: { invited: string[] } }>(
+      this.ownerB, 'POST', '/accounts/organization/invite/', {
+        emails: [this.member.email], org_level: 3,
+        workspace_access: [{ workspace_id: this.ownerB.workspaceId, level: 3 }],
+      });
+    expect(invited.status).toBe(200);
+    // Boolean avoids logging even test-owned email addresses on a failed check.
+    expect(invited.body.result.invited.length === 1
+      && invited.body.result.invited[0] === this.member.email).toBe(true);
+    this.memberInB = this.inOrganization(this.member, this.ownerB);
+    for (const actor of [this.member, this.memberInB]) {
+      const info = await this.send<ScopeUserInfo>(actor, 'GET', '/accounts/user-info/');
+      expect(info.status).toBe(200);
+      expect(scopeId(info.body.id)).toBe(this.member.userId);
+      expect(scopeId(info.body.organization.id)).toBe(actor.organizationId);
+      expect(info.body.org_level).toBe(3);
+    }
+    return { a: this.member, b: this.memberInB, foreign: this.foreign };
+  }
+
+  /** Log the same invited member back in without reusing the revoked bearer. */
+  async signInMember(): Promise<ScopeActor> {
+    const { email, password } = this.inviteCredentials('member');
+    const req = this.requests.get(email)!;
+    const login = await this.sendOn<Tokens>(req, 'POST', '/accounts/token/',
+      { email, password, remember_me: true });
+    expect(login.status).toBe(200);
+    const { access, refresh } = login.body;
+    expect(Boolean(access && refresh)).toBe(true);
+    const tokens = { access, refresh };
+    const { organizationId, workspaceId } = this.member;
+    return { ...this.member, tokens, api: new ApiClient(req, E2E.apiUrl).withAuth(tokens, organizationId, workspaceId) };
+  }
+
   /** Additional non-admin members in owner A's default workspace. */
   async inviteMember(label: string): Promise<ScopeActor> {
     return this.invite(label, 3, [this.ownerA.workspaceId]);
   }
 
-  async openContext(browser: Browser, actor: ScopeActor): Promise<BrowserContext> {
+  async openContext(browser: Browser, actor: ScopeActor,
+    options: ScopeContextOptions = {}): Promise<BrowserContext> {
+    const baseURL = ownedScopeOrigin(options.appUrl ?? this.options.appUrl ?? E2E.appUrl);
     // These flows exercise API writes and use page.route for transport-failure
     // checks. A service worker can bypass Playwright's routing entirely.
-    const context = await browser.newContext({ baseURL: E2E.appUrl, serviceWorkers: 'block' });
+    const context = await browser.newContext({ baseURL,
+      ignoreHTTPSErrors: options.ignoreHTTPSErrors ?? this.options.ignoreHTTPSErrors ?? false,
+      serviceWorkers: 'block' });
     this.contexts.add(context);
     context.on('close', () => this.contexts.delete(context));
     await context.addInitScript(authInitScript, { access: actor.tokens.access, refresh: actor.tokens.refresh,
-      organizationId: actor.organizationId, workspaceId: actor.workspaceId });
+      organizationId: scopeId(actor.organizationId), workspaceId: scopeId(actor.workspaceId) });
     // WorkspaceContext.jsx:176 rejects stored workspace IDs without the org marker.
     await context.addInitScript(orgId => sessionStorage.setItem('workspaceOrgId', orgId), actor.organizationId);
     return context;
   }
 
   evidence() {
-    return { prefix: this.prefix, emptyWorkspace: this.emptyWorkspace, limitations: this.limitations,
-      actors: [this.ownerA, this.ownerB, this.member, this.viewer].filter(Boolean).map(
-        ({ userId, email, organizationId, workspaceId }) => ({ userId, email, organizationId, workspaceId })),
-      requests: this.receipts };
+    // Only typed public identities/booleans. No emails, credentials, invite links,
+    // full responses, or caller-supplied names in attachments.
+    return { emptyWorkspaceId: this.emptyWorkspace ? scopeId(this.emptyWorkspace.id) : null,
+      limitations: [...this.limitations],
+      actors: [this.ownerA, this.ownerB, this.member, this.viewer, this.memberInB, this.foreign]
+        .filter((actor): actor is ScopeActor => Boolean(actor)).map(
+          ({ userId, organizationId, workspaceId }) => ({ userId: scopeId(userId),
+            organizationId: scopeId(organizationId), workspaceId: scopeId(workspaceId) })),
+      requests: this.receipts.map(receipt => ({ ...receipt,
+        organizationId: receipt.organizationId ? scopeId(receipt.organizationId) : null,
+        workspaceId: receipt.workspaceId ? scopeId(receipt.workspaceId) : null })) };
   }
 
   async dispose(): Promise<void> {

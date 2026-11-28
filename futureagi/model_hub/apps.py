@@ -48,6 +48,9 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         # Helm bootstrap Job: migrate, seeds, ClickHouse schema, CDC, schedules.
         "bootstrap_install",
         "createcachetable",
+        # Explicit unreleased media cutover; command also requires the feature
+        # disabled, quiescence acknowledgement and a fixed legacy cutoff.
+        "cutover_attachment_media_sessions",
         "drop_legacy_observation_span",
         "harness_versions_backfill",
         "migrate",

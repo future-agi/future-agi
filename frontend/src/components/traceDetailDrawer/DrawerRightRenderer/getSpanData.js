@@ -103,6 +103,27 @@ export const isJson = (v) => {
   }
 };
 
+// One structured part of a message, by whole path segments:
+// `(message.)content(s).<part>[.<field>]`. The `message_content` wrapper
+// (`messageContent` in camelCased responses) is one whole segment, so a field
+// is never cut out of the middle of another segment's name.
+const CONTENT_PART_PATH = /^(?:message\.)?contents?\.(\d+)(?:\.(.+))?$/;
+const CONTENT_PART_WRAPPER = /^(?:message_content|messageContent)(?:\.(.+))?$/;
+
+/**
+ * Where a content property goes: `{ part, field }` for a structured part, or
+ * `null` for flat content. `field` is the rest of the path kept whole, so
+ * `image.url` stays `image.url` and an unknown field stays visible; it is `""`
+ * when the value is the whole part.
+ */
+function parseContentProperty(property) {
+  const match = CONTENT_PART_PATH.exec(property);
+  if (!match) return null;
+  const rest = match[2] ?? "";
+  const wrapper = CONTENT_PART_WRAPPER.exec(rest);
+  return { part: Number(match[1]), field: wrapper ? wrapper[1] ?? "" : rest };
+}
+
 function extractMessages(evalAttributes = {}, type = "input") {
   const messageObj = [];
   const tempMessages = {};
@@ -131,45 +152,42 @@ function extractMessages(evalAttributes = {}, type = "input") {
           }
 
           // property already excludes the message index (no `.splice(1)` needed).
-          const contentParts = property
-            .replace("message.content.", "")
-            .replace("message.contents.", "")
-            .replace("content.", "")
-            .replace("contents.", "")
-            .split(".");
+          const target = parseContentProperty(property);
 
-          const parsedIndex = contentParts?.[0];
-          const isMultipleContent = !isNaN(parseInt(parsedIndex));
-
-          const contentProperty = contentParts.slice(2).join(".");
-
+          // Slots by part number, ordered numerically once the message is read.
           if (!tempMessages[index].content) {
-            tempMessages[index].content = [];
+            tempMessages[index].content = new Map();
           }
+          const slots = tempMessages[index].content;
 
-          if (isMultipleContent) {
+          if (target) {
             // Some SDKs emit BOTH a flat `message.content` summary string and the
             // structured `message.contents.N.*` parts for the same message — e.g.
             // when an oversized image is masked to a "[image: …]" placeholder. If a
             // flat string already occupies this slot, keep it: attaching structured
             // sub-properties onto a string throws ("Cannot create property
             // 'image.url' on string") and crashes the whole trace view.
-            const slot = tempMessages[index].content[parsedIndex];
-            if (typeof slot !== "string") {
-              if (!slot) {
-                tempMessages[index].content[parsedIndex] = {};
-              }
-              if (contentProperty.length) {
-                tempMessages[index].content[parsedIndex][contentProperty] =
-                  content;
-              }
+            const slot = slots.get(target.part);
+            if (!target.field) {
+              // The value is the whole part; never clobber one already built.
+              if (slot == null) slots.set(target.part, content);
+            } else if (slot == null || typeof slot === "object") {
+              const part = slot ?? {};
+              // An own data property, even for a field such as `__proto__`.
+              Object.defineProperty(part, target.field, {
+                value: content,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
+              slots.set(target.part, part);
             }
-          } else if (
-            typeof tempMessages[index].content[0] !== "object" ||
-            tempMessages[index].content[0] === null
-          ) {
-            // Don't clobber already-built structured content with a flat summary.
-            tempMessages[index].content[0] = content;
+          } else {
+            const slot = slots.get(0);
+            if (typeof slot !== "object" || slot === null) {
+              // Don't clobber already-built structured content with a flat summary.
+              slots.set(0, content);
+            }
           }
         }
       });
@@ -182,7 +200,9 @@ function extractMessages(evalAttributes = {}, type = "input") {
       if (tempMessages[key].role && tempMessages[key].content) {
         messageObj.push({
           role: tempMessages[key].role,
-          content: tempMessages[key].content,
+          content: [...tempMessages[key].content.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([, part]) => part),
         });
       }
     });

@@ -5,7 +5,7 @@ set -euo pipefail
 cache=${1:?usage: install-test-packages.sh ABSOLUTE_CACHE_DIRECTORY}
 [[ "$cache" == /* ]] || { echo "Cache path must be absolute" >&2; exit 1; }
 mkdir -p "$cache/lists/partial" "$cache/archives/partial" "$cache/sources"
-packages=(ffmpeg xmlsec1 pgbouncer)
+packages=(ffmpeg xmlsec1 pgbouncer bubblewrap)
 runner_sources=/etc/apt/sources.list.d/ubuntu.sources
 options=(
   -o "Dir::Etc::sourcelist=/dev/null"
@@ -36,7 +36,7 @@ download() {
     --no-install-recommends "${packages[@]}"
 }
 if [[ ! -f "$cache/complete" ]]; then
-  echo "APT cache miss: refresh Ubuntu indexes and download ffmpeg/ffprobe + xmlsec1 + pgbouncer"
+  echo "APT cache miss: refresh Ubuntu indexes and download ffmpeg/ffprobe + xmlsec1 + pgbouncer + bubblewrap"
   started=$SECONDS
   # Only Ubuntu supplies these packages. Do not refresh unrelated repositories.
   # Two Ubuntu sources, both checked against the runner's Signed-By keyring.
@@ -82,3 +82,4 @@ ffmpeg -version | head -n 1
 ffprobe -version | head -n 1
 xmlsec1 --version
 /usr/sbin/pgbouncer --version | head -n 1
+bwrap --version

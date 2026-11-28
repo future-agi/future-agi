@@ -3,6 +3,9 @@
 // which storage-lane assertions need to reach the attached stack's stores.
 export const E2E = {
   appUrl: process.env.E2E_APP_URL ?? 'http://localhost:3100',
+  // The managed stack's https app origin (e2e/stack/attachments/Caddyfile):
+  // attachment media sessions and playback are same-origin and https only.
+  attachmentsAppUrl: process.env.E2E_ATTACHMENTS_APP_URL ?? 'https://localhost:23443',
   apiUrl: process.env.E2E_API_URL ?? 'http://localhost:8100',
   collectorUrl: process.env.E2E_COLLECTOR_URL ?? 'http://localhost:24318',
   gatewayUrl: process.env.E2E_GATEWAY_URL ?? 'http://localhost:28090',

@@ -1260,4 +1260,34 @@ describe("OpenAPI runtime contract", () => {
       ),
     ).toMatchObject({ ok: false });
   });
+
+  it("matches attachment 204 endpoints and rejects a body on their empty 204", () => {
+    const project = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    const noContent = [
+      { url: "/tracer/v1/attachment-media-sessions", method: "post" },
+      {
+        url: `/tracer/v1/projects/${project}/attachments/occurrences/${project}`,
+        method: "delete",
+      },
+      {
+        url: `/tracer/v1/projects/${project}/attachments/recordings/${project}/manifest`,
+        method: "put",
+      },
+    ];
+    for (const config of noContent) {
+      // An empty 204 has no body to check: it is the matched-endpoint skip,
+      // which names the endpoint (an unknown endpoint is skipped without one).
+      const empty = validateContractedResponse({
+        config,
+        status: 204,
+        data: "",
+      });
+      expect(empty).toMatchObject({ ok: true, skipped: true });
+      expect(empty.endpoint).toBeDefined();
+      // A 204 that carries a body still fails its empty-body contract.
+      expect(
+        validateContractedResponse({ config, status: 204, data: "unexpected" }),
+      ).toMatchObject({ ok: false });
+    }
+  });
 });
