@@ -20,6 +20,7 @@ SCHEMA_CACHES = {
     },
 }
 
+
 @pytest.fixture
 def schema_cache():
     with override_settings(CACHES=SCHEMA_CACHES):
