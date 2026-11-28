@@ -51,7 +51,7 @@ class PostHogTracker:
             if workspace_id:
                 properties["workspace_id"] = str(workspace_id)
 
-            self.client.set(user.email, properties)
+            self.client.set(distinct_id=str(user.id), properties=properties)
         except Exception as e:
             logger.exception("PostHog identify error", error=str(e))
 
@@ -92,7 +92,7 @@ class PostHogTracker:
         try:
             self.client.capture(
                 event_name,
-                distinct_id=str(user_id),
+                distinct_id=str(user_id) if user_id is not None else None,
                 properties=properties or {},
                 groups=groups or {},
             )

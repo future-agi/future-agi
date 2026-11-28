@@ -1,7 +1,7 @@
 """
 PostHog API analytics middleware.
 
-Automatically captures every API request as a PostHog event with:
+Captures authenticated API requests and allowlisted authentication outcomes:
 - Endpoint, method, status code, response time (p50/p95/p99 tracking in PostHog)
 - User & organization & workspace context (group analytics)
 - No manual instrumentation needed per view
@@ -27,6 +27,8 @@ import time
 import structlog
 from django.http import HttpRequest, HttpResponse
 
+from tfc.settings.settings import default_error_next_url
+
 logger = structlog.get_logger(__name__)
 
 # Paths to exclude from tracking (health checks, static, admin, docs, etc.)
@@ -39,6 +41,22 @@ EXCLUDED_PREFIXES = (
     "/__debug__/",
     "/swagger/",
     "/redoc/",
+)
+
+# These resolved views can emit a minimal outcome even before login.
+AUTH_OUTCOME_VIEWS = frozenset(
+    {
+        "user-signup",
+        "token_obtain_pair",
+        "activate-account",
+        "initiate-password-reset",
+        "reset-password-confirm",
+        "accept_invitation_email",
+        "login",
+        "auth0_callback",
+        "github-callback",
+        "microsoft-callback",
+    }
 )
 
 
@@ -75,7 +93,6 @@ class PostHogMiddleware:
         except Exception:
             logger.debug("deployment_telemetry_request_event_failed", exc_info=True)
 
-        # Only track if PostHog is enabled and user is authenticated
         if not self.tracker.is_enabled:
             return response
 
@@ -89,13 +106,37 @@ class PostHogMiddleware:
 
     def _capture_api_event(self, request, response, duration_ms):
         user = getattr(request, "user", None)
-        if not user or not getattr(user, "is_authenticated", False):
+        user_id = None
+        if user and getattr(user, "is_authenticated", False):
+            user_id = user.id
+        match = getattr(request, "resolver_match", None)
+        # Never fall back to the raw path: even an unmatched URL can contain a token.
+        path = f"/{match.route}" if match and match.route is not None else "unresolved"
+        if match and match.view_name in AUTH_OUTCOME_VIEWS:
+            status = response.status_code
+            error_code = None
+            if status >= 400:
+                error_code = "auth_request_failed"
+            elif status == 302:
+                location = response.get("Location", "")
+                if location.startswith(f"{default_error_next_url}&"):
+                    error_code = "auth_denied"
+            self.tracker.capture(
+                user_id=user_id,
+                event_name="api_request",
+                properties={
+                    "path": path,
+                    "status_code": status,
+                    "error_code": error_code,
+                },
+            )
+            return
+        if user_id is None:
             return
 
-        # Build properties
         properties = {
             "method": request.method,
-            "path": request.path,
+            "path": path,
             "status_code": response.status_code,
             "duration_ms": duration_ms,
             "content_type": response.get("Content-Type", ""),
@@ -107,10 +148,9 @@ class PostHogMiddleware:
             properties["query_param_count"] = len(request.GET)
 
         # Resolve view name for cleaner grouping
-        resolver_match = getattr(request, "resolver_match", None)
-        if resolver_match:
-            properties["view_name"] = resolver_match.view_name or ""
-            properties["url_name"] = resolver_match.url_name or ""
+        if match:
+            properties["view_name"] = match.view_name or ""
+            properties["url_name"] = match.url_name or ""
 
         # Groups for org + workspace analytics
         groups = {}
@@ -127,9 +167,8 @@ class PostHogMiddleware:
             groups["workspace"] = str(workspace_id)
             properties["workspace_id"] = str(workspace_id)
 
-        # Capture the event — use email as distinct_id
         self.tracker.capture(
-            user_id=getattr(user, "email", str(user.id)),
+            user_id=user_id,
             event_name="api_request",
             properties=properties,
             groups=groups,
