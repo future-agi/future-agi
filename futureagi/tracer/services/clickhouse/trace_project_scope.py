@@ -52,7 +52,6 @@ def latest_live_trace_projects_sql(
     *,
     candidate_trace_ids_sql: str,
     project_ids_param: str = "project_ids",
-    include_created_at: bool = False,
 ) -> str:
     """Return a project-bounded latest-live relation from direct-write traces.
 
@@ -71,16 +70,10 @@ def latest_live_trace_projects_sql(
     if not candidate_trace_ids_sql.strip():
         raise ValueError("A bounded trace-ID candidate query is required")
 
-    created_at = ", trace_project_scan.created_at" if include_created_at else ""
-    date_projection = (
-        ", tupleElement(latest_state, 3) AS trace_created_at"
-        if include_created_at
-        else ""
-    )
     return f"""
         SELECT
             trace_id,
-            tupleElement(latest_state, 1) AS project_id{date_projection}
+            tupleElement(latest_state, 1) AS project_id
         FROM (
             SELECT
                 trace_project_scan.id AS trace_id,
@@ -88,7 +81,7 @@ def latest_live_trace_projects_sql(
                 argMax(
                     tuple(
                         trace_project_scan.project_id,
-                        trace_project_scan.is_deleted{created_at}
+                        trace_project_scan.is_deleted
                     ),
                     trace_project_scan._version
                 ) AS latest_state

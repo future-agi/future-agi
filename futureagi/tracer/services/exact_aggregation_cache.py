@@ -30,9 +30,7 @@ logger = structlog.get_logger(__name__)
 # across deployments and snapshots live for up to 30 days, so reusing the old
 # namespace could otherwise serve results computed by pre-deploy code.
 # 5: session-graph and eval primary-traffic buckets are keyed by one UTC form.
-# 6: trace eval scores are each trace's latest recorded result, plotted at the
-#    trace's start (TH-10545); older snapshots plotted execution dates.
-_CACHE_VERSION = 6
+_CACHE_VERSION = 5
 # Admission is a shared resource guard, not a result contract. Preserve its
 # deployed key across semantic cache bumps so rolling workers do not each get
 # an independent allowance for the same project's expensive queries.
