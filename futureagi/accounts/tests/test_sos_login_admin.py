@@ -8,7 +8,6 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory
-from django.urls import reverse
 from structlog.testing import capture_logs
 
 from accounts.admin import SOSLoginProxy
@@ -483,11 +482,7 @@ class TestSOSCopyLink:
 
 @pytest.mark.django_db
 class TestSOSAuditLog:
-    """Every SOS mint emits `sos_login_started`, whichever path issued it.
-
-    The shared-key Appsmith path is the one with no operator identity, so it
-    is the path where a missing audit line would matter most.
-    """
+    """Every SOS mint emits `sos_login_started` with the operator's identity."""
 
     def _started(self, logs):
         return next(entry for entry in logs if entry["event"] == "sos_login_started")
@@ -509,23 +504,3 @@ class TestSOSAuditLog:
         assert entry["operator_email"] == sos_operator.email
         assert entry["target_user_id"] == str(user.id)
         assert entry["source"] == "django_admin"
-
-    def test_appsmith_path_records_an_unattributed_mint(
-        self, client, user, monkeypatch
-    ):
-        monkeypatch.setenv("API_KEY", "test-api-key")
-
-        with capture_logs() as logs:
-            response = client.post(
-                reverse("sos_login"),
-                data=json.dumps({"email": user.email}),
-                content_type="application/json",
-                HTTP_X_API_KEY="test-api-key",
-            )
-
-        assert response.status_code == 200, response.content
-        entry = self._started(logs)
-        assert entry["operator_id"] is None
-        assert entry["operator_email"] is None
-        assert entry["target_user_id"] == str(user.id)
-        assert entry["source"] == "appsmith_api"

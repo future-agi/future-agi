@@ -1650,78 +1650,11 @@ export const publicApiJourneys = [
       "accounts",
       "organization",
       "workspace",
-      "appsmith",
       "marketplace",
     ],
     public: true,
     async run({ apiBase, evidence }) {
       const zeroUuid = "00000000-0000-4000-8000-000000000456";
-
-      const apiKeyGuardEndpoints = [
-        {
-          label: "Appsmith users list",
-          method: "GET",
-          path: apiPath("/accounts/appsmith/users/"),
-        },
-        {
-          label: "Appsmith users patch alias",
-          method: "PATCH",
-          path: apiPath("/accounts/appsmith/users/"),
-          body: {},
-        },
-        {
-          label: "Appsmith users create",
-          method: "POST",
-          path: apiPath("/accounts/appsmith/users/"),
-          body: {},
-        },
-        {
-          label: "Appsmith SOS login",
-          method: "POST",
-          path: apiPath("/accounts/appsmith/users/login"),
-          body: {},
-        },
-        {
-          label: "Appsmith user detail",
-          method: "GET",
-          path: apiPath("/accounts/appsmith/users/{user_id}/", {
-            user_id: zeroUuid,
-          }),
-        },
-        {
-          label: "Appsmith user update",
-          method: "PATCH",
-          path: apiPath("/accounts/appsmith/users/{user_id}/", {
-            user_id: zeroUuid,
-          }),
-          body: {},
-        },
-        {
-          label: "Appsmith user detail post alias",
-          method: "POST",
-          path: apiPath("/accounts/appsmith/users/{user_id}/", {
-            user_id: zeroUuid,
-          }),
-          body: {},
-        },
-      ];
-
-      for (const endpoint of apiKeyGuardEndpoints) {
-        const result = await request(
-          apiBase,
-          endpoint.method,
-          endpoint.path,
-          endpoint.body,
-        );
-        assertJsonClientError(result, "No API key provided", endpoint.label);
-        evidence.push({
-          label: endpoint.label,
-          method: endpoint.method,
-          path: endpoint.path,
-          status: result.status,
-          code: result.body?.code || null,
-        });
-      }
 
       const publicValidationEndpoints = [
         {
@@ -1831,17 +1764,6 @@ export const publicApiJourneys = [
           label: "passkey rename",
           method: "PATCH",
           path: apiPath("/accounts/passkeys/{id}/", { id: zeroUuid }),
-          body: {},
-        },
-        {
-          label: "redis key delete",
-          method: "DELETE",
-          path: apiPath("/accounts/redis-key/"),
-        },
-        {
-          label: "redis key set",
-          method: "POST",
-          path: apiPath("/accounts/redis-key/"),
           body: {},
         },
         {

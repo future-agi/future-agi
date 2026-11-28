@@ -98,39 +98,6 @@ class UserSerializer(serializers.ModelSerializer):
         return "Active"
 
 
-class UserCreateSerializer(serializers.Serializer):
-    email = serializers.EmailField(
-        validators=[EmailValidator()], max_length=255, required=True
-    )
-    password = serializers.CharField(
-        min_length=8, max_length=128, required=True, write_only=True
-    )
-    organization_name = serializers.CharField(max_length=255, required=True)
-    send_credential = serializers.BooleanField(required=True)
-
-    def validate_email(self, value):
-        # You can add custom email validation here if needed
-        return value.lower()
-
-    def validate_password(self, value):
-        # You can add custom password validation here if needed
-        return value
-
-    def validate_organization_name(self, value):
-        # You can add custom organization name validation here if needed
-        return value.strip()
-
-
-class PasswordValidationSerializer(serializers.Serializer):
-    password = serializers.CharField(
-        min_length=8, max_length=128, required=True, write_only=True
-    )
-
-    def validate_password(self, value):
-        # You can add custom password validation here if needed
-        return value
-
-
 class CreateMemberSerializer(serializers.Serializer):
     email = serializers.EmailField(
         validators=[EmailValidator()], max_length=255, required=True
@@ -212,12 +179,6 @@ class TeamCreateRequestSerializer(serializers.Serializer):
     org_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     workspace = TeamWorkspaceInputSerializer(required=False)
     members = CreateMemberSerializer(many=True, required=False, default=list)
-
-
-class SOSLoginSerializer(serializers.Serializer):
-    email = serializers.EmailField(
-        validators=[EmailValidator()], max_length=255, required=True
-    )
 
 
 class UserOnboardingSerializer(serializers.Serializer):
