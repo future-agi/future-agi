@@ -274,97 +274,6 @@ export interface AcceptInvitationRequestApi {
   repeat_password: string;
 }
 
-export interface AccountOrganizationDetailApi {
-  id: string;
-  created_at?: string;
-  /** @minLength 1 */
-  name: string;
-  display_name: string;
-  is_new?: boolean;
-  ws_enabled?: boolean;
-  /** @minLength 1 */
-  region?: string;
-  require_2fa?: boolean;
-  require_2fa_grace_period_days?: number;
-  require_2fa_enforced_at?: string;
-}
-
-export interface AccountUserItemResponseApi {
-  id: string;
-  /** @minLength 1 */
-  email: string;
-  name: string;
-  organization_role: string;
-  organization: AccountOrganizationDetailApi;
-  created_at: string;
-  /** @minLength 1 */
-  status: string;
-  role: string;
-  goals?: string[];
-}
-
-export interface AccountsPaginatedUserResponseApi {
-  count: number;
-  /** @minLength 1 */
-  next: string;
-  /** @minLength 1 */
-  previous: string;
-  results: AccountUserItemResponseApi[];
-  total_pages: number;
-  current_page: number;
-  total_queries?: number;
-}
-
-export interface UserCreateApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  email: string;
-  /**
-   * @minLength 8
-   * @maxLength 128
-   */
-  password: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  organization_name: string;
-  send_credential: boolean;
-}
-
-export interface AppsmithUserCreateResponseApi {
-  /** @minLength 1 */
-  email: string;
-  /** @minLength 1 */
-  password: string;
-  /** @minLength 1 */
-  organization_name: string;
-  send_credential: boolean;
-}
-
-export interface PasswordValidationApi {
-  /**
-   * @minLength 8
-   * @maxLength 128
-   */
-  password: string;
-}
-
-export interface AppsmithPasswordUpdateResponseApi {
-  /** @minLength 1 */
-  password: string;
-}
-
-export interface SOSLoginApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  email: string;
-}
-
 export interface AWSMarketplaceSignupRequestApi {
   /** @minLength 1 */
   onboarding_token: string;
@@ -1074,45 +983,6 @@ export interface PasswordResetInitiateResponseApi {
   result: PasswordResetInitiateResultApi;
 }
 
-export type RedisKeyRequestApiValue = { [key: string]: unknown };
-
-export interface RedisKeyRequestApi {
-  /** @minLength 1 */
-  access_token_id: string;
-  /** @minLength 1 */
-  key: string;
-  value?: RedisKeyRequestApiValue;
-  /** @minimum 1 */
-  expiry?: number;
-}
-
-export type AccountsRedisSetResultApiValue = { [key: string]: unknown };
-
-export interface AccountsRedisSetResultApi {
-  /** @minLength 1 */
-  message: string;
-  /** @minLength 1 */
-  key: string;
-  value: AccountsRedisSetResultApiValue;
-}
-
-export interface AccountsRedisSetResponseApi {
-  status: boolean;
-  result: AccountsRedisSetResultApi;
-}
-
-export interface AccountsRedisDeleteResultApi {
-  /** @minLength 1 */
-  message: string;
-  /** @minLength 1 */
-  key: string;
-}
-
-export interface AccountsRedisDeleteResponseApi {
-  status: boolean;
-  result: AccountsRedisDeleteResultApi;
-}
-
 export interface SignupRequestApi {
   /** @minLength 1 */
   email: string;
@@ -1137,6 +1007,21 @@ export interface SignupResultApi {
 export interface SignupResponseApi {
   status: boolean;
   result: SignupResultApi;
+}
+
+export interface AccountOrganizationDetailApi {
+  id: string;
+  created_at?: string;
+  /** @minLength 1 */
+  name: string;
+  display_name: string;
+  is_new?: boolean;
+  ws_enabled?: boolean;
+  /** @minLength 1 */
+  region?: string;
+  require_2fa?: boolean;
+  require_2fa_grace_period_days?: number;
+  require_2fa_enforced_at?: string;
 }
 
 export interface TeamWorkspaceSummaryApi {
@@ -45958,56 +45843,6 @@ export interface APICallCountResponseApi {
   result: APICallCountResultApi;
 }
 
-export type UsageAPICallTypeApiName =
-  (typeof UsageAPICallTypeApiName)[keyof typeof UsageAPICallTypeApiName];
-
-export const UsageAPICallTypeApiName = {
-  prompt_bench: "prompt_bench",
-  dataset_protect: "dataset_protect",
-  dataset_protect_flash: "dataset_protect_flash",
-  turing_large_evaluator: "turing_large_evaluator",
-  turing_small_evaluator: "turing_small_evaluator",
-  turing_flash_evaluator: "turing_flash_evaluator",
-  protect_evaluator: "protect_evaluator",
-  protect_flash_evaluator: "protect_flash_evaluator",
-  code_evaluator: "code_evaluator",
-  jev_evaluator: "jev_evaluator",
-  user_add: "user_add",
-  observe_add: "observe_add",
-  prototype_add: "prototype_add",
-  dataset_add: "dataset_add",
-  row_add: "row_add",
-  knowledge_base: "knowledge_base",
-  synthetic_data_generation: "synthetic_data_generation",
-  error_localizer: "error_localizer",
-  auto_annotation: "auto_annotation",
-  dataset_evaluation: "dataset_evaluation",
-  experiment_evaluation: "experiment_evaluation",
-  optimisation_evaluation: "optimisation_evaluation",
-  eval_explanation: "eval_explanation",
-  dataset_run_prompt: "dataset_run_prompt",
-  dataset_optimization: "dataset_optimization",
-  dataset_experiment: "dataset_experiment",
-  voice_call: "voice_call",
-  text_call: "text_call",
-  wallet_refund: "wallet_refund",
-  wallet_refill: "wallet_refill",
-  wallet_auto_recharge: "wallet_auto_recharge",
-  wallet_add_funds: "wallet_add_funds",
-  trace_error_analysis: "trace_error_analysis",
-} as const;
-
-export interface UsageAPICallTypeApi {
-  readonly id?: number;
-  name: UsageAPICallTypeApiName;
-  description?: string;
-}
-
-export interface APICallTypeListResponseApi {
-  status: boolean;
-  result: UsageAPICallTypeApi[];
-}
-
 export interface UsageEmptyRequestApi {
   [key: string]: unknown;
 }
@@ -46145,191 +45980,6 @@ export interface PricingCalculationResponseApi {
   result: PricingCalculationResponseApiResult;
 }
 
-export interface UsageOrganizationBillingApi {
-  readonly id?: number;
-  readonly organization?: string;
-  /** @maxLength 100 */
-  billing_contact_name?: string;
-  /** @maxLength 254 */
-  billing_contact_email?: string;
-  /** @maxLength 100 */
-  company?: string;
-  /** @maxLength 255 */
-  billing_address1?: string;
-  /** @maxLength 255 */
-  billing_address2?: string;
-  /** @maxLength 100 */
-  city?: string;
-  /** @maxLength 100 */
-  state?: string;
-  /** @maxLength 100 */
-  country?: string;
-  /** @maxLength 20 */
-  postal_code?: string;
-  /** @maxLength 50 */
-  tax_id?: string;
-}
-
-export interface OrganizationBillingListResponseApi {
-  status: boolean;
-  result: UsageOrganizationBillingApi[];
-}
-
-export interface OrganizationBillingDetailResponseApi {
-  status: boolean;
-  result: UsageOrganizationBillingApi;
-}
-
-export interface UsageOrganizationApi {
-  readonly id?: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-}
-
-export interface OrganizationListResponseApi {
-  status: boolean;
-  result: UsageOrganizationApi[];
-}
-
-export type UsageOrganizationSubscriptionApiStatus =
-  (typeof UsageOrganizationSubscriptionApiStatus)[keyof typeof UsageOrganizationSubscriptionApiStatus];
-
-export const UsageOrganizationSubscriptionApiStatus = {
-  active: "active",
-  past_due: "past_due",
-  unpaid: "unpaid",
-  canceled: "canceled",
-  inactive: "inactive",
-} as const;
-
-export type UsageOrganizationSubscriptionApiSubscriptionFutureTier =
-  (typeof UsageOrganizationSubscriptionApiSubscriptionFutureTier)[keyof typeof UsageOrganizationSubscriptionApiSubscriptionFutureTier];
-
-export const UsageOrganizationSubscriptionApiSubscriptionFutureTier = {
-  free: "free",
-  basic: "basic",
-  basic_yearly: "basic_yearly",
-  custom: "custom",
-} as const;
-
-export interface UsageOrganizationSubscriptionApi {
-  readonly id?: number;
-  organization: string;
-  readonly subscription_tier?: string;
-  /** @maxLength 100 */
-  custom_subscription_id?: string;
-  status?: UsageOrganizationSubscriptionApiStatus;
-  /** Price of the subscription. */
-  subscription_price?: string;
-  wallet_balance?: string;
-  /** Amount to refill the wallet every month. */
-  wallet_refill_amount?: string;
-  /** Next due date for renewal. */
-  next_renewal_date?: string;
-  subscription_future_tier?: UsageOrganizationSubscriptionApiSubscriptionFutureTier;
-  /** Next due date for renewal. */
-  subscription_future_start_date?: string;
-  /** Price of the future subscription. */
-  subscription_future_price?: string;
-  /**
-   * Stripe customer ID for test mode. NULL values are allowed.
-   * @maxLength 100
-   */
-  stripe_customer_id_test?: string;
-  /**
-   * Stripe customer ID for live mode. NULL values are allowed.
-   * @maxLength 100
-   */
-  stripe_customer_id_live?: string;
-  auto_recharge_enabled?: boolean;
-  /** Amount to refill the wallet every month. */
-  auto_recharge_amount?: string;
-  /** Threshold to trigger auto recharge. */
-  auto_recharge_threshold?: string;
-  /** @maxLength 100 */
-  payment_method_id?: string;
-  last_refill_date?: string;
-  /** Amount of the last refill. */
-  last_refill_amount?: string;
-}
-
-export interface OrganizationSubscriptionListResponseApi {
-  status: boolean;
-  result: UsageOrganizationSubscriptionApi[];
-}
-
-export type UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier =
-  (typeof UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier)[keyof typeof UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier];
-
-export const UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier = {
-  free: "free",
-  basic: "basic",
-  basic_yearly: "basic_yearly",
-  custom: "custom",
-} as const;
-
-export type UsageOrganizationSubscriptionCreateApiStatus =
-  (typeof UsageOrganizationSubscriptionCreateApiStatus)[keyof typeof UsageOrganizationSubscriptionCreateApiStatus];
-
-export const UsageOrganizationSubscriptionCreateApiStatus = {
-  active: "active",
-  past_due: "past_due",
-  unpaid: "unpaid",
-  canceled: "canceled",
-  inactive: "inactive",
-} as const;
-
-export interface UsageOrganizationSubscriptionCreateApi {
-  /** Next due date for renewal. */
-  next_renewal_date?: string;
-  /** Price of the subscription. */
-  subscription_price?: string;
-  subscription_future_tier?: UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier;
-  /** Next due date for renewal. */
-  subscription_future_start_date?: string;
-  /** Price of the future subscription. */
-  subscription_future_price?: string;
-  status?: UsageOrganizationSubscriptionCreateApiStatus;
-  /** Amount to refill the wallet every month. */
-  wallet_refill_amount?: string;
-  wallet_balance?: string;
-  /**
-   * Stripe customer ID for test mode. NULL values are allowed.
-   * @maxLength 100
-   */
-  stripe_customer_id_test?: string;
-  /**
-   * Stripe customer ID for live mode. NULL values are allowed.
-   * @maxLength 100
-   */
-  stripe_customer_id_live?: string;
-  auto_recharge_enabled?: boolean;
-  /** Amount to refill the wallet every month. */
-  auto_recharge_amount?: string;
-  /** Threshold to trigger auto recharge. */
-  auto_recharge_threshold?: string;
-  /** @maxLength 100 */
-  payment_method_id?: string;
-  /** @maxLength 100 */
-  custom_subscription_id?: string;
-  organization: string;
-  subscription_tier: number;
-}
-
-export interface OrganizationSubscriptionMutationResponseApi {
-  status: boolean;
-  result: UsageOrganizationSubscriptionCreateApi;
-}
-
-export interface UsageStringResponseApi {
-  status: boolean;
-  /** @minLength 1 */
-  result: string;
-}
-
 export interface PricingCardDetailsResultApi {
   business_monthly_price: number;
   business_yearly_price: number;
@@ -46340,180 +45990,6 @@ export interface PricingCardDetailsResultApi {
 export interface PricingCardDetailsResponseApi {
   status: boolean;
   result: PricingCardDetailsResultApi;
-}
-
-export interface UsagePricingCreateApi {
-  readonly id?: number;
-  api_call_type: number;
-  price_per_call: string;
-  organization?: string;
-}
-
-export interface PricingListResponseApi {
-  status: boolean;
-  result: UsagePricingCreateApi[];
-}
-
-export interface PricingDetailResponseApi {
-  status: boolean;
-  result: UsagePricingCreateApi;
-}
-
-export interface UsagePricingApi {
-  readonly id?: number;
-  readonly api_call_type?: string;
-  price_per_call: string;
-  organization?: string;
-}
-
-export interface PricingReadResponseApi {
-  status: boolean;
-  result: UsagePricingApi;
-}
-
-export interface UsageRateLimitApi {
-  readonly id?: number;
-  readonly api_call_type?: string;
-  organization?: string;
-  /**
-   * Max calls per minute
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  minute_limit?: number;
-  /**
-   * Max calls per hour
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  hour_limit?: number;
-  /**
-   * Max calls per day
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  day_limit?: number;
-  /**
-   * Max calls per month
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  month_limit?: number;
-  readonly subscription_tier?: string;
-}
-
-export interface RateLimitListResponseApi {
-  status: boolean;
-  result: UsageRateLimitApi[];
-}
-
-export interface UsageRateLimitCreateApi {
-  readonly id?: number;
-  api_call_type: number;
-  organization?: string;
-  /**
-   * Max calls per minute
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  minute_limit?: number;
-  /**
-   * Max calls per hour
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  hour_limit?: number;
-  /**
-   * Max calls per day
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  day_limit?: number;
-  /**
-   * Max calls per month
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  month_limit?: number;
-  subscription_tier: number;
-}
-
-export interface RateLimitMutationResponseApi {
-  status: boolean;
-  result: UsageRateLimitCreateApi;
-}
-
-export interface RateLimitDetailResponseApi {
-  status: boolean;
-  result: UsageRateLimitApi;
-}
-
-export interface UsageResourceLimitApi {
-  readonly id?: number;
-  readonly resource_type?: string;
-  readonly subscription_tier?: string;
-  /**
-   * Limit for the resource
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  limit: number;
-  organization?: string;
-}
-
-export interface ResourceLimitListResponseApi {
-  status: boolean;
-  result: UsageResourceLimitApi[];
-}
-
-export interface UsageResourceLimitCreateApi {
-  readonly id?: number;
-  resource_type: number;
-  subscription_tier: number;
-  /**
-   * Limit for the resource
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  limit: number;
-  organization?: string;
-}
-
-export interface ResourceLimitMutationResponseApi {
-  status: boolean;
-  result: UsageResourceLimitCreateApi;
-}
-
-export interface ResourceLimitDetailResponseApi {
-  status: boolean;
-  result: UsageResourceLimitApi;
-}
-
-export type UsageResourceTypeApiName =
-  (typeof UsageResourceTypeApiName)[keyof typeof UsageResourceTypeApiName];
-
-export const UsageResourceTypeApiName = {
-  project: "project",
-  dataset: "dataset",
-  logs: "logs",
-  rows: "rows",
-  columns: "columns",
-  users: "users",
-  traces: "traces",
-  observe: "observe",
-  prototypes: "prototypes",
-  knowledge_base: "knowledge_base",
-} as const;
-
-export interface UsageResourceTypeApi {
-  readonly id?: number;
-  name: UsageResourceTypeApiName;
-  description?: string;
-}
-
-export interface ResourceTypeListResponseApi {
-  status: boolean;
-  result: UsageResourceTypeApi[];
 }
 
 export type SubscriptionPlansResultApiStatus =
@@ -46555,36 +46031,6 @@ export interface SubscriptionStatusResultApi {
 export interface SubscriptionStatusResponseApi {
   status: boolean;
   result: SubscriptionStatusResultApi;
-}
-
-export type UsageSubscriptionTierApiName =
-  (typeof UsageSubscriptionTierApiName)[keyof typeof UsageSubscriptionTierApiName];
-
-export const UsageSubscriptionTierApiName = {
-  free: "free",
-  basic: "basic",
-  basic_yearly: "basic_yearly",
-  custom: "custom",
-} as const;
-
-export interface UsageSubscriptionTierApi {
-  readonly id?: number;
-  readonly name?: UsageSubscriptionTierApiName;
-  description: string;
-  /** @maxLength 100 */
-  stripe_price_id?: string;
-  /** Amount to refill the wallet every month. */
-  wallet_refill_amount?: string;
-}
-
-export interface SubscriptionTierListResponseApi {
-  status: boolean;
-  result: UsageSubscriptionTierApi[];
-}
-
-export interface SubscriptionTierDetailResponseApi {
-  status: boolean;
-  result: UsageSubscriptionTierApi;
 }
 
 export interface AutoReloadSettingsRequestApi {
