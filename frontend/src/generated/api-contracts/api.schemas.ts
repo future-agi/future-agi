@@ -23990,8 +23990,8 @@ export interface HarnessRunPinnedVersionsApi {
   environment: RunVersionLabelApi | null;
   suite: RunVersionLabelApi | null;
   /** The split the run runs; null for the scenarios selected. */
-  split: HarnessRunPinnedVersionsApiSplit;
-  locked_version: RunLockedVersionLabelApi;
+  split: HarnessRunPinnedVersionsApiSplit | null;
+  locked_version: RunLockedVersionLabelApi | null;
 }
 
 export interface HarnessCompareVersionsApi {
@@ -30023,8 +30023,8 @@ export interface TestExecutionItemResponseApi {
   readonly agent_differs?: boolean;
   stop?: RunStopApi;
   /** The split the run ran; null for the scenarios selected. */
-  readonly split?: TestExecutionItemResponseApiSplit;
-  locked_version?: RunLockedVersionLabelApi;
+  readonly split?: TestExecutionItemResponseApiSplit | null;
+  locked_version?: RunLockedVersionLabelApi | null;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -33221,8 +33221,8 @@ export interface RunExecutionApi {
   capability_snapshot?: HarnessCapabilityReportApi;
   readiness_selection?: HarnessRunReadinessSelectionApi;
   /** The split the run ran; null for the scenarios selected. */
-  split?: RunExecutionApiSplit;
-  locked_version?: RunLockedVersionLabelApi;
+  split?: RunExecutionApiSplit | null;
+  locked_version?: RunLockedVersionLabelApi | null;
   /**
    * Said when the run replayed a build without its environment's actors.
    * @minLength 1

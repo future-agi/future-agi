@@ -49442,6 +49442,7 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
         .nullable(),
       split: zod
         .enum(["train", "test"])
+        .nullable()
         .describe("The split the run runs; null for the scenarios selected."),
       locked_version: zod
         .object({
@@ -49449,6 +49450,7 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
           label: zod.string().min(1).nullish(),
           locked: zod.boolean().optional(),
         })
+        .nullable()
         .describe(
           "The locked version the run of a split runs under; null without a split.",
         ),
@@ -49475,6 +49477,7 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
           .nullable(),
         split: zod
           .enum(["train", "test"])
+          .nullable()
           .describe("The split the run runs; null for the scenarios selected."),
         locked_version: zod
           .object({
@@ -49482,6 +49485,7 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
             label: zod.string().min(1).nullish(),
             locked: zod.boolean().optional(),
           })
+          .nullable()
           .describe(
             "The locked version the run of a split runs under; null without a split.",
           ),
@@ -54527,6 +54531,7 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
       .nullable(),
     split: zod
       .enum(["train", "test"])
+      .nullable()
       .describe("The split the run runs; null for the scenarios selected."),
     locked_version: zod
       .object({
@@ -54534,6 +54539,7 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
         label: zod.string().min(1).nullish(),
         locked: zod.boolean().optional(),
       })
+      .nullable()
       .describe(
         "The locked version the run of a split runs under; null without a split.",
       ),
@@ -54583,6 +54589,7 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
     ),
   blocked_code: zod
     .enum(["production_only"])
+    .nullable()
     .describe("Why the run would be refused; null when it is runnable."),
   held_back: zod
     .number()
@@ -67944,7 +67951,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           ),
         split: zod
           .enum(["train", "test"])
-          .optional()
+          .nullish()
           .describe("The split the run ran; null for the scenarios selected."),
         locked_version: zod
           .object({
@@ -67952,7 +67959,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
             label: zod.string().min(1).optional(),
             locked: zod.boolean().optional(),
           })
-          .optional()
+          .nullish()
           .describe(
             "The locked version the run of a split runs under; null without a split.",
           ),
@@ -73369,7 +73376,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       ),
     split: zod
       .enum(["train", "test"])
-      .optional()
+      .nullish()
       .describe("The split the run ran; null for the scenarios selected."),
     locked_version: zod
       .object({
@@ -73377,7 +73384,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         label: zod.string().min(1).optional(),
         locked: zod.boolean().optional(),
       })
-      .optional()
+      .nullish()
       .describe(
         "The locked version the run of a split runs under; null without a split.",
       ),

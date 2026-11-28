@@ -1075,6 +1075,19 @@ export type ${jsonAlias} = JsonValueApi;`,
         `HarnessRunCreateApi.${piece}_version_id nullable`,
       );
     }
+    // A run of the scenarios selected has no split and no locked version.
+    for (const [field, valueType] of [
+      ["split", "HarnessRunPinnedVersionsApiSplit"],
+      ["locked_version", "RunLockedVersionLabelApi"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessRunPinnedVersionsApi {",
+        `${field}: ${valueType};`,
+        `${field}: ${valueType} | null;`,
+        `HarnessRunPinnedVersionsApi.${field} nullable`,
+      );
+    }
     schemas = assertReplaceInNamedBlock(
       schemas,
       "export interface HarnessRunWarningApi {",
@@ -1200,6 +1213,18 @@ export type ${jsonAlias} = JsonValueApi;`,
           `${field}?: RunVersionLabelApi;`,
           `${field}?: RunVersionLabelApi | null;`,
           `${typeName}.${field} nullable`,
+        );
+      }
+      for (const field of [
+        `split?: ${typeName}Split;`,
+        "locked_version?: RunLockedVersionLabelApi;",
+      ]) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          field,
+          field.replace(/;$/, " | null;"),
+          `${typeName}.${field.split("?")[0]} nullable`,
         );
       }
     }
@@ -1635,7 +1660,7 @@ export type ${jsonAlias} = JsonValueApi;`,
     zod = assertReplaceRegexInNamedBlock(
       zod,
       "export const SimulateApiHarnessEnvironmentsRunPlanResponse =",
-      /("(?:agent|environment|suite)": zod\.object\(\{[^{}]*\}\))/g,
+      /("(?:agent|environment|suite|locked_version)": zod\.object\(\{[^{}]*\}\))/g,
       "$1.nullable()",
       "SimulateApiHarnessEnvironmentsRunPlanResponse.versions nullable",
     );
@@ -1643,6 +1668,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       ['"label": zod.string().min(1).optional()', "label"],
       [`"piece": zod.enum(['agent', 'environment', 'suite'])`, "piece"],
       ['"bundle_cached": zod.boolean()', "bundle_cached"],
+      [`"split": zod.enum(['train', 'test'])`, "split"],
+      [`"blocked_code": zod.enum(['production_only'])`, "blocked_code"],
     ]) {
       zod = assertReplaceInNamedBlock(
         zod,
@@ -1665,7 +1692,7 @@ export type ${jsonAlias} = JsonValueApi;`,
       ],
       [/("against": zod\.object\(\{(?:[^{}]|\{[^{}]*\})*\}\))/g, "against"],
       [
-        /("(?:agent|environment|suite)": zod\.object\(\{[^{}]*\}\))/g,
+        /("(?:agent|environment|suite|locked_version)": zod\.object\(\{[^{}]*\}\))/g,
         "versions",
       ],
     ]) {
@@ -1690,6 +1717,7 @@ export type ${jsonAlias} = JsonValueApi;`,
       ['"current_pass_rate": zod.number()', "current_pass_rate"],
       ['"against_pass_rate": zod.number()', "against_pass_rate"],
       ['"label": zod.string().min(1).optional()', "label"],
+      [`"split": zod.enum(['train', 'test'])`, "split"],
     ]) {
       zod = assertReplaceInNamedBlock(
         zod,
@@ -1711,6 +1739,13 @@ export type ${jsonAlias} = JsonValueApi;`,
         /("(?:environment_version|suite_version|pinned_agent_version)": zod\.object\(\{[^{}]*"label": zod\.string\(\)\.min\(1\))\.optional\(\)([^{}]*\}\))\.optional\(\)/g,
         "$1.nullish()$2.nullish()",
         `${response} run versions nullable`,
+      );
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} = zod.object({`,
+        /("split": zod\.enum\(\['train', 'test'\]\)|"locked_version": zod\.object\(\{[^{}]*\}\))\.optional\(\)/g,
+        "$1.nullish()",
+        `${response} split and locked version nullable`,
       );
     }
     // The same nullable nudge fields.
