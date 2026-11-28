@@ -14,6 +14,11 @@ import structlog
 from django.utils import timezone
 
 from simulate.models.agent_definition import AgentDefinition, ProviderCredentials
+from simulate.services.agent_definition import (
+    VapiConfiguration,
+    VapiConfigurationError,
+    resolve_vapi_configuration_for_version,
+)
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
@@ -249,16 +254,38 @@ class ObservabilityService:
         return response.status_code
 
     @staticmethod
+    def resolve_vapi_configuration(
+        provider: ObservabilityProvider,
+    ) -> VapiConfiguration:
+        try:
+            agent = provider.agent_definition
+        except AgentDefinition.DoesNotExist:
+            raise VapiConfigurationError("Vapi import needs a linked agent") from None
+        if agent.deleted:
+            raise VapiConfigurationError("Vapi import needs a non-deleted agent")
+        return resolve_vapi_configuration_for_version(
+            agent, agent.active_version or agent.latest_version
+        )
+
+    @staticmethod
     def get_call_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
+        *,
+        vapi_configuration: VapiConfiguration | None = None,
     ):
         """
         Fetches call logs from the specified provider.
         """
         if provider.provider == ProviderChoices.VAPI:
-            return ObservabilityService._fetch_vapi_logs(provider, start_time, end_time)
+            if vapi_configuration is None:
+                vapi_configuration = ObservabilityService.resolve_vapi_configuration(
+                    provider
+                )
+            return ObservabilityService._fetch_vapi_logs(
+                provider, vapi_configuration, start_time, end_time
+            )
         elif provider.provider == ProviderChoices.ELEVEN_LABS:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
@@ -283,6 +310,7 @@ class ObservabilityService:
     @staticmethod
     def _fetch_vapi_logs(
         provider: ObservabilityProvider,
+        configuration: VapiConfiguration,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
     ):
@@ -292,23 +320,14 @@ class ObservabilityService:
         Fetches in batches of VAPI_PAGE_LIMIT, using the max `updatedAt`
         from each batch as the cursor for the next request. Stops when a
         batch returns fewer results than the limit or after VAPI_MAX_PAGES.
-
-        Returns:
-            List of logs, or empty list if API key is missing.
         """
-        agent = ObservabilityService._get_agent_definition(provider)
-        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "VAPI")
-        if not api_key:
-            return []
-
-        headers = {"Authorization": f"Bearer {api_key}"}
-        assistant_id = getattr(agent, "assistant_id", None)
+        headers = {"Authorization": f"Bearer {configuration.api_key}"}
         all_logs: list[dict] = []
         current_start = start_time
 
         for page in range(VAPI_MAX_PAGES):
             params: dict[str, Any] = {
-                "assistantId": assistant_id,
+                "assistantId": configuration.assistant_id,
                 "limit": VAPI_PAGE_LIMIT,
             }
             if current_start:

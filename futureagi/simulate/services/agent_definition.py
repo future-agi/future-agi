@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import TypedDict
+from dataclasses import dataclass, field
+from typing import Literal, TypedDict
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
@@ -302,6 +303,73 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_changed=provider_changed,
     )
     creds.save()
+
+
+class VapiConfigurationError(ValueError):
+    """The selected source cannot supply a Vapi import credential pair."""
+
+
+@dataclass(frozen=True)
+class VapiConfiguration:
+    api_key: str = field(repr=False)
+    assistant_id: str
+    source: Literal["version", "legacy", "definition"]
+
+
+def _vapi_snapshot(agent: AgentDefinition, version: AgentVersion | None) -> dict:
+    snapshot: dict = {}
+    if version is not None:
+        if version.agent_definition_id != agent.pk:
+            raise VapiConfigurationError("Credential version belongs to another agent")
+        snapshot = version.configuration_snapshot or {}
+    provider = snapshot.get("provider") or agent.provider
+    if provider != ProviderCredentials.ProviderType.VAPI:
+        raise VapiConfigurationError("Selected agent is not configured for Vapi")
+    return snapshot
+
+
+def resolve_vapi_configuration_for_version(
+    agent: AgentDefinition, version: AgentVersion | None
+) -> VapiConfiguration:
+    """Read a complete pair without changing the selected or legacy credential row."""
+    vapi = ProviderCredentials.ProviderType.VAPI
+    assistant = _vapi_snapshot(agent, version).get("assistant_id")
+    row: ProviderCredentials | None = getattr(version, "credentials", None)
+    source: Literal["version", "legacy", "definition"] = "version"
+    if row is None:
+        row = getattr(agent, "credentials_legacy", None)
+        source = "legacy"
+        if row is not None and row.agent_version_id is not None:
+            # A backfilled legacy row belongs to its own version, not the selected one.
+            assistant = _vapi_snapshot(agent, row.agent_version).get("assistant_id")
+        elif agent.provider == vapi:
+            assistant = agent.assistant_id
+        elif row is not None and not (assistant and row.assistant_id == assistant):
+            raise VapiConfigurationError("Legacy credential has no matching assistant")
+
+    if row is not None and (
+        row.provider_type != vapi or row.agent_definition_id not in (None, agent.pk)
+    ):
+        raise VapiConfigurationError("Credential does not belong to this Vapi agent")
+
+    if row is None or not row.api_key:
+        # Only a missing or deliberately empty eligible row can select this pair.
+        if agent.provider != vapi:
+            raise VapiConfigurationError("Agent definition is not configured for Vapi")
+        key, assistant = agent.api_key, agent.assistant_id
+        source = "definition"
+    else:
+        try:
+            key = row.get_api_key()
+        except ValueError:
+            raise VapiConfigurationError("Vapi credential could not be read") from None
+        assistant = row.assistant_id or assistant
+
+    if not isinstance(key, str) or not key.strip():
+        raise VapiConfigurationError("Vapi API key is not configured")
+    if not isinstance(assistant, str) or not assistant.strip():
+        raise VapiConfigurationError("Vapi assistant ID is not configured")
+    return VapiConfiguration(key, assistant, source)
 
 
 def resolve_api_key_for_version(version):

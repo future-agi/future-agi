@@ -974,6 +974,11 @@ def _poll_other_provider(
     provider, *, start_time: datetime | None, end_time: datetime | None
 ) -> StoreOutcome:
     provider_id = provider.id
+    vapi = (
+        ObservabilityService.resolve_vapi_configuration(provider)
+        if provider.provider == ProviderChoices.VAPI
+        else None
+    )
     now = timezone.now()
     end = min(end_time or now, now)
     if provider.last_fetched_at is not None and provider.last_fetched_at > now:
@@ -993,10 +998,12 @@ def _poll_other_provider(
         end_time=str(end),
     )
     logs = ObservabilityService.get_call_logs(
-        provider=provider, start_time=start, end_time=end
+        provider=provider, start_time=start, end_time=end, vapi_configuration=vapi
     )  # HTTPError propagates to fetch_logs_for_provider
     try:
-        outcome = process_and_store_logs(logs, provider)
+        outcome = process_and_store_logs(
+            logs, provider, api_key=vapi.api_key if vapi else None
+        )
     except Exception as exc:
         logger.error(
             "provider_log_processing_failed",
@@ -1254,23 +1261,15 @@ def process_and_store_logs(
 
     For Vapi providers, ``api_key`` is threaded through to
     :func:`normalize_vapi_data` so the call-log download can use the
-    authenticated endpoint. When ``api_key`` is None it is resolved
-    via the Selector; when no key is available the pipeline falls back
-    to the legacy unauthenticated fetch.
+    authenticated endpoint. Without a listing key, resolve this connection only.
     """
     project = provider.project
 
-    if provider.provider == ProviderChoices.VAPI and api_key is None:
-        try:
-            from tracer.selectors import get_agent_api_key
-
-            api_key = get_agent_api_key(project.id, provider.provider)
-        except Exception as exc:
-            logger.error(
-                "process_and_store_logs: vapi api_key resolution failed",
-                provider_id=str(provider.id),
-                error_type=type(exc).__name__,
-            )
+    if provider.provider == ProviderChoices.VAPI:
+        if api_key is None:
+            api_key = ObservabilityService.resolve_vapi_configuration(provider).api_key
+        if not api_key.strip():
+            raise ValueError("Vapi API key is not configured")
 
     normalization_functions = {
         ProviderChoices.VAPI: lambda log: normalize_vapi_data(

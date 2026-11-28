@@ -8,6 +8,7 @@ Run with: pytest tracer/tests/test_observability_providers.py -v
 
 import threading
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -215,57 +216,41 @@ class TestVerifyApiKey:
         )
 
 
-class TestFetchVapiLogs:
-    """Tests for _fetch_vapi_logs method."""
-
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
+@pytest.fixture
+def vapi_connection():
+    return SimpleNamespace(
+        id="vapi-provider-123",
+        provider=ProviderChoices.VAPI,
+        agent_definition=SimpleNamespace(
+            provider="vapi",
+            deleted=False,
+            active_version=None,
+            latest_version=None,
+            api_key="valid-vapi-key",
+            assistant_id="assistant-123",
+        ),
     )
-    def test_returns_empty_list_when_no_api_key(
-        self, mock_get_agent, mock_requests_get
-    ):
-        """Returns empty list when agent has no API key (graceful handling)."""
-        from tracer.services.observability_providers import ObservabilityService
 
-        mock_get_agent.return_value = None
-        mock_provider = Mock()
-        mock_provider.id = "vapi-provider-123"
 
-        result = ObservabilityService._fetch_vapi_logs(mock_provider)
-
-        assert result == []
-        # Should not make HTTP request when validation fails
+class TestFetchVapiLogs:
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_rejects_missing_key(self, mock_requests_get, vapi_connection):
+        vapi_connection.agent_definition.api_key = ""
+        with pytest.raises(ValueError, match="Vapi API key"):
+            ObservabilityService.get_call_logs(vapi_connection)
         mock_requests_get.assert_not_called()
 
     @patch("tracer.services.observability_providers.requests.get")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_makes_request_with_valid_api_key(self, mock_get_agent, mock_requests_get):
+    def test_makes_request_with_valid_api_key(self, mock_requests_get, vapi_connection):
         """Makes HTTP request when API key is valid."""
         from tracer.services.observability_providers import ObservabilityService
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
-        mock_agent.assistant_id = "assistant-123"
-        mock_get_agent.return_value = mock_agent
 
         mock_response = Mock()
         mock_response.json.return_value = []
         mock_response.raise_for_status = Mock()
         mock_requests_get.return_value = mock_response
 
-        mock_provider = Mock()
-        mock_provider.id = "vapi-provider-123"
-
-        result = ObservabilityService._fetch_vapi_logs(mock_provider)
+        result = ObservabilityService.get_call_logs(vapi_connection)
 
         assert result == []
         mock_requests_get.assert_called_once()
@@ -273,23 +258,12 @@ class TestFetchVapiLogs:
         assert "Bearer valid-vapi-key" in str(call_kwargs)
 
     @patch("tracer.services.observability_providers.requests.get")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_paginates_when_batch_is_full(self, mock_get_agent, mock_requests_get):
+    def test_paginates_when_batch_is_full(self, mock_requests_get, vapi_connection):
         """Fetches multiple pages when a batch returns exactly VAPI_PAGE_LIMIT results."""
         from tracer.services.observability_providers import (
             VAPI_PAGE_LIMIT,
             ObservabilityService,
         )
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
-        mock_agent.assistant_id = "assistant-123"
-        mock_get_agent.return_value = mock_agent
 
         page1 = [
             {
@@ -316,33 +290,19 @@ class TestFetchVapiLogs:
 
         mock_requests_get.side_effect = [mock_resp1, mock_resp2]
 
-        mock_provider = Mock()
-        mock_provider.id = "vapi-provider-123"
-
-        result = ObservabilityService._fetch_vapi_logs(mock_provider)
+        result = ObservabilityService.get_call_logs(vapi_connection)
 
         assert mock_requests_get.call_count == 2
         assert len(result) == VAPI_PAGE_LIMIT + 30
 
     @patch("tracer.services.observability_providers.requests.get")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_stops_at_max_pages(self, mock_get_agent, mock_requests_get):
+    def test_stops_at_max_pages(self, mock_requests_get, vapi_connection):
         """Stops fetching after VAPI_MAX_PAGES even if batches are full."""
         from tracer.services.observability_providers import (
             VAPI_MAX_PAGES,
             VAPI_PAGE_LIMIT,
             ObservabilityService,
         )
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
-        mock_agent.assistant_id = "assistant-123"
-        mock_get_agent.return_value = mock_agent
 
         def make_response(page_num):
             resp = Mock()
@@ -360,29 +320,15 @@ class TestFetchVapiLogs:
             make_response(p) for p in range(VAPI_MAX_PAGES + 5)
         ]
 
-        mock_provider = Mock()
-        mock_provider.id = "vapi-provider-123"
-
-        result = ObservabilityService._fetch_vapi_logs(mock_provider)
+        result = ObservabilityService.get_call_logs(vapi_connection)
 
         assert mock_requests_get.call_count == VAPI_MAX_PAGES
         assert len(result) == VAPI_MAX_PAGES * VAPI_PAGE_LIMIT
 
     @patch("tracer.services.observability_providers.requests.get")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_single_page_when_under_limit(self, mock_get_agent, mock_requests_get):
+    def test_single_page_when_under_limit(self, mock_requests_get, vapi_connection):
         """Makes only one request when results are under VAPI_PAGE_LIMIT."""
         from tracer.services.observability_providers import ObservabilityService
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-vapi-key"
-        mock_agent.assistant_id = "assistant-123"
-        mock_get_agent.return_value = mock_agent
 
         mock_response = Mock()
         mock_response.json.return_value = [
@@ -392,10 +338,7 @@ class TestFetchVapiLogs:
         mock_response.raise_for_status = Mock()
         mock_requests_get.return_value = mock_response
 
-        mock_provider = Mock()
-        mock_provider.id = "vapi-provider-123"
-
-        result = ObservabilityService._fetch_vapi_logs(mock_provider)
+        result = ObservabilityService.get_call_logs(vapi_connection)
 
         mock_requests_get.assert_called_once()
         assert len(result) == 50
@@ -2455,16 +2398,11 @@ class TestObservabilityServiceIntegration:
         assert api_key == "test-vapi-api-key-12345"
 
     @patch("tracer.services.observability_providers.requests.get")
-    def test_fetch_vapi_logs_returns_empty_when_no_agent(
+    def test_fetch_vapi_logs_requires_linked_agent(
         self, mock_get, vapi_provider_without_agent
     ):
-        """Verify _fetch_vapi_logs returns empty list when no agent (graceful handling)."""
-        from tracer.services.observability_providers import ObservabilityService
-
-        result = ObservabilityService._fetch_vapi_logs(vapi_provider_without_agent)
-
-        assert result == []
-        # Should not make HTTP request when validation fails
+        with pytest.raises(ValueError, match="linked agent"):
+            ObservabilityService.get_call_logs(vapi_provider_without_agent)
         mock_get.assert_not_called()
 
     @patch("tracer.services.observability_providers.requests.get")
@@ -2479,7 +2417,7 @@ class TestObservabilityServiceIntegration:
         mock_response.raise_for_status = Mock()
         mock_get.return_value = mock_response
 
-        result = ObservabilityService._fetch_vapi_logs(vapi_provider_with_agent)
+        result = ObservabilityService.get_call_logs(vapi_provider_with_agent)
 
         assert result == []
         mock_get.assert_called_once()
@@ -2558,17 +2496,11 @@ class TestGetCallLogsForRowsWithoutHostedHistory:
         mock_get.assert_not_called()
         mock_post.assert_not_called()
 
-    def test_a_vapi_row_is_still_fetched(self):
-        provider = Mock()
-        provider.provider = ProviderChoices.VAPI
-
-        with patch.object(
-            ObservabilityService, "_fetch_vapi_logs", return_value=[{"id": "call-1"}]
-        ) as fetch:
-            result = ObservabilityService.get_call_logs(provider)
-
-        assert result == [{"id": "call-1"}]
-        fetch.assert_called_once_with(provider, None, None)
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_a_vapi_row_is_still_fetched(self, get, vapi_connection):
+        get.return_value.json.return_value = [{"id": "call-1"}]
+        assert ObservabilityService.get_call_logs(vapi_connection) == [{"id": "call-1"}]
+        get.assert_called_once()
 
     def test_an_unlisted_provider_still_raises(self):
         provider = Mock()
