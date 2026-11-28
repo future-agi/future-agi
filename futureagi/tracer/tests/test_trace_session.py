@@ -115,6 +115,41 @@ def get_result(response):
     return data.get("result", data)
 
 
+@pytest.fixture
+def session_detail_aliases(observe_project):
+    from tracer.tests._ch_seed import _get_ch_client
+    from tracer.tests.test_session_trace_ids_prefilter import _remap, _span
+
+    project = str(observe_project.id)
+    other_project = str(uuid.uuid4())
+    members = [
+        str(TraceSession.objects.create(project=observe_project, name=name).id)
+        for name in ("old-a", "old-b", "new", "plain")
+    ]
+    a, b, new, plain = members
+    traces = [str(uuid.uuid4()) for _ in members]
+    now = timezone.now()
+    with _get_ch_client() as client:
+        try:
+            _remap(client, a, new)
+            _remap(client, b, new)
+            for sid, tid in zip(members, traces, strict=True):
+                _span(client, project, sid, tid, start_time=now, total_tokens=10)
+            _span(client, other_project, new, str(uuid.uuid4()), start_time=now)
+            yield {a: traces[:3], b: traces[:3], new: traces[:3], plain: traces[3:]}
+        finally:
+            client.command(
+                "ALTER TABLE spans DELETE WHERE project_id IN %(ids)s "
+                "SETTINGS mutations_sync=2",
+                parameters={"ids": (project, other_project)},
+            )
+            client.command(
+                "ALTER TABLE trace_session_id_remap DELETE WHERE old_id IN %(ids)s "
+                "SETTINGS mutations_sync=2",
+                parameters={"ids": (a, b)},
+            )
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestTraceSessionRetrieveAPI:
@@ -135,6 +170,36 @@ class TestTraceSessionRetrieveAPI:
         data = get_result(response)
         assert "session_metadata" in data
         assert data["session_metadata"]["session_id"] == str(trace_session.id)
+
+    def test_query_reads_session_aliases_once(
+        self, auth_client, session_detail_aliases, monkeypatch
+    ):
+        from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+
+        analytics = mock.Mock(wraps=V2AnalyticsQueryService())
+        monkeypatch.setattr(
+            "tracer.views.trace_session.V2AnalyticsQueryService", lambda: analytics
+        )
+        for sid, traces in session_detail_aliases.items():
+            ordered = sorted(traces)
+            for offset in range(0, len(ordered), 2):
+                analytics.reset_mock()
+                response = auth_client.post(
+                    f"/tracer/trace-session/{sid}/query/",
+                    {"page_number": offset // 2, "page_size": 2},
+                    format="json",
+                )
+                assert response.status_code == status.HTTP_200_OK
+                queries = [c.args[0] for c in analytics.execute_ch_query.call_args_list]
+                assert sum("trace_session_id_remap" in q for q in queries) == 1
+                result = get_result(response)
+                metadata = result["session_metadata"]
+                assert metadata["session_id"] == sid
+                assert metadata["total_traces"] == len(ordered)
+                assert metadata["total_tokens"] == 10 * len(ordered)
+                page = [r["trace_id"] for r in result["response"]]
+                assert page == ordered[offset : offset + 2]
+                assert result["next"] == (offset + 2 < len(ordered))
 
     def test_retrieve_session_not_found(self, auth_client):
         """Retrieve non-existent session returns error."""
@@ -2482,57 +2547,6 @@ class TestTraceSessionOverlayWritePath:
         assert "trace_session_id_remap" in sql
         assert "WHERE any_id IN %(ids)s" in sql
 
-    def test_retrieve_clickhouse_binds_canonical_requested_session_id(
-        self, observe_project
-    ):
-        requested_id = str(uuid.uuid4())
-        survivor_id = str(uuid.uuid4())
-        bound_session_ids = []
-        analytics = mock.Mock()
-
-        def execute_ch_query(query, params, timeout_ms):
-            if "WHERE any_id IN %(ids)s" in query:
-                return mock.Mock(
-                    data=[{"any_id": requested_id, "survivor_id": survivor_id}]
-                )
-            if "trace_session_id_remap" in query:
-                return mock.Mock(data=[])
-            if "count(DISTINCT trace_id)" in query:
-                bound_session_ids.append(params.get("session_group_ids"))
-                return mock.Mock(
-                    data=[
-                        {
-                            "session_start": None,
-                            "session_end": None,
-                            "total_cost": 0,
-                            "total_tokens": 0,
-                            "total_traces": 0,
-                        }
-                    ]
-                )
-            if "GROUP BY trace_id" in query:
-                bound_session_ids.append(params.get("session_group_ids"))
-                return mock.Mock(data=[])
-            raise AssertionError(f"unexpected ClickHouse query: {query}")
-
-        analytics.execute_ch_query.side_effect = execute_ch_query
-
-        with mock.patch(
-            "tracer.views.trace_session.get_session_navigation",
-            return_value=(None, None),
-        ):
-            response = TraceSessionView()._retrieve_clickhouse(
-                mock.Mock(),
-                requested_id,
-                observe_project.id,
-                analytics,
-                {"page_number": 0, "page_size": 10},
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        expected_group = (survivor_id,)
-        assert bound_session_ids == [expected_group, expected_group]
-
     def test_retrieve_clickhouse_scans_spans_scoped_to_session_group(
         self, observe_project
     ):
@@ -2545,10 +2559,7 @@ class TestTraceSessionOverlayWritePath:
         analytics = mock.Mock()
 
         def execute_ch_query(query, params, timeout_ms):
-            if "WHERE any_id IN %(ids)s" in query:
-                return mock.Mock(data=[])
-            # Session-id canonicalization scan (_expand_session_group): no
-            # aliases, so the requested id stands alone.
+            # No aliases: the requested ID stands alone.
             if "FROM trace_session_id_remap" in query:
                 return mock.Mock(data=[])
             if "FROM spans" in query and (
