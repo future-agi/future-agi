@@ -715,6 +715,16 @@ jobs:
           E2E_SHARD: ${{ matrix.shard }}/${{ matrix.total }}
         run: bin/e2e test
 
+      - name: "Proof only: what the stack's own migrate applied on this leg"
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          echo "Database for this leg: $(cat "$RUNNER_TEMP/e2e-db-result" 2> /dev/null || echo 'no restore step')"
+          if [ "$E2E_STACK" = standalone ]; then service=app; else service=postgres-schema-bootstrap; fi
+          bin/e2e compose logs --no-color "$service" > "$RUNNER_TEMP/own-migrate.log" 2>&1 || true
+          echo "Migrations the boot applied: $(grep -c '  Applying ' "$RUNNER_TEMP/own-migrate.log" || true)"
+          grep -E 'No migrations to apply|Running migrations|migrate (\.\.\.|done)' "$RUNNER_TEMP/own-migrate.log" | head -5 || true
+
       - name: Prove host update assertion fallibility
         id: host-update-fallibility
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'
