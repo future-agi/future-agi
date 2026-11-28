@@ -1,18 +1,17 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
+  Box,
   Button,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   MenuItem,
+  Skeleton,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
+import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   VERSION_PIECES,
   isVersioningDisabled,
@@ -21,15 +20,29 @@ import {
   useRunPlan,
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
-import { useReadiness } from "src/api/simulate-environments/readiness";
+import {
+  useReadiness,
+  useRereadWhenDefaultsMove,
+} from "src/api/simulate-environments/readiness";
+import {
+  fixIsActive,
+  useFixRun,
+} from "src/api/simulate-environments/readinessFix";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
+import RunPlanDrawer from "./RunPlanDrawer";
+import RunPlanNote from "./RunPlanNote";
 import RunSeedLine from "./RunSeedLine";
 import { named } from "../agents/agentVersionStatus";
 import HeldBackBox from "./HeldBackBox";
 import ChangedSinceProvedBox from "./ChangedSinceProvedBox";
 import ReadyToRunSection from "./readiness/ReadyToRunSection";
+import SwitchPrompt from "./readiness/SwitchPrompt";
+import {
+  READY_TO_RUN_COPY,
+  RUN_PLAN_COPY,
+} from "./readiness/readiness.constants";
 import { readinessView } from "./readiness/readinessView";
 
 // The run plan's warning that saved changes moved what some scenarios are graded on since they were proved.
@@ -43,13 +56,17 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
+// The one red line, kept for what stops the run.
+const STOP_SX = { typography: "s3", color: "error.main" };
+
 const optionLabel = (version) =>
   version.isDefault ? `${named(version)} (${COPY.default})` : named(version);
 
 /**
  * Pick the agent, environment and scenario versions a run uses, see what to
  * watch out for, and start it. Only the versions the user changed are sent;
- * the rest run the environment's defaults at submit time.
+ * the rest run the environment's defaults at submit time. While the server
+ * offers Fix, what isn't ready can be sent to the builder chat from here.
  */
 export default function RunDialog({
   open,
@@ -60,9 +77,15 @@ export default function RunDialog({
   initialSeed = null,
   onClose,
   onOpenAgentVersions,
+  onGoToChat,
+  onReviewChanges,
   onSubmit,
   submitting = false,
   error = null,
+  request,
+  collapsed = false,
+  onCollapsedChange,
+  overBeside = false,
 }) {
   const versions = useEnvironmentVersions(env?.id, { enabled: open });
   const { data } = versions;
@@ -84,6 +107,8 @@ export default function RunDialog({
   // Empty keeps the environment's seed; sent as typed so the server validates it.
   const [seed, setSeed] = useState(() => initialSeed ?? "");
   const seedValue = seed.trim() || null;
+  // Per piece, the fix's saved version whose switch prompt was turned down.
+  const [kept, setKept] = useState({});
 
   const options = useMemo(
     () =>
@@ -147,20 +172,23 @@ export default function RunDialog({
   const selectionKeys = runIds ?? null;
   // A selection is asked about only once settled: the suite's scenarios loaded and at least one picked, else the
   // server refuses the keys.
+  const selectionSettled =
+    runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0);
   const readiness = useReadiness(env?.id, picks, {
     keys: selectionKeys,
     trials,
-    enabled:
-      open &&
-      versioned &&
-      Boolean(data) &&
-      (runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
+    enabled: open && versioned && Boolean(data) && selectionSettled,
   });
   const selection = readiness.data?.selection;
   const readyView = useMemo(
     () => (readiness.data ? readinessView(readiness.data) : null),
     [readiness.data],
   );
+  useRereadWhenDefaultsMove(env?.id, data?.defaults);
+  const fixOffered = Boolean(readyView?.groups);
+  const fixRun =
+    useFixRun(env?.id, { enabled: open && fixOffered }).data ?? null;
+  const fixActive = fixIsActive(fixRun);
   // From a Re-check click until the server says it is checking, Run waits too.
   const [sendingCheck, setSendingCheck] = useState(false);
   const refusedPlan = planRefusal(plan.error);
@@ -225,8 +253,25 @@ export default function RunDialog({
   )
     blocked = COPY.allHeld;
 
+  // A check of the pair started meanwhile: once Ready to run reads it, it says so, and once the check ends its
+  // refusal no longer applies.
+  const pairChecking = readyView?.state === "checking";
+  const wasChecking = useRef(false);
+  useEffect(() => {
+    if (
+      wasChecking.current &&
+      !pairChecking &&
+      error?.error === "pair_validating"
+    )
+      setDismissedError(error);
+    wasChecking.current = pairChecking;
+  }, [pairChecking, error]);
   const submitError =
-    error && error !== dismissedError ? inlineRunError(error) : null;
+    error &&
+    error !== dismissedError &&
+    !(pairChecking && error.error === "pair_validating")
+      ? inlineRunError(error)
+      : null;
   const seedError = submitError ? seedRefusal(submitError) : null;
   // A re-run's refused versions fall back to the defaults instead.
   const shownError =
@@ -266,7 +311,10 @@ export default function RunDialog({
   if (submitting) runLabel = COPY.starting;
 
   const pick = (piece, id) => {
-    setOverrides((current) => ({ ...current, [piece]: id }));
+    // While Fix is offered, a pick on the default follows it when the default moves; otherwise a pick stays pinned.
+    setOverrides(({ [piece]: _, ...rest }) =>
+      fixOffered && id === defaultId(piece) ? rest : { ...rest, [piece]: id },
+    );
     setDismissedError(error);
     setRerun("done");
   };
@@ -278,33 +326,76 @@ export default function RunDialog({
     onSubmit?.(picks, runIds, selected, seedValue);
   };
 
+  // Older picks of the pieces a fix saved new versions of.
+  const switchTargets = !fixOffered
+    ? []
+    : ["environment", "suite"].flatMap((piece) => {
+        const savedId = fixRun?.saved?.[piece]?.id;
+        const picked = options[piece].find((one) => one.id === picks[piece]);
+        const saved = options[piece].find((one) => one.id === savedId);
+        const older =
+          picked &&
+          saved &&
+          new Date(picked.createdAt) < new Date(saved.createdAt);
+        return older && kept[piece] !== saved.id ? [{ piece, saved }] : [];
+      });
+  // A draft the fix itself left is the fix; a later edit is someone else's.
+  const draftsFromFix =
+    fixRun?.state === "done" &&
+    fixRun.draft &&
+    drafts?.pieces?.every(
+      (piece) =>
+        new Date(drafts[piece].updatedAt || 0) <= new Date(fixRun.finished_at),
+    );
+  const draftsNote = () => {
+    if (fixOffered && drafts.stale) return RUN_PLAN_COPY.draftStale;
+    if (fixOffered && draftsFromFix) return RUN_PLAN_COPY.draftFix;
+    return DRAFTS_COPY.notInRun;
+  };
+
   const pickerField = (piece) => (
-    <TextField
-      key={piece}
-      select
-      fullWidth
-      size="small"
-      label={COPY.pieces[piece]}
-      value={selected[piece] || ""}
-      onChange={(e) => pick(piece, e.target.value)}
-      disabled={!options[piece].length || submitting}
-      SelectProps={{
-        displayEmpty: true,
-        renderValue: (id) => {
-          const version = options[piece].find((one) => one.id === id);
-          return version ? optionLabel(version) : COPY.none;
-        },
-      }}
-      InputLabelProps={{ shrink: true }}
-      error={pickerError === piece}
-      helperText={pickerError === piece ? errorText : undefined}
-    >
-      {options[piece].map((version) => (
-        <MenuItem key={version.id} value={version.id}>
-          {optionLabel(version)}
-        </MenuItem>
-      ))}
-    </TextField>
+    <Stack key={piece} direction="row" spacing={1.5} alignItems="flex-start">
+      <Typography
+        component="label"
+        id={`run-pick-${piece}-label`}
+        htmlFor={`run-pick-${piece}`}
+        sx={{
+          typography: "s3",
+          color: "text.secondary",
+          width: 96,
+          flexShrink: 0,
+          pt: 0.75,
+        }}
+      >
+        {RUN_PLAN_COPY.pickers[piece]}
+      </Typography>
+      <TextField
+        id={`run-pick-${piece}`}
+        select
+        fullWidth
+        size="small"
+        value={selected[piece] || ""}
+        onChange={(e) => pick(piece, e.target.value)}
+        disabled={!options[piece].length || submitting}
+        SelectProps={{
+          labelId: `run-pick-${piece}-label`,
+          displayEmpty: true,
+          renderValue: (id) => {
+            const version = options[piece].find((one) => one.id === id);
+            return version ? optionLabel(version) : COPY.none;
+          },
+        }}
+        error={pickerError === piece}
+        helperText={pickerError === piece ? errorText : undefined}
+        sx={{ "& .MuiInputBase-root": { typography: "s2" } }}
+      >
+        {options[piece].map((version) => (
+          <MenuItem key={version.id} value={version.id}>
+            {optionLabel(version)}
+          </MenuItem>
+        ))}
+      </TextField>
+    </Stack>
   );
 
   const scenarioLine = () => {
@@ -327,16 +418,9 @@ export default function RunDialog({
     />
   );
 
-  const body = () => {
+  const body = (close) => {
     if (versions.isLoading) {
-      return (
-        <Stack direction="row" spacing={1} alignItems="center">
-          <CircularProgress size={16} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {COPY.loading}
-          </Typography>
-        </Stack>
-      );
+      return <ContentSkeleton variant="panel" rows={2} label={COPY.loading} />;
     }
     if (!data) {
       return (
@@ -353,11 +437,26 @@ export default function RunDialog({
     const line = scenarioLine();
     return (
       <>
-        {PICKABLE.map(pickerField)}
+        <Stack spacing={1}>{PICKABLE.map(pickerField)}</Stack>
+        {switchTargets.map(({ piece, saved }) => (
+          <SwitchPrompt
+            key={piece}
+            envId={env.id}
+            piece={piece}
+            picks={picks}
+            saved={saved}
+            // Another suite may hold scenarios this one lacks.
+            keys={piece === "suite" ? scenarioIds ?? null : selectionKeys}
+            trials={trials}
+            enabled={selectionSettled}
+            onSwitch={() => pick(piece, saved.id)}
+            onKeep={() => setKept((all) => ({ ...all, [piece]: saved.id }))}
+          />
+        ))}
         {rerun === "fellBack" && (
-          <Alert severity="info" data-testid="rerun-fallback">
+          <RunPlanNote data-testid="rerun-fallback">
             {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
-          </Alert>
+          </RunPlanNote>
         )}
         {line && (
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -381,7 +480,14 @@ export default function RunDialog({
             readiness={readiness}
             view={readyView}
             onSendingChange={setSendingCheck}
-            onOpenAgentVersions={onOpenAgentVersions}
+            onOpenAgentVersions={
+              onOpenAgentVersions &&
+              (() => {
+                onOpenAgentVersions();
+                close();
+              })
+            }
+            onGoToChat={onGoToChat}
           />
         )}
         <HeldBackBox
@@ -398,47 +504,48 @@ export default function RunDialog({
             setDismissedError(error);
           }}
         />
-        {drafts?.any && (
-          <Alert severity="info" data-testid="run-drafts-note">
-            {DRAFTS_COPY.notInRun}
-          </Alert>
+        {drafts?.any && !(fixOffered && fixActive) && (
+          <RunPlanNote
+            data-testid="run-drafts-note"
+            action={
+              fixOffered && onReviewChanges && !drafts.stale ? (
+                <Button size="small" onClick={onReviewChanges}>
+                  {RUN_PLAN_COPY.reviewChanges}
+                </Button>
+              ) : null
+            }
+          >
+            {draftsNote()}
+          </RunPlanNote>
         )}
         {blockedToolLines}
         {blocked && (
-          <Typography
-            sx={{ typography: "s2", color: "error.main" }}
-            data-testid="run-blocked"
-          >
+          <Typography sx={STOP_SX} data-testid="run-blocked">
             {blocked}
           </Typography>
         )}
         {members.isError && !members.data && (
-          <Typography sx={{ typography: "s2", color: "error.main" }}>
-            {COPY.membersError}
-          </Typography>
+          <Typography sx={STOP_SX}>{COPY.membersError}</Typography>
         )}
         {missing.length > 0 && !blocked && (
-          <Alert severity="warning">
+          <RunPlanNote severity="warning">
             {COPY.notInSuite(missing, named(suite))}
-          </Alert>
+          </RunPlanNote>
         )}
         {/* Kept rendered while empty so the live region is announced. */}
         <Stack
-          spacing={2}
+          spacing={1}
           aria-live="polite"
           data-testid="run-plan"
           sx={{ "&:empty": { mt: 0 } }}
         >
           {plan.isLoading && (
-            <Stack direction="row" spacing={1} alignItems="center">
-              <CircularProgress size={14} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {COPY.checking}
-              </Typography>
-            </Stack>
+            <Box role="progressbar" aria-busy="true" aria-label={COPY.checking}>
+              <Skeleton variant="rounded" height={32} />
+            </Box>
           )}
           {planFailed && (
-            <Alert
+            <RunPlanNote
               severity="warning"
               data-testid="run-plan-failed"
               action={
@@ -452,52 +559,76 @@ export default function RunDialog({
               }
             >
               {COPY.planError}
-            </Alert>
+            </RunPlanNote>
           )}
           {warnings.map((warning) => (
-            <Alert
+            <RunPlanNote
               key={`${warning.code}:${warning.piece || ""}`}
               severity="warning"
               data-testid="run-warning"
             >
               {warning.message}
-            </Alert>
+            </RunPlanNote>
           ))}
         </Stack>
       </>
     );
   };
 
+  const environment = options.environment.find(
+    (one) => one.id === selected.environment,
+  );
+
   return (
-    <Dialog
-      data-scenario-run-dialog=""
+    <RunPlanDrawer
       open={open}
-      onClose={submitting ? undefined : onClose}
-      fullWidth
-      maxWidth="xs"
+      request={request}
+      subtitle={RUN_PLAN_COPY.subtitle(
+        env?.name,
+        environment && named(environment),
+      )}
+      busy={fixActive}
+      locked={submitting}
+      collapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
+      overBeside={overBeside}
+      onClose={onClose}
+      footer={(close) => (
+        <>
+          <Button color="inherit" onClick={close} disabled={submitting}>
+            {COPY.cancel}
+          </Button>
+          <CustomTooltip
+            show={pairChecking}
+            size="small"
+            arrow
+            title={READY_TO_RUN_COPY.states.checking}
+          >
+            <span>
+              <Button
+                variant="contained"
+                onClick={submit}
+                disabled={!canSubmit}
+                startIcon={<Iconify icon="solar:play-bold" width={16} />}
+              >
+                {runLabel}
+              </Button>
+            </span>
+          </CustomTooltip>
+        </>
+      )}
     >
-      <DialogTitle sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-        {COPY.title}
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          {body()}
+      {(close) => (
+        <>
+          {body(close)}
           {dialogError && (
-            <Alert severity="error" data-testid="run-error">
+            <Typography role="alert" sx={STOP_SX} data-testid="run-error">
               {errorText}
-            </Alert>
+            </Typography>
           )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button color="inherit" onClick={onClose} disabled={submitting}>
-          {COPY.cancel}
-        </Button>
-        <Button variant="contained" onClick={submit} disabled={!canSubmit}>
-          {runLabel}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </>
+      )}
+    </RunPlanDrawer>
   );
 }
 
@@ -505,6 +636,7 @@ RunDialog.propTypes = {
   open: PropTypes.bool,
   env: PropTypes.shape({
     id: PropTypes.string,
+    name: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }),
   // Undefined runs every scenario.
@@ -516,8 +648,18 @@ RunDialog.propTypes = {
   onClose: PropTypes.func,
   // Opens the agent's versions for a fix made on the agent; absent where that can't open.
   onOpenAgentVersions: PropTypes.func,
+  // Only where the page has no builder chat: takes the user to it.
+  onGoToChat: PropTypes.func,
+  // Opens the review of the unsaved changes; absent where that can't open.
+  onReviewChanges: PropTypes.func,
   // (picks, scenarioIds, resolved version ids, seed or null)
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,
+  // Only the edge tab shows; the body stays mounted.
+  // Changes each time the run plan is asked for.
+  request: PropTypes.number,
+  collapsed: PropTypes.bool,
+  onCollapsedChange: PropTypes.func,
+  overBeside: PropTypes.bool,
 };

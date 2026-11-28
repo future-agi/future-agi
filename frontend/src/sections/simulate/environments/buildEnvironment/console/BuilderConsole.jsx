@@ -58,14 +58,14 @@ const NEAR_BOTTOM_PX = 8;
 
 // Things worth reading. Tool rows and other progress only keep the ship flying,
 // or the new-message ping would replace it almost at once. Rebuild and rollback
-// cards are their own system turns, with no steps.
+// cards are their own system turns, with no steps; how a fix ended is a card.
 const MESSAGE_KINDS = new Set(["note", "ask", "error"]);
 
 const countMessages = (turns) =>
   (turns || []).reduce(
     (total, turn) =>
       total +
-      (turn.role === "system" ? 1 : 0) +
+      (turn.role === "system" || turn.card ? 1 : 0) +
       (turn.steps || []).filter((s) => MESSAGE_KINDS.has(s.kind)).length,
     0,
   );

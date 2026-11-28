@@ -49,6 +49,7 @@ from simulate.services.harness_versioning.drafts import (
     remember_save,
     replayed_save,
     require_idle,
+    require_no_fix_waiting,
     retire_chat_runtime,
     saved_body,
 )
@@ -145,6 +146,7 @@ def promote_candidates(
         from simulate.services.harness_scenario_actions import require_no_validation
 
         require_no_validation(locked)
+        require_no_fix_waiting(locked)
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")

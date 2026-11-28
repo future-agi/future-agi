@@ -539,7 +539,7 @@ export const checkRunning = (version) =>
   !isStuck(version);
 // A check this environment waits on: one still running, or one that passed
 // and whose move of the default is not recorded yet.
-const awaitedCheck = (version) =>
+export const awaitedCheck = (version) =>
   checkRunning(version) ||
   (version.preflightStatus === "passed" &&
     version.requestedHere &&
@@ -678,10 +678,14 @@ export const refreshFollowers = (queryClient, envId) => {
   queryClient.invalidateQueries({ queryKey: ["harness-scenarios", envId] });
 };
 
+// The environment's readiness fix run; its outcome reads the fix's draft.
+export const readinessFixKey = (envId) => ["harness-readiness-fix", envId];
+
 // A draft keeps its id as it is edited, so its diff and members are asked
 // again with the drafts.
 export const refreshDrafts = (queryClient, envId) => {
   queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+  queryClient.invalidateQueries({ queryKey: readinessFixKey(envId) });
   queryClient.invalidateQueries({
     queryKey: [...environmentVersionsKey(envId), "diff"],
   });

@@ -29,6 +29,7 @@ from simulate.services.harness_versioning.versions import (
     _remember_pair,
     move_default,
     record_authoring,
+    recorded_revisions,
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -711,6 +712,44 @@ class TestEnvironmentRollBack:
         assert "default_pair_sealed" not in run.payload["metadata"]["assembly"]
         assert "default_pairs" not in run.payload["metadata"]
         assert "default_pair_sealed" not in run.payload["metadata"]
+
+    def test_a_composed_pair_is_recorded_on_its_versions(
+        self, user, workspace, storage, settings
+    ):
+        environment = _cached_environment(user, workspace, "rb-env-record", storage)
+        _forget_legacy(storage, "rb-env-record")
+        e1, e2 = _with_e2(environment)
+        _uncache(environment)
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+
+        move_default(environment, "environment", e1.id, expected_default_id=e2.id)
+
+        environment.refresh_from_db()
+        revision = environment.payload["metadata"]["authoring_revision"]
+        for version in (environment.environment_version, environment.suite_version):
+            assert revision in recorded_revisions(version)
+
+    def test_a_label_the_backfill_found_unverified_is_not_recorded(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_versioning.versions import _note_pair
+
+        environment = _cached_environment(user, workspace, "rb-env-unver", storage)
+        version = environment.environment_version
+        assert recorded_revisions(version)
+        unverified = "sha256:" + "3" * 64
+        version.documents = {
+            **(version.documents or {}),
+            "unverified_revisions": [[unverified, "harness/legacy.tar.gz"]],
+        }
+        version.save(update_fields=["documents"])
+
+        _note_pair(SimpleNamespace(revision=unverified), version)
+        _note_pair(SimpleNamespace(revision="sha256:" + "4" * 64), version)
+
+        version.refresh_from_db()
+        assert unverified not in recorded_revisions(version)
+        assert "sha256:" + "4" * 64 in recorded_revisions(version)
 
     def test_the_former_default_stays_pickable(
         self, user, workspace, storage, settings

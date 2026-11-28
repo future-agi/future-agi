@@ -1,4 +1,5 @@
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const LINES_CHANGED = "These lines changed. Re-check, then try again.";
 
 export const READY_TO_RUN_COPY = {
   title: "Ready to run",
@@ -7,6 +8,7 @@ export const READY_TO_RUN_COPY = {
   namesMore: (n) => `and ${n} more`,
   recheck: "Re-check",
   checking: "Checking…",
+  checkingPair: "Checking these versions together…",
   areas: {
     start_and_message: "Starts and replies",
     tool_binding: "Tools wired to the test world",
@@ -20,8 +22,11 @@ export const READY_TO_RUN_COPY = {
     checking: "Checking these versions · runs wait until it finishes",
     failed: (reason) =>
       `Last check failed${reason ? `: ${reason}` : ""} · runs wait until a check passes`,
+    // The server's reason already says runs go ahead.
     ours: (reason) =>
-      `Check unavailable${reason ? `: ${reason}` : " on our side"} · runs aren't held`,
+      reason
+        ? `Check unavailable: ${reason}`
+        : "Check unavailable on our side · runs aren't held",
     retry: "The last check didn't finish · re-check",
     unavailable: "These versions can't be checked right now",
     alreadyChecked: "Already checked with these versions, nothing to redo",
@@ -51,6 +56,9 @@ export const READY_TO_RUN_COPY = {
     evidence: "The run records what the scenario checks need to read.",
     grading: "Each scenario has a check that can grade it.",
   },
+  saveAndRecheck: "Save and re-check",
+  credentialsNote:
+    "Only these values change; everything else on the agent keeps its value. Saving checks the pair again.",
   recheckPair: "Re-check this pair",
   retryAgent: "Retry the agent's start",
   openAgentVersions: "Open agent versions",
@@ -60,4 +68,92 @@ export const READY_TO_RUN_COPY = {
     `${plural(n, "scenario has", "scenarios have")} no check that can grade it`,
   loadError: "Couldn't check whether these versions are ready to run.",
   noVersions: "Ready to run starts once this environment has versions.",
+  groups: {
+    needs_you: "Needs you",
+    builder: "Builder chat can fix",
+    recheck: "Re-check to confirm",
+  },
+  groupHints: {
+    needs_you: "Only you can change these",
+    builder: "The builder chat can make these changes",
+    recheck: "Checking again settles these",
+  },
+  selectAll: "Select every line the builder chat can fix",
+  selectLine: (label) => `Fix ${label.toLowerCase()} with the builder chat`,
+  // Fixed labels: the group's header carries the count.
+  sendSelected: "Fix with builder chat",
+  // With nothing new ticked, the button says the fix is under way.
+  addSelected: (count) => (count ? "Add to this fix" : "Fixing…"),
+  fixOne: "Fix just this one",
+  addOne: "Add just this one to the fix",
+  fixLoadError: "Couldn't read the fix in progress.",
+  // A fix saved from these versions: where its changes went.
+  fixedIn: ({ environment, suite }) =>
+    `Fixed in ${[
+      environment && `environment ${environment.label}`,
+      suite && `scenarios ${suite.label}`,
+    ]
+      .filter(Boolean)
+      .join(" and ")}`,
+  fixFinishing:
+    "The fix is saving and checking its changes. Add more lines when it finishes.",
+  fixRefused: {
+    unsaved_changes:
+      "Save or discard the unsaved changes first, then try again.",
+    fix_running: "A fix is already running for this environment.",
+    chat_unavailable: "The builder chat isn't available for this environment.",
+    nothing_to_fix:
+      "Nothing left for the chat to fix here. Re-check to see the latest.",
+    fix_needs_defaults:
+      "Fix works on the default versions. Pick the defaults to fix.",
+    rebuild_running:
+      "A rebuild is running for this environment. Fix when it finishes.",
+    fix_waiting:
+      "The builder is waiting on your answer in the chat. Answer it, then try again.",
+    fix_disabled: "Fixing from the run plan isn't switched on here.",
+    fix_rows_unknown: LINES_CHANGED,
+    fix_group_unsupported: LINES_CHANGED,
+    default: "Couldn't start the fix. Try again in a moment.",
+  },
+  sendsToChat: "Sends this to the builder chat",
+  chatFixing: (labels) =>
+    labels.length ? `Fixing: ${labels.join(", ")}` : "Fixing",
+  chatFollow: "follow it in the builder chat",
+  goToChat: "Go to chat",
+  progress: {
+    queued: "Queued",
+    fixing: "Fixing…",
+    waiting_on_you: "Waiting on you",
+    waiting_on_other: (label) =>
+      `Waiting on ${(label || "another line").toLowerCase()}`,
+    fixed: "Fixed",
+    could_not_fix: "Couldn't fix",
+  },
+};
+
+export const RUN_PLAN_COPY = {
+  title: "Run plan",
+  collapse: "Collapse run plan",
+  expand: "Expand run plan",
+  close: "Close",
+  subtitle: (envName, envLabel) =>
+    [envName, envLabel && `environment ${envLabel}`]
+      .filter(Boolean)
+      .join(" · "),
+  // The version pickers' labels.
+  pickers: { agent: "Agent", environment: "Environment", suite: "Scenarios" },
+  // The builder chat's card when a fix ends.
+  fixEnd: {
+    openPlan: "Open run plan",
+    review: "Review and start run",
+  },
+  draftFix: "The fixes are in unsaved changes. Save them to run them.",
+  draftStale:
+    "These unsaved changes started from an older version. Discard them on the page, or ask chat to make them again.",
+  reviewChanges: "Review changes",
+  switchTo: (piece, label) => `The fixes are in ${piece} ${label}.`,
+  switchReady: (running, requested) =>
+    `${running} of ${requested} will run there.`,
+  switchVersion: (label) => `Switch to ${label}`,
+  keepVersion: "Keep this version",
 };

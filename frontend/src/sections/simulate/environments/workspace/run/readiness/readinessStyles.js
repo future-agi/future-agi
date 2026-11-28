@@ -5,3 +5,9 @@ export const lineSx = {
   px: 1.5,
   py: 1,
 };
+
+export const boxSx = {
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: 1,
+};

@@ -60,6 +60,7 @@ export const CONSOLE_COPY = {
   frozen: "Environment is still being built",
   stop: "Stop the current turn",
   collapse: "Collapse chat",
+  queued: "Queued",
   older: {
     events: {
       load: "Load earlier steps",

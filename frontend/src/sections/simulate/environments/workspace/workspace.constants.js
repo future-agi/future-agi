@@ -459,18 +459,12 @@ export const AGENT_VERSIONS_COPY = {
 };
 
 export const RUN_DIALOG_COPY = {
-  title: "Run simulation",
   seed: "Seed (optional)",
   seedLine: "Seed",
   seedNew: "New seed",
   edit: "Edit",
   done: "Done",
   seedHelp: "The same seed draws the same personas and variations again",
-  pieces: {
-    agent: "Agent version",
-    environment: "Environment version",
-    suite: "Scenario version",
-  },
   default: "default",
   none: "None yet",
   loading: "Loading versions…",
@@ -493,7 +487,9 @@ export const RUN_DIALOG_COPY = {
   rerunAgentFallback:
     "That run's agent version can't run now; using the current default agent.",
   allScenarios: (n, suite) =>
-    `Runs all ${n} scenario${n === 1 ? "" : "s"} in ${suite}.`,
+    n === 1
+      ? `Runs the 1 scenario in ${suite}.`
+      : `Runs all ${n} scenarios in ${suite}.`,
   allCurrentScenarios: (suite) => `Runs all scenarios in ${suite}.`,
   emptySuite: (suite) => `${suite} has no scenarios to run.`,
   noneInSuite: (suite) => `None of the selected scenarios are in ${suite}.`,
@@ -587,6 +583,8 @@ export const DRAFTS_COPY = {
     chat_working:
       "Chat is still saving its last changes; try again in a moment",
     rebuild_running: "An update is running; try again when it finishes",
+    fix_waiting:
+      "The builder is waiting on your answer in the chat. Answer it, then save.",
     environment_busy:
       "The environment is being built or updated; try again when it finishes",
     draft_not_found: "These changes were already saved or discarded.",

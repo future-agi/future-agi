@@ -1598,6 +1598,7 @@ def test_a_production_only_tool_holds_its_cases_for_another_agent_version_too(
         "action": f"Upload a new agent version that serves {REFUND} from its tools service, or remove it",
         "would": f"{REFUND} runs in the test world instead of reaching production",
         "recheck": None,
+        "message": None,
     }
     assert not set(REFUND_KEYS) & set(sent)
     assert set(LOOKUP_KEYS) <= set(sent)

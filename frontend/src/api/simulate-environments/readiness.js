@@ -1,7 +1,9 @@
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import {
+  VERSION_PIECES,
   environmentVersionsKey,
   retryServerFailures,
   runPlanKey,
@@ -11,7 +13,7 @@ import {
 // Run readiness for an agent, environment and scenario version together (the pair): what can run, what is held
 // back and why. Worked out on every read; Re-check starts a new check of the pair, read again while it runs.
 
-const CHECK_POLL_MS = 15000;
+const CHECK_POLL_MS = 5000;
 // The cases route reads at most this many scenario keys.
 export const MAX_CASE_KEYS = 200;
 
@@ -72,6 +74,12 @@ export function useReadiness(
   });
 }
 
+// Every readiness read of the environment, whatever its picks, with the run plans they sit beside.
+export const refreshReadiness = (queryClient, envId) =>
+  queryClient.invalidateQueries({
+    queryKey: [...environmentVersionsKey(envId), "run-plan"],
+  });
+
 export const recheckReadiness = async (envId, picks) =>
   (await axios.post(recheckPath(envId), versionPickFields(picks))).data;
 
@@ -79,10 +87,7 @@ export const useRecheck = (envId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (picks) => recheckReadiness(envId, picks),
-    onSettled: () =>
-      queryClient.invalidateQueries({
-        queryKey: [...environmentVersionsKey(envId), "run-plan"],
-      }),
+    onSettled: () => refreshReadiness(queryClient, envId),
     meta: { errorHandled: true },
   });
 };
@@ -127,4 +132,19 @@ export function useReadinessCases(
     retry: retryServerFailures,
     meta: { errorHandled: true },
   });
+}
+
+// Only hand-made picks are in the readiness key, and a default can move without a save here (a new agent version
+// passing its check, polled in), so a moved default reads it again.
+export function useRereadWhenDefaultsMove(envId, defaults) {
+  const queryClient = useQueryClient();
+  const ids = VERSION_PIECES.map((piece) => defaults?.[piece]?.id);
+  const signature = ids.some(Boolean) ? ids.join() : null;
+  const was = useRef(null);
+  useEffect(() => {
+    if (!signature) return;
+    if (was.current && was.current !== signature)
+      refreshReadiness(queryClient, envId);
+    was.current = signature;
+  }, [signature, envId, queryClient]);
 }

@@ -22,6 +22,7 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
+import { refreshReadiness } from "src/api/simulate-environments/readiness";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -49,6 +50,7 @@ import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
+import useFixInChat from "./run/readiness/useFixInChat";
 import { inlineRunError } from "./run/runErrors";
 import useWorkspaceTab, {
   AGENT_VERSIONS_PARAM,
@@ -152,8 +154,11 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // { ids, trials, initialPicks, seed } of the run awaiting version picks.
+  // { ids, trials, initialPicks, seed, request, collapsed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
+  const runRequests = useRef(0);
+  // Where runs go through the run plan.
+  const planned = source === "harness" && Boolean(env?.versioning?.enabled);
   // The review of the unsaved changes, opened from the unsaved-changes bar.
   const [reviewOpen, setReviewOpen] = useState(false);
   const runMutation = useMutation({
@@ -218,6 +223,10 @@ export default function EnvironmentWorkspace() {
           queryKey: environmentVersionsKey(env.id),
         });
       }
+      // A check of the pair is running: Ready to run reads it and waits on it.
+      if (error?.error === "pair_validating") {
+        refreshReadiness(queryClient, env.id);
+      }
       // The open run dialog explains its own refusals.
       if (picks !== undefined && inlineRunError(error)) return;
       handleCreditError(error);
@@ -233,13 +242,44 @@ export default function EnvironmentWorkspace() {
     }
     if (env?.versioning?.enabled) {
       runMutation.reset();
-      setRunDialog({ ids, trials, initialPicks, seed });
+      runRequests.current += 1;
+      setRunDialog({
+        ids,
+        trials,
+        initialPicks,
+        seed,
+        request: runRequests.current,
+      });
       return;
     }
     runMutation.mutate({ ids, trials, seed });
   };
+  // Opens the run plan, or expands it when collapsed; never starts a run.
+  const openRunPlan = () => {
+    if (!runDialog) {
+      startRun(undefined, 1);
+      return;
+    }
+    runRequests.current += 1;
+    const request = runRequests.current;
+    setRunDialog((open) => open && { ...open, request, collapsed: false });
+  };
+  // Only one drawer shows at a time: the run plan waits as its tab.
+  const openReview = () => {
+    setRunDialog((open) => open && { ...open, collapsed: true });
+    setReviewOpen(true);
+  };
+  const fixChat = useFixInChat(env?.id, {
+    enabled: planned,
+    turns: chat.turns,
+    locked: !roleCanRun,
+    onOpenPlan: openRunPlan,
+  });
+  const executionMatch = useMatch(EXECUTION_PATTERN);
+  // Keyed by the re-run's versions and seed, which it reads only when it mounts.
   const runDialogEl = runDialog && (
     <RunDialog
+      key={JSON.stringify([runDialog.initialPicks, runDialog.seed])}
       open
       env={env}
       scenarioIds={runDialog.ids}
@@ -247,10 +287,22 @@ export default function EnvironmentWorkspace() {
       initialPicks={runDialog.initialPicks}
       initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
-      onOpenAgentVersions={() => {
-        setRunDialog(null);
-        setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" });
-      }}
+      onOpenAgentVersions={() =>
+        setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" })
+      }
+      // The run page has no builder chat; the workspace page does.
+      onGoToChat={
+        executionMatch
+          ? () => navigate(paths.dashboard.simulate.environments.detail(env.id))
+          : undefined
+      }
+      onReviewChanges={executionMatch ? undefined : openReview}
+      request={runDialog.request}
+      overBeside={reviewOpen}
+      collapsed={Boolean(runDialog.collapsed)}
+      onCollapsedChange={(collapsed) =>
+        setRunDialog((open) => open && { ...open, collapsed })
+      }
       onSubmit={(picks, ids, resolved, seed) =>
         runMutation.mutate({
           ids,
@@ -323,7 +375,6 @@ export default function EnvironmentWorkspace() {
       </Alert>
     ) : null;
 
-  const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
 
   // Adapt to my agent opens its design at once, before the job has anything else to show;
@@ -679,7 +730,7 @@ export default function EnvironmentWorkspace() {
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
         rebuilding={chat.rebuildHold}
-        onReview={() => setReviewOpen(true)}
+        onReview={openReview}
       />
 
       {/* A template-seeded env is read-only until forked — the banner states the
@@ -691,9 +742,10 @@ export default function EnvironmentWorkspace() {
           busy={
             chat.running || chat.inFlight || chat.waiting || chat.nudgePending
           }
+          openKey={fixChat.activeId}
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
-              turns={chat.turns}
+              turns={fixChat.turns}
               running={chat.running}
               onSend={chat.send}
               onStop={chat.stop}
@@ -745,7 +797,7 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               onStartRun={startRun}
-              runDialogOpen={Boolean(runDialog)}
+              runDialogOpen={Boolean(runDialog) && !runDialog.collapsed}
               canRun={runnable && !runMutation.isPending}
               runBlockedReason={runReason(
                 blockedReason(

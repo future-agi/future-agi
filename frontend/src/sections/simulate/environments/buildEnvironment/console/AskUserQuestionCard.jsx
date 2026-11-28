@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Box,
   Stack,
@@ -7,6 +7,7 @@ import {
   Button,
   TextField,
   Checkbox,
+  Radio,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
@@ -83,6 +84,7 @@ export default function AskUserQuestionCard({
 }) {
   const [answer, setAnswer] = useState({ pick: null, picks: [], other: "" });
   const [resolved, setResolved] = useState(null);
+  const otherInput = useRef(null);
 
   const otherIndex = question.options.length;
   const otherActive = answer.other.trim().length > 0;
@@ -108,7 +110,8 @@ export default function AskUserQuestionCard({
         };
       });
     } else {
-      setAnswer((a) => ({ ...a, pick: i }));
+      // One choice: picking an option clears a typed answer.
+      setAnswer((a) => ({ ...a, pick: i, other: "" }));
     }
   };
 
@@ -158,7 +161,7 @@ export default function AskUserQuestionCard({
       {/* header */}
       <Stack
         direction="row"
-        alignItems="center"
+        alignItems="flex-start"
         spacing={1}
         sx={{ px: 2, py: 1.5 }}
       >
@@ -181,7 +184,12 @@ export default function AskUserQuestionCard({
       </Stack>
 
       {/* options */}
-      <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
+      <Stack
+        spacing={0.75}
+        role={question.multiSelect ? "group" : "radiogroup"}
+        aria-label={question.prompt}
+        sx={{ px: 1.5, pb: 1 }}
+      >
         {question.options.map((opt, i) => (
           <AskOptionRow
             key={opt.label}
@@ -189,7 +197,6 @@ export default function AskUserQuestionCard({
             description={opt.description}
             selected={rowIsSelected(i)}
             multi={question.multiSelect}
-            index={i + 1}
             onSelect={() => pick(i)}
           />
         ))}
@@ -198,20 +205,26 @@ export default function AskUserQuestionCard({
             label="Other"
             selected={otherActive}
             multi={question.multiSelect}
-            index={otherIndex + 1}
-            onSelect={() => {
-              /* focused when the user types */
-            }}
+            // Picked by typing: the row hands focus to its text box.
+            onSelect={() => otherInput.current?.focus()}
             bottomChildren={
               <TextField
                 size="small"
                 fullWidth
                 variant="outlined"
                 value={answer.other}
-                onChange={(e) =>
-                  setAnswer((a) => ({ ...a, other: e.target.value }))
-                }
+                onChange={(e) => {
+                  const other = e.target.value;
+                  // One choice: typing an answer clears the picked option.
+                  setAnswer((a) => ({
+                    ...a,
+                    other,
+                    pick: question.multiSelect || !other.trim() ? a.pick : null,
+                  }));
+                }}
                 placeholder="Type your own answer here"
+                inputRef={otherInput}
+                inputProps={{ "aria-label": "Other answer" }}
                 InputProps={{
                   sx: {
                     typography: "m3",
@@ -269,25 +282,55 @@ function AskOptionRow({
   description,
   selected,
   multi,
-  index,
   onSelect,
   bottomChildren,
 }) {
+  const Control = multi ? Checkbox : Radio;
   return (
+    // The row is the control: it takes the click, the keys and the checked state.
     <Box
+      role={multi ? "checkbox" : "radio"}
+      aria-checked={Boolean(selected)}
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === " " || event.key === "Enter") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       sx={{
         p: 1.5,
         borderRadius: "8px",
         cursor: "pointer",
-        bgcolor: "background.neutral",
-        "&:hover": { bgcolor: "action.hover" },
+        border: "1px solid",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "background.paper",
+        "&:hover": { bgcolor: selected ? "action.selected" : "action.hover" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "text.primary",
+          outlineOffset: 2,
+        },
       }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={1.5}>
+      <Stack direction="row" alignItems="flex-start" spacing={1.25}>
+        <Control
+          checked={Boolean(selected)}
+          tabIndex={-1}
+          size="small"
+          onChange={() => {}}
+          inputProps={{ "aria-hidden": true }}
+          sx={{ p: 0, mt: "1px", flexShrink: 0, pointerEvents: "none" }}
+        />
         <Box flex={1} minWidth={0}>
           <Typography
-            sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}
+            sx={{
+              typography: "s1",
+              fontWeight: selected ? 500 : 400,
+              color: "text.primary",
+            }}
           >
             {label}
           </Typography>
@@ -299,37 +342,6 @@ function AskOptionRow({
             </Typography>
           )}
         </Box>
-        {multi ? (
-          // The theme's checkbox as a display: the row owns the click.
-          <Checkbox
-            checked={Boolean(selected)}
-            tabIndex={-1}
-            size="small"
-            onChange={() => {}}
-            inputProps={{ "aria-hidden": true }}
-            sx={{ p: 0, flexShrink: 0, pointerEvents: "none" }}
-          />
-        ) : (
-          <Box
-            sx={{
-              minWidth: 24,
-              height: 20,
-              px: 0.75,
-              borderRadius: "4px",
-              flexShrink: 0,
-              mt: "1px",
-              display: "grid",
-              placeItems: "center",
-              bgcolor: selected ? "text.primary" : "action.selected",
-              color: selected ? "background.paper" : "text.secondary",
-              typography: "s3",
-              fontWeight: 500,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {index}
-          </Box>
-        )}
       </Stack>
       {bottomChildren}
     </Box>
@@ -340,7 +352,6 @@ AskOptionRow.propTypes = {
   description: PropTypes.string,
   selected: PropTypes.bool,
   multi: PropTypes.bool,
-  index: PropTypes.number,
   onSelect: PropTypes.func,
   bottomChildren: PropTypes.node,
 };

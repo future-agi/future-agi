@@ -64,6 +64,7 @@ from .hosted_harness import (
 )
 from .persona import Persona
 from .prompt_trial import PromptTrial
+from .readiness_fix import ReadinessFixRun
 from .run_test import RunTest
 from .scenario_graph import NodeType, ScenarioGraph
 from .scenarios import Scenarios
@@ -153,4 +154,5 @@ __all__ = [
     "HostedHarnessSecret",
     "HostedHarnessScenario",
     "HostedHarnessStageOutput",
+    "ReadinessFixRun",
 ]

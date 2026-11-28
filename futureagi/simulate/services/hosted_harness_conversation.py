@@ -1254,6 +1254,19 @@ def _ingest_event(
                 event["emitted_at"],
             )
         )
+    from simulate.services.harness_readiness import fix_driver
+
+    if event["kind"] in fix_driver.EVENT_KINDS:
+        transaction.on_commit(
+            partial(
+                fix_driver.on_conversation_event,
+                str(conversation.id),
+                event["kind"],
+                event.get("payload") or {},
+                event["sequence"],
+                event.get("message_id"),
+            )
+        )
     if chat_only and event["kind"] == "turn_completed":
         from simulate.services.harness_usage import bill_builder_turn
 
@@ -2209,7 +2222,8 @@ def promote_turn_checkpoint(
     ).first()
     if turn is None:
         return None
-    from simulate.services.harness_versioning import rebuild
+    from simulate.services.harness_readiness import fix_driver
+    from simulate.services.harness_versioning import drafts, rebuild
 
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation=conversation,
@@ -2217,6 +2231,8 @@ def promote_turn_checkpoint(
         role=HostedHarnessConversationMessage.Role.USER,
     ).first()
     nudge = rebuild.nudge_for_command(command)
+    fix = fix_driver.run_for_command(command)
+    refs_before = drafts.draft_refs(conversation.job) if fix else None
     checkpoints = HostedHarnessConversationEvent.no_workspace_objects.filter(
         conversation=conversation,
         kind="checkpoint_committed",
@@ -2232,6 +2248,8 @@ def promote_turn_checkpoint(
     if committed is None:
         if nudge is not None:
             rebuild.land_nudge_result(nudge, checkpoint_key=None, turn_event=turn)
+        if fix:
+            fix_driver.on_published(fix, turn, wrote=False)
         return None
     sequence, payload = committed
     digest = str(payload["digest"])
@@ -2251,12 +2269,18 @@ def promote_turn_checkpoint(
             command=command,
         )
     except HostedHarnessError as exc:
+        if fix and not exc.retryable:
+            fix_driver.on_publish_refused(fix, exc, turn)
         if nudge is None or exc.retryable:
             raise
         rebuild.fail_landing(nudge, exc, turn_event=turn)
         return None
     if nudge is not None:
         rebuild.land_nudge_result(nudge, checkpoint_key=object_key, turn_event=turn)
+    if fix and environment is not None:
+        fix_driver.on_published(
+            fix, turn, wrote=drafts.draft_refs(conversation.job) != refs_before
+        )
     return environment
 
 
@@ -2329,15 +2353,22 @@ class _DraftCommand:
 
 
 def _draft_command(
-    command: HostedHarnessConversationMessage | None, environment: HostedHarnessJob
+    command: HostedHarnessConversationMessage | None,
+    environment: HostedHarnessJob,
+    sequence: int | None = None,
 ) -> _DraftCommand | None:
-    """``None`` drops the save: it is a rebuild's, and that rebuild is over."""
+    """``None`` drops the save (event ``sequence``): it is a rebuild's, and that
+    rebuild is over, or a fix's whose run ended or whose command settled, or it came
+    from a sandbox a fix gave up."""
+    from simulate.services.harness_readiness import fix_driver
     from simulate.services.harness_versioning.drafts import command_author
     from simulate.services.harness_versioning.rebuild import draft_command
 
     payload = (command.payload or {}) if command is not None else {}
     rebuild = draft_command(command)
     if rebuild is None:
+        return None
+    if rebuild == ("", {}) and fix_driver.draft_command(command, sequence) is None:
         return None
     origin, draft_kwargs = rebuild
     return _DraftCommand(
@@ -2499,7 +2530,7 @@ def promote_conversation_checkpoint(
 
         basis = checkpoint_basis or expected_revision
         if basis != current_revision and not rebuild.only_agent_moved(
-            command, environment
+            command, environment, basis
         ):
             stale_revision = current_revision
         elif drafts.drafts_apply(environment):
@@ -2508,7 +2539,7 @@ def promote_conversation_checkpoint(
             # An outdated working copy: a newer one holds the drafts, so it is not
             # recomposed.
             outdated = expected is None
-            draft_command = _draft_command(command, environment)
+            draft_command = _draft_command(command, environment, sequence)
             if draft_command is None:
                 return environment
             try:

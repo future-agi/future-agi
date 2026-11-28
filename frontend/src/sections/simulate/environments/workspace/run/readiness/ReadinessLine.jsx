@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  Checkbox,
   Collapse,
   IconButton,
   Stack,
@@ -13,6 +14,9 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import CustomTooltip from "src/components/tooltip";
 import { useReadinessCases } from "src/api/simulate-environments/readiness";
 import { fToNow } from "src/utils/format-time";
+import ChatMarkdown from "../../../buildEnvironment/console/ChatMarkdown";
+import ViewerLock from "../../../components/ViewerLock";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import { isAgentFix } from "./readinessView";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
 import Spinner from "./Spinner";
@@ -70,6 +74,66 @@ WaitsOn.propTypes = {
   report: PropTypes.string,
 };
 
+// A fix run's state for a line; a line no fix took on has none.
+const PROGRESS_ROLE = {
+  queued: "neutral",
+  fixing: "info",
+  waiting_on_you: "warning",
+  waiting_on_other: "neutral",
+  fixed: "success",
+  could_not_fix: "danger",
+};
+
+// How the builder chat's fix of a line stands, or where an earlier one saved its changes.
+function FixState({ state, line }) {
+  if (state === "fixing") {
+    return (
+      <Stack
+        direction="row"
+        spacing={0.5}
+        alignItems="center"
+        sx={{ color: "primary.main", flexShrink: 0 }}
+      >
+        <Spinner />
+        <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium" }}>
+          {COPY.progress.fixing}
+        </Typography>
+      </Stack>
+    );
+  }
+  if (state) {
+    const text = COPY.progress[state];
+    return (
+      <StatusBadge
+        status={state}
+        role={PROGRESS_ROLE[state]}
+        label={
+          typeof text === "function"
+            ? text(COPY.areas[line.waitingOnArea])
+            : text
+        }
+        size="sm"
+      />
+    );
+  }
+  const { result } = line;
+  if (result?.state !== "fixed" || !(result.environment || result.suite))
+    return null;
+  return (
+    <StatusBadge
+      status="fixed"
+      role="success"
+      label={COPY.fixedIn(result)}
+      size="sm"
+    />
+  );
+}
+
+FixState.propTypes = {
+  state: PropTypes.oneOf(Object.keys(PROGRESS_ROLE)),
+  line: PropTypes.object.isRequired,
+};
+
 // One area that isn't ready: its reason on one line, and what we saw, the fix and its action once opened.
 export default function ReadinessLine({
   line,
@@ -85,18 +149,53 @@ export default function ReadinessLine({
   onRecheck,
   onRetryAgent,
   onOpenAgentVersions,
+  chatFix = null,
+  credentials = null,
+  saved = null,
 }) {
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const { fix } = line;
   const label = COPY.areas[line.area] || line.area;
   // Checking the pair again is this line's whole fix: it opens on what it checks and why, not "check again".
   const recheckOnly = fix?.type === "recheck" && fix.recheck?.scope === "pair";
-  const agentFix = isAgentFix(fix) && Boolean(onOpenAgentVersions);
+  // Missing values are asked for here; any other fix of the agent is made on its versions.
+  const agentFix =
+    isAgentFix(fix) && Boolean(onOpenAgentVersions) && !credentials;
   const bodyId = `readiness-fix-${line.area}`;
+  const state = PROGRESS_ROLE[line.progress?.state]
+    ? line.progress.state
+    : null;
+  // While the chat works on a line, its state stands in for the details.
+  const opens = Boolean(fix) && (!state || state === "could_not_fix");
+  const why = line.progress?.reason?.message;
+  const showWhy =
+    why && (state === "could_not_fix" || state === "waiting_on_you");
+  // The builder chat's re-check follows its fix.
+  const rechecks = !chatFix && fix?.recheck && (!credentials || inFlight);
   return (
-    // While a check runs these are the last results: dimmed, nothing to press.
-    <Box sx={{ ...lineSx, opacity: checking && !inFlight ? 0.5 : 1 }}>
+    // While a check runs these are the last results: dimmed, nothing to press. A fixed line is already the new one.
+    <Box
+      sx={{
+        ...lineSx,
+        opacity: checking && !inFlight && state !== "fixed" ? 0.5 : 1,
+      }}
+    >
       <Stack direction="row" spacing={1} alignItems="center">
+        {chatFix && (
+          // Lines already being fixed keep the space, so names line up.
+          <Box sx={{ width: 18, flexShrink: 0, display: "flex" }}>
+            {chatFix.onSelect && (
+              <Checkbox
+                size="small"
+                checked={chatFix.selected}
+                disabled={chatFix.locked}
+                onChange={(event) => chatFix.onSelect(event.target.checked)}
+                inputProps={{ "aria-label": COPY.selectLine(label) }}
+                sx={{ p: 0 }}
+              />
+            )}
+          </Box>
+        )}
         <Box sx={{ flexShrink: 0 }}>
           <StatusBadge status={line.status} label={label} variant="dot" />
         </Box>
@@ -132,7 +231,8 @@ export default function ReadinessLine({
               : COPY.affected(line.affected)}
           </Typography>
         )}
-        {fix && !checking && (
+        <FixState state={state} line={line} />
+        {opens && !checking && (
           <IconButton
             size="small"
             onClick={onToggle}
@@ -155,10 +255,14 @@ export default function ReadinessLine({
           </IconButton>
         )}
       </Stack>
+      {showWhy && (
+        // The builder's own reply, often markdown.
+        <ChatMarkdown text={why} dim small sx={{ pt: 0.5 }} />
+      )}
       {fix && (
         <Collapse
           id={bodyId}
-          in={open && (!checking || inFlight)}
+          in={open && opens && (!checking || inFlight)}
           timeout={reduceMotion ? 0 : "auto"}
           unmountOnExit
         >
@@ -205,7 +309,47 @@ export default function ReadinessLine({
                 />
               </Box>
             )}
-            {(agentFix || fix.recheck) && (
+            {saved}
+            {!inFlight && credentials}
+            {chatFix && fix.message && (
+              <Box>
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mb: 0.5 }}
+                >
+                  {COPY.sendsToChat}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.primary",
+                    bgcolor: "background.neutral",
+                    borderRadius: 1,
+                    px: 1.25,
+                    py: 1,
+                  }}
+                >
+                  {fix.message}
+                </Typography>
+              </Box>
+            )}
+            {chatFix?.onFixOne && (
+              <Box>
+                <ViewerLock
+                  locked={chatFix.locked}
+                  title={WORKSPACE_COPY.viewer.chat}
+                >
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={checking || chatFix.locked}
+                    onClick={chatFix.onFixOne}
+                  >
+                    {chatFix.fixOneLabel}
+                  </Button>
+                </ViewerLock>
+              </Box>
+            )}
+            {(agentFix || rechecks) && (
               <Stack direction="row" spacing={1}>
                 {agentFix && (
                   <Button
@@ -216,7 +360,7 @@ export default function ReadinessLine({
                     {COPY.openAgentVersions}
                   </Button>
                 )}
-                {fix.recheck && (
+                {rechecks && (
                   <Button
                     size="small"
                     variant={agentFix ? "outlined" : "contained"}
@@ -259,4 +403,15 @@ ReadinessLine.propTypes = {
   onRetryAgent: PropTypes.func.isRequired,
   // Opens the agent's versions, where a new version or new credentials are made; absent where that can't open.
   onOpenAgentVersions: PropTypes.func,
+  // On a line the builder chat can fix: its tick while the chat can take it on, and sending it alone.
+  chatFix: PropTypes.shape({
+    selected: PropTypes.bool,
+    onSelect: PropTypes.func,
+    onFixOne: PropTypes.func,
+    fixOneLabel: PropTypes.string,
+    locked: PropTypes.bool,
+  }),
+  // The form for the agent's missing values, and the version they were saved as.
+  credentials: PropTypes.node,
+  saved: PropTypes.node,
 };

@@ -1299,6 +1299,10 @@ HARNESS_ACTORS_SHARE = (
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Run readiness offers its Fix groups; only takes effect while versioning is enabled.
+HARNESS_READINESS_FIX_ENABLED = os.getenv(
+    "HARNESS_READINESS_FIX_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Accepting source.subfolder on a build; only once the sandbox's agent-learning-kit
 # reads it, else the harness would silently build from the repository root.
 HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(

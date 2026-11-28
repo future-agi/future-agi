@@ -339,6 +339,9 @@ class TestRows:
         ]
         assert routing["evidence"] == [{"check": "action_behavior", "result": "1/2"}]
         assert routing["fix"]["target"] == "issue_refund"
+        assert routing["fix"]["action"] == (
+            "Rebuild this environment so the test world's probe passes for issue_refund"
+        )
 
     def test_runtime_only_tool_is_partial(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "rd-runtime-only")
@@ -465,6 +468,7 @@ class TestRows:
             "action": "Point issue_refund at the test world",
             "would": "issue_refund lands in the test world and its check passes",
             "recheck": None,
+            "message": None,
         }
 
     def test_a_check_not_run_on_build_evidence_is_rechecked_on_the_pairing(
@@ -1143,6 +1147,7 @@ class TestApi:
                     "evidence",
                     "checked_at",
                     "fix",
+                    "fix_group",
                     "consequence",
                     "needed_by",
                     "affected",
@@ -1392,6 +1397,7 @@ class TestDoneWhen:
             "would": "issue_refund runs in the test world instead of reaching production",
             # Only a new agent version moves the tool off production: nothing to re-check.
             "recheck": None,
+            "message": None,
         }
         assert {
             one: rows[one]["status"]
@@ -2520,10 +2526,12 @@ class TestAgentGap:
                 "type": "tool_not_in_world",
                 "category": "tool_routing",
                 "target": "send_email",
-                "action": "Add send_email to this environment in the builder, or test"
-                " this agent version in an environment that has it",
+                "action": "Rebuild this environment from this agent version so the"
+                " test world has send_email, or test this agent version in an"
+                " environment that has it",
                 "would": "send_email is simulated in the test world and its check passes",
                 "recheck": None,
+                "message": None,
             }
             assert discovery["consequence"].startswith(
                 "In a run, send_email would reach outside the test world"
@@ -2639,6 +2647,7 @@ class TestAgentGap:
                 "method": "POST",
                 "path": f"{BASE}/{environment.id}/capabilities/recheck/",
             },
+            "message": None,
         }
         assert report["pairing"]["agent_tools"] == {"read": False, "count": 0}
         assert report["answer"]["kind"] == "unchecked"
@@ -2690,6 +2699,32 @@ class TestAgentGap:
         assert validation["state"] == "validating"
         job = HostedHarnessJob.no_workspace_objects.get(id=validation["job_id"])
         assert job.payload["metadata"]["agent_reading"] == "only"
+
+    def test_a_certified_pair_reads_checking_while_its_tools_are_read(
+        self, user, workspace, storage, auth_client
+    ):
+        environment, a2 = _with_a2(
+            user, workspace, storage, "rd-gap-unread-checking", tools=None
+        )
+        _built(environment, contract=WORLD)
+        _certify(environment, storage, agent=a2)
+        before = _get(auth_client, environment.id, agent_version_id=str(a2.id)).json()
+
+        started = _recheck(auth_client, environment.id, agent_version_id=str(a2.id))
+        during = _get(auth_client, environment.id, agent_version_id=str(a2.id)).json()
+        HostedHarnessJob.no_workspace_objects.filter(
+            id=started.json()["validation"]["job_id"]
+        ).update(state=HostedHarnessJob.State.COMPLETED)
+        after = _get(auth_client, environment.id, agent_version_id=str(a2.id)).json()
+
+        assert before["validation"]["state"] == "ready"
+        # The run gate refuses the pair while the reading runs; the report says so.
+        assert during["validation"]["state"] == "validating"
+        assert during["validation"]["job_id"] == started.json()["validation"]["job_id"]
+        assert during["answer"]["kind"] == "validating"
+        # The cached report is not served once the check ends.
+        assert after["validation"]["state"] == "ready"
+        assert after["answer"]["kind"] != "validating"
 
     def test_the_same_tools_leave_the_certificate_reading(
         self, user, workspace, storage

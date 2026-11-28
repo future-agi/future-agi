@@ -14,6 +14,7 @@ const state = {
   drafts: null,
   // The readiness selection for the picks.
   selection: undefined,
+  fixRun: null,
 };
 const PLAN_OK = {
   warnings: [],
@@ -83,6 +84,12 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
     data: enabled ? state.cases : undefined,
   })),
   useRecheck: vi.fn(() => ({ mutate: vi.fn(), reset, isPending: false })),
+  useRereadWhenDefaultsMove: () => {},
+}));
+vi.mock("src/api/simulate-environments/readinessFix", () => ({
+  fixIsActive: (run) => Boolean(run?.active),
+  useFixRun: () => ({ data: state.fixRun }),
+  useStartGroupFix: () => ({ mutate: vi.fn(), reset, isPending: false }),
 }));
 
 const { default: RunDialog } = await import("../RunDialog");
@@ -128,7 +135,7 @@ const refusal = (error, message, extra = {}) => ({
 
 const renderDialog = (props = {}) => {
   const onSubmit = vi.fn();
-  render(
+  const dialog = () => (
     <RunDialog
       open
       env={ENV}
@@ -137,9 +144,10 @@ const renderDialog = (props = {}) => {
       onClose={vi.fn()}
       onSubmit={onSubmit}
       {...props}
-    />,
+    />
   );
-  return { onSubmit };
+  const { rerender } = render(dialog());
+  return { onSubmit, rerender: () => rerender(dialog()) };
 };
 
 const pickOption = async (user, picker, option) => {
@@ -160,6 +168,7 @@ describe("RunDialog", () => {
     state.drafts = null;
     state.versionsError = undefined;
     state.selection = undefined;
+    state.fixRun = null;
   });
 
   it("asks the plan about the scenarios this run takes", () => {
@@ -247,15 +256,13 @@ describe("RunDialog", () => {
     renderDialog();
 
     expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v2 (default)");
     expect(
-      screen.getByRole("combobox", { name: "Scenario version" }),
+      screen.getByRole("combobox", { name: "Scenarios" }),
     ).toHaveTextContent("v3 (default)");
 
-    await user.click(
-      screen.getByRole("combobox", { name: "Environment version" }),
-    );
+    await user.click(screen.getByRole("combobox", { name: "Environment" }));
     const options = within(screen.getByRole("listbox")).getAllByRole("option");
     expect(options.map((one) => one.textContent)).toEqual([
       "v2 (default)",
@@ -266,7 +273,7 @@ describe("RunDialog", () => {
   it("offers the agent versions that can run, the default pre-selected", async () => {
     const user = userEvent.setup();
     renderDialog();
-    const agent = screen.getByRole("combobox", { name: "Agent version" });
+    const agent = screen.getByRole("combobox", { name: "Agent" });
     expect(agent).toHaveTextContent("v4 (default)");
 
     await user.click(agent);
@@ -283,7 +290,7 @@ describe("RunDialog", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog();
 
-    await pickOption(user, "Agent version", "v3");
+    await pickOption(user, "Agent", "v3");
     expect(planCalls.at(-1).picks).toEqual({ agent: "a3" });
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenLastCalledWith(
@@ -293,16 +300,16 @@ describe("RunDialog", () => {
       null,
     );
 
-    await pickOption(user, "Agent version", "v4 (default)");
+    await pickOption(user, "Agent", "v4 (default)");
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, null);
   });
 
   it("pre-selects a re-run's agent version", () => {
     const { onSubmit } = renderDialog({ initialPicks: { agent: "a3" } });
-    expect(
-      screen.getByRole("combobox", { name: "Agent version" }),
-    ).toHaveTextContent("v3");
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "v3",
+    );
     expect(planCalls.at(-1).picks).toEqual({ agent: "a3" });
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -320,7 +327,7 @@ describe("RunDialog", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog();
 
-    await pickOption(user, "Environment version", "v1");
+    await pickOption(user, "Environment", "v1");
     expect(planCalls.at(-1).picks).toEqual({ environment: "e1" });
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenLastCalledWith(
@@ -330,8 +337,8 @@ describe("RunDialog", () => {
       null,
     );
 
-    await pickOption(user, "Scenario version", "v2");
-    await pickOption(user, "Environment version", "v2 (default)");
+    await pickOption(user, "Scenarios", "v2");
+    await pickOption(user, "Environment", "v2 (default)");
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenLastCalledWith(
       { suite: "s2" },
@@ -361,7 +368,7 @@ describe("RunDialog", () => {
     expect(screen.getByRole("button", { name: "Run" })).toBeInTheDocument();
     expect(screen.queryByTestId("run-warning")).toBeNull();
 
-    await pickOption(user, "Environment version", "v1");
+    await pickOption(user, "Environment", "v1");
     expect(screen.getAllByTestId("run-warning")).toHaveLength(2);
     expect(
       screen.getByText("Suite v3 hasn't been proved against environment v1"),
@@ -383,9 +390,9 @@ describe("RunDialog", () => {
     const region = screen.getByTestId("run-plan");
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(
-      within(region).getByText(
-        "Checking these versions and what the run would block…",
-      ),
+      within(region).getByRole("progressbar", {
+        name: "Checking these versions and what the run would block…",
+      }),
     ).toBeInTheDocument();
     expect(runButton()).toBeDisabled();
   });
@@ -400,7 +407,7 @@ describe("RunDialog", () => {
     };
     renderDialog();
 
-    await pickOption(user, "Environment version", "v1");
+    await pickOption(user, "Environment", "v1");
     expect(screen.getByTestId("run-error")).toHaveTextContent(
       "These versions haven't been run together yet",
     );
@@ -408,7 +415,7 @@ describe("RunDialog", () => {
     expect(runButton()).toBeDisabled();
 
     // Back at the defaults the plan resolves again.
-    await pickOption(user, "Environment version", "v2 (default)");
+    await pickOption(user, "Environment", "v2 (default)");
     expect(screen.queryByTestId("run-error")).toBeNull();
     expect(runButton()).toBeEnabled();
   });
@@ -420,7 +427,7 @@ describe("RunDialog", () => {
     };
     renderDialog();
 
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(screen.getByTestId("run-error")).toHaveTextContent(
       "This suite version is changing",
     );
@@ -437,11 +444,9 @@ describe("RunDialog", () => {
     };
     renderDialog();
 
-    await pickOption(user, "Environment version", "v1");
-    expect(
-      within(field("Environment version")).getByText(message),
-    ).toBeInTheDocument();
-    expect(within(field("Scenario version")).queryByText(message)).toBeNull();
+    await pickOption(user, "Environment", "v1");
+    expect(within(field("Environment")).getByText(message)).toBeInTheDocument();
+    expect(within(field("Scenarios")).queryByText(message)).toBeNull();
     expect(screen.queryByTestId("run-error")).toBeNull();
     expect(runButton()).toBeDisabled();
   });
@@ -453,7 +458,7 @@ describe("RunDialog", () => {
     };
     const { onSubmit } = renderDialog();
 
-    await pickOption(user, "Environment version", "v1");
+    await pickOption(user, "Environment", "v1");
     expect(screen.getByTestId("run-plan-failed")).toHaveTextContent(
       "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
     );
@@ -471,7 +476,7 @@ describe("RunDialog", () => {
     });
 
     expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v1");
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenCalledWith(
@@ -498,7 +503,7 @@ describe("RunDialog", () => {
     const { rerender } = render(<RunDialog {...props} />);
 
     const environment = () =>
-      screen.getByRole("combobox", { name: "Environment version" });
+      screen.getByRole("combobox", { name: "Environment" });
     expect(environment()).toHaveTextContent("v1");
     expect(screen.queryByTestId("rerun-fallback")).toBeNull();
     expect(runButton()).toBeEnabled();
@@ -519,10 +524,10 @@ describe("RunDialog", () => {
   it("falls back to the defaults for a re-run version no longer active", () => {
     renderDialog({ initialPicks: { environment: "e0", suite: "s2" } });
     expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v2 (default)");
     expect(
-      screen.getByRole("combobox", { name: "Scenario version" }),
+      screen.getByRole("combobox", { name: "Scenarios" }),
     ).toHaveTextContent("v3 (default)");
     expect(planCalls.at(-1).picks).toEqual({});
     expect(screen.getByTestId("rerun-fallback")).toHaveTextContent(
@@ -535,15 +540,15 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({
       initialPicks: { agent: "a2", environment: "e1", suite: "s2" },
     });
-    expect(
-      screen.getByRole("combobox", { name: "Agent version" }),
-    ).toHaveTextContent("v4 (default)");
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "v4 (default)",
+    );
     // The run's environment and scenario versions are still valid: kept.
     expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v1");
     expect(
-      screen.getByRole("combobox", { name: "Scenario version" }),
+      screen.getByRole("combobox", { name: "Scenarios" }),
     ).toHaveTextContent("v2");
     expect(planCalls.at(-1).picks).toEqual({ environment: "e1", suite: "s2" });
     expect(screen.getByTestId("rerun-fallback")).toHaveTextContent(
@@ -559,11 +564,11 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({
       initialPicks: { agent: "a1", environment: "e1", suite: "s2" },
     });
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "v4 (default)",
+    );
     expect(
-      screen.getByRole("combobox", { name: "Agent version" }),
-    ).toHaveTextContent("v4 (default)");
-    expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v1");
     expect(screen.getByTestId("rerun-fallback")).toHaveTextContent(
       "That run's agent version can't run now; using the current default agent.",
@@ -585,11 +590,11 @@ describe("RunDialog", () => {
     };
     const { onSubmit } = renderDialog({ initialPicks: rerunPicks });
 
+    expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent(
+      "v4 (default)",
+    );
     expect(
-      screen.getByRole("combobox", { name: "Agent version" }),
-    ).toHaveTextContent("v4 (default)");
-    expect(
-      screen.getByRole("combobox", { name: "Scenario version" }),
+      screen.getByRole("combobox", { name: "Scenarios" }),
     ).toHaveTextContent("v2");
     expect(planCalls.at(-1).picks).toEqual({ environment: "e1", suite: "s2" });
     expect(screen.getByTestId("rerun-fallback")).toHaveTextContent(
@@ -610,7 +615,7 @@ describe("RunDialog", () => {
       initialPicks: { agent: "a2", environment: "e1", suite: "s2" },
     });
     expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v2 (default)");
     expect(screen.getByTestId("rerun-fallback")).toHaveTextContent(
       "That run's versions can't run now; using the current defaults.",
@@ -630,7 +635,7 @@ describe("RunDialog", () => {
     });
 
     expect(
-      screen.getByRole("combobox", { name: "Environment version" }),
+      screen.getByRole("combobox", { name: "Environment" }),
     ).toHaveTextContent("v2 (default)");
     expect(screen.getByTestId("rerun-fallback")).toBeInTheDocument();
     expect(screen.queryByTestId("run-error")).toBeNull();
@@ -638,7 +643,7 @@ describe("RunDialog", () => {
     expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
 
     // Picking again drops the note.
-    await pickOption(user, "Environment version", "v1");
+    await pickOption(user, "Environment", "v1");
     expect(screen.queryByTestId("rerun-fallback")).toBeNull();
   });
 
@@ -679,7 +684,7 @@ describe("RunDialog", () => {
       error: { statusCode: 409, detail: "Environment is busy" },
     };
     renderDialog();
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(screen.getByTestId("run-error")).toHaveTextContent(
       "Environment is busy",
     );
@@ -695,7 +700,7 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({ scenarioIds: undefined });
     expect(screen.getByText("Runs all 3 scenarios in v3.")).toBeInTheDocument();
 
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(screen.getByText("Runs all 2 scenarios in v2.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(onSubmit).toHaveBeenCalledWith(
@@ -740,11 +745,115 @@ describe("RunDialog", () => {
     expect(screen.queryByTestId("run-drafts-note")).toBeNull();
   });
 
+  it("collapses to its edge tab and keeps the picks mounted", async () => {
+    const user = userEvent.setup();
+    const onCollapsedChange = vi.fn();
+    const props = {
+      open: true,
+      env: ENV,
+      scenarioIds: ["k1"],
+      onClose: vi.fn(),
+      onCollapsedChange,
+    };
+    const { rerender } = render(<RunDialog {...props} />);
+    await pickOption(user, "Environment", "v1");
+    await user.click(screen.getByRole("button", { name: "Collapse run plan" }));
+    expect(onCollapsedChange).toHaveBeenCalledWith(true);
+    rerender(<RunDialog {...props} collapsed />);
+    expect(screen.queryByRole("combobox", { name: "Environment" })).toBeNull();
+    rerender(<RunDialog {...props} collapsed={false} />);
+    expect(
+      screen.getByRole("combobox", { name: "Environment" }),
+    ).toHaveTextContent("v1");
+  });
+
+  it("gives focus back when closed, and stays when asked for again as it slides shut", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const plan = (request) => (
+      <>
+        <button type="button">Run simulation</button>
+        {request && (
+          <RunDialog
+            open
+            env={ENV}
+            scenarioIds={["k1"]}
+            onClose={onClose}
+            request={request}
+          />
+        )}
+      </>
+    );
+    const { rerender } = render(plan());
+    const opener = screen.getByRole("button", { name: "Run simulation" });
+    await user.click(opener);
+    rerender(plan(1));
+    await waitFor(() => expect(opener).not.toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(opener).toHaveFocus();
+    rerender(plan(2));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 400);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+  });
+
+  it("closes on Escape from inside the plan, not from the rest of the page", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <>
+        <input aria-label="Reply to the builder" />
+        <p>An earlier message</p>
+        <RunDialog open env={ENV} scenarioIds={["k1"]} onClose={onClose} />
+      </>,
+    );
+    // It takes focus as it opens.
+    await waitFor(() =>
+      expect(screen.getByRole("complementary")).toContainElement(
+        document.activeElement,
+      ),
+    );
+    await user.click(screen.getByLabelText("Reply to the builder"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByText("An earlier message"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Environment" }));
+    // The first Escape is the open list's.
+    await user.keyboard("{Escape}");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 400);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps a pick of the default pinned when the default moves, while Fix is off", async () => {
+    const user = userEvent.setup();
+    const props = { open: true, env: ENV, scenarioIds: ["k1"] };
+    const { rerender } = render(<RunDialog {...props} />);
+    await pickOption(user, "Environment", "v1");
+    await pickOption(user, "Environment", "v2 (default)");
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        item({ id: "e3", label: "v3", is_default: true }),
+        item({ id: "e2", label: "v2" }),
+      ],
+    };
+    rerender(<RunDialog {...props} />);
+    const picker = screen.getByRole("combobox", { name: "Environment" });
+    expect(picker).toHaveTextContent("v2");
+    expect(picker).not.toHaveTextContent("v3");
+  });
+
   it("says why Run is off when the picked suite has no scenarios", async () => {
     const user = userEvent.setup();
     state.members.s2 = [];
     renderDialog({ scenarioIds: undefined });
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(screen.getByTestId("run-blocked")).toHaveTextContent(
       "v2 has no scenarios to run.",
     );
@@ -755,7 +864,7 @@ describe("RunDialog", () => {
     const user = userEvent.setup();
     delete state.members.s2;
     renderDialog({ scenarioIds: undefined });
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 
@@ -764,7 +873,7 @@ describe("RunDialog", () => {
     renderDialog();
     expect(screen.queryByText(/isn't in|aren't in/)).toBeNull();
 
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(
       screen.getByText(
         "1 selected scenario isn't in v2 and will be skipped: k2",
@@ -776,7 +885,7 @@ describe("RunDialog", () => {
   it("keeps Run off when none of the selected scenarios are in the picked suite", async () => {
     const user = userEvent.setup();
     renderDialog({ scenarioIds: ["k2", "k3"] });
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(screen.getByTestId("run-blocked")).toHaveTextContent(
       "None of the selected scenarios are in v2.",
     );
@@ -812,16 +921,16 @@ describe("RunDialog", () => {
     renderDialog({ error });
     expect(screen.queryByTestId("run-error")).toBeNull();
     expect(
-      within(field("Scenario version")).getByText(
+      within(field("Scenarios")).getByText(
         "This suite version can't be picked for this environment",
       ),
     ).toBeInTheDocument();
     expect(
-      within(field("Environment version")).queryByText(/can't be picked/),
+      within(field("Environment")).queryByText(/can't be picked/),
     ).toBeNull();
 
     // Changing a pick clears it.
-    await pickOption(user, "Scenario version", "v2");
+    await pickOption(user, "Scenarios", "v2");
     expect(
       screen.queryByText(
         "This suite version can't be picked for this environment",
@@ -838,7 +947,7 @@ describe("RunDialog", () => {
       ),
     });
     expect(
-      within(field("Agent version")).getByText(
+      within(field("Agent")).getByText(
         "Only the environment's current agent version can be picked for now",
       ),
     ).toBeInTheDocument();
@@ -1006,7 +1115,12 @@ describe("RunDialog", () => {
     state.versions = {
       ...VERSIONS,
       environment: [
-        item({ id: "e2", label: "v2", name: "Refunds 14 days", is_default: true }),
+        item({
+          id: "e2",
+          label: "v2",
+          name: "Refunds 14 days",
+          is_default: true,
+        }),
       ],
     };
     renderDialog();
@@ -1304,6 +1418,104 @@ describe("RunDialog", () => {
         ),
       ).toBeInTheDocument();
       expect(runButton()).toBeDisabled();
+    });
+
+    it("leaves a pair_validating refusal to Ready to run, and drops it once the check ends", () => {
+      state.report = report({ state: "validating" });
+      const { rerender } = renderDialog({
+        error: { statusCode: 409, error: "pair_validating" },
+      });
+      expect(screen.queryByTestId("run-error")).toBeNull();
+
+      state.report = report();
+      rerender();
+      expect(screen.queryByTestId("run-error")).toBeNull();
+      expect(runButton()).toBeEnabled();
+    });
+
+    describe("while the server offers Fix", () => {
+      const offered = () => ({ ...report(), fix_groups: {} });
+      const drafts = {
+        environment: {
+          id: "d1",
+          parent: { id: "e2" },
+          revision: 3,
+          updated_at: "2026-11-12T10:00:00Z",
+        },
+        suite: null,
+        set_aside: [],
+      };
+
+      it("follows the default again once the picker is put back on it", async () => {
+        const user = userEvent.setup();
+        state.report = offered();
+        const props = { open: true, env: ENV, scenarioIds: ["k1"] };
+        const { rerender } = render(<RunDialog {...props} />);
+        await pickOption(user, "Environment", "v1");
+        await pickOption(user, "Environment", "v2 (default)");
+        state.versions = {
+          ...VERSIONS,
+          environment: [
+            item({ id: "e3", label: "v3", is_default: true }),
+            item({ id: "e2", label: "v2" }),
+          ],
+        };
+        rerender(<RunDialog {...props} />);
+        expect(
+          screen.getByRole("combobox", { name: "Environment" }),
+        ).toHaveTextContent("v3 (default)");
+      });
+
+      it("points unsaved changes to their review, and names a fix's own", async () => {
+        const user = userEvent.setup();
+        const onReviewChanges = vi.fn();
+        state.report = offered();
+        state.drafts = drafts;
+        state.fixRun = {
+          state: "done",
+          draft: true,
+          finished_at: "2026-11-12T10:01:00Z",
+        };
+        renderDialog({ onReviewChanges });
+        const note = within(screen.getByTestId("run-drafts-note"));
+        expect(
+          note.getByText(/^The fixes are in unsaved changes/),
+        ).toBeInTheDocument();
+        await user.click(note.getByRole("button", { name: "Review changes" }));
+        expect(onReviewChanges).toHaveBeenCalledTimes(1);
+      });
+
+      it("offers the version a fix saved over an older pick, with how many run on it", async () => {
+        const user = userEvent.setup();
+        state.report = offered();
+        state.versions = {
+          ...VERSIONS,
+          environment: [
+            item({ id: "e3", label: "v3", created_at: "2026-03-01" }),
+            item({
+              id: "e2",
+              label: "v2",
+              is_default: true,
+              created_at: "2026-02-01",
+            }),
+            item({ id: "e1", label: "v1", created_at: "2026-01-01" }),
+          ],
+        };
+        state.fixRun = {
+          state: "done",
+          saved: { environment: { id: "e3" }, suite: null },
+        };
+        renderDialog();
+        await pickOption(user, "Environment", "v1");
+        expect(screen.getByTestId("run-switch-environment")).toHaveTextContent(
+          "The fixes are in environment v3. 1 of 2 will run there.",
+        );
+        await user.click(screen.getByRole("button", { name: "Switch to v3" }));
+        expect(
+          screen.getByRole("combobox", { name: "Environment" }),
+        ).toHaveTextContent("v3");
+        expect(screen.queryByTestId("run-switch-environment")).toBeNull();
+      });
     });
   });
 });

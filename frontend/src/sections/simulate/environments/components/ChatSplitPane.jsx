@@ -85,7 +85,12 @@ const initialWidth = () => {
  * chat owns its collapse button (attach `collapseRef` to it so focus can move
  * between it and the rail's expand arrow) and knows when it is visible again.
  */
-export default function ChatSplitPane({ chat, children, busy = false }) {
+export default function ChatSplitPane({
+  chat,
+  children,
+  busy = false,
+  openKey = null,
+}) {
   const containerRef = useRef(null);
   const dragRef = useRef(null);
   const chatLayerRef = useRef(null);
@@ -164,6 +169,11 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
   const expand = useCallback(() => setOpen(true), [setOpen]);
   // Asked to show one of its messages, the chat opens.
   useEffect(() => subscribeBuilderChatFocus(expand), [expand]);
+
+  // Something the chat now shows wants it open, e.g. a fix that just started.
+  useEffect(() => {
+    if (openKey != null) expand();
+  }, [openKey, expand]);
 
   const onPointerDown = (event) => {
     // Primary button only: a right-click opens the context menu, which can
@@ -449,4 +459,6 @@ ChatSplitPane.propTypes = {
   // Shows a dot on the collapsed rail while the builder is working, waiting
   // on an answer from the user, or a nudge waits for one.
   busy: PropTypes.bool,
+  // Each new non-null value expands a collapsed chat.
+  openKey: PropTypes.string,
 };

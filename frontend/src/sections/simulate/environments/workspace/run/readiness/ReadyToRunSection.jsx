@@ -9,13 +9,17 @@ import {
   isVersioningDisabled,
   useRetryAgentVersion,
 } from "src/api/simulate-environments/versions";
+import { runStatusOf } from "src/utils/runStatus";
 import { refusalText } from "../../evals/refusalText";
+import CredentialsForm from "../../agents/CredentialsForm";
+import { checkMissing } from "../../agents/agentVersionStatus";
+import FixGroups from "./FixGroups";
 import ReadinessLine from "./ReadinessLine";
+import SavedCredentials from "./SavedCredentials";
 import Spinner from "./Spinner";
-import { lineSx } from "./readinessStyles";
+import useMissingCredentials from "./useMissingCredentials";
+import { boxSx, lineSx } from "./readinessStyles";
 import { READY_TO_RUN_COPY as COPY } from "./readiness.constants";
-
-const boxSx = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 
 // The check state's dot: info while it waits or runs, danger when it holds the run, warning when it couldn't settle.
 const STATE_ROLE = {
@@ -49,6 +53,7 @@ export default function ReadyToRunSection({
   view,
   onSendingChange,
   onOpenAgentVersions,
+  onGoToChat,
 }) {
   const recheck = useRecheck(envId);
   const retryAgent = useRetryAgentVersion(envId);
@@ -56,13 +61,26 @@ export default function ReadyToRunSection({
   const [pressed, setPressed] = useState(null);
   // One line open at a time keeps the section short; the dialog body scrolls.
   const [openArea, setOpenArea] = useState(null);
-  const sending = recheck.isPending || retryAgent.isPending;
+  // After an agent retry, until the report has been read again.
+  const [refreshing, setRefreshing] = useState(false);
+  const picksKey = JSON.stringify(picks || {});
+  const agentId = readiness.data?.pairing?.agent_version?.id;
+  const missing = useMissingCredentials(
+    envId,
+    agentId,
+    picksKey,
+    Boolean(view?.groups),
+  );
+  const sending =
+    recheck.isPending ||
+    retryAgent.isPending ||
+    refreshing ||
+    missing.checking;
   useEffect(() => {
     onSendingChange?.(sending);
   }, [sending, onSendingChange]);
   useEffect(() => () => onSendingChange?.(false), [onSendingChange]);
   // Other picks start with nothing open, nothing running and no answer from the last picks' re-check.
-  const picksKey = JSON.stringify(picks || {});
   const { reset: resetRecheck } = recheck;
   const { reset: resetRetry } = retryAgent;
   useEffect(() => {
@@ -99,7 +117,6 @@ export default function ReadyToRunSection({
   // A re-check reads as running from the click, not from the next report.
   const checking = view.state === "checking" || sending;
   const dimSx = { ...lineSx, opacity: checking ? 0.5 : 1 };
-  const agentId = readiness.data?.pairing?.agent_version?.id;
   const runRecheck = (from = null) => {
     setPressed(from);
     retryAgent.reset();
@@ -108,7 +125,19 @@ export default function ReadyToRunSection({
   const runRetryAgent = (from = null) => {
     setPressed(from);
     recheck.reset();
-    retryAgent.mutate({ versionId: agentId });
+    setRefreshing(true);
+    retryAgent.mutate(
+      { versionId: agentId },
+      {
+        onSettled: async () => {
+          try {
+            await readiness.refetch();
+          } finally {
+            setRefreshing(false);
+          }
+        },
+      },
+    );
   };
   const blockers = view.open.filter((line) => line.status === "blocked").length;
   const readyLabels = view.ready.map(areaLabel);
@@ -132,6 +161,54 @@ export default function ReadyToRunSection({
     refusal ? refusalText(refusal, "") : view.stateReason,
   );
 
+  const renderLine = (line, chatFix = null) => {
+    const asksValues = Boolean(view.groups) && line.fix?.type === "preflight";
+    const toggle = () =>
+      setOpenArea((area) => (area === line.area ? null : line.area));
+    return (
+      <ReadinessLine
+        key={line.area}
+        line={line}
+        envId={envId}
+        picks={picks}
+        keys={keys}
+        trials={trials}
+        report={view.computedAt}
+        open={openArea === line.area}
+        onToggle={toggle}
+        checking={checking}
+        inFlight={checking && pressed === line.area}
+        onRecheck={() => runRecheck(line.area)}
+        onRetryAgent={() => runRetryAgent(line.area)}
+        onOpenAgentVersions={onOpenAgentVersions}
+        chatFix={chatFix}
+        saved={
+          asksValues && missing.saved ? (
+            <SavedCredentials version={missing.saved} />
+          ) : null
+        }
+        credentials={
+          asksValues && missing.asked ? (
+            <CredentialsForm
+              // Its rows are seeded once: a new version or new missing names starts it again.
+              key={`${missing.asked.id}:${checkMissing(missing.asked).join(",")}`}
+              envId={envId}
+              version={missing.asked}
+              onSaved={(data) => {
+                setPressed(line.area);
+                missing.onSaved(data);
+              }}
+              onCancel={toggle}
+              extras={false}
+              saveLabel={COPY.saveAndRecheck}
+              note={COPY.credentialsNote}
+            />
+          ) : null
+        }
+      />
+    );
+  };
+
   return (
     <Box data-testid="ready-to-run" sx={boxSx}>
       <Stack
@@ -145,7 +222,7 @@ export default function ReadyToRunSection({
             {COPY.title}
           </Box>
           <Box component="span" sx={{ color: "text.secondary" }}>
-            {` · ${COPY.blockers(blockers)}`}
+            {` · ${checking ? COPY.checkingPair : COPY.blockers(blockers)}`}
           </Box>
         </Typography>
         <Button
@@ -176,26 +253,19 @@ export default function ReadyToRunSection({
           </Typography>
         </Stack>
       )}
-      {view.open.map((line) => (
-        <ReadinessLine
-          key={line.area}
-          line={line}
+      {view.groups ? (
+        <FixGroups
           envId={envId}
           picks={picks}
-          keys={keys}
-          trials={trials}
-          report={view.computedAt}
-          open={openArea === line.area}
-          onToggle={() =>
-            setOpenArea((area) => (area === line.area ? null : line.area))
-          }
+          groups={view.groups}
           checking={checking}
-          inFlight={checking && pressed === line.area}
-          onRecheck={() => runRecheck(line.area)}
-          onRetryAgent={() => runRetryAgent(line.area)}
-          onOpenAgentVersions={onOpenAgentVersions}
+          renderLine={renderLine}
+          onRecheck={() => runRecheck()}
+          onGoToChat={onGoToChat}
         />
-      ))}
+      ) : (
+        view.open.map((line) => renderLine(line))
+      )}
       {view.limits.map((line) => (
         <Stack
           key={line.area}
@@ -206,7 +276,8 @@ export default function ReadyToRunSection({
         >
           <StatusBadge
             status={line.status}
-            label={areaLabel(line.area)}
+            // The status in words too, never the dot's colour alone.
+            label={`${areaLabel(line.area)}: ${runStatusOf(line.status).label}`}
             variant="dot"
           />
           <Typography
@@ -276,4 +347,6 @@ ReadyToRunSection.propTypes = {
   // Told while a re-check or agent retry is being sent, so Run waits for it.
   onSendingChange: PropTypes.func,
   onOpenAgentVersions: PropTypes.func,
+  // Set where the page has no builder chat to follow a fix in.
+  onGoToChat: PropTypes.func,
 };
