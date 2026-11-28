@@ -117,7 +117,7 @@ say "install (bundled datastores)"
 helm upgrade --install "$release" "$chart" --namespace "$ns" \
   -f "$values_dir/examples/bundled.yaml" \
   ${image_args[@]+"${image_args[@]}"} \
-  --set config.telemetry=false \
+  -f "$here/ci/telemetry-loopback.yaml" \
   --set bootstrap.admin.existingSecret=smoke-admin \
   --wait --timeout "$timeout"
 kubectl -n "$ns" get pods -o wide

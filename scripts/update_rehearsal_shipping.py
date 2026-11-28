@@ -46,6 +46,20 @@ SHIPPING_TRANSACTION_INTEGRATED = False
 PREFIX = 'fagi-upd-e2e-release-'
 
 
+# Opt-out still sends a minimal registration. Never send it off the test stack.
+REHEARSAL_TELEMETRY = {
+    'FUTURE_AGI_TELEMETRY_DISABLED': 'true',
+    'FUTURE_AGI_TELEMETRY_URL': 'http://127.0.0.1:9',
+}
+
+
+def require_rehearsal_telemetry(model):
+    # A retained Compose definition may ignore or override the generated .env.
+    environment = model['services']['app'].get('environment') or {}
+    if any(environment.get(key) != value for key, value in REHEARSAL_TELEMETRY.items()):
+        raise ValueError('retained app must disable telemetry and use the loopback URL')
+
+
 def producer():
     # The CLI installs its __main__ module at this canonical name before calling
     # us. Imports from tests/library callers already have that identity.
@@ -1042,7 +1056,7 @@ class ShippingRehearsal:
         finally:
             for sock in sockets: sock.close()
         values.update(self.ports,COMPOSE_PROJECT_NAME=self.project,COMPOSE_PROFILES='',GOOGLE_APPLICATION_CREDENTIALS='/dev/null',
-            FUTURE_AGI_TELEMETRY_DISABLED='true',FUTURE_AGI_VERSION=self.row.release.manifest['version'])
+            FUTURE_AGI_VERSION=self.row.release.manifest['version'], **REHEARSAL_TELEMETRY)
         values['INTEGRATION_ENCRYPTION_KEY']=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         for key in ('SECRET_KEY','REDIS_PASSWORD','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD','AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN'):
             values[key]=secrets.token_hex(32)
@@ -1067,6 +1081,7 @@ class ShippingRehearsal:
         p.equal(daemon_info['OSType']+'/'+arch,self.row.platform,'native product rehearsal required')
         model=self.installation.config(refresh=True)
         p.need(set(model['services'])=={'app','postgres','clickhouse'} and set(model['volumes'])==set(p.VOLUME_ROLES),'unsupported rehearsal model')
+        require_rehearsal_telemetry(model)
         for service in model['services'].values():
             p.need(not service.get('build') and service.get('restart','no') in ('no','unless-stopped') and not service.get('privileged'),'unsupported rehearsal model')
             for mount in service.get('volumes',[]):
