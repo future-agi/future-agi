@@ -149,13 +149,17 @@ class HostedHarnessJob(BaseModel):
         max_length=8, choices=TaskSplit.choices, null=True, blank=True
     )
     # RESTRICT, like the locked version's own version pins: a locked version a run
-    # scored is never deleted while the run exists.
+    # scored is never deleted while the run exists. Django enforces it: a database
+    # foreign key would scan this table under its lock when added. Indexed by
+    # idx_hjob_locked_version, which builds concurrently.
     locked_version = models.ForeignKey(
         "simulate.HarnessLockedVersion",
         on_delete=models.RESTRICT,
         null=True,
         blank=True,
         related_name="+",
+        db_constraint=False,
+        db_index=False,
     )
     assembled_bundle = models.ForeignKey(
         "simulate.HarnessAssembledBundle",
@@ -245,6 +249,7 @@ class HostedHarnessJob(BaseModel):
             models.Index(
                 fields=["state", "deadline_at"], name="idx_hjob_state_deadline"
             ),
+            models.Index(fields=["locked_version"], name="idx_hjob_locked_version"),
         ]
 
 
