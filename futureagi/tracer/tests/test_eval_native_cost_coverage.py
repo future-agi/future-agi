@@ -88,6 +88,9 @@ class _TraceQuery:
     def count(self):
         return len(self.traces)
 
+    def values_list(self, *_args, **_kwargs):
+        return [t.id for t in self.traces]
+
 
 def _context(monkeypatch, spans):
     trace_ids = list(dict.fromkeys(span.trace_id for span in spans))

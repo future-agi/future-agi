@@ -481,17 +481,16 @@ class TestSessionTraceIdsSliceD:
         )
         ctx = build_session_context(vehicle)
         assert ctx is not None
-        # trace_count is the PG count over the CH-derived id set; the manufactured
-        # traces have NO PG Trace rows (net-new), so trace_count is 0 — but the
-        # CH-derived id set itself is non-empty. We assert the derivation ran by
-        # checking session_trace_ids directly returns the set the ctx was built
-        # from (the ctx 'traces' list is the PG-hydrated page, empty here since no
-        # PG rows; the headline is that the CH derivation is wired, not empty-FK).
+        # The manufactured traces have NO PG Trace rows (net-new, as collector
+        # ingestion leaves them). They are still listed, described by their spans
+        # (TH-11001); before, the page was PG-only and came back empty.
         from tracer.services.clickhouse.v2 import get_reader
 
         with get_reader() as reader:
             derived = set(reader.session_trace_ids(ids["proj"], ids["netnew_id"]))
         assert derived == ids["netnew_traces"]
+        assert {t["id"] for t in ctx["traces"]} == ids["netnew_traces"]
+        assert ctx["trace_count"] == len(ids["netnew_traces"])
         # The OLD FK walk (HEAD) would have been empty for this id.
         assert _head_session_trace_ids(ids["netnew_id"]) == set()
 
