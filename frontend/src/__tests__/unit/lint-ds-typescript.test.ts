@@ -52,6 +52,9 @@ beforeAll(() => {
   const preview =
     'export const Preview = () => <Dialog open aria-label="Account preferences" />;';
   write("views/Preview.stories.tsx", `${dialog}\n${preview}`);
+  const multiline = (source: string) =>
+    `import {\n  Dialog,\n} from "${source}";\nexport const color = "#abc";`;
+  write("views/Multiline.ts", multiline("./dialog"));
   git("init", "--quiet");
   git("add", "src");
   git(
@@ -64,12 +67,13 @@ beforeAll(() => {
     "-qm",
     "base",
   );
-  // Reformat the same import on two renames. Only the story was exempt at base.
+  // Only the story was exempt at base, even when renamed without editing it.
   const reformatted = dialog.slice(0, -1);
   git("mv", "src/views/Fields.ts", "src/views/Fields.tsx");
   write("views/Fields.tsx", `${reformatted}\n${fields.replace("<T>", "<T,>")}`);
   git("mv", "src/views/Preview.stories.tsx", "src/views/Preview.tsx");
-  write("views/Preview.tsx", `${reformatted}\n${preview}`);
+  // The import source changes, but the specifier and color lines do not.
+  write("views/Multiline.ts", multiline("@mui/material"));
 
   // A conversion that reformats an old import and introduces a new one.
   git("mv", "src/views/Page.jsx", "src/views/Page.tsx");
@@ -129,7 +133,9 @@ it("reports new restricted imports but not ones already linted before a rename",
   expect(stdout).toMatch(/Other\.jsx:.*warning.*EmptyLayout/);
   expect(stdout).not.toContain("MixedType.ts:");
   expect(stdout).toMatch(/MixedValue\.ts:.*error.*bare MUI Dialog/);
-  expect(stdout).toContain("5 design-system error(s) and 1 warning(s)");
+  expect(stdout).toMatch(/Multiline\.ts:2:.*error.*bare MUI Dialog/);
+  expect(stdout).not.toMatch(/Multiline\.ts:.*Hex colour/);
+  expect(stdout).toContain("6 design-system error(s) and 1 warning(s)");
 });
 
 it("includes typed source files in the full design-system lint", () => {

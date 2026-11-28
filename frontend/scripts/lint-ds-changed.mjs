@@ -1,7 +1,7 @@
 /* eslint-env node */
 /* eslint-disable no-console */
-// Runs the design-system lint (.eslintrc.ds.cjs) on the lines this branch adds,
-// so older screens don't fail CI but new code has to follow the system.
+// Reports new restricted imports in changed files and other design-system
+// diagnostics on added lines, so existing screens don't have to migrate at once.
 //
 //   node scripts/lint-ds-changed.mjs                  # base: nearest of origin/dev, origin/main
 //   node scripts/lint-ds-changed.mjs --base up/dev    # explicit base ref
@@ -79,11 +79,17 @@ const addedLines = (mergeBase) => {
   let basePath = null;
   let current = null;
   for (const line of diff.split("\n")) {
-    if (line.startsWith("--- ")) {
+    // Exact renames have no ---/+++ headers or added lines.
+    if (line.startsWith("rename from ")) {
+      basePath = line.slice("rename from ".length);
+    } else if (line.startsWith("--- ")) {
       basePath = line.startsWith("--- a/") ? line.slice(6) : null;
-    } else if (line.startsWith("+++ b/")) {
+    } else if (line.startsWith("+++ b/") || line.startsWith("rename to ")) {
+      const file = line.startsWith("+++ b/")
+        ? line.slice(6)
+        : line.slice("rename to ".length);
       current = { basePath, lines: new Set() };
-      byFile.set(path.resolve(repoRoot, line.slice(6)), current);
+      byFile.set(path.resolve(repoRoot, file), current);
     } else if (current && line.startsWith("@@")) {
       const [, start, count = "1"] = line.match(/\+(\d+)(?:,(\d+))?/);
       for (let n = 0; n < Number(count); n += 1) {
@@ -96,7 +102,7 @@ const addedLines = (mergeBase) => {
 
 const { ref, mergeBase } = resolveMergeBase();
 const changed = addedLines(mergeBase);
-const files = [...changed.keys()].filter((f) => changed.get(f).lines.size > 0);
+const files = [...changed.keys()];
 
 const eslint = new ESLint({
   cwd: frontendRoot,
@@ -105,8 +111,8 @@ const eslint = new ESLint({
 });
 const results = files.length ? await eslint.lintFiles(files) : [];
 
-// An import rule fires on the whole import line, so reformatting or extending an
-// existing import would look new. Count it only if the base file didn't have it.
+// Editing the module path of a multiline import can flag an unchanged specifier
+// line. Compare imports file-wide; keep styling checks scoped to added lines.
 const isImportMessage = ({ ruleId, nodeType }) =>
   ruleId === "no-restricted-imports" ||
   (ruleId === "no-restricted-syntax" && /^(Import|Export)/.test(nodeType));
@@ -127,7 +133,8 @@ let warnings = 0;
 for (const result of results) {
   const { basePath, lines } = changed.get(result.filePath);
   let hits = result.messages.filter(
-    (m) => m.message.includes("[DS]") && lines.has(m.line),
+    (m) =>
+      m.message.includes("[DS]") && (isImportMessage(m) || lines.has(m.line)),
   );
   if (hits.some(isImportMessage)) {
     const before = await baseImportMessages(basePath);
@@ -144,6 +151,6 @@ for (const result of results) {
 }
 
 console.log(
-  `\nlint:ds:changed: ${count} design-system error(s) and ${warnings} warning(s) on lines added since ${ref} (${mergeBase.slice(0, 9)}), ${files.length} file(s) checked.`,
+  `\nlint:ds:changed: ${count} design-system error(s) and ${warnings} warning(s) introduced since ${ref} (${mergeBase.slice(0, 9)}), ${files.length} file(s) checked.`,
 );
 process.exit(count ? 1 : 0);

@@ -1,7 +1,6 @@
 // Future AGI Design System guard.
-// `yarn lint:ds` checks all of src; `yarn lint:ds:changed` checks only the lines a
-// branch adds, which is what CI runs. Each rule flags styling that should come from
-// the theme or a shared component instead of being written by hand on a screen.
+// `yarn lint:ds` checks all of src. CI runs `yarn lint:ds:changed`, which checks
+// for new restricted imports in changed files and style violations on added lines.
 // Real exceptions carry `eslint-disable-next-line no-restricted-syntax -- ds: <reason>`
 // with a reason from scripts/ds-optouts.mjs.
 
