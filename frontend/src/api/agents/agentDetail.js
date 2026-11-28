@@ -237,15 +237,31 @@ export function useStoredAgent(agentId, versionId, { enabled = true } = {}) {
   });
 }
 
+const ENVIRONMENTS_PAGE = 100;
+
+// Every page, newest first: the tab lists all that the agent's count counts, so a new
+// build never pushes an older one off it. A row a new build pushed onto the next page
+// is kept once.
+const listAgentEnvironments = async (agentId) => {
+  const rows = new Map();
+  for (let page = 1; ; page += 1) {
+    const data = await listHarnessEnvironments({
+      agentDefinitionId: agentId,
+      page,
+      limit: ENVIRONMENTS_PAGE,
+    });
+    const results = data?.results ?? [];
+    for (const row of results) if (!rows.has(row.id)) rows.set(row.id, row);
+    if (!results.length || page >= (data?.total_pages ?? page)) {
+      return { ...data, results: [...rows.values()] };
+    }
+  }
+};
+
 export function useAgentEnvironments(agentId) {
   return useQuery({
     queryKey: ["agents", "environments", agentId],
-    queryFn: () =>
-      listHarnessEnvironments({
-        agentDefinitionId: agentId,
-        page: 1,
-        limit: 100,
-      }),
+    queryFn: () => listAgentEnvironments(agentId),
     select: (d) =>
       (d?.results ?? []).map((e) => ({
         id: e.id,
