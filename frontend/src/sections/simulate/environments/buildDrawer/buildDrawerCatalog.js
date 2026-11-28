@@ -351,6 +351,9 @@ const ALL_CATALOG_ITEMS = [
   ),
 ];
 
+// The SDK rows on their own, for pages that list them without the drawer.
+export const FRAMEWORK_ITEMS = FRAMEWORKS;
+
 const LIVE_IN_PROD = new Set([
   "github",
   "upload",

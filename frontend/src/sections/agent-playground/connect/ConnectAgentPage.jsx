@@ -7,12 +7,26 @@ import Iconify from "src/components/iconify";
 import PageHeader from "src/components/page-header";
 import SideDrawer from "src/sections/simulate/environments/components/SideDrawer";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
-import ConnectCatalog from "./ConnectCatalog";
+import ConnectSection from "src/sections/simulate/environments/buildDrawer/ConnectSection";
+import BrandLogoTile from "src/sections/simulate/environments/buildDrawer/LogoTile";
 import GitHubConnectFlow from "./GitHubConnectFlow";
+import PlatformConnectFlow from "./PlatformConnectFlow";
+import SoonFrameworks from "./SoonFrameworks";
 import UploadConnectFlow from "./UploadConnectFlow";
-import { LogoTile } from "./connectBits";
-import { GITHUB_SOURCE, UPLOAD_SOURCE } from "./connectSources";
-import { clearConnectDraft, hasConnectDraft } from "./connectDraft";
+import UploadDropZone from "./UploadDropZone";
+import {
+  AGENT_CONNECT_ITEMS,
+  GITHUB_SOURCE,
+  PLATFORM_SOURCES,
+  SOON_FRAMEWORKS,
+  UPLOAD_SOURCE,
+  connectItemOf,
+} from "./connectSources";
+import {
+  clearConnectDraft,
+  hasConnectDraft,
+  saveConnectDraft,
+} from "./connectDraft";
 
 export default function ConnectAgentPage() {
   const navigate = useNavigate();
@@ -20,7 +34,9 @@ export default function ConnectAgentPage() {
   const source = params.get("source");
   const onGitHub = source === GITHUB_SOURCE;
   const onUpload = source === UPLOAD_SOURCE;
-  const drawerOpen = onGitHub || onUpload;
+  const onPlatform = PLATFORM_SOURCES.includes(source);
+  const drawerOpen = onGitHub || onUpload || onPlatform;
+  const opened = drawerOpen ? connectItemOf(source) : null;
   const [confirmClose, setConfirmClose] = useState(false);
   const close = () => {
     if (hasConnectDraft(source)) {
@@ -28,6 +44,12 @@ export default function ConnectAgentPage() {
       return;
     }
     setParams({});
+  };
+  // A folder dropped on the page is already uploaded and being read, so the
+  // drawer opens on the agents it found, not on picking a folder again.
+  const openScanned = ({ folder, scanId }) => {
+    saveConnectDraft({ stage: "agents", folder, scanId }, UPLOAD_SOURCE);
+    setParams({ source: UPLOAD_SOURCE });
   };
   const discard = () => {
     clearConnectDraft(source);
@@ -53,9 +75,14 @@ export default function ConnectAgentPage() {
         title="New agent"
         description="Connect it from where it runs today."
       />
-      <ConnectCatalog
-        pickedId={source}
+      <ConnectSection
+        head={false}
+        items={AGENT_CONNECT_ITEMS}
         onPick={(item) => setParams({ source: item.id })}
+        sdkSlot={<SoonFrameworks items={SOON_FRAMEWORKS} />}
+        uploadSlot={
+          <UploadDropZone onScanned={openScanned} disabled={drawerOpen} />
+        }
       />
       <SideDrawer open={drawerOpen} onClose={close} width={960}>
         {drawerOpen && (
@@ -80,20 +107,19 @@ export default function ConnectAgentPage() {
                 flexShrink: 0,
               }}
             >
-              <LogoTile
-                icon={
-                  onUpload
-                    ? "solar:upload-minimalistic-linear"
-                    : "simple-icons:github"
-                }
+              <BrandLogoTile
+                logo={opened?.logo}
+                icon={opened?.icon}
                 size={32}
               />
               <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>
-                {onUpload ? "Upload a folder" : "GitHub"}
+                {onUpload ? "Upload a folder" : opened?.name}
               </Typography>
             </Stack>
             <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              {onUpload ? (
+              {onPlatform ? (
+                <PlatformConnectFlow key={source} platform={source} />
+              ) : onUpload ? (
                 <UploadConnectFlow />
               ) : (
                 <GitHubConnectFlow

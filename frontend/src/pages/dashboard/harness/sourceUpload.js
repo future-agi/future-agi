@@ -55,13 +55,21 @@ export function guessEntryFile(fileNames = []) {
   return "";
 }
 
+// A picked folder's files carry webkitRelativePath ("agent/main.py"); a
+// dropped folder's carry react-dropzone's path ("/agent/main.py" or
+// "./agent/main.py") instead. Both become "agent/main.py".
+export const relativePathOf = (file) =>
+  file.webkitRelativePath ||
+  (typeof file.path === "string" && file.path.replace(/^\.?\//, "")) ||
+  file.name;
+
 export const MAX_UPLOAD_FILES = 1000;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 export function prepareSourceFolder(selectedFiles) {
   const selected = Array.from(selectedFiles || []);
   const files = selected.filter((file) => {
-    const parts = (file.webkitRelativePath || file.name).split("/");
+    const parts = relativePathOf(file).split("/");
     const leaf = parts.at(-1).toLowerCase();
     const environmentFile =
       (leaf === ".env" || leaf.startsWith(".env.")) &&
@@ -81,9 +89,7 @@ export function prepareSourceFolder(selectedFiles) {
     );
   if (totalBytes > MAX_UPLOAD_BYTES)
     throw new Error("Source uploads support at most 200 MiB.");
-  const originalPaths = files.map(
-    (file) => file.webkitRelativePath || file.name,
-  );
+  const originalPaths = files.map(relativePathOf);
   const root = originalPaths[0]?.split("/")[0] || "uploaded-agent";
   const stripRoot = originalPaths.every((path) => path.startsWith(`${root}/`));
   return {

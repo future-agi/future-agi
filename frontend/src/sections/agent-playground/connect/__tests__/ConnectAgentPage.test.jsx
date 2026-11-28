@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Routes } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
-import { fireEvent, renderWithRouter, screen, within } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, renderWithRouter, screen, waitFor, within } from "src/utils/test-utils";
 import ConnectAgentPage from "../ConnectAgentPage";
 
 const mockNavigate = vi.fn();
@@ -25,6 +26,12 @@ vi.mock("src/api/agents/agentConnect", () => ({
   useStartScan: () => ({ mutate: mockStartScan, isPending: false }),
   useAgentScan: () => ({ data: null, isLoading: false, isError: false }),
   useConnectAgent: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+const mockUpload = vi.hoisted(() => vi.fn());
+vi.mock("src/pages/dashboard/harness/sourceUpload", async (importOriginal) => ({
+  ...(await importOriginal()),
+  uploadSourceFolder: (...args) => mockUpload(...args),
 }));
 
 vi.mock("src/hooks/use-debounce", () => ({ useDebounce: (value) => value }));
@@ -61,15 +68,17 @@ const REPOSITORY = {
 
 const renderPage = (route = "/dashboard/agents/connect") =>
   renderWithRouter(
-    <HelmetProvider>
-      <Routes>
-        <Route path="/dashboard/agents/connect" element={<ConnectAgentPage />} />
-      </Routes>
-    </HelmetProvider>,
+    <QueryClientProvider client={new QueryClient()}>
+      <HelmetProvider>
+        <Routes>
+          <Route path="/dashboard/agents/connect" element={<ConnectAgentPage />} />
+        </Routes>
+      </HelmetProvider>
+    </QueryClientProvider>,
     { route },
   );
 
-const row = (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
+const row = (name) => screen.getByRole("button", { name: `Connect ${name}` });
 
 describe("ConnectAgentPage", () => {
   beforeEach(() => {
@@ -81,39 +90,82 @@ describe("ConnectAgentPage", () => {
     mockBranches.mockReturnValue({ data: [], isFetching: false });
   });
 
-  it("opens on Code, where only GitHub can be connected", () => {
+  it("opens on Code: GitHub, the SDK rows coming soon, and the folder drop", () => {
     renderPage();
 
     expect(screen.getByText("From a repository")).toBeInTheDocument();
     expect(row("GitHub")).toBeEnabled();
     expect(within(row("GitHub")).getByText("Install the GitHub app, then pick the repository")).toBeInTheDocument();
-    for (const name of ["GitLab", "Bitbucket", "LangGraph", "CrewAI"]) {
-      expect(row(name)).toBeDisabled();
+    for (const name of ["GitLab", "Bitbucket", "OpenAI, Anthropic or Gemini calls"]) {
+      expect(screen.queryByText(name)).toBeNull();
     }
-    expect(
-      screen.getAllByLabelText("Coming soon", { selector: "span" }).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /^LangGraph/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^CrewAI/ })).toBeDisabled();
+    expect(screen.getAllByLabelText("Coming soon", { selector: "span" })).toHaveLength(17);
+    expect(screen.getByText("Choose a folder or drag & drop it here")).toBeInTheDocument();
+    expect(screen.queryByText(/No agent yet/)).toBeNull();
   });
 
-  it("shows hosted platforms as coming soon", () => {
+  it("uploads a dropped folder on the page and opens on the agents in it", async () => {
+    sessionStorage.clear();
+    mockUpload.mockResolvedValue({ source_id: "src-1" });
+    mockStartScan.mockImplementation((_source, { onSuccess }) => onSuccess({ id: "scan-1" }));
+    const { container } = renderPage();
+    const file = new File(["x"], "main.py");
+    Object.defineProperty(file, "webkitRelativePath", { value: "agent/main.py" });
+
+    fireEvent.change(container.querySelector('input[type="file"][webkitdirectory]'), {
+      target: { files: [file] },
+    });
+
+    expect(await screen.findByRole("button", { name: "Next" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Find agents" })).toBeNull();
+    await waitFor(() =>
+      expect(document.querySelectorAll('input[type="file"][webkitdirectory]')).toHaveLength(0),
+    );
+  });
+
+  it("connects Vapi and Retell AI as hosted platforms, nothing coming soon", () => {
     renderPage();
 
     fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
 
-    expect(row("Vapi")).toBeDisabled();
-    expect(within(row("Vapi")).getByText("Coming soon")).toBeInTheDocument();
+    expect(row("Vapi")).toBeEnabled();
+    expect(row("Retell AI")).toBeEnabled();
+    expect(screen.queryByText("ElevenLabs")).toBeNull();
+    expect(screen.queryByText("Coming soon")).toBeNull();
+  });
+
+  it("connects a LiveKit project or a phone number under other ways", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Other ways/ }));
+
+    expect(row("LiveKit project")).toBeEnabled();
+    expect(row("Phone number")).toBeEnabled();
+    expect(screen.queryByText("Coming soon")).toBeNull();
+  });
+
+  it("opens a hosted platform's form in the drawer", () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
+
+    fireEvent.click(row("Vapi"));
+
+    expect(screen.getByRole("textbox", { name: "Assistant ID" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect agent" })).toBeDisabled();
   });
 
   it("searches every way in and says when nothing matches", () => {
     renderPage();
     const search = screen.getByRole("textbox", { name: "Search ways to connect" });
 
-    fireEvent.change(search, { target: { value: "repo" } });
-    expect(row("GitHub")).toBeInTheDocument();
-    expect(row("GitLab")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "voice" } });
+    expect(row("Vapi")).toBeInTheDocument();
+    expect(row("Phone number")).toBeInTheDocument();
 
     fireEvent.change(search, { target: { value: "zzz" } });
-    expect(screen.getByText('Nothing matches "zzz"')).toBeInTheDocument();
+    expect(screen.getByText(/No way to connect matches/)).toBeInTheDocument();
   });
 
   it("asks to install the GitHub App and comes back here afterwards", () => {

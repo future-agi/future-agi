@@ -22,6 +22,24 @@ describe("prepareSourceFolder", () => {
     expect(result.totalBytes).toBe(40);
   });
 
+  it("reads a dropped folder's paths the same as a picked one", () => {
+    const dropped = (path) => ({
+      name: path.split("/").at(-1),
+      size: 1,
+      webkitRelativePath: "",
+      path,
+    });
+    const result = prepareSourceFolder([
+      dropped("/agent/main.py"),
+      dropped("./agent/tools/search.py"),
+      dropped("/agent/.env"),
+    ]);
+
+    expect(result.name).toBe("agent");
+    expect(result.paths).toEqual(["main.py", "tools/search.py"]);
+    expect(result.excludedCount).toBe(1);
+  });
+
   it("rejects a folder containing only excluded files", () => {
     expect(() => prepareSourceFolder([file("agent/.env")])).toThrow(
       "no uploadable source files",
