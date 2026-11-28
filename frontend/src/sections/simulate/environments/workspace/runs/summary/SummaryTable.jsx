@@ -18,6 +18,7 @@ import StatusChip from "../StatusChip";
 import { stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
+import LockedVersionSplitTag from "../../run/LockedVersionSplitTag";
 import { neutralCheckboxSx } from "../detail/trace/traceTable.constants";
 import { COMPARE_COPY } from "../../workspace.constants";
 import { format } from "../detail/analytics/DashboardCharts";
@@ -209,6 +210,10 @@ function SummaryRow({
                 {row.label}
                 {sub ? ` · ${sub}` : ""}
               </Typography>
+              <LockedVersionSplitTag
+                lockedVersion={row.lockedVersion}
+                split={row.split}
+              />
               {row.agentDiffers && (
                 <AgentDiffersTag
                   agentVersion={row.pinnedAgentVersion}

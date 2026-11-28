@@ -5,6 +5,7 @@ import IconifyJs from "src/components/iconify";
 import StatusBadgeJs from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
+  currentLockedVersion as currentLockedVersionJs,
   useEnvironmentVersions,
   useLockPreview as useLockPreviewJs,
   useLockVersion as useLockVersionJs,
@@ -98,6 +99,11 @@ const useLockVersion = useLockVersionJs as unknown as (
 const useUnlockVersion = useUnlockVersionJs as unknown as (
   envId: string,
 ) => LockMutation<{ lockedVersionId: string }>;
+const currentLockedVersion = currentLockedVersionJs as unknown as (
+  lockedVersions: LockedVersion[],
+  environmentVersionId: string | null,
+  suiteVersionId: string | null,
+) => LockedVersion | null;
 const Iconify = IconifyJs as unknown as ComponentType<{
   icon: string;
   width: number;
@@ -137,11 +143,10 @@ export default function LockedVersionCard({
     "environment" | "suite",
     VersionRow[]
   >;
-  const current = lockedVersions.find(
-    (lockedVersion) =>
-      !lockedVersion.unlockedAt &&
-      lockedVersion.environmentVersionId === lock.environmentVersionId &&
-      lockedVersion.suiteVersionId === lock.suiteVersionId,
+  const current = currentLockedVersion(
+    lockedVersions,
+    lock.environmentVersionId,
+    lock.suiteVersionId,
   );
   const earlier = lockedVersions.filter(
     (lockedVersion) => lockedVersion !== current,

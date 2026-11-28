@@ -1367,6 +1367,54 @@ describe("RunDetail", () => {
     stubTickable = true;
   });
 
+  it("re-runs a split run on its split", async () => {
+    stubTickable = false;
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        environmentVersion: { id: "e1", label: "v1" },
+        suiteVersion: { id: "s2", label: "v2" },
+        split: "test",
+        lockedVersion: { id: "lv1", label: "2026.11.1", locked: true },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    await user.click(screen.getByRole("button", { name: /Run again/ }));
+    expect(onStartRun.mock.calls[0][2].initialPicks).toMatchObject({
+      environment: "e1",
+      suite: "s2",
+      split: "test",
+    });
+    stubTickable = true;
+  });
+
+  it("names the run's locked version and split in the sub-line's hover card", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e2", label: "v2" },
+        suiteVersion: { id: "s3", label: "v3" },
+        split: "train",
+        lockedVersion: { id: "lv1", label: "2026.11.1", locked: true },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    await userEvent.setup().hover(screen.getByText(/^agent v4 · env v2/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /scenarios v3 · lock 2026\.11\.1 · train/,
+    );
+  });
+
   it("re-runs ticked calls with the run's versions pre-selected", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();

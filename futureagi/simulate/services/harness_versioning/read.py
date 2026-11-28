@@ -166,6 +166,19 @@ def version_refs(
     }
 
 
+def locked_version_ref(
+    locked_version_id: Any, label: str | None, unlocked_at: Any
+) -> dict[str, Any] | None:
+    """A run's locked version as ``{id, label, locked}``, or ``None`` without one."""
+    if locked_version_id is None:
+        return None
+    return {
+        "id": str(locked_version_id),
+        "label": label,
+        "locked": unlocked_at is None,
+    }
+
+
 def _summary_line(text: str | None) -> str:
     lines = (text or "").strip().splitlines()
     return (lines[0] if lines else "")[:1024]
@@ -893,8 +906,10 @@ def run_version_labels(
     Read from the run job's own pins only, never the environment's defaults; an
     unpinned run is absent, so callers show it as before versioning. The newest live
     pinned job wins, as in the run's results. ``agent_differs`` says the run's agent is
-    not the one its environment version was built with. With ``readiness``, each also
-    carries ``capability_snapshot``: the readiness the run was created with, and
+    not the one its environment version was built with. ``split`` is the split the run
+    ran, and ``locked_version`` the locked version it recorded at start; ``locked``
+    says whether that one is locked still. With ``readiness``, each also carries
+    ``capability_snapshot``: the readiness the run was created with, and
     ``readiness_selection``: the cases it held back.
     """
     ids = [one for one in execution_ids if one]
@@ -915,6 +930,10 @@ def run_version_labels(
         "agent_version__version_name",
         "agent_version__version_number",
         "environment_version__agent_version_id",
+        "split",
+        "locked_version_id",
+        "locked_version__label",
+        "locked_version__unlocked_at",
     )
     from simulate.services.harness_readiness.report import snapshot_as_read
 
@@ -946,6 +965,10 @@ def run_version_labels(
                 else None
             ),
             "agent_differs": bool(agent_id and built_with and agent_id != built_with),
+            "split": split,
+            "locked_version": locked_version_ref(
+                locked_version_id, locked_label, unlocked_at
+            ),
             **(
                 {
                     "capability_snapshot": snapshot_as_read(
@@ -969,5 +992,9 @@ def run_version_labels(
             agent_name,
             agent_number,
             built_with,
+            split,
+            locked_version_id,
+            locked_label,
+            unlocked_at,
         ) in rows
     }

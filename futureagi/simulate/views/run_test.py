@@ -5639,6 +5639,8 @@ def _version_labels(labels: dict[str, Any], execution_id: Any) -> dict[str, Any]
         "suite_version": held.get("suite_version"),
         "pinned_agent_version": held.get("agent_version"),
         "agent_differs": bool(held.get("agent_differs")),
+        "split": held.get("split"),
+        "locked_version": held.get("locked_version"),
     }
 
 

@@ -342,6 +342,92 @@ def _locked_version(
 
 
 @dataclass(frozen=True)
+class SplitSelection:
+    """The locked version a run of a split records, and the scenarios it runs."""
+
+    locked_version: HarnessLockedVersion
+    scenario_keys: list[str]
+
+
+def select_split(
+    environment: HostedHarnessJob,
+    pins: ResolvedPins | None,
+    split: str,
+    scenario_keys: list[str] | None,
+    *,
+    locked_version: HarnessLockedVersion | None = None,
+) -> SplitSelection:
+    """What a run of ``pins`` and ``split`` runs: ``scenario_keys``, each of which must
+    be in the split, or else every scenario of the split in suite order. Only a pair
+    of versions that is locked now has splits to run. The split holds the lock's
+    roster members of it, less the ones the run can't play now: which tools reach
+    production follows the run's bundle, which the lock doesn't freeze. A split with
+    none left to play is refused. A repeated request passes the ``locked_version`` its
+    run recorded, which counts even once unlocked or relocked."""
+    environment_version = pins.environment_version if pins is not None else None
+    suite_version = pins.suite_version if pins is not None else None
+    if (
+        locked_version is None
+        and environment_version is not None
+        and suite_version is not None
+    ):
+        locked_version = _locked_version(environment_version.id, suite_version.id)
+    if locked_version is None:
+        from simulate.services.harness_versioning.read import _label, _message_label
+
+        pair = "these versions"
+        if environment_version is not None and suite_version is not None:
+            environment_label = _label(environment_version.version_number)
+            suite_label = _label(suite_version.version_number)
+            pair = (
+                f"environment {_message_label(environment_label)}, "
+                f"scenarios {_message_label(suite_label)}"
+            )
+        raise HostedHarnessError(
+            "split_needs_locked_version",
+            f"Lock {pair} to run their train and test splits.",
+            status_code=422,
+        )
+    splits = locked_version_members(locked_version.id)
+    # Every member of the suite, not the split's only: a member pairs by its name only
+    # when no member has that key, so the other split's keys must be seen.
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=locked_version.suite_version_id
+        )
+        .order_by("number")
+        .values_list("scenario_id", "scenario_key", "content__name")
+    )
+    blocked = _blocked_members(members, production_bound(environment, pins))
+    keys = [
+        key
+        for scenario_id, key, _ in members
+        if splits.get(scenario_id) == split and scenario_id not in blocked
+    ]
+    if not keys:
+        raise HostedHarnessError(
+            "split_empty",
+            f"The {split} split of lock {locked_version.label} has no scenario this"
+            " run can play.",
+            status_code=422,
+            details={"split": split},
+        )
+    if not scenario_keys:
+        return SplitSelection(locked_version, keys)
+    outside = [key for key in scenario_keys if key not in keys]
+    if outside:
+        raise HostedHarnessError(
+            "split_scenario_outside",
+            ", ".join(outside)
+            + (" is" if len(outside) == 1 else " are")
+            + f" not in the {split} split of lock {locked_version.label}.",
+            status_code=422,
+            details={"split": split, "scenario_keys": outside},
+        )
+    return SplitSelection(locked_version, list(scenario_keys))
+
+
+@dataclass(frozen=True)
 class LockedVersionSplits:
     """A locked version's roster: its members' splits, by scenario key."""
 
@@ -357,20 +443,25 @@ class LockedVersionSplits:
 
 
 def run_locked_version(run: HostedHarnessJob) -> LockedVersionSplits | None:
-    """The locked version of ``run``'s own pair, with its splits; None when the pair
-    isn't locked. An unlocked one doesn't count. An Epoch from the run holds back its
-    test split: its check runs use the same pair. The launch reads it once and records
-    it, so an unlock mid-Epoch changes nothing."""
-    # Once a run job names its own locked version, that one wins over the pair's.
-    environment_version_id, suite_version_id = (
-        run.environment_version_id,
-        run.suite_version_id,
-    )
-    if environment_version_id is None or suite_version_id is None:
-        return None
-    locked_version = _locked_version(environment_version_id, suite_version_id)
-    if locked_version is None:
-        return None
+    """The locked version ``run`` ran under, with its splits. A run of a split names its
+    own, which wins even once unlocked or relocked: the Epoch must hold back the split
+    that run used. Any other run takes its pair's locked version; None when the pair
+    isn't locked, and an unlocked one doesn't count. An Epoch from the run holds back
+    its test split: its check runs use the same pair. The launch reads it once and
+    records it, so an unlock mid-Epoch changes nothing."""
+    if run.locked_version_id is not None:
+        locked_version = HarnessLockedVersion.no_workspace_objects.get(
+            id=run.locked_version_id
+        )
+        suite_version_id = locked_version.suite_version_id
+    else:
+        if run.environment_version_id is None or run.suite_version_id is None:
+            return None
+        found = _locked_version(run.environment_version_id, run.suite_version_id)
+        if found is None:
+            return None
+        locked_version = found
+        suite_version_id = run.suite_version_id
     # The lock's roster, as it locked them: a later rule, an edit or a new default
     # never moves a scenario into or out of its test split.
     members = locked_version_members(locked_version.id)

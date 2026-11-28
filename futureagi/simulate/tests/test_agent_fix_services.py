@@ -575,6 +575,51 @@ class TestALockedVersion:
         assert (found.id, found.label) == (locked.id, "2026.11.1")
         assert found.test_keys == frozenset([KEYS[0]])
 
+    def test_an_epoch_from_a_split_run_holds_back_the_lock_that_run_recorded(
+        self, source_run
+    ):
+        # The run ran under lock A, whose roster holds only KEYS[0], in its test split.
+        recorded = _locked_version(source_run, test=[KEYS[0]], label="2026.11.1")
+        source_run.locked_version = recorded
+        source_run.split = TaskSplit.TEST
+        source_run.save(update_fields=["locked_version", "split"])
+        # Then the pair was unlocked and relocked as B, whose roster adds KEYS[1] to the
+        # test split. KEYS[0] keeps the split A first gave it.
+        now = timezone.now()
+        HarnessLockedVersion.no_workspace_objects.filter(id=recorded.id).update(
+            unlocked_at=now
+        )
+        relocked = HarnessLockedVersion.no_workspace_objects.create(
+            environment=source_run.environment,
+            environment_version_id=source_run.environment_version_id,
+            suite_version_id=source_run.suite_version_id,
+            label="2026.11.2",
+            locked_at=now,
+            train_count=0,
+            test_count=2,
+        )
+        for key in KEYS:
+            member = HarnessSuiteMember.no_workspace_objects.get(
+                suite_version_id=source_run.suite_version_id, scenario_key=key
+            )
+            if key == KEYS[1]:
+                HarnessTaskSplit.no_workspace_objects.create(
+                    scenario_id=member.scenario_id,
+                    split=TaskSplit.TEST,
+                    first_locked_version=relocked,
+                )
+            HarnessLockedVersionMember.no_workspace_objects.create(
+                locked_version=relocked,
+                scenario_id=member.scenario_id,
+                split=TaskSplit.TEST,
+            )
+
+        found = run_locked_version(source_run)
+
+        # The run's own lock wins over the pair's current one, though it was unlocked.
+        assert (found.id, found.label) == (recorded.id, "2026.11.1")
+        assert found.test_keys == frozenset([KEYS[0]])
+
     def test_an_unlocked_version_holds_back_nothing_of_its_split(self, source_run):
         _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]], unlocked=True)
 

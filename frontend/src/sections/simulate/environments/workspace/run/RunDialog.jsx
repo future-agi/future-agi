@@ -16,6 +16,7 @@ import {
 import {
   VERSION_PIECES,
   isVersioningDisabled,
+  currentLockedVersion,
   useDrafts,
   useEnvironmentVersions,
   useRunPlan,
@@ -43,13 +44,17 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
+const SPLITS = ["train", "test"];
+const ALL = "all";
+
 const optionLabel = (version) =>
   version.isDefault ? `${named(version)} (${COPY.default})` : named(version);
 
 /**
  * Pick the agent, environment and scenario versions a run uses, see what to
  * watch out for, and start it. Only the versions the user changed are sent;
- * the rest run the environment's defaults at submit time.
+ * the rest run the environment's defaults at submit time. When the picked
+ * pair is locked, the run can take its train or test split.
  */
 export default function RunDialog({
   open,
@@ -69,9 +74,17 @@ export default function RunDialog({
   const { data: drafts } = useDrafts(env?.id, {
     enabled: open && Boolean(env?.versioning?.enabled),
   });
-  const [overrides, setOverrides] = useState(() => ({
-    ...(initialPicks || {}),
-  }));
+  const [overrides, setOverrides] = useState(() =>
+    Object.fromEntries(
+      PICKABLE.filter((piece) => initialPicks?.[piece]).map((piece) => [
+        piece,
+        initialPicks[piece],
+      ]),
+    ),
+  );
+  // The split the user wants; it applies only while the picked pair is locked.
+  const [split, setSplit] = useState(() => initialPicks?.split || null);
+  const [splitTouched, setSplitTouched] = useState(false);
   // A re-run's versions stay picked once their plan resolves: "checking" until
   // then, "fellBack" to the defaults when they can't run now.
   const [rerun, setRerun] = useState(() =>
@@ -112,10 +125,18 @@ export default function RunDialog({
 
   const suite = options.suite.find((one) => one.id === selected.suite);
   const runAll = scenarioIds === undefined;
-  // Run-all names no scenarios: the server runs the picked suite whole. With versioning on that is a saved version,
-  // whose scenarios say how many run.
+  const lockedVersion = currentLockedVersion(
+    data?.lockedVersions,
+    selected.environment,
+    selected.suite,
+  );
+  const runSplit = lockedVersion ? split : null;
+  // Run-all names no scenarios: the server runs the picked suite whole, or the
+  // split's scenarios of it. With versioning on that is a saved version, whose
+  // scenarios say how many run.
   const needsMembers =
     runAll &&
+    !runSplit &&
     Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
   const membersWanted = Boolean(selected.suite) && (!runAll || needsMembers);
   const members = useSuiteMembers(env?.id, selected.suite, {
@@ -134,6 +155,7 @@ export default function RunDialog({
   const plan = useRunPlan(env?.id, picks, {
     enabled: open && !versions.isLoading,
     scenarioKeys: runIds ?? null,
+    split: runSplit,
   });
   const allWarnings = plan.data?.warnings || [];
   const changed = allWarnings.filter(
@@ -143,18 +165,23 @@ export default function RunDialog({
     (one) => one.code !== CHANGED_SINCE_PROVED,
   );
   const versioned = Boolean(env?.versioning?.enabled);
+  // A whole split runs the scenarios its plan names: the lock's, less those the
+  // run can't play now.
+  const splitKeys =
+    runAll && runSplit ? plan.data?.scenario_keys ?? null : null;
   // What readiness holds back for these picks and scenarios, and how many run.
-  const selectionKeys = runIds ?? null;
+  const selectionKeys = runIds ?? splitKeys;
   // A selection is asked about only once settled: the suite's scenarios loaded and at least one picked, else the
-  // server refuses the keys.
+  // server refuses the keys. A split waits for its plan.
+  let selectionSettled = runAll;
+  if (runAll && runSplit) selectionSettled = Boolean(splitKeys?.length);
+  else if (!runAll)
+    selectionSettled =
+      !(membersWanted && !memberKeys) && selectionKeys.length > 0;
   const readiness = useReadiness(env?.id, picks, {
     keys: selectionKeys,
     trials,
-    enabled:
-      open &&
-      versioned &&
-      Boolean(data) &&
-      (runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
+    enabled: open && versioned && Boolean(data) && selectionSettled,
   });
   const selection = readiness.data?.selection;
   const readyView = useMemo(
@@ -189,6 +216,7 @@ export default function RunDialog({
       setAgentFellBack(true);
     } else if (stale.length || refusedPlan) {
       setOverrides({});
+      setSplit(null);
       setAgentFellBack(false);
       setRerun("fellBack");
     } else if (plan.data || plan.isError) {
@@ -207,7 +235,9 @@ export default function RunDialog({
   ]);
 
   let blocked = null;
-  if (needsMembers && memberKeys?.length === 0) {
+  if (runAll && runSplit && lockedVersion[runSplit] === 0) {
+    blocked = COPY.split.empty(runSplit);
+  } else if (needsMembers && memberKeys?.length === 0) {
     blocked = COPY.emptySuite(named(suite));
   } else if (!runAll && scenarioIds.length > 0 && runIds.length === 0) {
     blocked = COPY.noneInSuite(named(suite));
@@ -275,8 +305,40 @@ export default function RunDialog({
   // a new request.
   const submit = () => {
     if (!canSubmit) return;
-    onSubmit?.(picks, runIds, selected, seedValue);
+    onSubmit?.(picks, runIds, selected, seedValue, runSplit);
   };
+
+  // A re-run's split that its versions can no longer take.
+  const splitDropped =
+    Boolean(initialPicks?.split) &&
+    !splitTouched &&
+    rerun !== "checking" &&
+    Boolean(data) &&
+    !runSplit;
+
+  const splitField = lockedVersion && (
+    <TextField
+      select
+      fullWidth
+      size="small"
+      label={COPY.split.label}
+      value={runSplit || ALL}
+      onChange={(e) => {
+        setSplit(e.target.value === ALL ? null : e.target.value);
+        setSplitTouched(true);
+        setDismissedError(error);
+      }}
+      disabled={submitting}
+      InputLabelProps={{ shrink: true }}
+    >
+      <MenuItem value={ALL}>{COPY.split.all}</MenuItem>
+      {SPLITS.map((one) => (
+        <MenuItem key={one} value={one}>
+          {COPY.split.option(one, lockedVersion[one])}
+        </MenuItem>
+      ))}
+    </TextField>
+  );
 
   const pickerField = (piece) => (
     <TextField
@@ -311,6 +373,14 @@ export default function RunDialog({
     const repeats = trials > 1 ? ` ${COPY.trials(trials)}` : "";
     if (blocked) return null;
     if (!runAll) return `${COPY.selectedScenarios(runIds.length)}${repeats}`;
+    if (runSplit) {
+      const line = COPY.split.line(
+        runSplit,
+        splitKeys?.length ?? lockedVersion[runSplit],
+        lockedVersion.label,
+      );
+      return `${line}${repeats}`;
+    }
     if (!selected.suite) return null;
     if (!needsMembers)
       return `${COPY.allCurrentScenarios(named(suite))}${repeats}`;
@@ -354,9 +424,15 @@ export default function RunDialog({
     return (
       <>
         {PICKABLE.map(pickerField)}
+        {splitField}
         {rerun === "fellBack" && (
           <Alert severity="info" data-testid="rerun-fallback">
             {agentFellBack ? COPY.rerunAgentFallback : COPY.rerunFallback}
+          </Alert>
+        )}
+        {splitDropped && (
+          <Alert severity="info" data-testid="rerun-split-fallback">
+            {COPY.split.rerunFallback}
           </Alert>
         )}
         {line && (
@@ -510,13 +586,14 @@ RunDialog.propTypes = {
   // Undefined runs every scenario.
   scenarioIds: PropTypes.arrayOf(PropTypes.string),
   trials: PropTypes.number,
-  // {agent, environment, suite} → version id, pre-selected (a re-run's versions).
+  // {agent, environment, suite} → version id and the split ("train" or
+  // "test"), pre-selected (a re-run's versions and split).
   initialPicks: PropTypes.objectOf(PropTypes.string),
   initialSeed: PropTypes.string,
   onClose: PropTypes.func,
   // Opens the agent's versions for a fix made on the agent; absent where that can't open.
   onOpenAgentVersions: PropTypes.func,
-  // (picks, scenarioIds, resolved version ids, seed or null)
+  // (picks, scenarioIds, resolved version ids, seed or null, split or null)
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
   error: PropTypes.object,

@@ -32,6 +32,7 @@ from simulate.selectors.held_back import (
     detail_without,
     members_without,
     refusal_body,
+    refuse_coding_agent_split,
     verify_result,
     verify_run,
 )
@@ -1726,10 +1727,15 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if job is None:
             return self._not_found()
         # A coding agent may plan only on the default suite, and never reads its held-back cases.
+        refuse_coding_agent_split(request, query.get("split"))
         hidden = _held_back_from(request, job, query.get("suite_version_id"))
         return Response(
             preview_run(
-                job, picks, scenario_keys=query.get("scenario_keys"), hidden=hidden
+                job,
+                picks,
+                scenario_keys=query.get("scenario_keys"),
+                hidden=hidden,
+                split=query.get("split"),
             )
         )
 
@@ -1811,6 +1817,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 "pairs": comparison["pairs"],
                 "summary": comparison["summary"],
                 "versions": comparison["versions"],
+                "comparability": comparison["comparability"],
             }
         )
 

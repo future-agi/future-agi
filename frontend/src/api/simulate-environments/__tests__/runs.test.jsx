@@ -170,6 +170,25 @@ describe("executionToRun", () => {
     expect(unpinned.agentDiffers).toBe(false);
   });
 
+  it("carries the run's split and the locked version it ran under", () => {
+    const run = executionToRun({
+      id: "ex-9",
+      status: "Completed",
+      split: "test",
+      locked_version: { id: "lv1", label: "2026.11.1", locked: true },
+    });
+    expect(run.split).toBe("test");
+    expect(run.lockedVersion).toEqual({
+      id: "lv1",
+      label: "2026.11.1",
+      locked: true,
+    });
+
+    const whole = executionToRun({ id: "ex-10", status: "Completed" });
+    expect(whole.split).toBeNull();
+    expect(whole.lockedVersion).toBeNull();
+  });
+
   it("carries the run-level duration (seconds) the summary table shows", () => {
     const run = executionToRun({
       id: "ex-6",

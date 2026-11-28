@@ -7,6 +7,7 @@ from typing import Any, get_args
 from django.conf import settings
 from rest_framework import serializers
 
+from simulate.models.harness_versioning import TaskSplit
 from simulate.models.hosted_harness import (
     MAX_SCENARIOS_PER_JOB,
     MAX_SEED,
@@ -109,6 +110,15 @@ class RunVersionLabelSerializer(serializers.Serializer):
 
     id = serializers.UUIDField(read_only=True)
     label = serializers.CharField(read_only=True, allow_null=True)
+
+
+class RunLockedVersionLabelSerializer(serializers.Serializer):
+    """The locked version a run of a split ran under, such as "2026.11.1", and whether
+    it is locked still."""
+
+    id = serializers.UUIDField(read_only=True)
+    label = serializers.CharField(read_only=True)  # type: ignore[assignment]  # the API field is named label, as Field's own
+    locked = serializers.BooleanField(read_only=True)
 
 
 class SecretReferenceSerializer(serializers.Serializer):
@@ -962,8 +972,17 @@ class HarnessRunCreateSerializer(serializers.Serializer):
         required=False,
         help_text=(
             "The scenarios to run, at most 1000. Leave it out to run every scenario"
-            " of the chosen suite version, resolved by the server; an empty list is"
-            " refused."
+            " of the chosen suite version, or of the split when one is given,"
+            " resolved by the server; an empty list is refused."
+        ),
+    )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Run this split of the locked version of the run's versions; absent or null runs"
+            " scenario_ids, or every scenario when they are left out."
         ),
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
@@ -989,6 +1008,15 @@ class HarnessRunPinnedVersionsSerializer(serializers.Serializer):
     agent = RunVersionLabelSerializer(allow_null=True)
     environment = RunVersionLabelSerializer(allow_null=True)
     suite = RunVersionLabelSerializer(allow_null=True)
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        allow_null=True,
+        help_text="The split the run runs; null for the scenarios selected.",
+    )
+    locked_version = RunLockedVersionLabelSerializer(
+        allow_null=True,
+        help_text="The locked version the run of a split runs under; null without a split.",
+    )
 
 
 class HarnessRunWarningSerializer(serializers.Serializer):

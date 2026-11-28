@@ -16,7 +16,9 @@ from rest_framework import serializers
 
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import RunTest
+from simulate.models.harness_versioning import TaskSplit
 from simulate.serializers.harness_job import (
+    RunLockedVersionLabelSerializer,
     RunStopSerializer,
     RunVersionLabelSerializer,
 )
@@ -204,6 +206,17 @@ class TestExecutionItemResponseSerializer(TrialPassFieldsSerializer):
         allow_null=True,
         help_text="The run's Stop and how far it got confirmed; null for a run never"
         " stopped.",
+    )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        read_only=True,
+        allow_null=True,
+        help_text="The split the run ran; null for the scenarios selected.",
+    )
+    locked_version = RunLockedVersionLabelSerializer(
+        read_only=True,
+        allow_null=True,
+        help_text="The locked version the run of a split ran under; null without a split.",
     )
 
 

@@ -41,7 +41,10 @@ import {
 import SectionCard from "../../../components/SectionCard";
 import ViewerLock from "../../../components/ViewerLock";
 import useSimulationAccess from "../../../hooks/useSimulationAccess";
-import { WORKSPACE_COPY } from "../../workspace.constants";
+import {
+  WORKSPACE_COPY,
+  lockedVersionSplitInline,
+} from "../../workspace.constants";
 import StatusChip from "../StatusChip";
 import { runColorValue } from "../runs.constants";
 import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
@@ -234,6 +237,7 @@ export default function RunDetail({
     env.name,
     `${stats.total} tasks`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+    lockedVersionSplitInline(identity?.lockedVersion, identity?.split),
     identity?.seed != null && `seed ${identity.seed}`,
     startedLabel && `started ${startedLabel}`,
   ]
@@ -248,6 +252,7 @@ export default function RunDetail({
       agent: identity?.pinnedAgentVersion?.id,
       environment: identity?.environmentVersion?.id,
       suite: identity?.suiteVersion?.id,
+      split: identity?.split ?? undefined,
     },
     seed: identity?.seed ?? undefined,
   };

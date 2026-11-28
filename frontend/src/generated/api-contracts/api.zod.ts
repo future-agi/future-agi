@@ -49440,6 +49440,20 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
           label: zod.string().min(1).nullish(),
         })
         .nullable(),
+      split: zod
+        .enum(["train", "test"])
+        .nullable()
+        .describe("The split the run runs; null for the scenarios selected."),
+      locked_version: zod
+        .object({
+          id: zod.string().uuid().optional(),
+          label: zod.string().min(1).nullish(),
+          locked: zod.boolean().optional(),
+        })
+        .nullable()
+        .describe(
+          "The locked version the run of a split runs under; null without a split.",
+        ),
     }),
     against: zod
       .object({
@@ -49461,8 +49475,30 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
             label: zod.string().min(1).nullish(),
           })
           .nullable(),
+        split: zod
+          .enum(["train", "test"])
+          .nullable()
+          .describe("The split the run runs; null for the scenarios selected."),
+        locked_version: zod
+          .object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).nullish(),
+            locked: zod.boolean().optional(),
+          })
+          .nullable()
+          .describe(
+            "The locked version the run of a split runs under; null without a split.",
+          ),
       })
       .nullable(),
+  }),
+  comparability: zod.object({
+    comparable: zod
+      .boolean()
+      .describe(
+        "False when either run ran a split and the two differ in environment version, suite version or split; every verdict is then null.",
+      ),
+    reasons: zod.array(zod.enum(["different_versions", "different_split"])),
   }),
 });
 
@@ -54463,6 +54499,12 @@ export const SimulateApiHarnessEnvironmentsRunPlanQueryParams = zod.object({
     .describe(
       "The scenarios the run would select, comma-separated; absent or blank selects every scenario.",
     ),
+  split: zod
+    .enum(["train", "test"])
+    .optional()
+    .describe(
+      "The split of the locked version the run would run; absent previews the scenarios selected.",
+    ),
 });
 
 export const simulateApiHarnessEnvironmentsRunPlanResponseHeldBackMin = 0;
@@ -54487,6 +54529,20 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
         label: zod.string().min(1).nullish(),
       })
       .nullable(),
+    split: zod
+      .enum(["train", "test"])
+      .nullable()
+      .describe("The split the run runs; null for the scenarios selected."),
+    locked_version: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        label: zod.string().min(1).nullish(),
+        locked: zod.boolean().optional(),
+      })
+      .nullable()
+      .describe(
+        "The locked version the run of a split runs under; null without a split.",
+      ),
   }),
   warnings: zod.array(
     zod.object({
@@ -54533,12 +54589,19 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
     ),
   blocked_code: zod
     .enum(["production_only"])
+    .nullable()
     .describe("Why the run would be refused; null when it is runnable."),
   held_back: zod
     .number()
     .min(simulateApiHarnessEnvironmentsRunPlanResponseHeldBackMin)
     .describe(
       "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
+    ),
+  scenario_keys: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "The scenarios a run of the split would run, in suite order; absent without a split.",
     ),
 });
 
@@ -54567,7 +54630,13 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
     .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax)
     .optional()
     .describe(
-      "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
+      "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, or of the split when one is given, resolved by the server; an empty list is refused.",
+    ),
+  split: zod
+    .enum(["train", "test"])
+    .optional()
+    .describe(
+      "Run this split of the locked version of the run's versions; absent or null runs scenario_ids, or every scenario when they are left out.",
     ),
   trials: zod
     .number()
@@ -59666,7 +59735,13 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax)
     .optional()
     .describe(
-      "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, resolved by the server; an empty list is refused.",
+      "The scenarios to run, at most 1000. Leave it out to run every scenario of the chosen suite version, or of the split when one is given, resolved by the server; an empty list is refused.",
+    ),
+  split: zod
+    .enum(["train", "test"])
+    .optional()
+    .describe(
+      "Run this split of the locked version of the run's versions; absent or null runs scenario_ids, or every scenario when they are left out.",
     ),
   trials: zod
     .number()
@@ -67874,6 +67949,20 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           .describe(
             "The run's Stop and how far it got confirmed; null for a run never stopped.",
           ),
+        split: zod
+          .enum(["train", "test"])
+          .nullish()
+          .describe("The split the run ran; null for the scenarios selected."),
+        locked_version: zod
+          .object({
+            id: zod.string().uuid().optional(),
+            label: zod.string().min(1).optional(),
+            locked: zod.boolean().optional(),
+          })
+          .nullish()
+          .describe(
+            "The locked version the run of a split runs under; null without a split.",
+          ),
       }),
     )
     .optional(),
@@ -73284,6 +73373,20 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .optional()
       .describe(
         "The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.",
+      ),
+    split: zod
+      .enum(["train", "test"])
+      .nullish()
+      .describe("The split the run ran; null for the scenarios selected."),
+    locked_version: zod
+      .object({
+        id: zod.string().uuid().optional(),
+        label: zod.string().min(1).optional(),
+        locked: zod.boolean().optional(),
+      })
+      .nullish()
+      .describe(
+        "The locked version the run of a split runs under; null without a split.",
       ),
     build_notice: zod
       .string()

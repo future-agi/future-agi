@@ -656,6 +656,50 @@ class TestVerifyApi:
 
         assert posted.status_code == 400
 
+    def test_a_coding_agent_may_not_run_a_split(self, api_client, environment, keys):
+        posted = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"split": "test", "trials": 1},
+            HTTP_IDEMPOTENCY_KEY="coder-split",
+        )
+
+        assert posted.status_code == 422, posted.content
+        assert posted.json()["error"] == "split_not_for_coding_agent"
+        assert (
+            posted.json()["message"]
+            == "A coding agent runs every scenario. Leave out the split."
+        )
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment, split__isnull=False
+        ).exists()
+
+    @pytest.mark.parametrize("scenario_keys", [None, "first", "last"])
+    def test_a_coding_agent_may_not_plan_a_split(
+        self, api_client, environment, keys, scenario_keys
+    ):
+        # One refusal for every selection: none of them says which split a case is in.
+        query = {"split": "test"}
+        if scenario_keys is not None:
+            suite = _suite_keys(environment)
+            query["scenario_keys"] = suite[0] if scenario_keys == "first" else suite[-1]
+
+        plan = api_client.get(
+            f"{BASE}/{environment.id}/run-plan/",
+            query,
+            HTTP_X_API_KEY=keys.coder.api_key,
+            HTTP_X_SECRET_KEY=keys.coder.secret_key,
+        )
+
+        assert plan.status_code == 422, plan.content
+        assert plan.json()["error"] == "split_not_for_coding_agent"
+        assert (
+            plan.json()["message"]
+            == "A coding agent runs every scenario. Leave out the split."
+        )
+
 
 class TestVerifyRunsStayOutOfTheUsersRuns:
     @pytest.fixture

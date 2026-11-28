@@ -503,6 +503,18 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
+  // The train or test split of the picked versions' lock.
+  split: {
+    label: "Split",
+    all: "All scenarios",
+    option: (split, n) =>
+      `${split === "train" ? "Train" : "Test"} split · ${n} scenario${n === 1 ? "" : "s"}`,
+    line: (split, n, lockedVersion) =>
+      `Runs the ${split} split of lock ${lockedVersion}: ${n} scenario${n === 1 ? "" : "s"}.`,
+    empty: (split) => `The ${split} split has no scenarios to run.`,
+    rerunFallback:
+      "That run's versions are unlocked now, so this run doesn't use its split.",
+  },
   heldBack: (n, tools) =>
     n
       ? `${n} scenario${n === 1 ? "" : "s"} held back: ${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production`
@@ -671,9 +683,27 @@ export const COMPARE_COPY = {
     not_applicable: "n/a",
     criteria_changed: "criteria changed",
   },
+  lockedVersion: (label) => `Lock ${label}`,
+  splits: { train: "Train split", test: "Test split" },
+  notComparableRuns:
+    "Not comparable: these runs ran different versions or splits.",
   notComparable: (count) =>
     `${count} trial${count === 1 ? "" : "s"} left out: ${count === 1 ? "it" : "they"} did not start from the seeded records, so ${count === 1 ? "it" : "they"} cannot show whether results repeat.`,
 };
+
+const SPLIT_NAMES = { train: "Train", test: "Test" };
+
+// The lock a run ran under and the split it ran: "Lock 2026.11.1 · Test".
+export const lockedVersionSplitLabel = (lockedVersion, split) =>
+  [lockedVersion?.label && `Lock ${lockedVersion.label}`, SPLIT_NAMES[split]]
+    .filter(Boolean)
+    .join(" · ");
+
+// The same, inside a line of lowercase pieces: "lock 2026.11.1 · test".
+export const lockedVersionSplitInline = (lockedVersion, split) =>
+  [lockedVersion?.label && `lock ${lockedVersion.label}`, split]
+    .filter(Boolean)
+    .join(" · ");
 
 // The run's agent is not the one its environment version was built with.
 const shortVersion = (prefix, label) => {
