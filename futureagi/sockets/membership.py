@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from functools import partial
+from uuid import UUID
 
 import structlog
 from asgiref.sync import async_to_sync
@@ -22,6 +23,7 @@ from django.conf import settings
 from django.db import transaction
 
 from sockets.org_scope import organization_membership_is_active
+from sockets.template_scope import template_workspace_access
 
 logger = structlog.get_logger(__name__)
 
@@ -87,6 +89,7 @@ class MembershipSocketGuard:
     def __init__(self, consumer):
         self.consumer = consumer
         self.closed = False
+        self.template_id: UUID | None = None
         self._last_validated_at: float | None = None
         self._revalidation_pending = False
         # Advanced by every forced check. Only a check that started at the
@@ -123,7 +126,7 @@ class MembershipSocketGuard:
             # check cannot fall back to a cached result.
             self._revalidation_pending = True
             self._generation += 1
-        elif not self._revalidation_pending:
+        elif not self._revalidation_pending and self.template_id is None:
             if self.consumer.scope.get("auth_scope") is not None:
                 return True
             interval = getattr(
@@ -138,10 +141,21 @@ class MembershipSocketGuard:
                 return True
 
         generation = self._generation
+        template_id = self.template_id
         try:
-            allowed = await database_sync_to_async(organization_membership_is_active)(
-                user.id, organization_id
-            )
+            if template_id is not None:
+                # This also checks the user's current organization membership.
+                # Workspace-only changes need not produce an organization event.
+                allowed = (
+                    await template_workspace_access(
+                        user.id, organization_id, template_id
+                    )
+                    is True
+                )
+            else:
+                allowed = await database_sync_to_async(
+                    organization_membership_is_active
+                )(user.id, organization_id)
         except Exception as exc:  # noqa: BLE001 - skip delivery until a check succeeds
             self._last_validated_at = None
             logger.warning(
@@ -149,7 +163,11 @@ class MembershipSocketGuard:
             )
             return False
 
-        if self.closed or generation != self._generation:
+        if (
+            self.closed
+            or generation != self._generation
+            or template_id != self.template_id
+        ):
             # The socket closed or membership changed while this check ran.
             # A stale result must not deliver, close or clear revalidation.
             return False

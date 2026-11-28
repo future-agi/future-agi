@@ -21,6 +21,7 @@ from accounts.models.user import OrgApiKey, User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.services.token_service import issue_tokens
 from saml2_auth.tests.ws_helpers import WebsocketCommunicator
+from sockets.org_scope import organization_membership_is_active
 from sockets.routing import websocket_urlpatterns
 from tfc.constants.levels import Level
 from tfc.middleware.jwt_auth import JWTAuthMiddleware
@@ -155,6 +156,7 @@ def remove_member(owner, member):
         **bearer(owner),
     )
     assert response.status_code == 200, response.content
+    assert not organization_membership_is_active(member.pk, owner.organization_id)
 
 
 def deactivate_member(owner, member):
@@ -165,6 +167,7 @@ def deactivate_member(owner, member):
         **bearer(owner),
     )
     assert response.status_code == 200, response.content
+    assert not organization_membership_is_active(member.pk, owner.organization_id)
 
 
 async def open_socket(user, org, target=None):

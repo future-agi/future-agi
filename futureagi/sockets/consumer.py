@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from uuid import UUID
 
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -9,6 +10,7 @@ from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
 from sockets.targets import normalize_socket_target
+from sockets.template_scope import template_workspace_access
 
 logger = structlog.get_logger(__name__)
 
@@ -271,6 +273,33 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
+        # Job and legacy string targets are not template IDs. Bare UUIDs
+        # may identify a template; authorize before changing group membership.
+        try:
+            template_id = UUID(str(uuid))
+        except ValueError:
+            template_id = None
+        if template_id is not None:
+            try:
+                access = await template_workspace_access(
+                    self.user.id, self.organization_id, template_id
+                )
+            except Exception as exc:
+                logger.warning(
+                    "socket_template_check_failed", error_type=type(exc).__name__
+                )
+                await self.send_json(
+                    {"type": "error", "message": "Subscription unavailable"}
+                )
+                return
+            if access is False:
+                await self.send_json(
+                    {"type": "error", "message": "Subscription unavailable"}
+                )
+                return
+            if access is None:
+                template_id = None
+
         # Automatically unsubscribe from previous subscription
         if self.current_subscription:
             await self.channel_layer.group_discard(
@@ -293,6 +322,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if self._socket_closed():
             return
         self.current_subscription = channel_name
+        self._membership.template_id = template_id
 
         await self.send_json(
             {
@@ -318,6 +348,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if channel_name == self.current_subscription:
             await self.channel_layer.group_discard(channel_name, self.channel_name)
             self.current_subscription = None
+            self._membership.template_id = None
 
             await self.send_json(
                 {
