@@ -106,14 +106,18 @@ def _legacy_spans_from_postgres(trace_id: str) -> list[dict[str, Any]]:
     )
 
 
-def _legacy_spans_from_clickhouse(trace_id: str) -> list[dict[str, Any]]:
+def _legacy_spans_from_clickhouse(
+    trace_id: str, *, project_id: str
+) -> list[dict[str, Any]]:
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
         # list_by_trace orders by start_time, id — matching the prior
         # `.order_by("start_time")` (ties on start_time previously broke
-        # by row order; here they break by id, which is stable).
-        chspans = reader.list_by_trace(trace_id)
+        # by row order; here they break by id, which is stable). Pinned to
+        # the trace's project: the same trace id can exist in another
+        # project or organization.
+        chspans = reader.list_by_trace(trace_id, project_id=project_id)
     return [_chspan_to_legacy_dict(s) for s in chspans]
 
 
@@ -134,7 +138,9 @@ def convert_trace_to_graph(
     trace_id = str(trace.id)
 
     try:
-        spans = _legacy_spans_from_clickhouse(trace_id)
+        spans = _legacy_spans_from_clickhouse(
+            trace_id, project_id=str(trace.project_id)
+        )
     except Exception:
         logger.warning(
             "trace_to_graph_clickhouse_failed, falling back to postgres",

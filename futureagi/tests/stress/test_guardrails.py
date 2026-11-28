@@ -38,10 +38,12 @@ def test_s14_guardrails_reject_heavy_query_server_stays_healthy(stress_dataset):
                 with get_reader() as reader:
                     # All noise trace ids, unchunked, include_heavy=True pulls
                     # fat JSON columns (attributes_extra, span_events,
-                    # resource_attrs). No project_id → full-table scan.
+                    # resource_attrs) far past the 1 MB cap. The read is scoped
+                    # (span reads require a tenant scope).
                     reader.list_root_spans_by_trace_ids(
                         noise.trace_ids,
                         include_heavy=True,
+                        project_id=noise.project_id,
                     )
 
     assert "241" in str(exc_info.value)

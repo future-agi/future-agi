@@ -836,12 +836,20 @@ class TestVoiceRawLogFromClickHouse:
         mock_reader.__enter__ = lambda s: s
         mock_reader.__exit__ = MagicMock(return_value=False)
         trace_query = MagicMock()
-        trace_query.values_list.return_value.first.return_value = span.trace_id
+        trace_query.values_list.return_value.first.return_value = (
+            span.trace_id,
+            span.project_id,
+        )
 
         with patch(
             "tracer.services.clickhouse.v2.get_reader", return_value=mock_reader
         ):
-            return _extract_voice_trace_original_config(trace_query)
+            config = _extract_voice_trace_original_config(trace_query)
+        # The span read is pinned to the trace's own project.
+        mock_reader.list_by_trace.assert_called_once_with(
+            span.trace_id, project_id=str(span.project_id)
+        )
+        return config
 
     def test_original_config_reads_a_json_string_raw_log(self):
         span = _ch_conversation_span(json.dumps(_VAPI_RAW_LOG))

@@ -44,8 +44,14 @@ func TestTrajectoryEnvIsRefusedWhileDormant(t *testing.T) {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 			err := applyEnvOverrides(slog.New(slog.NewTextHandler(io.Discard, nil)), &rootConfig{})
-			if err == nil || !strings.Contains(err.Error(), "disabled in this release") {
-				t.Fatalf("expected dormant refusal for %s=%s, got %v", tc.key, tc.value, err)
+			// Standalone compaction is refused in every release (Validate),
+			// before the dormant check; every other setting by the dormant check.
+			want := "disabled in this release"
+			if tc.key == "FI_COMPACT_SPAN_ATTRS" {
+				want = "no longer supported"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected refusal %q for %s=%s, got %v", want, tc.key, tc.value, err)
 			}
 		})
 	}

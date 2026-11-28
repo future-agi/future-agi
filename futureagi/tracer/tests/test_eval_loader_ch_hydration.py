@@ -50,7 +50,7 @@ class TestEvalLoaderChHydration:
         trace = Trace.objects.create(project=project, name="t")
         span = _ch_only_span(project, trace)
         with eval_read_source("clickhouse"):
-            obj = get_observation_span(span.id)
+            obj = get_observation_span(span.id, project_id=str(project.id))
         assert str(obj.id) == span.id
         assert obj.input == {"k": "v"}
         assert str(obj.trace.id) == str(trace.id)  # resolved from CH, no PG span
@@ -63,7 +63,7 @@ class TestEvalLoaderChHydration:
         trace = Trace.objects.create(project=project, name="t")
         span = _ch_only_span(project, trace)
         with eval_read_source("clickhouse"):
-            obj = get_observation_span(span.id)
+            obj = get_observation_span(span.id, project_id=str(project.id))
         obj.eval_status = "COMPLETED"
         obj.save()  # bound no-op — must not INSERT into PG
         assert not ObservationSpan.objects.filter(id=span.id).exists()
@@ -108,3 +108,14 @@ class TestEvalLoaderChHydration:
         span = _ch_only_span(project, trace)
         with pytest.raises(ObservationSpan.DoesNotExist):
             get_observation_span(span.id)
+
+    def test_ch_span_read_without_project_refuses_before_reading(self, project):
+        # A span id is not unique across tenants: the CH path refuses an
+        # unscoped read instead of returning whichever tenant's copy it finds.
+        from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
+
+        trace = Trace.objects.create(project=project, name="t")
+        span = _ch_only_span(project, trace)
+        with eval_read_source("clickhouse"):
+            with pytest.raises(UnscopedSpanReadError):
+                get_observation_span(span.id)

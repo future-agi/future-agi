@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,44 +49,68 @@ func buildConversationTrace(projectID, orgID, sessionID string, traceByte byte, 
 	return td
 }
 
-func TestConvertWithOptionsPhase0Compaction(t *testing.T) {
+// TestDormantCompactEnvDoesNotStripInputValue: standalone compaction is gone.
+// Even a config that sets CompactSpanAttrs without going through Validate
+// (which rejects it) must produce the dev row: input.value / output.value stay
+// in attributes_extra and no sentinel is written.
+func TestDormantCompactEnvDoesNotStripInputValue(t *testing.T) {
 	pid := "11111111-1111-4111-8111-111111111111"
 	oid := "99999999-9999-4999-8999-999999999999"
 	inPayload := `{"messages":[{"role":"user","content":"` + strings.Repeat("hello ", 500) + `"}]}`
 	outPayload := `{"choices":[{"message":{"role":"assistant","content":"world"}}]}`
 
-	td := buildConversationTrace(pid, oid, "sess-p0", 0xaa, 0x01, inPayload, outPayload, false)
-	res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{
-		Trajectory: trajectory.Config{CompactSpanAttrs: true, Mode: trajectory.ModeOff},
-	})
-	if err != nil {
-		t.Fatalf("ConvertWithOptions: %v", err)
+	for _, opts := range []ConvertOptions{
+		{Trajectory: trajectory.Config{CompactSpanAttrs: true, Mode: trajectory.ModeOff}},
+		{Trajectory: trajectory.Config{CompactSpanAttrs: true, Mode: trajectory.ModeOff}, Gate: trajectory.FixedGate(true)},
+	} {
+		td := buildConversationTrace(pid, oid, "sess-p0", 0xaa, 0x01, inPayload, outPayload, false)
+		dev := ptrace.NewTraces()
+		td.CopyTo(dev) // same timestamps: only _version may differ
+		res, err := ConvertWithOptions(context.Background(), td, nil, opts)
+		if err != nil {
+			t.Fatalf("ConvertWithOptions: %v", err)
+		}
+		want, _, err := ConvertWithIdentities(context.Background(), dev, nil)
+		if err != nil {
+			t.Fatalf("ConvertWithIdentities: %v", err)
+		}
+		row := res.Rows[0]
+		of := row["attributes_extra"].(map[string]any)
+		if _, ok := of["input.value"]; !ok {
+			t.Fatalf("input.value was stripped from attributes_extra without dedup")
+		}
+		if _, ok := of[trajectory.SentinelPromotedInputKey]; ok {
+			t.Fatalf("a compaction sentinel was written without dedup")
+		}
+		assertRowsEqualIgnoringVersion(t, res.Rows, want)
+		if res.Trajectory != nil || res.Usage.DedupApplied {
+			t.Fatalf("no trajectory work may happen with dedup off")
+		}
 	}
-	if len(res.Rows) != 1 {
-		t.Fatalf("got %d rows, want 1", len(res.Rows))
+}
+
+// assertRowsEqualIgnoringVersion compares converted rows; _version is the
+// wall-clock insert stamp and differs between two conversions.
+func assertRowsEqualIgnoringVersion(t *testing.T, got, want []map[string]any) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(got), len(want))
 	}
-	row := res.Rows[0]
-	if row["input"] != inPayload || row["output"] != outPayload {
-		t.Fatalf("Phase 0 must preserve full spans.input/output")
-	}
-	of := row["attributes_extra"].(map[string]any)
-	if _, dup := of["input.value"]; dup {
-		t.Errorf("Phase 0 failed to remove duplicate input.value from attributes_extra")
-	}
-	if _, dup := of["output.value"]; dup {
-		t.Errorf("Phase 0 failed to remove duplicate output.value from attributes_extra")
-	}
-	if of[trajectory.SentinelPromotedInputKey] != "input.value" {
-		t.Errorf("missing input sentinel: %v", of)
-	}
-	if of[trajectory.SentinelPromotedOutputKey] != "output.value" {
-		t.Errorf("missing output sentinel: %v", of)
-	}
-	if _, hasEnc := row["payload_encoding"]; hasEnc {
-		t.Errorf("Phase 0 must NOT emit Phase 1 payload_encoding column when Mode=off")
-	}
-	if res.Trajectory != nil && !res.Trajectory.Empty() {
-		t.Errorf("Phase 0 must NOT produce trajectory_items")
+	for i := range got {
+		g, w := map[string]any{}, map[string]any{}
+		for k, v := range got[i] {
+			g[k] = v
+		}
+		for k, v := range want[i] {
+			w[k] = v
+		}
+		delete(g, "_version")
+		delete(w, "_version")
+		gb, _ := json.Marshal(g)
+		wb, _ := json.Marshal(w)
+		if string(gb) != string(wb) {
+			t.Fatalf("row %d differs from the dedup-off row:\n got %s\nwant %s", i, gb, wb)
+		}
 	}
 }
 
@@ -105,7 +130,7 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 	in1 := `{"messages":[{"role":"system","content":"System prompt"},{"role":"user","content":"Hello"}]}`
 	out1 := `{"choices":[{"index":0,"message":{"role":"assistant","content":"Hi!"}}]}`
 	tdOther := buildConversationTrace(otherProj, oid, "sess-other", 0xbb, 0x01, in1, out1, true)
-	resOther, err := ConvertWithOptions(context.Background(), tdOther, nil, ConvertOptions{Trajectory: cfg, Seen: seen})
+	resOther, err := ConvertWithOptions(context.Background(), tdOther, nil, ConvertOptions{Trajectory: cfg, Seen: seen, Gate: trajectory.FixedGate(true)})
 	if err != nil {
 		t.Fatalf("ConvertWithOptions(other): %v", err)
 	}
@@ -127,7 +152,7 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 		outBytes, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "message": reply}}})
 
 		td := buildConversationTrace(canaryProj, oid, "sess-canary", 0xcc, byte(turn), string(inBytes), string(outBytes), true)
-		res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Seen: seen})
+		res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Seen: seen, Gate: trajectory.FixedGate(true)})
 		if err != nil {
 			t.Fatalf("turn %d: %v", turn, err)
 		}
@@ -175,5 +200,87 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 			}
 		}
 		msgs = append(msgs, reply)
+	}
+}
+
+// TestConvertWithOptionsConcurrentCanary: a canary config normalized once (as
+// server.WithTrajectory does) is shared by concurrent requests. Before the fix
+// every ConvertWithOptions re-normalized it and wrote into the shared
+// CanaryProjects map, which the Go runtime aborts on ("concurrent map
+// writes"), even without -race.
+func TestConvertWithOptionsConcurrentCanary(t *testing.T) {
+	pid := "11111111-1111-4111-8111-111111111111"
+	oid := "99999999-9999-4999-8999-999999999999"
+	cfg := trajectory.Config{Mode: trajectory.ModeCanary, CanaryProjectList: []string{pid}}.Normalize()
+	seen := trajectory.NewSeenStore(nil, 10_000, time.Hour, time.Hour)
+	in := `{"messages":[{"role":"system","content":"System prompt ` + strings.Repeat("s", 200) + `"},{"role":"user","content":"Hello"}]}`
+	out := `{"choices":[{"index":0,"message":{"role":"assistant","content":"Hi"}}]}`
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for g := 0; g < 32; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				td := buildConversationTrace(pid, oid, fmt.Sprintf("sess-%d", g), byte(g), byte(i), in, out, false)
+				res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Seen: seen, Gate: trajectory.FixedGate(true)})
+				if err != nil {
+					errs <- err
+					return
+				}
+				if res.Rows[0]["payload_encoding"] != trajectory.EncodingItemsV1 {
+					errs <- fmt.Errorf("canary project was not deduplicated")
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	if len(cfg.CanaryProjects) != 1 {
+		t.Fatalf("the shared canary map changed: %v", cfg.CanaryProjects)
+	}
+}
+
+// TestConvertDedupProjectGateClosedRowsByteIdenticalToDev: a dedup project
+// whose gate is closed (or absent) gets the dev row, byte for byte: no pointer
+// columns, no compaction, no trajectory batch, no dedup usage.
+func TestConvertDedupProjectGateClosedRowsByteIdenticalToDev(t *testing.T) {
+	pid := "11111111-1111-4111-8111-111111111111"
+	oid := "99999999-9999-4999-8999-999999999999"
+	in := `{"messages":[{"role":"system","content":"System prompt ` + strings.Repeat("s", 600) + `"},{"role":"user","content":"Hello"}]}`
+	out := `{"choices":[{"index":0,"message":{"role":"assistant","content":"Hi"}}]}`
+	cfg := trajectory.Config{Mode: trajectory.ModeOn}.Normalize()
+	for name, gate := range map[string]trajectory.DedupGate{"closed": trajectory.FixedGate(false), "absent": nil} {
+		t.Run(name, func(t *testing.T) {
+			td := buildConversationTrace(pid, oid, "sess", 0x31, 0x01, in, out, true)
+			dev := ptrace.NewTraces()
+			td.CopyTo(dev) // same timestamps: only _version may differ
+			res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Seen: trajectory.NewSeenStore(nil, 100, time.Hour, time.Hour), Gate: gate})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, _, err := ConvertWithIdentities(context.Background(), dev, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRowsEqualIgnoringVersion(t, res.Rows, want)
+			if res.Trajectory != nil || res.Usage.DedupApplied {
+				t.Fatal("a closed gate must not produce trajectory work")
+			}
+		})
+	}
+	// The same request with the gate open is deduplicated, so the comparison
+	// above is not vacuous.
+	td := buildConversationTrace(pid, oid, "sess", 0x31, 0x01, in, out, true)
+	res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Gate: trajectory.FixedGate(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rows[0]["payload_encoding"] != trajectory.EncodingItemsV1 {
+		t.Fatal("open gate: the span must be extracted")
 	}
 }

@@ -13,7 +13,10 @@ def test_log_comment_reaches_query_log(stress_dataset):
     tag = "stress:scaffold:probe"
     with ch_query_settings(log_comment=tag):
         with get_reader() as reader:
-            reader.list_by_ids(["00000000-0000-0000-0000-000000000000"])
+            reader.list_by_ids(
+                ["00000000-0000-0000-0000-000000000000"],
+                project_id=stress_dataset.noise.project_id,
+            )
     from tests.stress.ch_asserts import _query_log_rows
 
     assert len(_query_log_rows(tag)) == 1

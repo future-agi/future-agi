@@ -51,9 +51,14 @@ def _projection_reads():
     return [
         (
             "list_root_spans_by_trace_ids",
-            lambda r, cols: r.list_root_spans_by_trace_ids(["t1"], columns=cols),
+            lambda r, cols: r.list_root_spans_by_trace_ids(
+                ["t1"], columns=cols, project_id="p1"
+            ),
         ),
-        ("list_by_ids", lambda r, cols: r.list_by_ids(["s1"], columns=cols)),
+        (
+            "list_by_ids",
+            lambda r, cols: r.list_by_ids(["s1"], columns=cols, project_id="p1"),
+        ),
     ]
 
 
@@ -97,7 +102,9 @@ def test_unrecognised_column_raises_before_any_sql_runs(label, call, bad):
 def test_root_span_projection_requires_the_trace_id_key():
     client = _RecordingClient()
     with pytest.raises(ValueError, match="trace_id"):
-        _reader_with(client).list_root_spans_by_trace_ids(["t1"], columns=["id"])
+        _reader_with(client).list_root_spans_by_trace_ids(
+            ["t1"], columns=["id"], project_id="p1"
+        )
     assert client.sql is None
 
 

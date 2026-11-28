@@ -7174,8 +7174,16 @@ class EvalPlayGroundAPIView(APIView):
                     from tracer.models.project import Project
                     from tracer.services.clickhouse.v2 import get_reader
 
+                    # Pinned to the org's projects: the same span id can
+                    # exist in another organization.
+                    _org_project_ids = [
+                        str(p)
+                        for p in Project.objects.filter(organization=org).values_list(
+                            "id", flat=True
+                        )
+                    ]
                     with get_reader() as reader:
-                        _s = reader.get(str(_span_id))
+                        _s = reader.get(str(_span_id), project_ids=_org_project_ids)
                     if (
                         _s
                         and Project.objects.filter(
@@ -7210,7 +7218,9 @@ class EvalPlayGroundAPIView(APIView):
                         # writes via the OTLP ingest pipeline) so a single
                         # in-process pass is cheaper than two CH round-trips.
                         with get_reader() as reader:
-                            _ch_spans = reader.list_by_trace(str(_t.id))
+                            _ch_spans = reader.list_by_trace(
+                                str(_t.id), project_id=str(_t.project_id)
+                            )
                         _span_count = len(_ch_spans)
                         _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
                         _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)

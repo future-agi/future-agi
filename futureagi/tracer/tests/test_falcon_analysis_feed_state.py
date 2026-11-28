@@ -101,7 +101,7 @@ def test_refused_preupgrade_batch_preserves_running_marker_and_click_deduplicati
         with no_background_work(tid):
             assert_activity_refused(str(project.pk), [tid])
         assert feed.dispatch_deep_analysis(*args).status == "running"
-        enqueue.assert_called_once_with(tid, False)
+        enqueue.assert_called_once_with(tid, False, project_id=str(project.pk))
         assert cache.get(old_key) == "1" and deep_analysis_state.is_running(tid)
     finally:
         deep_analysis_state.clear(tid)

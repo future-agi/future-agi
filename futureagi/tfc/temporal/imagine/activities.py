@@ -46,7 +46,11 @@ async def fetch_trace_data(input: FetchTraceInput) -> str:
 
     def _fetch_spans():
         try:
-            return reader.list_by_trace(str(input.trace_id))[:20]
+            # Scoped to the verified trace's project: the same trace id can
+            # exist in another project or organization.
+            return reader.list_by_trace(
+                str(input.trace_id), project_id=str(trace.project_id)
+            )[:20]
         finally:
             reader.close()
 

@@ -406,10 +406,13 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                 )
             )
 
+            # The spans were listed in the version's project; the worker reads
+            # each one there (a span id can exist in another project).
             for span_id in span_ids:
                 evaluate_observation_span.delay(
                     span_id,
                     custom_eval_config.id,
+                    project_id=str(project_version.project_id),
                 )
 
             return self._gm.success_response({"message": "Evaluation Ran Successfully"})

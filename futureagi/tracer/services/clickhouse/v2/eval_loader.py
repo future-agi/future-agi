@@ -108,7 +108,9 @@ def get_observation_span(
     the project the eval config was authored in) scopes the CH read to one tenant.
     ``spans`` is sorted by ``project_id`` first, so passing it lets ClickHouse
     prune by the primary index instead of scanning every project's parts for the
-    span id — the difference between a whole-table read and a pruned one.
+    span id — the difference between a whole-table read and a pruned one. The
+    CH path requires it (``UnscopedSpanReadError`` otherwise): a span id can be
+    held by several projects and organizations.
 
     Raises `ObservationSpan.DoesNotExist` (same as the Django path) when no
     such span — keeps downstream `except ObservationSpan.DoesNotExist` blocks
@@ -153,7 +155,14 @@ def _hybrid_load_from_ch(
     """
     from tracer.models.observation_span import ObservationSpan
     from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
+    # Refused before the try: the fallback below must not turn a missing
+    # tenant scope into a retry or a Postgres read.
+    if not project_id:
+        raise UnscopedSpanReadError(
+            "an eval span read from ClickHouse needs the span's project_id"
+        )
     try:
         with get_reader() as reader:
             ch_row = reader.get(span_id, project_id=project_id)
@@ -205,7 +214,8 @@ def filter_observation_spans_by_trace(
 
     ``project_id`` scopes the CH read so ClickHouse can prune ``spans`` by the
     ``project_id`` sort-key prefix instead of scanning all projects for the
-    trace's spans.
+    trace's spans. The CH path requires it (``UnscopedSpanReadError``
+    otherwise): a trace id can be held by several projects and organizations.
 
     ``heavy_span_ids`` (optional): ids whose heavy columns (attributes_extra /
     span_events / resource_attrs) are required. A lean pass loads all spans
@@ -219,6 +229,14 @@ def filter_observation_spans_by_trace(
     if src != "clickhouse":
         return list(ObservationSpan.objects.filter(trace_id=trace_id, deleted=deleted))
 
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
+
+    # Refused before the try: the fallback below must not turn a missing
+    # tenant scope into a retry or a Postgres read.
+    if not project_id:
+        raise UnscopedSpanReadError(
+            "an eval trace-span read from ClickHouse needs the trace's project_id"
+        )
     try:
         from tracer.services.clickhouse.v2 import get_reader
 

@@ -32,9 +32,15 @@ class TraceErrorAnalysisAgent:
         enable_memory=True,
         save_to_db=True,
         token_budget: int | None = None,
+        *,
+        project_id,
     ):
         self.trace_id = trace_id
-        self.spans = TraceErrorAnalysisDB().get_all_spans(trace_id)
+        # project_id is the trace's verified project: the same trace id can
+        # exist in another project or organization.
+        self.spans = TraceErrorAnalysisDB().get_all_spans(
+            trace_id, project_id=project_id
+        )
         self.db = TraceErrorAnalysisDB()
         self.span_map = {str(span.id): span for span in self.spans}
         self.errors: list[dict] = []

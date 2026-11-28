@@ -21,6 +21,7 @@ from tracer.services.clickhouse.v2 import (
     physical_span_detail_reads,
     span_reader,
     trace_detail_reads,
+    trajectory_hydration,
 )
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_INLINE,
@@ -31,9 +32,13 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     SENTINEL_PROMOTED_INPUT_KEY,
     SENTINEL_PROMOTED_OUTPUT_JSON,
     SENTINEL_PROMOTED_OUTPUT_KEY,
+    TrajectoryContentUnavailable,
+    _parse_envelope,
+    _resolve_scope_and_hash,
     build_trajectory_items_query,
     hydrate_chspans,
     hydrate_span_dicts,
+    payload_checksum,
     reconstruct_payload,
     restore_promoted_in_attributes_extra,
 )
@@ -48,23 +53,49 @@ def _h(tag: str) -> str:
     return (tag.encode().hex() + "0" * 32)[:32]
 
 
+def _side(
+    gaps: list[str], slots: str, contents: list[str], **extra
+) -> tuple[dict, str]:
+    """A v2 side template plus the original text it rebuilds to."""
+    assert len(gaps) == len(slots) + 1 == len(contents) + 1
+    original = gaps[0] + "".join(c + g for c, g in zip(contents, gaps[1:], strict=True))
+    shape = {
+        "g": gaps,
+        "r": slots,
+        **extra,
+        "il": len(original),
+        "x": payload_checksum(original),
+    }
+    return shape, original
+
+
+def _envelope(**sides) -> str:
+    return json.dumps({"v": 2, **sides})
+
+
+CONTRACT_DIR = Path(__file__).parent / "fixtures" / "trajectory_contract"
+
+
+def _jsonl(name: str) -> list[dict]:
+    with (CONTRACT_DIR / name).open(encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
 # --------------------------------------------------------------------------- #
 # 1. Payload reconstruction across provider formats (Go -> Python contract)
 # --------------------------------------------------------------------------- #
 @pytest.mark.unit
 def test_reconstruct_openai_chat_with_tools_and_choices():
     h_sys, h_u1, h_t1, h_out = _h("sys"), _h("u1"), _h("tool1"), _h("out1")
+    sys_c = '{"role":"system","content":"You are a coding agent."}'
+    u1_c = '{"role": "user", "content": "Fix the bug"}'
+    t1_c = '{"type":"function","function":{"name":"read_file"}}'
+    out_c = '{"index":0,"message":{"role":"assistant","content":"Checking file."}}'
     store = {
-        (
-            PROJECT_SCOPE_ID,
-            h_sys,
-        ): '{"role":"system","content":"You are a coding agent."}',
-        (SESSION_ID, h_u1): '{"role":"user","content":"Fix the bug"}',
-        (PROJECT_SCOPE_ID, h_t1): '{"type":"function","function":{"name":"read_file"}}',
-        (
-            SESSION_ID,
-            h_out,
-        ): '{"index":0,"message":{"role":"assistant","content":"Checking file."}}',
+        (PROJECT_SCOPE_ID, h_sys): sys_c,
+        (SESSION_ID, h_u1): u1_c,
+        (PROJECT_SCOPE_ID, h_t1): t1_c,
+        (SESSION_ID, h_out): out_c,
     }
 
     def resolve(prefixed: str) -> str | None:
@@ -72,39 +103,30 @@ def test_reconstruct_openai_chat_with_tools_and_choices():
             return store.get((PROJECT_SCOPE_ID, prefixed[len(PROJECT_HASH_PREFIX) :]))
         return store.get((SESSION_ID, prefixed))
 
-    in_shape = {
-        "f": "obj_messages",
-        "mk": "messages",
-        "tk": "tools",
-        "w": {"model": "gpt-4o", "temperature": 0.2},
-    }
+    # Wrapper text, key order and whitespace survive verbatim in the gaps.
+    in_shape, in_original = _side(
+        [
+            '{"model": "gpt-4o", "temperature": 0.20, "tools": [',
+            '], "messages": [',
+            ",\n  ",
+            "]}",
+        ],
+        "tmm",
+        [t1_c, sys_c, u1_c],
+    )
     in_json = reconstruct_payload(
         in_shape,
         [f"{PROJECT_HASH_PREFIX}{h_sys}", h_u1],
         [f"{PROJECT_HASH_PREFIX}{h_t1}"],
         resolve,
     )
-    assert in_json is not None
-    parsed_in = json.loads(in_json)
-    assert parsed_in == {
-        "model": "gpt-4o",
-        "temperature": 0.2,
-        "tools": [{"type": "function", "function": {"name": "read_file"}}],
-        "messages": [
-            {"role": "system", "content": "You are a coding agent."},
-            {"role": "user", "content": "Fix the bug"},
-        ],
-    }
+    assert in_json == in_original
+    assert in_json.encode("utf-8") == in_original.encode("utf-8")
 
-    out_shape = {"f": "obj_messages", "mk": "choices", "w": {"id": "chatcmpl-1"}}
-    out_json = reconstruct_payload(out_shape, [h_out], None, resolve)
-    assert out_json is not None
-    assert json.loads(out_json) == {
-        "id": "chatcmpl-1",
-        "choices": [
-            {"index": 0, "message": {"role": "assistant", "content": "Checking file."}}
-        ],
-    }
+    out_shape, out_original = _side(
+        ['{"id":"chatcmpl-1","choices":[', "]}"], "m", [out_c]
+    )
+    assert reconstruct_payload(out_shape, [h_out], None, resolve) == out_original
 
 
 @pytest.mark.unit
@@ -117,47 +139,314 @@ def test_reconstruct_openai_chat_with_tools_and_choices():
 )
 def test_reconstruct_anthropic_and_openai_responses_formats(sys_key, msg_key, model):
     h_sys, h_u1 = _h("s"), _h("u")
-    store = {
-        f"{PROJECT_HASH_PREFIX}{h_sys}": '"Follow all safety rules."',
-        h_u1: '{"role":"user","content":"Hello"}',
-    }
-    shape = {
-        "f": "obj_messages",
-        "mk": msg_key,
-        "sk": sys_key,
-        "sh": f"{PROJECT_HASH_PREFIX}{h_sys}",
-        "w": {"model": model},
-    }
-    rebuilt = reconstruct_payload(shape, [h_u1], None, store.get)
-    assert rebuilt is not None
-    assert json.loads(rebuilt) == {
-        "model": model,
-        sys_key: "Follow all safety rules.",
-        msg_key: [{"role": "user", "content": "Hello"}],
-    }
+    sys_c, u1_c = '"Follow all safety rules."', '{"role":"user","content":"Hello"}'
+    store = {f"{PROJECT_HASH_PREFIX}{h_sys}": sys_c, h_u1: u1_c}
+    shape, original = _side(
+        [f'{{"model":"{model}","{sys_key}":', f',"{msg_key}":[', "]}"],
+        "sm",
+        [sys_c, u1_c],
+        sh=f"{PROJECT_HASH_PREFIX}{h_sys}",
+    )
+    assert reconstruct_payload(shape, [h_u1], None, store.get) == original
+
+    # An "s" slot needs sh: without it the template is rejected, not guessed.
+    no_sh = {k: v for k, v in shape.items() if k != "sh"}
+    assert reconstruct_payload(no_sh, [h_u1], None, store.get) is None
 
 
 @pytest.mark.unit
 def test_reconstruct_msg_array_and_missing_item_safety():
     h1, h2 = _h("m1"), _h("m2")
-    store = {
-        f"{PROJECT_HASH_PREFIX}{h1}": '{"role":"developer","content":"Strict"}',
-        h2: '{"role":"user","content":"Ping"}',
-    }
-    rebuilt = reconstruct_payload(
-        {"f": "msg_array"}, [f"{PROJECT_HASH_PREFIX}{h1}", h2], None, store.get
+    c1, c2 = (
+        '{"role":"developer","content":"Strict"}',
+        '{"role":"user","content":"Ping"}',
     )
-    assert rebuilt is not None
-    assert json.loads(rebuilt) == [
-        {"role": "developer", "content": "Strict"},
-        {"role": "user", "content": "Ping"},
-    ]
+    store = {f"{PROJECT_HASH_PREFIX}{h1}": c1, h2: c2}
+    shape, original = _side(["[", ",", "]"], "mm", [c1, c2])
+    assert (
+        reconstruct_payload(shape, [f"{PROJECT_HASH_PREFIX}{h1}", h2], None, store.get)
+        == original
+    )
 
     # Missing item -> returns None so caller keeps inline preview safely.
-    assert (
-        reconstruct_payload({"f": "msg_array"}, [h2, _h("missing")], None, store.get)
-        is None
+    assert reconstruct_payload(shape, [h2, _h("missing")], None, store.get) is None
+
+
+@pytest.mark.unit
+def test_reconstruct_rejects_slot_count_mismatch():
+    c = '{"role":"user","content":"x"}'
+    shape, _ = _side(["[", "]"], "m", [c])
+    resolve = {"a": c, "b": c}.get
+    assert reconstruct_payload(shape, ["a", "b"], None, resolve) is None
+    assert reconstruct_payload(shape, [], None, resolve) is None
+    assert reconstruct_payload(shape, ["a"], ["b"], resolve) is None
+    assert reconstruct_payload({**shape, "g": ["["]}, ["a"], None, resolve) is None
+    assert reconstruct_payload({**shape, "r": "q"}, ["a"], None, resolve) is None
+
+
+@pytest.mark.unit
+def test_checksum_mismatch_returns_unavailable(settings, monkeypatch):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    h = _h("u1")
+    shape, original = _side(["[", "]"], "m", ['{"role":"user","content":"stored"}'])
+    tampered = '{"role":"user","content":"STORED"}'
+    with pytest.raises(TrajectoryContentUnavailable):
+        reconstruct_payload(shape, [h], None, {h: tampered}.get)
+
+    rows = [
+        {
+            "project_id": PROJECT_ID,
+            "id": "span-x",
+            "input": "preview",
+            "output": "out",
+            "input_item_hashes": [h],
+            "output_item_hashes": [],
+            "tool_def_hashes": [],
+            "item_scope_id": SESSION_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": _envelope(**{"in": shape}),
+        }
+    ]
+
+    def fake_query(_sql, _params):
+        return [{"scope_id": SESSION_ID, "item_hash": h, "content": tampered}]
+
+    hydrate_span_dicts(rows, fake_query)
+    # The preview stays; a wrong rebuild is never shown as the full content.
+    assert rows[0]["input"] == "preview"
+    messages = [c.args[0] for c in log.warning.call_args_list]
+    # Logged once, under its own reason; not again as missing items.
+    assert len(messages) == 1, messages
+    assert messages[0].startswith("trajectory_hydration_checksum_mismatch")
+    assert original != tampered
+
+
+def _failing_side_rows() -> tuple[list[dict], list[dict], str]:
+    """Dict rows whose input side cannot rebuild, one per failure reason.
+
+    Each row carries a promoted input sentinel; the output side is inline.
+    Returns the rows, the item rows a query returns and the stored content.
+    """
+    h = _h("u1")
+    stored = '{"role":"user","content":"stored"}'
+    shape, _original = _side(["[", "]"], "m", [stored])
+    extra = json.dumps({"keep": 1, SENTINEL_PROMOTED_INPUT_KEY: "input.value"})
+
+    def row(span_id: str, **overrides) -> dict:
+        return {
+            "project_id": PROJECT_ID,
+            "id": span_id,
+            "input": "preview",
+            "output": "inline out",
+            "input_item_hashes": [h],
+            "output_item_hashes": [],
+            "tool_def_hashes": [],
+            "item_scope_id": SESSION_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": _envelope(**{"in": shape}),
+            "span_attributes": extra,
+            **overrides,
+        }
+
+    rows = [
+        # Two m-slots for one hash: _collect_required_refs returns no refs.
+        row(
+            "bad-count",
+            payload_envelope=_envelope(
+                **{"in": {**shape, "r": "mm", "g": ["[", ",", "]"]}}
+            ),
+        ),
+        # An s-slot without sh.
+        row(
+            "no-sh",
+            payload_envelope=_envelope(**{"in": {**shape, "r": "s"}}),
+            input_item_hashes=[],
+        ),
+        row("missing", input_item_hashes=[_h("absent")]),
+        row("tampered"),
+        # items_v1 with an envelope the reader rejects.
+        row("v1", payload_envelope=json.dumps({"v": 1, "in": {"f": "msg_array"}})),
+    ]
+    items = [
+        {
+            "scope_id": SESSION_ID,
+            "item_hash": h,
+            "content": stored.replace("stored", "STORED"),
+        }
+    ]
+    return rows, items, stored
+
+
+@pytest.mark.unit
+def test_failed_side_logs_once_per_reason_and_keeps_preview(settings, monkeypatch):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    rows, items, _stored = _failing_side_rows()
+    calls = []
+
+    def fake_query(sql, params):
+        calls.append(params)
+        return items
+
+    hydrate_span_dicts(rows, fake_query)
+    assert len(calls) == 1
+    assert [r["input"] for r in rows] == ["preview"] * len(rows)
+    assert [r["output"] for r in rows] == ["inline out"] * len(rows)
+    events = [
+        (c.args[0].split(" ", 1)[0], c.args[3])
+        for c in log.warning.call_args_list
+        if c.args[0].startswith("trajectory_hydration_")
+    ]
+    # Malformed templates are logged, not silently served as previews, and
+    # every failure is logged exactly once.
+    assert sorted(events) == sorted(
+        [
+            ("trajectory_hydration_invalid_template", "bad-count"),
+            ("trajectory_hydration_invalid_template", "no-sh"),
+            ("trajectory_hydration_missing_items", "missing"),
+            ("trajectory_hydration_checksum_mismatch", "tampered"),
+        ]
     )
+
+
+@pytest.mark.unit
+def test_promoted_attribute_is_never_restored_from_a_preview(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    rows, items, _stored = _failing_side_rows()
+    hydrate_span_dicts(rows, lambda _sql, _params: items)
+    for row in rows:
+        attrs = json.loads(row["span_attributes"])
+        assert attrs == {"keep": 1}, (row["id"], attrs)
+
+    # The same rows as CHSpan instances.
+    rows, items, _stored = _failing_side_rows()
+    spans = [
+        span_reader.CHSpan(
+            id=row["id"],
+            project_id=PROJECT_ID,
+            trace_id=TRACE_ID,
+            parent_span_id="",
+            name="llm.call",
+            observation_type="llm",
+            operation_name="chat",
+            start_time=datetime(2026, 11, 22, 0, 0, tzinfo=UTC),
+            end_time=datetime(2026, 11, 22, 0, 0, 1, tzinfo=UTC),
+            latency_ms=1000,
+            model="gpt-4o",
+            provider="openai",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            cost=0.001,
+            status="OK",
+            status_message="",
+            org_id=None,
+            project_version_id=None,
+            end_user_id=None,
+            trace_session_id=SESSION_ID,
+            prompt_version_id=None,
+            prompt_label_id=None,
+            custom_eval_config_id=None,
+            input=row["input"],
+            output=row["output"],
+            tags="[]",
+            span_events="[]",
+            metadata="{}",
+            resource_attrs="{}",
+            attributes_extra=row["span_attributes"],
+            input_item_hashes=tuple(row["input_item_hashes"]),
+            output_item_hashes=(),
+            tool_def_hashes=(),
+            item_scope_id=SESSION_ID,
+            payload_encoding=ENCODING_ITEMS_V1,
+            payload_envelope=row["payload_envelope"],
+        )
+        for row in rows
+    ]
+    tuple_items = [(i["scope_id"], i["item_hash"], i["content"]) for i in items]
+    for span in hydrate_chspans(spans, lambda _sql, _params: tuple_items):
+        assert span.input == "preview", span.id
+        assert json.loads(span.attributes_extra) == {"keep": 1}, span.id
+
+    # An inline side next to a failed one is still restored.
+    row = _failing_side_rows()[0][3]
+    row["span_attributes"] = json.dumps(
+        {
+            SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+            SENTINEL_PROMOTED_OUTPUT_KEY: "output.value",
+        }
+    )
+    hydrate_span_dicts([row], lambda _sql, _params: items)
+    assert json.loads(row["span_attributes"]) == {"output.value": "inline out"}
+
+
+@pytest.mark.unit
+def test_envelope_version_other_than_2_is_rejected(monkeypatch):
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    assert _parse_envelope(json.dumps({"v": 1, "in": {"f": "msg_array"}})) is None
+    assert _parse_envelope(json.dumps({"in": {"g": ["[", "]"], "r": ""}})) is None
+    messages = [c.args[0] for c in log.warning.call_args_list]
+    assert sum("trajectory_envelope_version_rejected" in m for m in messages) == 2
+    assert _parse_envelope(_envelope(**{"in": {"g": [""], "r": ""}})) is not None
+
+
+@pytest.mark.unit
+def test_reconstruct_payload_v2_golden():
+    """Go writes the contract fixtures from the real converter
+    (fi-collector TestTrajectoryContractFixturesUpToDate); every extracted
+    side must rebuild to the exact dedup-off bytes."""
+    payloads = _jsonl("payloads.jsonl")
+    spans = {row["id"]: row for row in _jsonl("spans.jsonl")}
+    items = {
+        (row["project_id"], row["scope_id"], row["item_hash"]): row["content"]
+        for row in _jsonl("items.jsonl")
+    }
+    assert len(payloads) >= 15
+    rebuilt = 0
+    for case in payloads:
+        row = spans[case["span_id"]]
+        env = _parse_envelope(row.get("payload_envelope"))
+        scope = row.get("item_scope_id") or ""
+
+        def resolve(ref: str, row=row, scope=scope) -> str | None:
+            s, h = _resolve_scope_and_hash(ref, scope)
+            return items.get((row["project_id"], s, h))
+
+        for side, col, hashes_col, tools_col in (
+            ("in", "input", "input_item_hashes", "tool_def_hashes"),
+            ("out", "output", "output_item_hashes", None),
+        ):
+            want = case[col]
+            if not case[f"{col}_extracted"]:
+                assert row[col] == want, (case["case"], side)
+                assert env is None or env.get(side) is None, (case["case"], side)
+                continue
+            assert env is not None and env.get(side) is not None, case["case"]
+            got = reconstruct_payload(
+                env[side],
+                row[hashes_col],
+                row[tools_col] if tools_col else None,
+                resolve,
+            )
+            assert got == want, (case["case"], side)
+            assert got.encode("utf-8") == want.encode("utf-8"), (case["case"], side)
+            assert env[side]["il"] == len(want), (case["case"], side)
+            rebuilt += 1
+    assert rebuilt >= 20
+    # JSON escapes reach the reader as the six-character sequences and come
+    # back unchanged (fixture case unicode_escape_sequences).
+    escaped = [c for c in payloads if c["case"] == "unicode_escape_sequences"]
+    assert len(escaped) == 1 and escaped[0]["input_extracted"]
+    for escape in ("\\u00e9", "\\ud83d\\ude80", "\\u2028"):
+        assert escape in escaped[0]["input"], escape
+    assert {c["case"] for c in payloads if not c["input_extracted"]} >= {
+        "non_utf8_stays_inline",
+        "plain_text_both_sides",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -214,13 +503,18 @@ def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed(
             },
         ]
 
-    env = json.dumps(
-        {
-            "v": 1,
-            "in": {"f": "obj_messages", "mk": "messages", "w": {"model": "gpt-4o"}},
-            "out": {"f": "msg_array"},
-        }
+    in_shape, in_original = _side(
+        ['{"model": "gpt-4o",\n "messages": [', ", ", "]}"],
+        "mm",
+        [
+            '{"role":"system","content":"Be brief."}',
+            '{"role":"user","content":"Question?"}',
+        ],
     )
+    out_shape, out_original = _side(
+        ["[", "]"], "m", ['{"role":"assistant","content":"Answer!"}']
+    )
+    env = _envelope(**{"in": in_shape, "out": out_shape})
     mixed_rows = [
         dict(inline_rows[0]),
         {
@@ -249,16 +543,8 @@ def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed(
     assert set(calls[0][1]["traj_scope_ids"]) == {PROJECT_SCOPE_ID, SESSION_ID}
 
     hydrated = mixed_rows[1]
-    assert json.loads(hydrated["input"]) == {
-        "model": "gpt-4o",
-        "messages": [
-            {"role": "system", "content": "Be brief."},
-            {"role": "user", "content": "Question?"},
-        ],
-    }
-    assert json.loads(hydrated["output"]) == [
-        {"role": "assistant", "content": "Answer!"}
-    ]
+    assert hydrated["input"] == in_original
+    assert hydrated["output"] == out_original
     # Phase 0 sentinels popped and replaced with the hydrated full payload!
     attrs = json.loads(hydrated["span_attributes"])
     assert SENTINEL_PROMOTED_INPUT_KEY not in attrs
@@ -320,7 +606,10 @@ def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1(settings):
     now = datetime(2026, 11, 20, 12, 15, tzinfo=UTC)
     hour = now.replace(minute=0, second=0, microsecond=0)
     h_u1 = _h("u1")
-    env = json.dumps({"v": 1, "in": {"f": "msg_array"}})
+    in_shape, expected_in = _side(
+        ["[", "]"], "m", ['{"role":"user","content":"Hydrated question"}']
+    )
+    env = _envelope(**{"in": in_shape})
 
     span_row = {
         "project_id": PROJECT_ID,
@@ -411,9 +700,7 @@ def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1(settings):
         include_annotations=False,
     )
     assert len(detail.spans) == 1
-    assert json.loads(detail.spans[0]["input"]) == [
-        {"role": "user", "content": "Hydrated question"}
-    ]
+    assert detail.spans[0]["input"] == expected_in
     assert json.loads(detail.spans[0]["span_attributes"]) == {
         "input.value": detail.spans[0]["input"]
     }
@@ -435,9 +722,7 @@ def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1(settings):
         },
         authorized_project_id=PROJECT_ID,
     )
-    assert json.loads(phys["input"]) == [
-        {"role": "user", "content": "Hydrated question"}
-    ]
+    assert phys["input"] == expected_in
     assert json.loads(phys["span_attributes"]) == {"input.value": phys["input"]}
 
 
@@ -445,7 +730,10 @@ def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1(settings):
 def test_ch_span_reader_hydrates_get_list_and_export(settings):
     settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     h_u1 = _h("u1")
-    env = json.dumps({"v": 1, "in": {"f": "msg_array"}})
+    in_shape, expected_in = _side(
+        ["[", "]"], "m", ['{"role":"user","content":"Full eval prompt"}']
+    )
+    env = _envelope(**{"in": in_shape})
     now = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
 
     row_map = dict.fromkeys(span_reader._TRAJECTORY_DATA_KEYS, "")
@@ -517,30 +805,22 @@ def test_ch_span_reader_hydrates_get_list_and_export(settings):
 
     sp = reader.get("sp-1", project_id=PROJECT_ID)
     assert sp is not None
-    assert json.loads(sp.input) == [{"role": "user", "content": "Full eval prompt"}]
+    assert sp.input == expected_in
     # eval_loader consumes _ch_span_attributes(sp) -> Phase 0 sentinel restored with hydrated input!
     attrs = span_reader._ch_span_attributes(sp)
     assert attrs["input.value"] == sp.input
     assert SENTINEL_PROMOTED_INPUT_KEY not in attrs
 
     trace_spans = reader.list_by_trace(TRACE_ID, project_id=PROJECT_ID)
-    assert (
-        len(trace_spans) == 1
-        and json.loads(trace_spans[0].input)[0]["content"] == "Full eval prompt"
-    )
+    assert len(trace_spans) == 1 and trace_spans[0].input == expected_in
 
     id_spans = reader.list_by_ids(["sp-1"], project_id=PROJECT_ID)
-    assert (
-        len(id_spans) == 1
-        and json.loads(id_spans[0].input)[0]["content"] == "Full eval prompt"
-    )
+    assert len(id_spans) == 1 and id_spans[0].input == expected_in
 
     exported = reader.export_fields_by_ids(
         ["sp-1"], {"input", "span_attributes"}, project_id=PROJECT_ID
     )
-    assert json.loads(exported["sp-1"]["input"]) == [
-        {"role": "user", "content": "Full eval prompt"}
-    ]
+    assert exported["sp-1"]["input"] == expected_in
     assert json.loads(exported["sp-1"]["attributes_extra"]) == {
         "input.value": exported["sp-1"]["input"]
     }
@@ -812,9 +1092,9 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1(setti
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
     item_hash = "d" * 32
-    env_json = json.dumps({"in": {"f": "msg_array"}})
     full_msg = json.dumps({"role": "user", "content": "Full lossless dataset question"})
-    expected_in = json.dumps([json.loads(full_msg)], separators=(",", ":"))
+    in_shape, expected_in = _side(["[", "]"], "m", [full_msg])
+    env_json = _envelope(**{"in": in_shape})
     raw_extra = json.dumps(
         {
             "meta": "keep",

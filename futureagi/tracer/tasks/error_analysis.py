@@ -31,9 +31,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
+def analyze_single_trace(
+    trace_id, task_id, ingest_embeddings: bool = True, *, project_id
+):
     """
     Helper function to analyze a single trace with a deduct-and-refund billing model.
+
+    ``project_id`` is the trace's project as the caller verified it (the
+    analysis task's project, or the feed cluster's project). The trace is
+    read, billed and stored in that project only: the same trace id can exist
+    in another project or organization. Without it nothing is read or billed.
 
     ``ingest_embeddings`` controls whether per-error vectors are pushed to
     ClickHouse after a successful run. The legacy compass clustering
@@ -74,8 +81,19 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     try:
         close_old_connections()
 
-        # Check if this trace has already been analyzed
-        existing_analysis = TraceErrorAnalysis.objects.filter(trace_id=trace_id).first()
+        if not project_id:
+            logger.error("trace_error_analysis_missing_project", trace_id=str(trace_id))
+            deep_analysis_state.set_failed(str(trace_id))
+            return {
+                "success": False,
+                "trace_id": trace_id,
+                "error": "Trace project not given",
+            }
+
+        # Check if this trace has already been analyzed in this project
+        existing_analysis = TraceErrorAnalysis.objects.filter(
+            trace_id=trace_id, project_id=project_id
+        ).first()
         if existing_analysis:
             logger.warning(f"Trace {trace_id} already analyzed, skipping.")
             return {
@@ -85,18 +103,19 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
                 "skipped": True,
             }
 
-        # Trace lives only in CH post-cutover; resolve its project (org + billing)
-        # from the CH root span's project_id, then load the PG Project (kept).
-        with get_reader() as reader:
-            roots = reader.root_ids_by_trace_ids([str(trace_id)])
-        root = roots.get(str(trace_id))
-        project_id = root[1] if root else None
+        # Trace lives only in CH post-cutover: confirm the verified project
+        # holds its root span, then load the PG Project (org + billing).
         project = (
             Project.objects.select_related("organization").filter(id=project_id).first()
-            if project_id
-            else None
         )
-        if project is None:
+        root = None
+        if project is not None:
+            with get_reader() as reader:
+                roots = reader.root_ids_by_trace_ids(
+                    [str(trace_id)], project_ids=[str(project.id)]
+                )
+            root = roots.get(str(trace_id))
+        if project is None or root is None:
             logger.warning(f"Trace {trace_id} not found, skipping analysis.")
             return {"success": False, "trace_id": trace_id, "error": "Trace not found"}
         organization = project.organization
@@ -140,6 +159,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
 
         agent = TraceErrorAnalysisAgent(
             trace_id=str(trace_id),
+            project_id=str(project.id),
             enable_memory=True,
             save_to_db=True,
             token_budget=500000,
@@ -159,7 +179,9 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
 
         if error_count > 0 and ingest_embeddings:
             error_analysis_db = TraceErrorAnalysisDB()
-            error_analysis_db.ingest_trace_error_embeddings(trace_id)
+            error_analysis_db.ingest_trace_error_embeddings(
+                trace_id, project_id=str(project.id)
+            )
 
         # Mark the API call as successful
         if api_call_log_row:
@@ -246,7 +268,9 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     time_limit=3600,  # 1 hour ceiling; typical run is ~1 minute
     queue="agent_compass",
 )
-def run_deep_analysis_on_demand(trace_id: str, force: bool = False) -> dict:
+def run_deep_analysis_on_demand(
+    trace_id: str, force: bool = False, project_id: str | None = None
+) -> dict:
     """Run deep analysis on a single trace, triggered by a user clicking
     the Error Feed's "Run Deep Analysis" button.
 
@@ -270,13 +294,33 @@ def run_deep_analysis_on_demand(trace_id: str, force: bool = False) -> dict:
     vectors that ``ingest_trace_error_embeddings`` produces. The legacy
     compass clustering pipeline is the only consumer of those vectors
     and it's on death row in Phase 5.
+
+    ``project_id`` is the feed cluster's project, which the dispatcher
+    verified. A job queued without it (before the dispatcher sent it) is
+    marked failed without reading, billing or deleting anything; the user
+    can run it again.
     """
     close_old_connections()
 
-    if force:
-        TraceErrorAnalysis.objects.filter(trace_id=trace_id).delete()
+    if not project_id:
+        from tracer.queries import deep_analysis_state
 
-    return analyze_single_trace(trace_id, None, ingest_embeddings=False)
+        logger.error("deep_analysis_missing_project", trace_id=str(trace_id))
+        deep_analysis_state.set_failed(str(trace_id))
+        return {
+            "success": False,
+            "trace_id": trace_id,
+            "error": "Trace project not given",
+        }
+
+    if force:
+        TraceErrorAnalysis.objects.filter(
+            trace_id=trace_id, project_id=project_id
+        ).delete()
+
+    return analyze_single_trace(
+        trace_id, None, ingest_embeddings=False, project_id=project_id
+    )
 
 
 @temporal_activity(
@@ -362,7 +406,9 @@ def process_trace_error_batch(task_id: str, trace_ids: list):
         close_old_connections()
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [
-                executor.submit(analyze_single_trace, trace_id, task_id)
+                executor.submit(
+                    analyze_single_trace, trace_id, task_id, project_id=project_id
+                )
                 for trace_id in trace_ids
             ]
 
