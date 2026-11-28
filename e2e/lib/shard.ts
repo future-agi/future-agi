@@ -58,6 +58,10 @@ export const DB_REUSE_LOADS: Record<string, Record<number, number>> = {
   // restore and boot, mean 262 s, so 540; shard 3's compare took 461 s and
   // 394 s, mean 428 s, so 880.
   distributed: { 2: 540, 3: 880 },
+  // One restore run (46132312899), at the same 2.066: shard 2's boot from zero
+  // took 399 s more than a restoring leg's restore and boot (460 s against 50
+  // to 66 s), so 820; shard 3's compare took 435 s, so 900.
+  standalone: { 2: 820, 3: 900 },
 };
 
 /** The load each shard starts with: all zero unless this run restores. */

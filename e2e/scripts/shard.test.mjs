@@ -98,9 +98,10 @@ test("only a run that restores starts shards 2 and 3 with load", () => {
     assert.deepEqual(startingLoads(8, "distributed", restores), new Array(8).fill(0));
   // A run restores only with both of those legs.
   assert.deepEqual(startingLoads(2, "distributed", "true"), [0, 0]);
+  assert.deepEqual(startingLoads(6, "standalone", "true"), [0, 820, 900, 0, 0, 0]);
   // A stack without measured loads splits evenly.
-  assert.deepEqual(startingLoads(6, "standalone", "true"), new Array(6).fill(0));
-  assert.deepEqual(Object.keys(DB_REUSE_LOADS), ["distributed"]);
+  assert.deepEqual(startingLoads(6, "other", "true"), new Array(6).fill(0));
+  assert.deepEqual(Object.keys(DB_REUSE_LOADS), ["distributed", "standalone"]);
 });
 
 test("a starting load takes tests off that shard and keeps every file once", () => {
