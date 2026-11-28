@@ -197,6 +197,25 @@ describe("agentNames", () => {
       "Clinic and Billing are still used in environments. Delete those environments first.",
     );
   });
+
+  it("asks for no deletes when the page lists none of what holds an agent", () => {
+    const held = {
+      name: "Clinic",
+      environmentCount: 0,
+      testedByEnvironment: true,
+    };
+    expect(deleteBlockedReason([held])).toBe(
+      "Clinic is still used in an environment, so it can't be deleted.",
+    );
+    expect(
+      deleteBlockedReason([held, { name: "Billing", environmentCount: 2 }]),
+    ).toBe(
+      "Clinic and Billing are still used in environments, so they can't be deleted.",
+    );
+    expect(deleteConfirmText([{ name: "Billing" }], [held])).toBe(
+      "This deletes Billing with all its versions. Clinic is still used in an environment and stays.",
+    );
+  });
 });
 
 describe("filter panel rows", () => {

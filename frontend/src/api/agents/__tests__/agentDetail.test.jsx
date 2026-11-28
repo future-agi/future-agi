@@ -180,6 +180,17 @@ describe("mapAgentDetail", () => {
     });
   });
 
+  it("says whether anything still tests the agent, listed or not", () => {
+    expect(
+      mapAgentDetail({
+        ...HOSTED_AGENT_DETAIL,
+        environment_count: 0,
+        tested_by_environment: true,
+      }).testedByEnvironment,
+    ).toBe(true);
+    expect(mapAgentDetail(HOSTED_AGENT_DETAIL).testedByEnvironment).toBe(false);
+  });
+
   it("copes with an agent that has no versions", () => {
     const a = mapAgentDetail({
       ...HOSTED_AGENT_DETAIL,

@@ -146,6 +146,7 @@ describe("mapConnectedAgent", () => {
         source: "github",
         version_count: 1,
         environment_count: 1,
+        tested_by_environment: true,
         environments: [{ id: "e5391b8a", name: "ride-voice-agent" }],
       }),
     ).toEqual({
@@ -159,6 +160,7 @@ describe("mapConnectedAgent", () => {
       versionCount: 1,
       environments: [{ id: "e5391b8a", name: "ride-voice-agent" }],
       environmentCount: 1,
+      testedByEnvironment: true,
       createdAt: "2026-10-14T11:50:22.093543Z",
       updatedAt: "2026-10-20T08:01:10.000000Z",
     });
