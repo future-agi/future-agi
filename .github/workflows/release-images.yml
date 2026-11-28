@@ -1071,6 +1071,11 @@ jobs:
         (needs.dispatch-ee.result == 'success' && needs.simulation-runner.result == 'success')
       )
     runs-on: ubuntu-latest
+    # The deployment-bump App's key is stored only in this environment, which
+    # admits release tags alone. That App can open pull requests on the
+    # deployment repo and nothing else; the shared release App has no access
+    # there.
+    environment: deploy-bump
     env:
       VERSION: ${{ needs.guard.outputs.version }}
       SDK_VERSION: ${{ needs.resolve-sdk.outputs.sdk_version }}
@@ -1091,8 +1096,8 @@ jobs:
       - uses: actions/create-github-app-token@v2
         id: app-token
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          app-id: ${{ secrets.DEPLOY_BUMP_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_BUMP_PRIVATE_KEY }}
           owner: future-agi
           repositories: deployment
           permission-contents: write
