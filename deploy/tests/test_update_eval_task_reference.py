@@ -388,7 +388,10 @@ class EvalTaskReferenceTests(unittest.TestCase):
         for field,default in [('analysis_source_generation',0),('sampling_contact_attribute','')]:
             before=project[field]
             project[field]=default
-            with self.subTest(field=field),self.assertRaisesRegex(AssertionError,'incompatible existing Project'):
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(AssertionError, "incompatible existing Project"),
+            ):
                 env['check_context'](CONTEXT)
             project[field]=before
 
@@ -417,7 +420,10 @@ class EvalTaskReferenceTests(unittest.TestCase):
         for version in ('v1.58.0','v1.60.0'):
             env,_,_=schema_env(LATEST_SOURCE)
             env['SOURCE_FIELDS']=payload_env(version)['SOURCE_FIELDS']
-            with self.subTest(version=version),self.assertRaisesRegex(AssertionError,'field inventory drift'):
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(AssertionError, "field inventory drift"),
+            ):
                 exec(t.SCHEMA_CHECK,env)
         env,_,_=schema_env(LATEST_SOURCE)
         env['Task']._meta.concrete_fields.append(SimpleNamespace(name='failure_reason'))
@@ -430,20 +436,29 @@ class EvalTaskReferenceTests(unittest.TestCase):
             if change=='missing check': checks.pop(name)
             if change=='wrong column': checks[name]['columns']=['sampling_contact_attribute']
             if change=='extra check': checks['extra']=dict(check=True,columns=['analysis_source_generation'])
-            with self.subTest(change=change),self.assertRaisesRegex(AssertionError,'physical check drift'):
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(AssertionError, "physical check drift"),
+            ):
                 exec(t.SCHEMA_CHECK,env)
         for table,field,kind in ((TABLE,'sampling_policy','json'),
                 ('tracer_project','sampling_contact_attribute','character varying(10)'),
                 ('tracer_project','analysis_source_generation','integer')):
             env,_,_=schema_env(LATEST_SOURCE)
             env['physical_types'][table][field]=kind
-            with self.subTest(field=field),self.assertRaisesRegex(AssertionError,'physical sampling/generation type drift'):
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(AssertionError, "physical sampling/generation type drift"),
+            ):
                 exec(t.SCHEMA_CHECK,env)
         for definition in ((False,'CHECK ((analysis_source_generation >= 0))'),
                 (True,'CHECK ((analysis_source_generation >= -1))')):
             env,_,_=schema_env(LATEST_SOURCE)
             env['check_definition']=definition
-            with self.subTest(definition=definition),self.assertRaisesRegex(AssertionError,'generation check definition drift'):
+            with (
+                self.subTest(definition=definition),
+                self.assertRaisesRegex(AssertionError, "generation check definition drift"),
+            ):
                 exec(t.SCHEMA_CHECK,env)
 
     def test_actual_chunks_replay_and_refuse_partial_payload_membership_or_work_conflicts(self):
