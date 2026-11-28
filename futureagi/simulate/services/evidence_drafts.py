@@ -699,6 +699,34 @@ def forget_later(evidence_import_id: str, drafting_job_id: str) -> None:
         )
 
 
+def stop_drafting(evidence_import: EvidenceImport) -> None:
+    """Fence the builder under the import's discard lock. Delete its resources
+    only after the discard commits; the sweep retries any unconfirmed cleanup."""
+    if evidence_import.drafting_job_id is not None:
+        _retire_drafting_chat(evidence_import.drafting_job_id)
+        transaction.on_commit(lambda: _forgotten(evidence_import))
+
+
+def _retire_drafting_chat(job_id: uuid.UUID) -> HostedHarnessConversation | None:
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation._base_manager.select_for_update()
+            .filter(job_id=job_id)
+            .first()
+        )
+        if conversation is not None:
+            # A soft-deleted chat stays available to cleanup, but neither recovery
+            # nor an already queued runtime start can claim a new lease for it.
+            if not conversation.deleted:
+                conversation.state = HostedHarnessConversation.State.RETIRED
+                conversation.active_invocation_id = None
+                conversation.delete()
+            HostedHarnessConversationLease._base_manager.filter(
+                conversation=conversation
+            ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+        return conversation
+
+
 def forget(evidence_import_id: str, drafting_job_id: str | None = None) -> None:
     """Delete an import's drafting job and everything its chat left: the sandbox,
     the checkpoints, the chat's rows (messages, events, transcripts, lease) and the
@@ -716,22 +744,7 @@ def forget(evidence_import_id: str, drafting_job_id: str | None = None) -> None:
     if evidence_import is None or evidence_import.drafting_job_id is None:
         return
     job_id = evidence_import.drafting_job_id
-    with transaction.atomic():
-        conversation = (
-            HostedHarnessConversation._base_manager.select_for_update()
-            .filter(job_id=job_id)
-            .first()
-        )
-        if conversation is not None:
-            # A soft-deleted chat stays available to cleanup, but neither recovery
-            # nor an already queued runtime start can claim a new lease for it.
-            if not conversation.deleted:
-                conversation.state = HostedHarnessConversation.State.RETIRED
-                conversation.active_invocation_id = None
-                conversation.delete()
-            HostedHarnessConversationLease._base_manager.filter(
-                conversation=conversation
-            ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+    conversation = _retire_drafting_chat(job_id)
     if conversation is not None:
         lease = HostedHarnessConversationLease._base_manager.filter(
             conversation=conversation
@@ -784,7 +797,11 @@ def sweep() -> dict[str, int]:
         conversation = HostedHarnessConversation._base_manager.filter(
             job_id=evidence_import.drafting_job_id
         ).first()
-        command = _drafting_command(conversation) if conversation else None
+        if conversation is not None and conversation.deleted:
+            # Cleanup already fenced this draft; its cases are not a live turn.
+            forgotten += _forgotten(evidence_import)
+            continue
+        command = _drafting_command(conversation)
         waiting = evidence_import.cases.filter(
             id__in=((command.payload or {}) if command else {}).get("_case_ids") or [],
             status=EvidenceImportCase.Status.PENDING,
