@@ -16,9 +16,11 @@ import ast
 import json
 import logging
 import os
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -57,6 +59,9 @@ class _RecordingClient:
         self.calls.append((sql, dict(parameters or {}), dict(settings or {})))
         rows = self._items if "FROM trajectory_items" in sql else self._rows
         return SimpleNamespace(result_rows=rows)
+
+    def close(self):
+        return None
 
 
 def _reader(client) -> CHSpanReader:
@@ -100,17 +105,7 @@ def test_unscoped_trace_reads_raise(method, scope):
     assert client.calls == []  # refused before any SQL
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
-        "get",
-        "list_by_trace",
-        "list_by_trace_ids",
-        "first_span_by_type",
-        "list_by_parent",
-        "child_tree_spans_by_trace_ids",
-    ],
-)
+@pytest.mark.parametrize("method", sorted(UNSCOPED_CALLS))
 def test_empty_project_ids_scope_reads_nothing(method):
     """An empty project set (a tenant with no projects) is a scope that
     admits no row: nothing is read and nothing comes back."""
@@ -120,11 +115,11 @@ def test_empty_project_ids_scope_reads_nothing(method):
     assert client.calls == []
 
 
-@pytest.mark.parametrize(
-    "method",
-    ["list_by_trace", "list_by_trace_ids", "first_span_by_type", "list_by_parent"],
-)
+@pytest.mark.parametrize("method", sorted(set(UNSCOPED_CALLS) - {"get"}))
 def test_project_ids_scope_binds_an_in_predicate(method):
+    """Every scoped read takes the caller's projects (``project_ids``), so an
+    org-wide caller can pin its projects instead of ``org_id``, which a
+    collector row may carry as NULL."""
     client = _RecordingClient()
     UNSCOPED_CALLS[method](_reader(client), project_ids=[OWN, FOREIGN, OWN])
     sql, params, _ = client.calls[0]
@@ -461,7 +456,7 @@ def test_legacy_span_eval_reads_in_the_given_or_config_project():
     assert _legacy_eval_span_project_id("", config) == OWN
 
 
-def test_eval_trace_read_without_trace_project_uses_config_project(monkeypatch):
+def test_runner_span_read_uses_span_row_or_version_config_project(monkeypatch):
     """The tag-triggered runner reads its span in the Postgres span row's
     project, or in the project of the version's eval configs when that row
     cannot be read; it never reads unscoped."""
@@ -589,6 +584,7 @@ class _ChildTreeReader:
 
     def __init__(self):
         self.tree_calls: list[dict] = []
+        self.trace_map_calls: list[dict] = []
 
     def __enter__(self):
         return self
@@ -596,7 +592,8 @@ class _ChildTreeReader:
     def __exit__(self, *_exc):
         return False
 
-    def trace_ids_for_span_ids(self, span_ids, *, project_id=None):
+    def trace_ids_for_span_ids(self, span_ids, **scope):
+        self.trace_map_calls.append(scope)
         return {str(s): TRACE for s in span_ids}
 
     def child_tree_spans_by_trace_ids(self, trace_ids, **scope):
@@ -604,32 +601,309 @@ class _ChildTreeReader:
         return {}
 
 
+def _foreign_org_project(project):
+    """A project in a new organization, shaped like ``project``."""
+    from accounts.models.organization import Organization
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace
+    from tracer.models.project import Project
+
+    org = Organization.objects.create(name="Foreign organization")
+    user = User.objects.create_user(
+        email=f"foreign-{uuid.uuid4().hex}@example.invalid", organization=org
+    )
+    workspace = Workspace.objects.create(
+        name="Foreign workspace", organization=org, created_by=user
+    )
+    return Project.objects.create(
+        name="Foreign project",
+        organization=org,
+        workspace=workspace,
+        model_type=project.model_type,
+        trace_type=project.trace_type,
+    )
+
+
 @pytest.mark.django_db
 def test_org_wide_dataset_child_tree_reads_in_the_orgs_projects(
     monkeypatch, organization, project
 ):
-    """An org-wide export (no project) reads child trees in the
-    organization's projects, not in every tenant's copy of the trace."""
+    """An org-wide export (no project) maps span ids to traces and reads the
+    child trees in the organization's projects, never in another
+    organization's copy of the same ids."""
     from tracer.tasks import dataset as dataset_tasks
 
+    foreign = _foreign_org_project(project)
     reader = _ChildTreeReader()
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
 
-    from tracer.models.project import Project
-
-    foreign_org_project = FOREIGN
     dataset_tasks._serialize_span_trees_batch(["span-1"], org_id=str(organization.id))
-    (call,) = reader.tree_calls
-    org_projects = {
-        str(pid)
-        for pid in Project.with_simulation.filter(
-            organization=organization
-        ).values_list("id", flat=True)
-    }
-    assert call["project_id"] is None
-    assert str(project.id) in call["project_ids"]
-    assert set(call["project_ids"]) == org_projects
-    assert foreign_org_project not in call["project_ids"]
+    expected = {str(project.id)}
+    (map_call,) = reader.trace_map_calls
+    (tree_call,) = reader.tree_calls
+    for call in (map_call, tree_call):
+        assert call["project_id"] is None
+        assert set(call["project_ids"]) == expected
+        assert str(foreign.id) not in call["project_ids"]
 
     dataset_tasks._serialize_span_trees_batch(["span-1"], project_id=str(project.id))
+    assert reader.trace_map_calls[-1] == {
+        "project_id": str(project.id),
+        "project_ids": None,
+    }
     assert reader.tree_calls[-1] == {"project_id": str(project.id), "project_ids": None}
+
+
+def test_span_to_trace_map_binds_the_project_scope():
+    client = _RecordingClient(rows=[("span-1", TRACE)])
+    reader = _reader(client)
+    assert reader.trace_ids_for_span_ids(["span-1"], project_ids=[OWN, OWN]) == {
+        "span-1": TRACE
+    }
+    sql, params, _ = client.calls[0]
+    assert "project_id IN %(pids)s" in sql
+    assert params["pids"] == (OWN,)
+    assert reader.trace_ids_for_span_ids(["span-1"], project_ids=[]) == {}
+    assert len(client.calls) == 1
+
+
+# ── a missing scope fails loudly ───────────────────────────────────────────────
+
+
+def _unscoped_reader(monkeypatch):
+    """Routes ``get_reader()`` to a real reader over a recording client, so
+    an unscoped read raises the reader's own ``UnscopedSpanReadError``."""
+    client = _RecordingClient()
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.get_reader", lambda: _reader(client)
+    )
+    return client
+
+
+_FAIL_OPEN_WRAPPERS = {
+    "span_for_item": lambda h: h._ch_span_for_item("span-1", project_ids=None),
+    "root_span_for_trace": lambda h: h._ch_root_span_for_trace(TRACE, project_ids=None),
+    "batch_spans": lambda h: h._batch_ch_spans(["span-1"], project_id=None),
+    "batch_trace_roots": lambda h: h._batch_ch_trace_roots([TRACE], project_id=None),
+}
+
+
+@pytest.mark.parametrize("wrapper", sorted(_FAIL_OPEN_WRAPPERS))
+def test_fail_open_annotation_reads_raise_a_missing_scope(monkeypatch, wrapper):
+    """A render read that treats a CH error as "deleted" still raises when it
+    was called without a scope: that is a bug, not a missing span."""
+    from model_hub.utils import annotation_queue_helpers as helpers
+
+    client = _unscoped_reader(monkeypatch)
+    with pytest.raises(UnscopedSpanReadError):
+        _FAIL_OPEN_WRAPPERS[wrapper](helpers)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("helper", ["export_rows", "child_trees"])
+def test_dataset_export_does_not_bisect_a_missing_scope(helper):
+    """The export bisects a failed batch down to single ids; a missing scope
+    fails every half the same way, so it is raised on the first read."""
+    from tracer.tasks import dataset as dataset_tasks
+
+    reader = _reader(_RecordingClient())
+    seen = []
+    if helper == "export_rows":
+        real = reader.export_fields_by_ids
+        reader.export_fields_by_ids = lambda ids, *a, **kw: (
+            seen.append(ids) or real(ids, *a, **kw)
+        )
+        call = lambda: dataset_tasks._export_span_rows(  # noqa: E731
+            reader, ["a", "b", "c"], {"input"}
+        )
+    else:
+        real = reader.child_tree_spans_by_trace_ids
+        reader.child_tree_spans_by_trace_ids = lambda ids, **kw: (
+            seen.append(ids) or real(ids, **kw)
+        )
+        call = lambda: dataset_tasks._child_tree_spans_by_trace_ids(  # noqa: E731
+            reader, ["a", "b", "c"]
+        )
+    with pytest.raises(UnscopedSpanReadError):
+        call()
+    assert seen == [["a", "b", "c"]]
+
+
+# ── deep analysis runs in the verified project ─────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_deep_analysis_reads_and_dispatches_in_the_clusters_project(
+    monkeypatch, project
+):
+    """The feed's deep analysis works in the project of the cluster that
+    links the trace: another organization's analysis of the same trace id is
+    neither shown nor taken as done, and the worker is told the project."""
+    from tracer.models.trace_error_analysis import (
+        ErrorClusterTraces,
+        TraceErrorAnalysis,
+    )
+    from tracer.queries import deep_analysis_state, feed
+    from tracer.tests.test_error_analysis import make_feed_group
+
+    trace_id = str(uuid.uuid4())
+    cluster = make_feed_group(project, "tenancy-deep-analysis")
+    ErrorClusterTraces.objects.create(cluster=cluster, trace_id=trace_id)
+    TraceErrorAnalysis.objects.create(
+        trace_id=trace_id, project=_foreign_org_project(project)
+    )
+    enqueue = Mock()
+    monkeypatch.setattr("tracer.tasks.run_deep_analysis_on_demand.delay", enqueue)
+    args = (cluster.cluster_id, trace_id, [str(project.pk)])
+    deep_analysis_state.clear(trace_id)
+    try:
+        assert feed.get_deep_analysis(*args).status == "idle"
+        assert feed.dispatch_deep_analysis(*args).status == "running"
+        enqueue.assert_called_once_with(trace_id, False, project_id=str(project.pk))
+    finally:
+        deep_analysis_state.clear(trace_id)
+
+
+@pytest.mark.django_db
+def test_queued_deep_analysis_without_a_project_reads_nothing(monkeypatch, project):
+    """A job queued before the dispatcher sent the project is marked failed;
+    it neither deletes another tenant's analysis nor reads the trace."""
+    from tracer.models.trace_error_analysis import TraceErrorAnalysis
+    from tracer.queries import deep_analysis_state
+    from tracer.tasks import error_analysis as task_module
+
+    trace_id = str(uuid.uuid4())
+    kept = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=project)
+    analyze = Mock()
+    monkeypatch.setattr(task_module, "analyze_single_trace", analyze)
+    deep_analysis_state.clear(trace_id)
+    try:
+        result = task_module.run_deep_analysis_on_demand._original_func(trace_id, True)
+        assert result["success"] is False
+        analyze.assert_not_called()
+        assert TraceErrorAnalysis.objects.filter(pk=kept.pk).exists()
+        assert deep_analysis_state.status(trace_id, has_analysis=False) == "failed"
+    finally:
+        deep_analysis_state.clear(trace_id)
+
+
+class _RootIdReader:
+    """``root_ids_by_trace_ids`` over two tenants' roots of one trace id; the
+    foreign root sorts first, as an older copy would."""
+
+    def __init__(self, roots):
+        self._roots = roots  # [(root_id, project_id)] in CH order
+        self.calls: list[dict] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
+        self.calls.append({"project_ids": project_ids})
+        for root_id, pid in self._roots:
+            if project_ids is None or pid in project_ids:
+                return {trace_ids[0]: (root_id, pid)}
+        return {}
+
+
+@pytest.mark.requires_ee
+@pytest.mark.django_db
+def test_error_analysis_reads_bills_and_stores_in_the_given_project(
+    monkeypatch, project
+):
+    """The analysis agent, the billing row and the skip check use the
+    project the caller verified, not whichever tenant's root of the trace id
+    ClickHouse returns first."""
+    import ee.agenthub.traceerroragent.traceerror as agent_module
+    from tracer.tasks import error_analysis as task_module
+
+    foreign = _foreign_org_project(project)
+    trace_id = str(uuid.uuid4())
+    reader = _RootIdReader(
+        [("foreign-root", str(foreign.id)), ("own-root", str(project.id))]
+    )
+    monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
+
+    agents = []
+
+    class _Agent:
+        def __init__(self, **kwargs):
+            agents.append(kwargs)
+            self.cost = {"total_cost": 0}
+
+        def summarize(self):
+            return {"errors": []}
+
+    monkeypatch.setattr(agent_module, "TraceErrorAnalysisAgent", _Agent)
+    billed = []
+
+    def _bill(organization, **kwargs):
+        billed.append((str(organization.id), kwargs["config"]["project_id"]))
+        return Mock()
+
+    monkeypatch.setattr(
+        "ee.usage.utils.usage_entries.log_and_deduct_cost_for_api_request", _bill
+    )
+    monkeypatch.setattr(
+        "ee.usage.services.metering.check_usage",
+        lambda *_a, **_kw: SimpleNamespace(allowed=True, reason=None),
+    )
+    monkeypatch.setattr("ee.usage.services.emitter.emit", Mock())
+
+    result = task_module.analyze_single_trace(
+        trace_id, None, ingest_embeddings=False, project_id=str(project.id)
+    )
+
+    assert result["success"] is True, result
+    assert reader.calls == [{"project_ids": [str(project.id)]}]
+    assert [a["project_id"] for a in agents] == [str(project.id)]
+    assert billed == [(str(project.organization_id), str(project.id))]
+
+
+@pytest.mark.django_db
+def test_run_evaluation_fan_out_reads_each_span_in_the_versions_project(
+    monkeypatch, auth_client, organization, workspace, custom_eval_config
+):
+    """The spans are listed in the version's project; each queued evaluation
+    is told that project, even when the config belongs to another project."""
+    from tracer.models.project import Project
+    from tracer.models.project_version import ProjectVersion
+    from tracer.views import custom_eval_config as view_module
+
+    other = Project.objects.create(
+        name="Version project",
+        organization=organization,
+        workspace=workspace,
+        model_type=custom_eval_config.project.model_type,
+        trace_type="observe",
+    )
+    version = ProjectVersion.objects.create(
+        project=other,
+        name="v",
+        version="v1",
+        eval_tags=[
+            {"custom_eval_config_id": str(custom_eval_config.id), "value": "LLM"}
+        ],
+    )
+    reader = _ScopeRecordingReader(result=[SimpleNamespace(id="span-1")])
+    monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
+    delay = Mock()
+    monkeypatch.setattr(view_module.evaluate_observation_span, "delay", delay)
+
+    response = auth_client.post(
+        "/tracer/custom-eval-config/run_evaluation/",
+        {
+            "custom_eval_config_id": str(custom_eval_config.id),
+            "project_version_id": str(version.id),
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    assert reader.calls[0][1] == (str(other.id),)
+    delay.assert_called_once_with(
+        "span-1", custom_eval_config.id, project_id=str(other.id)
+    )

@@ -11,6 +11,7 @@ import structlog
 from django.db import close_old_connections, transaction
 
 from tfc.temporal import temporal_activity
+from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
 
 logger = structlog.get_logger(__name__)
 
@@ -209,6 +210,8 @@ def _export_span_rows(
             project_id=str(project_id) if project_id else None,
             org_id=str(org_id) if org_id else None,
         )
+    except UnscopedSpanReadError:
+        raise  # a missing scope fails every half too: never bisect it
     except Exception:
         if len(span_ids) == 1:
             raise
@@ -243,6 +246,8 @@ def _child_tree_spans_by_trace_ids(
             project_id=str(project_id) if project_id else None,
             project_ids=project_ids,
         )
+    except UnscopedSpanReadError:
+        raise  # a missing scope fails every half too: never bisect it
     except Exception:
         if len(trace_ids) == 1:
             raise
@@ -304,7 +309,9 @@ def _serialize_span_trees_batch(
 
     with get_reader() as reader:
         trace_map = reader.trace_ids_for_span_ids(
-            str_ids, project_id=str(project_id) if project_id else None
+            str_ids,
+            project_id=str(project_id) if project_id else None,
+            project_ids=scope_project_ids,
         )
         unique_trace_ids = list(dict.fromkeys(trace_map.values()))
 

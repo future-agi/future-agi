@@ -26,6 +26,9 @@ from conftest import (
 from tracer.services.clickhouse.v2.span_reader import (
     CHSpanReader,
     UnscopedSpanReadError,
+    _active_select_sql,
+    _ReadScope,
+    _row_to_chspan,
 )
 
 pytestmark = pytest.mark.integration
@@ -160,17 +163,22 @@ def test_shared_trace_id_two_projects_hydrates_only_caller_project(tenancy):
     spans = reader.list_by_trace(trace_id, project_id=own)
     assert [(s.project_id, json.loads(s.input)) for s in spans] == [(own, own_content)]
 
-    spans = reader.list_by_trace_ids([trace_id], project_id=own)
+    # ``project_ids`` (the caller's projects) on the reads that gained it.
+    spans = reader.list_by_trace_ids([trace_id], project_ids=[own])
     assert [(s.project_id, json.loads(s.input)) for s in spans] == [(own, own_content)]
 
     span = reader.get("shared-span", project_id=own)
     assert (span.project_id, json.loads(span.input)) == (own, own_content)
 
-    span = reader.first_span_by_type(trace_id, "llm", project_id=own)
+    span = reader.first_span_by_type(trace_id, "llm", project_ids=[own])
     assert (span.project_id, json.loads(span.input)) == (own, own_content)
 
-    tree = reader.child_tree_spans_by_trace_ids([trace_id], project_id=own)
+    tree = reader.child_tree_spans_by_trace_ids([trace_id], project_ids=[own])
     assert [json.loads(d["input"]) for d in tree[trace_id]] == [own_content]
+
+    assert reader.trace_ids_for_span_ids(["shared-span"], project_ids=[own]) == {
+        "shared-span": trace_id
+    }
 
     exported = reader.export_fields_by_ids(["shared-span"], {"input"}, project_id=own)
     assert json.loads(exported["shared-span"]["input"]) == own_content
@@ -183,6 +191,51 @@ def test_shared_trace_id_two_projects_hydrates_only_caller_project(tenancy):
 
     with pytest.raises(UnscopedSpanReadError):
         reader.list_by_trace(trace_id)
+
+
+def _both_tenants_rows(reader, sql_tail, trace_id):
+    """Both tenants' rows for ``trace_id``, as a read with no project
+    predicate returns them (the input the hydration guard exists for)."""
+    return reader._client.query(sql_tail, parameters={"trace_id": trace_id})
+
+
+@override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=True)
+def test_hydration_guard_leaves_a_row_outside_the_scope_unfilled(tenancy):
+    """Defence in depth on live ``trajectory_items``: handed both tenants'
+    rows under one tenant's scope, the hydrator fills only that tenant's row;
+    the other keeps its stored preview and none of its items are read."""
+    reader, insert_span, insert_item = tenancy
+    own = str(uuid.uuid4())
+    trace_id = str(uuid.uuid4())
+    _seed_shared_trace(insert_span, insert_item, own, trace_id, items_v1=True)
+    own_content = [{"role": "user", "content": "own question"}]
+    scope = _ReadScope.of(project_id=own)
+
+    rows = _both_tenants_rows(
+        reader,
+        f"SELECT {_active_select_sql(True)} FROM spans FINAL "
+        "WHERE trace_id = %(trace_id)s ORDER BY project_id",
+        trace_id,
+    ).result_rows
+    spans = reader._hydrate_chspans([_row_to_chspan(r) for r in rows], scope=scope)
+    by_project = {s.project_id: s.input for s in spans}
+    assert set(by_project) == {own, FOREIGN}
+    assert json.loads(by_project[own]) == own_content
+    assert by_project[FOREIGN] == "foreign preview"
+
+    result = _both_tenants_rows(
+        reader,
+        "SELECT id, toString(project_id) AS project_id, input, "
+        "input_item_hashes, output_item_hashes, tool_def_hashes, "
+        "toString(item_scope_id) AS item_scope_id, payload_encoding, "
+        "payload_envelope FROM spans FINAL WHERE trace_id = %(trace_id)s",
+        trace_id,
+    )
+    dicts = [dict(zip(result.column_names, r, strict=True)) for r in result.result_rows]
+    reader._hydrate_dict_rows(dicts, scope=scope, attr_key="attributes_extra")
+    by_project = {d["project_id"]: d["input"] for d in dicts}
+    assert json.loads(by_project[own]) == own_content
+    assert by_project[FOREIGN] == "foreign preview"
 
 
 @override_settings(FI_TRAJECTORY_STORE_READ_ENABLED=False)
