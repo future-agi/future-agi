@@ -38977,6 +38977,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
       counted: zod.union([zod.boolean(), zod.null()]).optional(),
       limited_validation: zod.boolean().optional(),
+      held_back_verified_min: zod.number().optional(),
       issue: zod
         .union([
           zod.object({
@@ -39745,6 +39746,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
   counted: zod.union([zod.boolean(), zod.null()]).optional(),
   limited_validation: zod.boolean().optional(),
+  held_back_verified_min: zod.number().optional(),
   issue: zod
     .union([
       zod.object({
@@ -40242,6 +40244,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   attempt_of_id: zod.union([zod.string().uuid(), zod.null()]),
   counted: zod.union([zod.boolean(), zod.null()]).optional(),
   limited_validation: zod.boolean().optional(),
+  held_back_verified_min: zod.number().optional(),
   issue: zod
     .union([
       zod.object({

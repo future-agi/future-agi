@@ -30,7 +30,12 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
-from simulate.pydantic_schemas.agent_fix import MAX_MINUTES_MAX, EngineBrief, Surface
+from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_VERIFIED_MIN,
+    MAX_MINUTES_MAX,
+    EngineBrief,
+    Surface,
+)
 from simulate.selectors.agent_fix import (
     LOST_MODELS_SKIPPED_FOR,
     default_max_minutes,
@@ -2978,7 +2983,13 @@ def test_a_plan_refusal_names_the_feature_epoch():
 
 
 @pytest.mark.parametrize(
-    "held_back, limited", [(0, False), (3, True), (4, False), (6, False)]
+    "held_back, limited",
+    [
+        (0, False),
+        (HELD_BACK_VERIFIED_MIN - 1, True),
+        (HELD_BACK_VERIFIED_MIN, False),
+        (HELD_BACK_VERIFIED_MIN + 2, False),
+    ],
 )
 def test_too_few_held_back_cases_limit_a_fix_s_validation(
     auth_client, environment, source_run, held_back, limited
@@ -2994,8 +3005,9 @@ def test_too_few_held_back_cases_limit_a_fix_s_validation(
     read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
     listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)}).json()
 
-    assert read["limited_validation"] is limited
-    assert listed["results"][0]["limited_validation"] is limited
+    for epoch in (read, listed["results"][0]):
+        assert epoch["limited_validation"] is limited
+        assert epoch["held_back_verified_min"] == HELD_BACK_VERIFIED_MIN
 
 
 def _judged(run, config, *, passes=0, status="completed"):

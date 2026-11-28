@@ -147668,6 +147668,11 @@
                     "type": "boolean",
                     "readOnly": true
                 },
+                "held_back_verified_min": {
+                    "title": "Held back verified min",
+                    "type": "integer",
+                    "readOnly": true
+                },
                 "issue": {
                     "$ref": "#/definitions/AgentFixEpochIssue"
                 },
@@ -148643,6 +148648,11 @@
                 "limited_validation": {
                     "title": "Limited validation",
                     "type": "boolean",
+                    "readOnly": true
+                },
+                "held_back_verified_min": {
+                    "title": "Held back verified min",
+                    "type": "integer",
                     "readOnly": true
                 },
                 "issue": {

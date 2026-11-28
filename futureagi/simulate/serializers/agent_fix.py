@@ -10,6 +10,7 @@ from simulate.models.harness_versioning import TaskSplit
 from simulate.pydantic_schemas.agent_fix import (
     ALLOWED_MODELS_MAX,
     BUDGET_CREDITS_MAX,
+    HELD_BACK_VERIFIED_MIN,
     MARGIN_PCT_DEFAULT,
     MARGIN_PCT_MAX,
     MAX_MINUTES_MAX,
@@ -485,6 +486,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # Some cases held back, but too few to call the fix verified, whatever its verdict
     # says. With none held back it is proven on the targets only, and this is false.
     limited_validation = serializers.SerializerMethodField()
+    held_back_verified_min = serializers.SerializerMethodField()
     # The Error Feed issue it was run from; null for an epoch run from a run, or once
     # its issue is gone.
     issue = serializers.SerializerMethodField()
@@ -542,6 +544,10 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_limited_validation(self, fix_run: AgentFixRun) -> bool:
         return limited_validation(fix_run)
+
+    @swagger_serializer_method(serializer_or_field=serializers.IntegerField())
+    def get_held_back_verified_min(self, _fix_run: AgentFixRun) -> int:
+        return HELD_BACK_VERIFIED_MIN
 
     @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
@@ -605,6 +611,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "attempt_of_id",
             "counted",
             "limited_validation",
+            "held_back_verified_min",
             "issue",
             "from_issue",
             "check_runs",
