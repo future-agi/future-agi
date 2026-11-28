@@ -1900,6 +1900,28 @@ class TestSplitRuns:
 
         assert run.payload["metadata"]["selected_scenario_keys"] == TEST[1:]
 
+    def test_a_name_that_is_another_splits_key_keeps_its_scenario(
+        self, user, workspace, storage
+    ):
+        # The train scenario is named as the test one is keyed; only the test one needs
+        # production, so the train one still runs.
+        environment, _ = _locked(user, workspace, "sp-prod-name", storage)
+        member = HarnessSuiteMember.no_workspace_objects.get(
+            suite_version_id=environment.suite_version_id, scenario_key=TRAIN[0]
+        )
+        HarnessSuiteMember.no_workspace_objects.filter(id=member.id).update(
+            content={**member.content, "name": NAMES[1]}
+        )
+        _needs_production(environment, {TEST[0]})
+
+        with patch(
+            "simulate.services.harness_versioning.locked_versions.actors_enabled",
+            return_value=True,
+        ):
+            run, _ = _split_run(environment, "train")
+
+        assert run.payload["metadata"]["selected_scenario_keys"] == TRAIN
+
     def test_a_scenario_the_lock_left_out_is_not_run(self, user, workspace, storage):
         # The lock's roster names the split, not the scenario's own split: a task
         # the lock couldn't run at lock time keeps its split but is not in this lock.
