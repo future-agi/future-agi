@@ -765,6 +765,52 @@ def test_app_urls_have_working_defaults_in_both_setups() -> None:
         assert "FUTURE_AGI_CLOUD_API_URL" not in env
 
 
+def test_hosted_harness_parallelism_env_forwarded_with_safe_defaults() -> None:
+    """Backend and simulation-runner receive the hosted parallelism settings
+    with fail-closed defaults (parallelism disabled, safe int/JSON fallbacks)."""
+    expected = {
+        "HARNESS_PARALLELISM_ENABLED": "${HARNESS_PARALLELISM_ENABLED:-false}",
+        "HARNESS_MAX_WORLD_SLOTS": "${HARNESS_MAX_WORLD_SLOTS:-8}",
+        "HARNESS_PARALLEL_SNAPSHOT_DIGESTS": "${HARNESS_PARALLEL_SNAPSHOT_DIGESTS:-}",
+        "HARNESS_RESOURCE_PROFILES": "${HARNESS_RESOURCE_PROFILES:-[]}",
+    }
+    standalone_app = _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"]
+    distributed = _compose(DISTRIBUTED_COMPOSE)
+    distributed_services = distributed["services"]
+    # Compose's merge tags (!override, !reset) are not YAML's.
+    production_text = re.sub(
+        r"!(override|reset)\b",
+        "",
+        (ROOT / "deploy" / "docker-compose.production.yml").read_text("utf-8"),
+    )
+    production = yaml.safe_load(production_text)
+
+    targets = (
+        ("standalone app", standalone_app),
+        ("distributed x-backend-env", distributed["x-backend-env"]),
+        ("distributed backend", distributed_services["backend"]["environment"]),
+        (
+            "distributed worker-simulation-runner",
+            distributed_services["worker-simulation-runner"]["environment"],
+        ),
+    )
+    for label, env in targets:
+        for key, value in expected.items():
+            assert str(env.get(key)) == value, f"{label}: {key}"
+
+    assert (
+        str(production["x-production-backend-env"].get("HARNESS_PARALLELISM_ENABLED"))
+        != "true"
+    )
+    for name in ("backend", "worker-simulation-runner"):
+        svc_env = production["services"][name].get("environment") or {}
+        assert str(svc_env.get("HARNESS_PARALLELISM_ENABLED", "")).lower() not in (
+            "1",
+            "true",
+            "yes",
+        ), f"production {name} must not enable parallelism by default"
+
+
 # Keys the Standalone app sets otherwise than Distributed's x-backend-env,
 # each with why. Every other key the two share must be equal, so a change to
 # one setup's backend environment reaches the other.
