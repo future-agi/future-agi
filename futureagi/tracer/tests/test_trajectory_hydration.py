@@ -1516,3 +1516,734 @@ def test_trace_list_content_query_preserves_legacy_root_replay_signature(setting
         [tid], root_identities=[root_id]
     )
     assert "payload_encoding" not in sql
+
+
+# --------------------------------------------------------------------------- #
+# 7. Read state (RD-3), failure vocabulary (RD-4) and the pair-exact query (RD-5)
+# --------------------------------------------------------------------------- #
+from tracer.services.clickhouse.v2.trajectory_hydration import (  # noqa: E402
+    CONTENT_HYDRATED,
+    CONTENT_INLINE,
+    CONTENT_MISSING,
+    CONTENT_STATE_KEY,
+    CSV_UNAVAILABLE_PREFIX,
+    ReadStateProbe,
+    TrajectoryHydrationUnavailable,
+    TrajectoryReadState,
+    content_unavailable_sides,
+    fetch_trajectory_items_dict_rows,
+    fetch_trajectory_items_tuple_rows,
+    items_query_row_cap,
+    items_query_settings,
+    mark_csv_unavailable_previews,
+    pinned_read_state,
+    raise_if_content_unavailable,
+    read_state_snapshot,
+    trajectory_read_state,
+)
+from tracer.tests.trajectory_read_state_support import SchemaProbe  # noqa: E402
+
+READY = TrajectoryReadState.READY
+NOT_READY = TrajectoryReadState.NOT_READY
+KILLED = TrajectoryReadState.KILLED
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 1_000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    c = _Clock()
+    monkeypatch.setattr(trajectory_hydration, "_monotonic", c)
+    return c
+
+
+def _one_side_row(span_id: str, item_hash: str, *, created_at=None, **extra) -> dict:
+    """An items_v1 dict row whose input is a one-message array of ``item_hash``
+    and whose input.value was promoted (sentinel in span_attributes)."""
+    shape, _original = _side(["[", "]"], "m", ['{"role":"user","content":"full"}'])
+    row = {
+        "project_id": PROJECT_ID,
+        "id": span_id,
+        "input": "preview",
+        "output": "inline out",
+        "input_item_hashes": [item_hash],
+        "output_item_hashes": [],
+        "tool_def_hashes": [],
+        "item_scope_id": SESSION_ID,
+        "payload_encoding": ENCODING_ITEMS_V1,
+        "payload_envelope": _envelope(**{"in": shape}),
+        "span_attributes": json.dumps(
+            {"keep": 1, SENTINEL_PROMOTED_INPUT_KEY: "input.value"}
+        ),
+        **extra,
+    }
+    if created_at is not None:
+        row["created_at"] = created_at
+    return row
+
+
+@pytest.mark.unit
+def test_read_state_cache_positive_latched_negative_15s_errors_uncached(
+    settings, clock
+):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    absent = SchemaProbe(columns=(), table=False, endpoint="db-a")
+    source = absent.probe
+
+    assert trajectory_read_state(source) is NOT_READY
+    assert len(absent.statements) == 2
+    # Negative result: cached for 15 s, then probed again.
+    clock.now += 14.0
+    assert trajectory_read_state(source) is NOT_READY
+    assert len(absent.statements) == 2
+    clock.now += 2.0
+    absent.columns = trajectory_hydration.TRAJECTORY_SPAN_COLUMNS
+    absent.table = True
+    assert trajectory_read_state(source) is READY
+    assert len(absent.statements) == 4
+    # Positive result: latched for the process, even when the probe breaks.
+    absent.error = RuntimeError("system.columns unreachable")
+    clock.now += 10_000.0
+    assert trajectory_read_state(source) is READY
+    assert len(absent.statements) == 4
+
+    # A probe error is never cached: with no recent state it raises, every
+    # call probes again, and it never falls back to NOT_READY.
+    failing = SchemaProbe(error=RuntimeError("boom"), endpoint="db-b")
+    for _ in range(2):
+        with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+            trajectory_read_state(failing.probe)
+        assert exc.value.code == "read_state_probe_failed"
+    assert len(failing.statements) == 2
+
+    # Within 60 s of a successful probe, an error reuses that state.
+    flaky = SchemaProbe(columns=(), table=False, endpoint="db-c")
+    assert trajectory_read_state(flaky.probe) is NOT_READY
+    flaky.error = RuntimeError("transient")
+    clock.now += 20.0
+    assert trajectory_read_state(flaky.probe) is NOT_READY
+    clock.now += 50.0
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        trajectory_read_state(flaky.probe)
+
+    # Two endpoints never share a latch.
+    assert (
+        trajectory_read_state(
+            SchemaProbe(columns=(), table=False, endpoint="db-d").probe
+        )
+        is NOT_READY
+    )
+
+
+@pytest.mark.unit
+def test_read_flag_true_still_probes_and_refuses_absent_columns(settings, monkeypatch):
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    absent = SchemaProbe(columns=(), table=False, endpoint="pre040")
+    assert trajectory_read_state(absent.probe) is NOT_READY
+    assert absent.statements, "true must not skip the probe"
+    errors = [c.args[0] for c in log.error.call_args_list]
+    assert any(m.startswith("trajectory_read_flag_refused") for m in errors)
+    # With the schema present, true is READY.
+    assert trajectory_read_state(SchemaProbe(endpoint="post040").probe) is READY
+
+
+@pytest.mark.unit
+def test_read_flag_false_honoured_only_while_items_are_empty(settings, monkeypatch):
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = False
+    assert trajectory_read_state(SchemaProbe(total_rows=0, endpoint="e").probe) is (
+        NOT_READY
+    )
+    assert trajectory_read_state(SchemaProbe(total_rows=3, endpoint="f").probe) is (
+        READY
+    )
+    # total_rows NULL is not "empty": the flag is not honoured.
+    assert trajectory_read_state(SchemaProbe(total_rows=None, endpoint="g").probe) is (
+        READY
+    )
+    overridden = [
+        c
+        for c in log.error.call_args_list
+        if c.args[0].startswith("trajectory_read_flag_overridden")
+    ]
+    assert len(overridden) == 1, "logged once per process"
+
+
+@pytest.mark.unit
+def test_partial_040_schema_is_not_ready_and_logged(settings, monkeypatch):
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    three = trajectory_hydration.TRAJECTORY_SPAN_COLUMNS[:3]
+    assert trajectory_read_state(SchemaProbe(columns=three, endpoint="p1").probe) is (
+        NOT_READY
+    )
+    # All six columns but no trajectory_items table is partial too.
+    assert trajectory_read_state(SchemaProbe(table=False, endpoint="p2").probe) is (
+        NOT_READY
+    )
+    partial = [
+        c
+        for c in log.error.call_args_list
+        if c.args[0].startswith("trajectory_schema_partial")
+    ]
+    assert len(partial) == 2
+
+    # A column declared with another type is not the 040 column.
+    class _WrongType(SchemaProbe):
+        def run(self, sql, params, names):
+            rows = super().run(sql, params, names)
+            if "system.columns" in sql:
+                rows = [
+                    ("payload_encoding", "String", "DEFAULT", "'inline'")
+                    if r[0] == "payload_encoding"
+                    else r
+                    for r in rows
+                ]
+            return rows
+
+    assert trajectory_read_state(_WrongType(endpoint="p3").probe) is NOT_READY
+
+
+@pytest.mark.unit
+def test_cluster_probe_requires_every_replica(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    settings.FI_TRAJECTORY_READ_PROBE_CLUSTER = "cluster"
+    from tracer.tests.trajectory_read_state_support import _column_row
+
+    def run_for(lagging_host_columns):
+        statements = []
+
+        def run(sql, params, names):
+            statements.append(sql)
+            if "clusterAllReplicas" in sql and "system.one" in sql:
+                return [("r1",), ("r2",)]
+            if "clusterAllReplicas" in sql:
+                assert params["traj_probe_database"] == "db"
+                rows = [("r1", *_column_row(c)) for c in TRAJECTORY_COLUMNS]
+                rows += [("r2", *_column_row(c)) for c in lagging_host_columns]
+                return rows
+            if "currentDatabase() AS database" in sql:
+                return [("db",)]
+            if "system.columns" in sql:
+                return [_column_row(c) for c in TRAJECTORY_COLUMNS]
+            return [(0,)]
+
+        return ReadStateProbe(f"cluster-{len(lagging_host_columns)}", run), statements
+
+    TRAJECTORY_COLUMNS = trajectory_hydration.TRAJECTORY_SPAN_COLUMNS
+    lagging, statements = run_for(TRAJECTORY_COLUMNS[:2])
+    assert trajectory_read_state(lagging) is NOT_READY
+    assert any("clusterAllReplicas" in s for s in statements)
+    applied, _ = run_for(TRAJECTORY_COLUMNS)
+    assert trajectory_read_state(applied) is READY
+
+
+@pytest.mark.unit
+def test_kill_switch_turns_ready_into_killed_and_never_a_preview(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    settings.FI_TRAJECTORY_HYDRATION_KILL = True
+    # KILLED only modifies READY: before 040 the kill switch projects nothing.
+    assert (
+        trajectory_read_state(SchemaProbe(columns=(), table=False, endpoint="k0").probe)
+        is NOT_READY
+    )
+    assert trajectory_read_state(SchemaProbe(endpoint="k1").probe) is KILLED
+    assert KILLED.projects_pointers and not KILLED.fetches_items
+
+    query_fn = MagicMock()
+    # A fresh span: the kill switch must not turn into an endless retry.
+    rows = [_one_side_row("k", _h("k"), created_at=datetime.now(UTC))]
+    hydrate_span_dicts(rows, query_fn, state=KILLED)
+    query_fn.assert_not_called()
+    assert rows[0]["input"] == "preview"
+    assert rows[0][CONTENT_STATE_KEY] == {
+        "input": CONTENT_MISSING,
+        "output": CONTENT_INLINE,
+    }
+    assert json.loads(rows[0]["span_attributes"]) == {"keep": 1}
+    assert content_unavailable_sides(rows[0]) == ["input"]
+
+
+@pytest.mark.unit
+def test_query_failure_raises_trajectory_hydration_unavailable():
+    rows = [_one_side_row("q", _h("q"))]
+
+    def broken(_sql, _params):
+        raise ConnectionError("clickhouse went away")
+
+    with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+        hydrate_span_dicts(rows, broken)
+    assert exc.value.code == "items_query_failed"
+    assert isinstance(exc.value.__cause__, ConnectionError)
+    # Nothing was applied: no content state, no rebuilt preview.
+    assert rows[0]["input"] == "preview" and CONTENT_STATE_KEY not in rows[0]
+
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        fetch_trajectory_items_tuple_rows(broken, [(PROJECT_ID, SESSION_ID, _h("q"))])
+
+
+@pytest.mark.unit
+def test_items_query_rejects_rows_it_did_not_request():
+    refs = [(PROJECT_ID, SESSION_ID, _h("a")), (PROJECT_ID, PROJECT_SCOPE_ID, _h("b"))]
+    # The cross product a scopes x hashes filter returns: (SESSION, b) was
+    # never asked for.
+    cross = [
+        {"scope_id": SESSION_ID, "item_hash": _h("a"), "content": "a"},
+        {"scope_id": SESSION_ID, "item_hash": _h("b"), "content": "b?"},
+    ]
+    with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+        fetch_trajectory_items_dict_rows(lambda _s, _p: cross, refs)
+    assert exc.value.code == "items_query_unrequested_row"
+    # More rows than pairs: the client-side row cap.
+    many = cross + [
+        {"scope_id": PROJECT_SCOPE_ID, "item_hash": _h("b"), "content": "b"}
+    ]
+    with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+        fetch_trajectory_items_dict_rows(lambda _s, _p: many, refs)
+    assert exc.value.code == "items_query_row_cap"
+
+
+@pytest.mark.unit
+def test_chunking_bounds_pairs_and_query_size():
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        _MAX_PAIRS_PER_QUERY,
+        _MAX_SCOPES_PER_QUERY,
+        _chunk_project_refs,
+    )
+
+    other = "44444444-4444-4444-8444-444444444444"
+    refs = [
+        (PROJECT_ID, f"scope-{i % 700:04d}-{'x' * 30}", f"{i:032x}")
+        for i in range(4000)
+    ]
+    refs += [(other, SESSION_ID, _h("o"))]
+    refs += refs[:10]  # duplicates are read once
+    chunks = _chunk_project_refs(refs)
+    seen = set()
+    for project_id, scopes, pairs in chunks:
+        assert len(pairs) <= _MAX_PAIRS_PER_QUERY
+        assert len(scopes) <= _MAX_SCOPES_PER_QUERY
+        assert set(scopes) == {s for s, _h2 in pairs}
+        seen.update((project_id, s, h) for s, h in pairs)
+        sql, params = build_trajectory_items_query(project_id=project_id, pairs=pairs)
+        # The rendered statement stays far below max_query_size (256 KiB).
+        rendered = sql + repr(params)
+        assert len(rendered.encode()) < 200 * 1024
+        assert items_query_row_cap(params) == len(set(pairs)) + 1
+    assert seen == set(refs)
+    # A single pair binds as a set, never as one bare tuple.
+    _sql, params = build_trajectory_items_query(
+        project_id=PROJECT_ID, pairs=[(SESSION_ID, _h("one"))]
+    )
+    assert params["traj_pairs"] == ((SESSION_ID, _h("one")), (SESSION_ID, _h("one")))
+    assert items_query_row_cap(params) == 2
+
+    settings = items_query_settings(params)
+    assert settings["max_result_rows"] == 2
+    assert settings["result_overflow_mode"] == "throw"
+    assert settings["max_execution_time"] == 10
+    assert settings["max_threads"] == 1
+    assert settings["log_comment"] == "trajectory_hydration"
+
+
+@pytest.mark.unit
+def test_missing_item_marks_state_and_does_not_restore_promoted_attr(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        trajectory_hydration,
+        "_report_content_unavailable",
+        lambda reason, **kw: sent.append((reason, kw["surface"], kw["side"])),
+    )
+    old = datetime(2026, 11, 1, tzinfo=UTC)
+    present, absent = _h("present"), _h("absent")
+    rows = [
+        _one_side_row("hydrated", present, created_at=old),
+        _one_side_row("missing", absent, created_at=old),
+        {"project_id": PROJECT_ID, "id": "inline", "input": "x", "output": "y"},
+    ]
+    items = [
+        {
+            "scope_id": SESSION_ID,
+            "item_hash": present,
+            "content": '{"role":"user","content":"full"}',
+        }
+    ]
+    hydrate_span_dicts(rows, lambda _s, _p: items, surface="trace_detail")
+
+    hydrated, missing, inline = rows
+    assert hydrated["input"] == '[{"role":"user","content":"full"}]'
+    assert hydrated[CONTENT_STATE_KEY] == {
+        "input": CONTENT_HYDRATED,
+        "output": CONTENT_INLINE,
+    }
+    assert json.loads(hydrated["span_attributes"])["input.value"] == hydrated["input"]
+
+    assert missing["input"] == "preview"
+    assert missing[CONTENT_STATE_KEY] == {
+        "input": CONTENT_MISSING,
+        "output": CONTENT_INLINE,
+    }
+    # The sentinel is gone and input.value is NOT rebuilt from the preview.
+    assert json.loads(missing["span_attributes"]) == {"keep": 1}
+    assert content_unavailable_sides(missing) == ["input"]
+
+    assert CONTENT_STATE_KEY not in inline
+    assert content_unavailable_sides(inline) == []
+    assert sent == [("missing_items", "trace_detail", "in")]
+
+    # The same row as a CHSpan.
+    span = span_reader.CHSpan(
+        **{
+            **dict.fromkeys(span_reader._DATA_KEYS, ""),
+            "id": "missing",
+            "project_id": PROJECT_ID,
+            "start_time": old,
+            "end_time": old,
+            "latency_ms": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "cost": None,
+            "org_id": None,
+            "project_version_id": None,
+            "end_user_id": None,
+            "trace_session_id": None,
+            "prompt_version_id": None,
+            "prompt_label_id": None,
+            "custom_eval_config_id": None,
+            "attrs_string": {},
+            "attrs_number": {},
+            "attrs_bool": {},
+            "streaming": None,
+            "temperature": None,
+            "top_p": None,
+            "max_tokens": None,
+            "is_deleted": 0,
+            "created_at": old,
+            "input": "preview",
+            "output": "inline out",
+            "attributes_extra": json.dumps(
+                {"keep": 1, SENTINEL_PROMOTED_INPUT_KEY: "input.value"}
+            ),
+            "input_item_hashes": (absent,),
+            "item_scope_id": SESSION_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": _one_side_row("x", absent)["payload_envelope"],
+        }
+    )
+    (out,) = hydrate_chspans([span], lambda _s, _p: [])
+    assert out.input == "preview"
+    assert out.content_state == (CONTENT_MISSING, CONTENT_INLINE)
+    assert content_unavailable_sides(out) == ["input"]
+    assert "input.value" not in span_reader._ch_span_attributes(out)
+    with pytest.raises(TrajectoryContentUnavailable) as exc:
+        raise_if_content_unavailable([out], surface="eval")
+    assert exc.value.span_ids == ("missing",)
+
+
+@pytest.mark.unit
+def test_missing_item_on_fresh_span_is_retryable_unavailable():
+    fresh = datetime.now(UTC) - timedelta(minutes=2)
+    rows = [_one_side_row("fresh", _h("lagging"), created_at=fresh)]
+    with pytest.raises(TrajectoryHydrationUnavailable) as exc:
+        hydrate_span_dicts(rows, lambda _s, _p: [])
+    assert exc.value.code == "items_not_yet_visible"
+    assert CONTENT_STATE_KEY not in rows[0]
+
+    # Past the window it is reported as missing, not retried forever.
+    rows = [
+        _one_side_row("old", _h("lagging"), created_at=fresh - timedelta(minutes=20))
+    ]
+    hydrate_span_dicts(rows, lambda _s, _p: [])
+    assert content_unavailable_sides(rows[0]) == ["input"]
+    # A checksum mismatch on a fresh span is not lag: it is missing at once.
+    tampered = [{"scope_id": SESSION_ID, "item_hash": _h("t"), "content": "WRONG"}]
+    rows = [_one_side_row("tampered", _h("t"), created_at=fresh)]
+    hydrate_span_dicts(rows, lambda _s, _p: tampered)
+    assert content_unavailable_sides(rows[0]) == ["input"]
+    # A row with no created_at is treated as old (documented choice).
+    rows = [_one_side_row("no-created-at", _h("lagging"))]
+    hydrate_span_dicts(rows, lambda _s, _p: [])
+    assert content_unavailable_sides(rows[0]) == ["input"]
+
+
+@pytest.mark.unit
+def test_rca_hydration_failure_is_not_silent_preview(monkeypatch):
+    from tracer.services.clickhouse import cluster_rca_spans
+
+    class _BrokenAnalytics:
+        def execute_ch_query(self, query, params, timeout_ms=None, **_kw):
+            raise ConnectionError("items read failed")
+
+    monkeypatch.setattr(cluster_rca_spans, "_analytics", _BrokenAnalytics())
+    rows = [_one_side_row("rca", _h("rca"))]
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        cluster_rca_spans._hydrate_rca_rows(PROJECT_ID, rows, READY)
+    # Before: the swallowing reader returned [] and the preview was served.
+    assert cluster_rca_spans._execute_read("SELECT 1", {}) == []
+
+    class _EmptyAnalytics:
+        def execute_ch_query(self, query, params, timeout_ms=None, **_kw):
+            return SimpleNamespace(
+                columns=["scope_id", "item_hash", "content"], data=[]
+            )
+
+    monkeypatch.setattr(cluster_rca_spans, "_analytics", _EmptyAnalytics())
+    rows = [
+        _one_side_row("rca", _h("rca"), created_at=datetime(2026, 11, 1, tzinfo=UTC))
+    ]
+    with pytest.raises(TrajectoryContentUnavailable):
+        cluster_rca_spans._hydrate_rca_rows(PROJECT_ID, rows, READY)
+
+
+@pytest.mark.unit
+def test_rca_span_reads_surface_hydration_failures(monkeypatch):
+    from tracer.services.clickhouse import cluster_rca_spans
+
+    class _Reader:
+        def list_by_trace(self, *_a, **_k):
+            raise TrajectoryHydrationUnavailable("items_query_failed")
+
+        def get(self, *_a, **_k):
+            raise TrajectoryHydrationUnavailable("items_query_failed")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(cluster_rca_spans, "get_reader", lambda: _Reader())
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        cluster_rca_spans.spans_for_trace(PROJECT_ID, TRACE_ID)
+    with pytest.raises(TrajectoryHydrationUnavailable):
+        cluster_rca_spans.read_span(PROJECT_ID, "s")
+
+
+@pytest.mark.unit
+def test_csv_marks_a_missing_side_preview():
+    rows = [
+        {
+            "input": "preview",
+            "output": "out",
+            CONTENT_STATE_KEY: {"input": CONTENT_MISSING, "output": CONTENT_INLINE},
+        },
+        {
+            "input": "full",
+            "output": "out",
+            CONTENT_STATE_KEY: {"input": CONTENT_HYDRATED, "output": CONTENT_INLINE},
+        },
+        {"input": "inline", "output": "out"},
+        {
+            "input": None,
+            "output": "p",
+            CONTENT_STATE_KEY: {"input": CONTENT_MISSING, "output": CONTENT_MISSING},
+        },
+    ]
+    mark_csv_unavailable_previews(rows)
+    mark_csv_unavailable_previews(rows)  # idempotent
+    assert rows[0]["input"] == CSV_UNAVAILABLE_PREFIX + "preview"
+    assert rows[0]["output"] == "out"
+    assert rows[1]["input"] == "full"
+    assert rows[2]["input"] == "inline"
+    assert rows[3]["input"] == CSV_UNAVAILABLE_PREFIX
+    assert rows[3]["output"] == CSV_UNAVAILABLE_PREFIX + "p"
+    assert CSV_UNAVAILABLE_PREFIX == "[preview — full content unavailable] "
+
+
+@pytest.mark.unit
+def test_state_snapshot_pins_one_state_per_call(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = None
+    probe = SchemaProbe(columns=(), table=False, endpoint="snap")
+    with read_state_snapshot(probe.probe) as state:
+        assert state is NOT_READY
+        probe.columns = trajectory_hydration.TRAJECTORY_SPAN_COLUMNS
+        probe.table = True
+        trajectory_hydration.reset_read_state_cache()
+        # Inside the call the pinned state wins over a changed schema.
+        assert trajectory_read_state(probe.probe) is NOT_READY
+        with read_state_snapshot(probe.probe) as nested:
+            assert nested is NOT_READY
+    assert trajectory_read_state(probe.probe) is READY
+    with pinned_read_state(KILLED):
+        assert trajectory_read_state() is KILLED
+
+
+@pytest.mark.unit
+def test_eval_loader_refuses_a_span_whose_content_is_unavailable():
+    from tracer.services.clickhouse.v2.eval_loader import (
+        SpanContentUnavailable,
+        _construct_from_chspan,
+    )
+
+    base = {
+        **dict.fromkeys(span_reader._DATA_KEYS, ""),
+        "id": "s1",
+        "project_id": PROJECT_ID,
+        "start_time": datetime(2026, 11, 1, tzinfo=UTC),
+        "end_time": None,
+        "latency_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": None,
+        "org_id": None,
+        "project_version_id": None,
+        "end_user_id": None,
+        "trace_session_id": None,
+        "prompt_version_id": None,
+        "prompt_label_id": None,
+        "custom_eval_config_id": None,
+        "attrs_string": {},
+        "attrs_number": {},
+        "attrs_bool": {},
+        "streaming": None,
+        "temperature": None,
+        "top_p": None,
+        "max_tokens": None,
+        "is_deleted": 0,
+        "created_at": None,
+        "input": '"preview"',
+        "output": '"out"',
+        "attributes_extra": "{}",
+        "tags": "[]",
+        "span_events": "[]",
+        "metadata": "{}",
+        "resource_attrs": "{}",
+    }
+    missing = span_reader.CHSpan(
+        **base, content_state=(CONTENT_MISSING, CONTENT_INLINE)
+    )
+    with pytest.raises(SpanContentUnavailable) as exc:
+        _construct_from_chspan(missing)
+    assert exc.value.sides == ["input"]
+    # Hydrated and inline spans still load.
+    ok = span_reader.CHSpan(**base, content_state=(CONTENT_HYDRATED, CONTENT_INLINE))
+    assert _construct_from_chspan(ok).input == "preview"
+
+
+@pytest.mark.unit
+def test_dataset_rows_refuse_unavailable_content():
+    from tracer.tasks import dataset as dataset_tasks
+
+    child = {
+        "id": "c1",
+        "parent_span_id": "root",
+        "input": "preview",
+        CONTENT_STATE_KEY: {"input": CONTENT_MISSING, "output": CONTENT_INLINE},
+    }
+    with pytest.raises(TrajectoryContentUnavailable) as exc:
+        dataset_tasks._build_subtree_from_dicts({"root": [child]}, "root")
+    assert exc.value.span_ids == ("c1",)
+    inline_child = {"id": "c2", "parent_span_id": "root", "input": "x"}
+    assert dataset_tasks._build_subtree_from_dicts({"root": [inline_child]}, "root")
+
+    # The chunk task refuses rows whose export carries a missing side.
+    with pytest.raises(TrajectoryContentUnavailable):
+        raise_if_content_unavailable(
+            [
+                {
+                    "id": "s1",
+                    CONTENT_STATE_KEY: {
+                        "input": CONTENT_INLINE,
+                        "output": CONTENT_MISSING,
+                    },
+                }
+            ],
+            surface="dataset",
+        )
+
+
+@pytest.mark.unit
+def test_trace_detail_hydration_failure_is_typed_unavailable(settings):
+    """read_trace_detail turns an items failure into its typed 503 code and
+    resolves the read state once for the whole read."""
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    now = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+    span = _one_side_row("span-1", _h("u1"), created_at=now)
+    span.update(trace_id=TRACE_ID, start_time=now, parent_span_id="", name="n")
+
+    class _Analytics:
+        def __init__(self):
+            self.queries = []
+
+        def execute_ch_query(self, query, params=None, **_kw):
+            self.queries.append(query)
+            if "FROM trajectory_items" in query:
+                raise ConnectionError("items replica down")
+            if "latest_physical_spans" in query:
+                return SimpleNamespace(data=[dict(span)], complete=True)
+            if "AS span_id" in query:
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "project_id": PROJECT_ID,
+                            "trace_id": TRACE_ID,
+                            "span_id": "span-1",
+                            "start_time": now,
+                            "latest_is_deleted": 0,
+                            "latest_version": 1,
+                        }
+                    ],
+                    complete=True,
+                )
+            return SimpleNamespace(data=[], complete=True)
+
+    with pytest.raises(trace_detail_reads.TraceDetailReadUnavailable) as exc:
+        trace_detail_reads.read_trace_detail(
+            analytics=_Analytics(),
+            project_ids=[PROJECT_ID],
+            trace_id=TRACE_ID,
+            include_annotations=False,
+        )
+    assert exc.value.code == "trajectory_hydration_unavailable"
+
+    # A probe failure is the same typed 503, never a preview.
+    class _Probe(_Analytics):
+        trajectory_read_probe = SchemaProbe(
+            error=RuntimeError("down"), endpoint="td"
+        ).probe
+
+    with pytest.raises(trace_detail_reads.TraceDetailReadUnavailable) as exc:
+        trace_detail_reads.read_trace_detail(
+            analytics=_Probe(),
+            project_ids=[PROJECT_ID],
+            trace_id=TRACE_ID,
+            include_annotations=False,
+        )
+    assert exc.value.code == "trajectory_read_state_unavailable"
+
+
+@pytest.mark.unit
+def test_trace_detail_reads_content_and_pointers_from_one_tuple(settings):
+    ident = trace_detail_reads.PhysicalSpanIdentity(
+        project_id=PROJECT_ID,
+        trace_id=TRACE_ID,
+        span_id="s",
+        start_time=datetime(2026, 11, 1, tzinfo=UTC),
+    )
+    builder = trace_detail_reads.TraceDetailReadBuilder(
+        project_ids=[PROJECT_ID], trace_id=TRACE_ID
+    )
+    off, _ = builder.build_content_query([ident], state=NOT_READY)
+    on, _ = builder.build_content_query([ident], state=READY)
+    # Flag-off SQL keeps the per-column projections.
+    assert "argMax(input, _version) AS latest_input," in off
+    assert "latest_content_tuple" not in off
+    for col in trajectory_hydration.TRAJECTORY_SPAN_COLUMNS:
+        assert col not in off
+    # With pointers, one argMax picks input, output, attributes_extra and every
+    # pointer from the same physical row.
+    assert "argMax(input, _version)" not in on
+    assert "argMax(output, _version)" not in on
+    assert "argMax(tuple(attributes_extra), _version)" not in on
+    assert "argMax(input_item_hashes" not in on
+    assert "AS latest_content_tuple" in on
+    assert "latest_created_at AS created_at" in on

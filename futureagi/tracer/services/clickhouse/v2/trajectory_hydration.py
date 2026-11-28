@@ -168,6 +168,9 @@ CONTENT_STATE_KEY = "_content_state"
 CONTENT_UNAVAILABLE_KEY = "content_unavailable"
 CSV_UNAVAILABLE_PREFIX = "[preview — full content unavailable] "
 
+# Indirection so tests drive the cache clock without patching ``time``.
+_monotonic = time.monotonic
+
 READ_STATE_NEGATIVE_TTL_S = 15.0
 # A probe error reuses the last state a probe returned this recently.
 READ_STATE_PROBE_ERROR_GRACE_S = 60.0
@@ -453,7 +456,7 @@ def _base_read_state(probe: ReadStateProbe) -> TrajectoryReadState:
     flag = _read_flag()
     cluster = _probe_cluster()
     key = (probe.endpoint, flag, cluster)
-    now = time.monotonic()
+    now = _monotonic()
     with _state_lock:
         cached = _state_cache.get(key)
     if cached is not None and (cached[1] is None or cached[1] > now):
@@ -1000,7 +1003,7 @@ def _report_content_unavailable(
 ) -> None:
     """A rate-limited Sentry event (one per reason and surface a minute)."""
     key = f"{reason}:{surface}"
-    now = time.monotonic()
+    now = _monotonic()
     with _state_lock:
         if now - _sentry_last.get(key, -_SENTRY_INTERVAL_S) < _SENTRY_INTERVAL_S:
             return
