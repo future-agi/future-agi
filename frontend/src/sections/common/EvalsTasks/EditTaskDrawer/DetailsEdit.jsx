@@ -244,14 +244,11 @@ const DetailsEdit = ({
   }, [evalAttributes]);
 
   const { mutate: updateEvalTask, isPending } = useMutation({
-    mutationFn: (data) =>
-      axios.patch(endpoints.project.patchEvalTask(), {
-        ...data,
-        eval_task_id: selectedRow?.id,
-      }),
-    onSuccess: (data) => {
+    mutationFn: (data) => axios.patch(endpoints.project.patchEvalTask(), data),
+    onSuccess: (data, { eval_task_id: updatedId }) => {
+      queryClient.resetQueries({ queryKey: ["eval-task-logs", updatedId] });
       queryClient.invalidateQueries({
-        queryKey: ["taskDetails", taskDetails?.id],
+        queryKey: ["taskDetails", updatedId],
       });
       enqueueSnackbar(data?.data?.result?.message, { variant: "success" });
       refreshGrid();
@@ -269,6 +266,7 @@ const DetailsEdit = ({
     );
 
     const transformedData = {
+      eval_task_id: selectedRow?.id,
       evals: data.evalsDetails?.map((item) => item.id) || [],
       filters: {
         project_id: data.project,

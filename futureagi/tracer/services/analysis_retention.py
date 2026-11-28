@@ -361,6 +361,7 @@ def _retire_instant_task(task_id, *, organization_id) -> int:
             deleted_at=now,
             updated_at=now,
             status=EvalTaskStatus.DELETED,
+            failure_reason=None,
         )
         InstantEvalAnswer.objects.filter(task_id=task_id).delete()
         InstantEvalRow.objects.filter(task_id=task_id).delete()

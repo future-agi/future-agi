@@ -100,11 +100,12 @@ const renderTaskList = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <TaskListView onCreateTask={vi.fn()} onRowClick={vi.fn()} />
     </QueryClientProvider>,
   );
+  return queryClient;
 };
 
 const resumeButtonIn = (row) =>
@@ -136,6 +137,35 @@ describe("TaskListView resume action", () => {
         {},
       ),
     );
+  });
+
+  it("explains a failed badge without attaching its reason to completed rows", async () => {
+    const reason = "Narrow the time range and retry.";
+    axiosGetMock.mockResolvedValue(
+      taskPage([
+        { ...task("failed", "failed"), failure_reason: reason },
+        { ...task("done", "completed"), failure_reason: reason },
+      ]),
+    );
+    renderTaskList();
+    const failed = await screen.findByTestId("row-failed");
+    expect(failed).toContainElement(screen.getByTitle(reason));
+    expect(screen.getByTestId("row-done")).toHaveTextContent("Completed");
+  });
+
+  it("discards only the resumed row's cached Logs", async () => {
+    axiosGetMock.mockResolvedValue(taskPage([task("task-failed", "failed")]));
+    const client = renderTaskList();
+    const logs = ["eval-task-logs", "task-failed"];
+    const otherLogs = ["eval-task-logs", "task-other"];
+    const failed = { status: "failed", failure_reason: "Selection failed" };
+    client.setQueryData(logs, failed);
+    client.setQueryData(otherLogs, failed);
+
+    const row = await screen.findByTestId("row-task-failed");
+    fireEvent.click(resumeButtonIn(row));
+    await waitFor(() => expect(client.getQueryData(logs)).toBeUndefined());
+    expect(client.getQueryData(otherLogs)).toEqual(failed);
   });
 
   it("still offers Resume on a paused task", async () => {

@@ -230,14 +230,11 @@ const EditTaskDrawerV2Content = ({
 
   // Update mutation
   const { mutate: updateEvalTask, isPending } = useMutation({
-    mutationFn: (data) =>
-      axios.patch(endpoints.project.patchEvalTask(), {
-        ...data,
-        eval_task_id: selectedRow?.id,
-      }),
-    onSuccess: (data) => {
+    mutationFn: (data) => axios.patch(endpoints.project.patchEvalTask(), data),
+    onSuccess: (data, { eval_task_id: updatedId }) => {
+      queryClient.resetQueries({ queryKey: ["eval-task-logs", updatedId] });
       queryClient.invalidateQueries({
-        queryKey: ["taskDetails", taskDetails?.id],
+        queryKey: ["taskDetails", updatedId],
       });
       enqueueSnackbar(data?.data?.result?.message || "Task updated", {
         variant: "success",
@@ -257,6 +254,7 @@ const EditTaskDrawerV2Content = ({
       );
 
       const transformedData = {
+        eval_task_id: selectedRow?.id,
         evals: data.evalsDetails?.map((item) => item.id) || [],
         filters: {
           project_id: data.project,
@@ -282,7 +280,13 @@ const EditTaskDrawerV2Content = ({
       };
       updateEvalTask(transformedData);
     },
-    [formValues, startDateField.value, endDateField.value, updateEvalTask],
+    [
+      formValues,
+      startDateField.value,
+      endDateField.value,
+      updateEvalTask,
+      selectedRow?.id,
+    ],
   );
 
   const onSubmit = useCallback(() => {

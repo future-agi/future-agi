@@ -160,10 +160,11 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
             # delete wins.
             changed = EvalTask.objects.filter(
                 id=task.id, status=EvalTaskStatus.FAILED
-            ).update(status=EvalTaskStatus.PENDING)
+            ).update(status=EvalTaskStatus.PENDING, failure_reason=None)
             if not changed:
                 return outcome
             task.status = EvalTaskStatus.PENDING
+            task.failure_reason = None
 
         # The describe above is the evidence the restarted run's first reap
         # needs, and it has answered: nothing owns the task. Handed over

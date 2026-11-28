@@ -37994,48 +37994,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
-          page: {
-            required: false,
+          eval_task_id: {
+            required: true,
             schema: {
-              type: "integer",
-              minimum: 1,
-            },
-          },
-          limit: {
-            required: false,
-            schema: {
-              type: "integer",
-              minimum: 1,
-              maximum: 100,
-              default: 10,
+              type: "string",
+              format: "uuid",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/EvalTask",
-                },
-              },
-            },
+            $ref: "#/definitions/EvalTaskLogsResponse",
           },
           400: {
             $ref: "#/definitions/ApiErrorResponse",
@@ -68456,6 +68425,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           ],
           "x-nullable": true,
         },
+        failure_reason: {
+          title: "Failure reason",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
         start_time: {
           title: "Start time",
           type: "string",
@@ -68545,6 +68521,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/EvalTaskDetailsResult",
+        },
+      },
+    },
+    EvalTaskLogsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/EvalTaskLogsResult",
         },
       },
     },
@@ -112183,6 +112173,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           ],
           "x-nullable": true,
         },
+        failure_reason: {
+          title: "Failure reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         filters_applied: {
           title: "Filters applied",
           type: "object",
@@ -112438,6 +112434,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Row type",
           type: "string",
           enum: ["spans", "traces", "sessions", "voiceCalls"],
+        },
+      },
+    },
+    EvalTaskLogsResult: {
+      required: [
+        "start_time",
+        "end_time",
+        "status",
+        "run_type",
+        "errors_count",
+        "success_count",
+        "skipped_count",
+        "warnings_count",
+        "total_count",
+        "target_count",
+        "error_groups",
+        "warning_groups",
+        "error_groups_truncated",
+        "warning_groups_truncated",
+        "row_type",
+      ],
+      type: "object",
+      properties: {
+        start_time: {
+          title: "Start time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        end_time: {
+          title: "End time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          "x-nullable": true,
+        },
+        failure_reason: {
+          title: "Failure reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        run_type: {
+          title: "Run type",
+          type: "string",
+          "x-nullable": true,
+        },
+        errors_count: {
+          title: "Errors count",
+          type: "integer",
+        },
+        success_count: {
+          title: "Success count",
+          type: "integer",
+        },
+        skipped_count: {
+          title: "Skipped count",
+          type: "integer",
+        },
+        warnings_count: {
+          title: "Warnings count",
+          type: "integer",
+        },
+        total_count: {
+          title: "Total count",
+          type: "integer",
+        },
+        target_count: {
+          title: "Target count",
+          type: "integer",
+        },
+        error_groups: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalTaskLogsErrorGroup",
+          },
+        },
+        warning_groups: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalTaskLogsWarningGroup",
+          },
+        },
+        error_groups_truncated: {
+          title: "Error groups truncated",
+          type: "boolean",
+        },
+        warning_groups_truncated: {
+          title: "Warning groups truncated",
+          type: "boolean",
+        },
+        row_type: {
+          title: "Row type",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -140741,6 +140836,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    EvalTaskLogsErrorGroup: {
+      required: ["normalized", "count", "sample"],
+      type: "object",
+      properties: {
+        normalized: {
+          title: "Normalized",
+          type: "string",
+          minLength: 1,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        sample: {
+          title: "Sample",
+          type: "string",
+        },
+      },
+    },
+    EvalTaskLogsWarningGroup: {
+      required: ["type", "empty_keys", "filled_keys", "message", "count"],
+      type: "object",
+      properties: {
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        empty_keys: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+        filled_keys: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+      },
+    },
     EvalTaskUsageAggregationMetadata: {
       required: [
         "query_complete",
@@ -154081,6 +154226,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         status: {
           title: "Status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        failure_reason: {
+          title: "Failure reason",
           type: "string",
           minLength: 1,
           "x-nullable": true,

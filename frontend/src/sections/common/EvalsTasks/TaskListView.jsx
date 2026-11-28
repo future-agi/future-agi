@@ -1,4 +1,11 @@
-import { Box, Button, IconButton, Popover, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  Popover,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +25,7 @@ import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
 import { isResumableTaskStatus } from "./task_status";
+import { useResumeEvalTask } from "./useResumeEvalTask";
 import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
@@ -402,10 +410,7 @@ const TaskListView = ({
     onSettled: () => refetch(),
   });
 
-  const { mutate: resumeTask } = useMutation({
-    mutationFn: (taskId) =>
-      axios.post(endpoints.project.resumeEvalTask(taskId), {}),
-    meta: { errorHandled: true },
+  const { mutate: resumeTask } = useResumeEvalTask({
     // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: (taskId) => optimisticRowStatus(taskId, "pending"),
     onError: (_e, _v, ctx) => {
@@ -511,7 +516,15 @@ const TaskListView = ({
           const status = getValue()?.toLowerCase();
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <StatusBadge status={status} />
+              {status === "failed" && row.original.failure_reason ? (
+                <Tooltip title={row.original.failure_reason} describeChild>
+                  <span tabIndex={0}>
+                    <StatusBadge status={status} />
+                  </span>
+                </Tooltip>
+              ) : (
+                <StatusBadge status={status} />
+              )}
               {status === "running" && (
                 <IconButton
                   size="small"

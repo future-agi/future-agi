@@ -1094,6 +1094,7 @@ def test_a_stopped_run_with_rows_left_is_resumed_not_retried_or_extended(
     checked credits for. A paused or stalled run is resumed first, which
     checks credits for every row it reads."""
     task = _half_answered_run(auth_client, observe_project, yes_no, status_)
+    EvalTask.objects.filter(pk=task.pk).update(failure_reason="READ_BUDGET")
     monkeypatch.setattr(instant_eval_scale, "_workflow_gone", lambda task: True)
     calls = _credit_cap(monkeypatch)
     before = len(started)
@@ -1113,6 +1114,9 @@ def test_a_stopped_run_with_rows_left_is_resumed_not_retried_or_extended(
 
     resumed = _control(auth_client, observe_project, task, "resume")
     assert resumed.status_code == status.HTTP_200_OK, resumed.json()
+    task.refresh_from_db()
+    assert task.status == EvalTaskStatus.PENDING
+    assert task.failure_reason is None
     # The four rows never read, at 0.06 credits an answer.
     assert calls == [("jev_evaluator", 0.24)]
     assert len(started) == before + 1

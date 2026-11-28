@@ -861,7 +861,10 @@ def _start_workflow_on_commit(task, *, replace: bool) -> None:
             start_eval_task_workflow_sync(task, replace_existing=replace)
         except Exception:
             logger.exception("instant_eval_workflow_start_failed", task_id=str(task.id))
-            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+            # A failed dispatch never reached selection: drop any older reason.
+            EvalTask.objects.filter(id=task.id).update(
+                status=EvalTaskStatus.FAILED, failure_reason=None
+            )
 
     transaction.on_commit(start)
 
@@ -1586,7 +1589,9 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a running run can be paused."
             )
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+        EvalTask.objects.filter(id=task.id).update(
+            status=EvalTaskStatus.PAUSED, failure_reason=None
+        )
         if run is not None:
             InstantEvalRun.objects.filter(id=run.id).update(
                 answers_version=F("answers_version") + 1
@@ -1599,8 +1604,11 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         return self._ok(task, "Paused. Answers already being read will still land.")
 
     def _restart(self, task):
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
+        EvalTask.objects.filter(id=task.id).update(
+            status=EvalTaskStatus.PENDING, failure_reason=None
+        )
         task.status = EvalTaskStatus.PENDING
+        task.failure_reason = None
         _start_workflow_on_commit(task, replace=True)
 
     def _resume(self, request, task, run, data):
@@ -1659,7 +1667,9 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             InstantEvalRun.objects.filter(id=run.id).update(
                 cancelled_at=timezone.now(), answers_version=F("answers_version") + 1
             )
-            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+            EvalTask.objects.filter(id=task.id).update(
+                status=EvalTaskStatus.PAUSED, failure_reason=None
+            )
         try:
             signal_pause_eval_task_workflow(task.id)
         except Exception:

@@ -515,7 +515,10 @@ def _requeue_entries_sync(task_id: str, entry_ids: list[str]) -> dict:
 
 
 def _set_task_status_sync(
-    task_id: str, status: str, expected_status: str | None = None
+    task_id: str,
+    status: str,
+    expected_status: str | None = None,
+    failure_reason: str | None = None,
 ) -> dict:
     """Set the task's DB ``status`` (the UI's source of truth), optionally only
     when it is currently ``expected_status``.
@@ -537,7 +540,12 @@ def _set_task_status_sync(
         from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         now = timezone.now()
-        fields: dict = {"status": status}
+        fields: dict = {
+            "status": status,
+            "failure_reason": failure_reason
+            if status == EvalTaskStatus.FAILED
+            else None,
+        }
         if status == EvalTaskStatus.RUNNING:
             # Continuous start_time is its acceptance/activation floor, not
             # worker startup time. Creation falls back to created_at; a
@@ -633,8 +641,9 @@ def _finalize_task_sync(task_id: str) -> dict:
                 "status": task.status or "",
             }
         task.status = EvalTaskStatus.COMPLETED
+        task.failure_reason = None
         task.end_time = timezone.now()
-        task.save(update_fields=["status", "end_time"])
+        task.save(update_fields=["status", "failure_reason", "end_time"])
         _prewarm_instant_summary(task_id)
         return {
             "task_id": str(task_id),
@@ -872,7 +881,7 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
     async with Heartbeater():
         result = await otel_sync_to_async(
             _set_task_status_sync, thread_sensitive=False
-        )(input.task_id, input.status, input.expected_status)
+        )(input.task_id, input.status, input.expected_status, input.failure_reason)
     if result["failed_continuous"]:
         info = activity.info()
         # Always set here: this activity only runs inside the eval-task workflow.

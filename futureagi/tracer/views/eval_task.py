@@ -24,6 +24,7 @@ from django.db.models import (
 from django.db.models.functions import Cast, Coalesce, Left, Length, NullIf
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
 from rest_framework import status as drf_status
@@ -79,6 +80,7 @@ from tracer.serializers.eval_task import (
     EvalTaskIdQuerySerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
+    EvalTaskLogsResponseSerializer,
     EvalTaskMessageResponseSerializer,
     EvalTaskSerializer,
     EvalTaskUpdateRequestSerializer,
@@ -250,6 +252,7 @@ class _EvalTaskListRowResponseSerializer(serializers.Serializer):
     name = serializers.CharField(allow_null=True)
     project_name = serializers.CharField(required=False)
     status = serializers.CharField(allow_null=True)
+    failure_reason = serializers.CharField(allow_null=True, required=False)
     run_type = serializers.CharField(allow_null=True)
     row_type = serializers.CharField(allow_null=True)
     filters_applied = serializers.JSONField(allow_null=True)
@@ -344,6 +347,7 @@ def _bounded_eval_task_compatibility_rows(queryset):
             "project__name",
             "name",
             "status",
+            "failure_reason",
             "run_type",
             "row_type",
             "filters",
@@ -1474,6 +1478,7 @@ def _serialize_eval_task_list_page(tasks, *, include_project_name):
             "id": str(eval_task.id),
             "name": eval_task.name,
             "status": eval_task.status,
+            "failure_reason": eval_task.visible_failure_reason,
             "run_type": eval_task.run_type,
             "row_type": eval_task.row_type,
             "filters_applied": eval_task.filters,
@@ -2125,14 +2130,24 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     _WARNING_LOG_SCAN_LIMIT = settings.EVAL_TASK_WARNING_LOG_SCAN_LIMIT
 
     @validated_request(
+        manual_parameters=[
+            openapi.Parameter(
+                "eval_task_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=True,
+            )
+        ],
         responses={
+            200: EvalTaskLogsResponseSerializer,
             400: ApiErrorResponseSerializer,
             422: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-        }
+        },
     )
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
     @_bounded_eval_task_read
     def get_eval_task_logs(self, request, *args, **kwargs):
         try:
@@ -2145,6 +2160,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     "start_time",
                     "end_time",
                     "status",
+                    "failure_reason",
                     "run_type",
                     "row_type",
                 )
@@ -2255,6 +2271,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # and the fetch that first sees "completed" already carries the
                 # final tallies — no off-by-one-tick stale count.
                 "status": eval_task.status,
+                "failure_reason": eval_task.visible_failure_reason,
                 # Duration is only meaningful for historical runs (which finalize
                 # with an end_time). Continuous tasks never end, so the frontend
                 # hides the Duration card based on this.
@@ -2831,7 +2848,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_tasks.update(
-                deleted=True, deleted_at=timezone.now(), status=EvalTaskStatus.DELETED
+                deleted=True,
+                deleted_at=timezone.now(),
+                status=EvalTaskStatus.DELETED,
+                failure_reason=None,
             )
 
             EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
@@ -2882,7 +2902,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_task.status = EvalTaskStatus.PAUSED
-            eval_task.save(update_fields=["status", "updated_at"])
+            eval_task.failure_reason = None
+            eval_task.save(update_fields=["status", "failure_reason", "updated_at"])
 
             # Nudge the running workflow to stop launching new evals immediately.
             # Best-effort: the paused status above is the durable signal the
@@ -2937,7 +2958,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
             ).count()
             eval_task.status = EvalTaskStatus.PENDING
-            eval_task.save(update_fields=["status"])
+            eval_task.failure_reason = None
+            eval_task.save(update_fields=["status", "failure_reason"])
 
             # Pause exits the workflow; resuming starts a fresh run that picks up
             # the remaining pending/running entries.
@@ -3384,6 +3406,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 "project_id": queryset.project.id,
                 "project_name": queryset.project.name,
                 "status": queryset.status,
+                "failure_reason": queryset.visible_failure_reason,
                 "filters_applied": queryset.filters,
                 "created_at": queryset.created_at,
                 "evals_applied": evals_rich,

@@ -508,6 +508,7 @@ import type {
   EvalTaskCreateResponseApi,
   EvalTaskDeleteRequestApi,
   EvalTaskDetailsResponseApi,
+  EvalTaskLogsResponseApi,
   EvalTaskMessageResponseApi,
   EvalTaskUpdateRequestApi,
   EvalTaskUpdateResponseApi,
@@ -1563,7 +1564,6 @@ import type {
   TracerDerivedMetricsTrendParams,
   TracerDerivedMetricsUnitValuesParams,
   TracerEvalTaskGetEvalDetailsParams,
-  TracerEvalTaskGetEvalTaskLogs200,
   TracerEvalTaskGetEvalTaskLogsParams,
   TracerEvalTaskGetUsageParams,
   TracerEvalTaskList200,
@@ -79857,7 +79857,7 @@ export const tracerEvalTaskGetEvalDetails = async (
 };
 
 export type tracerEvalTaskGetEvalTaskLogsResponse200 = {
-  data: TracerEvalTaskGetEvalTaskLogs200;
+  data: EvalTaskLogsResponseApi;
   status: 200;
 };
 
@@ -79905,7 +79905,7 @@ export type tracerEvalTaskGetEvalTaskLogsResponse =
   | tracerEvalTaskGetEvalTaskLogsResponseError;
 
 export const getTracerEvalTaskGetEvalTaskLogsUrl = (
-  params?: TracerEvalTaskGetEvalTaskLogsParams,
+  params: TracerEvalTaskGetEvalTaskLogsParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -79927,7 +79927,7 @@ export const getTracerEvalTaskGetEvalTaskLogsUrl = (
 };
 
 export const tracerEvalTaskGetEvalTaskLogs = async (
-  params?: TracerEvalTaskGetEvalTaskLogsParams,
+  params: TracerEvalTaskGetEvalTaskLogsParams,
   options?: RequestInit,
 ): Promise<tracerEvalTaskGetEvalTaskLogsResponse> => {
   return apiMutator<tracerEvalTaskGetEvalTaskLogsResponse>(
