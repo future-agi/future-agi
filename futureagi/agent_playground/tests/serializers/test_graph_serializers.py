@@ -29,6 +29,7 @@ class TestGraphListSerializer:
         assert data["name"] == graph.name
         assert data["description"] == graph.description
         assert data["is_template"] == graph.is_template
+        assert data["max_concurrent_nodes"] == 10
         assert "created_at" in data
         assert "updated_at" in data
         assert data["created_by"]["id"] == str(user.id)
@@ -147,6 +148,7 @@ class TestGraphDetailSerializer:
         assert data["name"] == graph.name
         assert data["description"] == graph.description
         assert data["is_template"] == graph.is_template
+        assert data["max_concurrent_nodes"] == 10
         assert "created_at" in data
         assert "updated_at" in data
         assert "active_version" in data
@@ -296,6 +298,20 @@ class TestGraphCreateSerializer:
         serializer = GraphCreateSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data.get("description") is None
+        assert "max_concurrent_nodes" not in serializer.validated_data
+
+    def test_max_concurrent_nodes_optional_and_validated(self):
+        serializer = GraphCreateSerializer(
+            data={"name": "New Graph", "max_concurrent_nodes": 7}
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["max_concurrent_nodes"] == 7
+
+        serializer = GraphCreateSerializer(
+            data={"name": "New Graph", "max_concurrent_nodes": 0}
+        )
+        assert not serializer.is_valid()
+        assert "greater than zero" in str(serializer.errors)
 
     def test_empty_description_allowed(self):
         """Test that empty description is allowed."""
@@ -452,6 +468,35 @@ class TestGraphUpdateSerializer:
         serializer = GraphUpdateSerializer(data=data, partial=True)
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["description"] == ""
+
+    def test_valid_update_max_concurrent_nodes(self):
+        serializer = GraphUpdateSerializer(
+            data={"max_concurrent_nodes": 3}, partial=True
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["max_concurrent_nodes"] == 3
+
+    def test_rejects_zero_max_concurrent_nodes(self):
+        serializer = GraphUpdateSerializer(
+            data={"max_concurrent_nodes": 0}, partial=True
+        )
+        assert not serializer.is_valid()
+        assert "max_concurrent_nodes" in serializer.errors
+        assert "greater than zero" in str(serializer.errors)
+
+    def test_rejects_negative_max_concurrent_nodes(self):
+        serializer = GraphUpdateSerializer(
+            data={"max_concurrent_nodes": -5}, partial=True
+        )
+        assert not serializer.is_valid()
+        assert "greater than zero" in str(serializer.errors)
+
+    def test_rejects_non_integer_max_concurrent_nodes(self):
+        serializer = GraphUpdateSerializer(
+            data={"max_concurrent_nodes": "abc"}, partial=True
+        )
+        assert not serializer.is_valid()
+        assert "greater than zero" in str(serializer.errors)
 
 
 class TestReferenceableGraphSerializer:

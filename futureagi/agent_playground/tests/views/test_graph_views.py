@@ -508,6 +508,31 @@ class TestGraphPartialUpdate:
         assert response.status_code == status.HTTP_200_OK
         assert response.data["result"]["description"] is None
 
+    def test_update_max_concurrent_nodes(self, authenticated_client, graph):
+        """Test updating agent step concurrency."""
+        url = reverse("graph-detail", kwargs={"pk": str(graph.id)})
+        response = authenticated_client.patch(
+            url, data={"max_concurrent_nodes": 3}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["result"]["max_concurrent_nodes"] == 3
+        graph.refresh_from_db()
+        assert graph.max_concurrent_nodes == 3
+
+    def test_update_rejects_zero_max_concurrent_nodes(
+        self, authenticated_client, graph
+    ):
+        url = reverse("graph-detail", kwargs={"pk": str(graph.id)})
+        response = authenticated_client.patch(
+            url, data={"max_concurrent_nodes": 0}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "greater than zero" in str(response.data)
+        graph.refresh_from_db()
+        assert graph.max_concurrent_nodes == 10
+
     def test_update_does_not_touch_versions(
         self, authenticated_client, graph, graph_version, node, input_port
     ):
