@@ -41,7 +41,6 @@ from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_source,
     eval_logger_version_column,
 )
-from tracer.services.clickhouse.query_builders.base import exact_datetime_bound_sql
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
@@ -51,6 +50,7 @@ from tracer.services.clickhouse.query_builders.filters import (
     boolean_meta_presence_condition,
     resolve_annotation_label_output_type,
     resolve_boolean_meta_value,
+    resolve_eval_filter_metadata,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _validate_attribute_key,
@@ -109,260 +109,6 @@ _USAGE_EVAL_LATEST_COLUMNS = (
 def _usage_eval_latest_projection(alias: str, *, include_config: bool = False) -> str:
     columns = _USAGE_EVAL_LATEST_COLUMNS + (("config",) if include_config else ())
     return ",\n                        ".join(f"{alias}.{column}" for column in columns)
-
-
-def eval_result_belongs_to_trace_project_sql(
-    stamped_project_expr: str, trace_project_expr: str, trace_project_count_expr: str
-) -> str:
-    """Ownership rule for a trace-attached eval result (TH-10545).
-
-    Writers stamp ``config.project_id`` on usage rows from v1.59 on. A stamped
-    row belongs to the live (trace, project) pair its stamp names, even when
-    another selected project holds the same trace UUID. A row without a stamp
-    (older history, SDK and other writers) is attributed through its trace
-    only when exactly one selected project holds that trace, as before; a
-    UUID shared by two selected projects cannot say whose result it is. Keep
-    this the single place that decides ownership.
-    """
-
-    return (
-        f"(({stamped_project_expr} = '' AND {trace_project_count_expr} = 1) "
-        f"OR ({stamped_project_expr} != '' "
-        f"AND toUUIDOrZero({stamped_project_expr}) = {trace_project_expr}))"
-    )
-
-
-def _live_trace_project_pairs_sql(
-    *, candidate_trace_ids_sql: str, include_created_at: bool
-) -> str:
-    """Every live (trace, project) pair of the candidate traces in the selection.
-
-    Unlike ``latest_live_trace_projects_sql`` a trace UUID held by two selected
-    projects is kept, once per project, so a stamped result can still find
-    its own project's copy. ``trace_project_count`` counts the selected
-    projects holding the UUID (live or tombstoned), which is what the old
-    relation used to call a UUID ambiguous. Liveness is the latest version
-    per (trace, project), so one project's tombstone never hides the other's.
-    """
-
-    created = (
-        ",\n                       argMax(trace_pair_scan.created_at, "
-        "trace_pair_scan._version) AS trace_created_at"
-        if include_created_at
-        else ""
-    )
-    created_out = ", trace_created_at" if include_created_at else ""
-    return f"""
-        SELECT trace_id, project_id, trace_project_count{created_out}
-        FROM (
-            SELECT trace_id, project_id, latest_is_deleted{created_out},
-                   count() OVER (PARTITION BY trace_id) AS trace_project_count
-            FROM (
-                SELECT trace_pair_scan.id AS trace_id,
-                       trace_pair_scan.project_id AS project_id,
-                       argMax(trace_pair_scan.is_deleted,
-                              trace_pair_scan._version) AS latest_is_deleted{created}
-                FROM traces AS trace_pair_scan
-                PREWHERE trace_pair_scan.project_id IN %(project_ids)s
-                  AND trace_pair_scan.id IN (
-                      SELECT trace_id FROM ({candidate_trace_ids_sql})
-                  )
-                GROUP BY trace_pair_scan.id, trace_pair_scan.project_id
-            ) AS trace_pair_state
-        ) AS trace_pair_counted
-        WHERE latest_is_deleted = 0
-    """
-
-
-def _eval_window_subjects_sql(*, include_spanless: bool = False) -> str:
-    """Possible subjects, not dates: a late child must never re-date a trace."""
-    subjects = """
-        SELECT DISTINCT toUUIDOrZero(eval_window_span.trace_id) AS trace_id
-        FROM spans AS eval_window_span
-        PREWHERE eval_window_span.project_id IN %(project_ids)s
-          AND eval_window_span.start_time >= %(start_date)s
-          AND eval_window_span.start_time < %(end_date)s
-        WHERE eval_window_span.trace_id != ''
-          AND toUUIDOrZero(eval_window_span.trace_id) !=
-              toUUID('00000000-0000-0000-0000-000000000000')
-    """
-    if include_spanless:
-        # A live trace can outlast every span. Its own creation time is the
-        # fallback date; current versions/liveness are checked downstream.
-        subjects += """
-            UNION DISTINCT
-            SELECT trace_window_scan.id AS trace_id
-            FROM traces AS trace_window_scan
-            PREWHERE trace_window_scan.project_id IN %(project_ids)s
-              AND trace_window_scan.created_at >= %(start_date)s
-              AND trace_window_scan.created_at < %(end_date)s
-        """
-    return subjects
-
-
-def _eval_trace_dates_sql(live_traces: str, subjects: str) -> str:
-    """Date from *all* live spans of each subject, never just the chart window."""
-    root = "(eval_trace_span.parent_span_id IS NULL OR eval_trace_span.parent_span_id = '')"
-    return f"""
-        SELECT eval_live_trace.trace_id AS trace_id,
-               eval_live_trace.project_id AS project_id,
-               eval_live_trace.trace_project_count AS trace_project_count,
-               coalesce(eval_trace_start.span_start, eval_live_trace.trace_created_at) AS trace_start
-        FROM ({live_traces}) AS eval_live_trace
-        LEFT JOIN (
-            SELECT eval_trace_span.project_id AS span_project_id,
-                   eval_trace_span.trace_id AS span_trace_id,
-                   toNullable(if(countIf({root}) > 0,
-                                 minIf(eval_trace_span.start_time, {root}),
-                                 min(eval_trace_span.start_time))) AS span_start
-            FROM spans AS eval_trace_span FINAL
-            PREWHERE eval_trace_span.project_id IN %(project_ids)s
-              AND eval_trace_span.trace_id IN (SELECT toString(trace_id) FROM {subjects})
-            WHERE eval_trace_span._peerdb_is_deleted = 0
-            GROUP BY span_project_id, span_trace_id
-        ) AS eval_trace_start
-          ON eval_live_trace.trace_id = toUUIDOrZero(eval_trace_start.span_trace_id)
-         AND eval_live_trace.project_id = eval_trace_start.span_project_id
-        WHERE trace_start >= %(start_date)s AND trace_start < %(end_date)s
-    """
-
-
-def _latest_recorded_eval_sql(
-    *,
-    scan_alias: str,
-    latest_alias: str,
-    scope: str,
-    template_param: str,
-    subject_sql: str,
-    trace_alias: str,
-    dated: bool,
-    include_config: bool = False,
-) -> str:
-    """One row per trace: its LATEST RECORDED result for one eval template.
-
-    * Candidates are every live ``success`` or ``error`` row of the trace,
-      whenever it was recorded (no upper time bound, so a re-evaluation
-      replaces the earlier result in every range). ``processing``,
-      ``not_started`` and the denied statuses are not recorded results.
-    * A stamped row of another project is dropped before the election
-      (``eval_result_belongs_to_trace_project_sql``). A trace UUID held by two
-      selected projects keeps each project's stamped results, and each
-      (project, trace) pair elects its own winner and its own trace start.
-    * Winner: a trace-level result (``target_type='trace'``) first, then the
-      latest span-level result by ``created_at``; ``id`` breaks ties.
-    * Callers keep ``status = 'success'`` after the election, so a failed
-      winner shows no number instead of an older success.
-
-    ``dated`` also keeps standalone rows (no trace; one row each, dated and
-    windowed by their execution time) and projects ``eval_bucket_at``: the
-    trace's start for trace rows. ``subject_sql`` yields UUIDs of possible
-    subjects of the outer metric. Membership is checked again after physical
-    collapse because a CDC update may change the trace in the config.
-    """
-    subjects = f"{scan_alias}_subjects"
-    trace_relation = _live_trace_project_pairs_sql(
-        candidate_trace_ids_sql=f"SELECT trace_id FROM {subjects}",
-        include_created_at=dated,
-    )
-    if dated:
-        trace_relation = _eval_trace_dates_sql(trace_relation, subjects)
-    lookup = f"{scan_alias}_candidate"
-    lookup_scope = scope.replace(f"{scan_alias}.", f"{lookup}.")
-    subject_match = (
-        f"{lookup}.eval_trace_id != '' AND "
-        f"toUUIDOrZero({lookup}.eval_trace_id) != "
-        "toUUID('00000000-0000-0000-0000-000000000000') AND "
-        f"toUUIDOrZero({lookup}.eval_trace_id) IN (SELECT trace_id FROM {subjects})"
-    )
-    if dated:
-        subject_match += (
-            f" OR ({lookup}.eval_trace_id = '' AND {lookup}.created_at >= %(start_date)s"
-            f" AND {lookup}.created_at < %(end_date)s)"
-        )
-    stamped_project = f"{latest_alias}.eval_stamped_project_id"
-    owned = eval_result_belongs_to_trace_project_sql(
-        stamped_project,
-        f"{trace_alias}.project_id",
-        f"{trace_alias}.trace_project_count",
-    )
-    trace_member = f"{trace_alias}.project_id IN %(project_ids)s"
-    if dated:
-        # Standalone rows are dated and windowed by their execution time, so
-        # the upper bound applies to them here, after the version collapse.
-        candidate = (
-            f"(({latest_alias}.eval_trace_id = '' "
-            f"AND {latest_alias}.created_at < %(end_date)s) OR {trace_member})"
-        )
-        owned = f"({latest_alias}.eval_trace_id = '' OR {owned})"
-        election_key = (
-            f"if(\n"
-            f"                    {latest_alias}.eval_trace_id = '',\n"
-            f"                    concat('row:', toString({latest_alias}.id)),\n"
-            f"                    concat('trace:', "
-            f"toString({trace_alias}.project_id),\n"
-            f"                           ':', {latest_alias}.eval_trace_id)\n"
-            f"                )"
-        )
-        dated_projection = (
-            f",\n                    if({latest_alias}.eval_trace_id = '', "
-            f"toDateTime64({latest_alias}.created_at, 6, 'UTC'), "
-            f"{trace_alias}.trace_start) AS eval_bucket_at"
-        )
-    else:
-        candidate = f"{latest_alias}.eval_trace_id != '' AND {trace_member}"
-        election_key = f"{trace_alias}.project_id, {latest_alias}.eval_trace_id"
-        dated_projection = ""
-    config = f"JSONExtractString({scan_alias}.config)"
-    # The physical eval_score is 0 for a missing score; callers that read a
-    # score as a number or a label check this flag first (TH-10545).
-    has_numeric_score = eval_output_presence_expr(
-        f"{config}, 'output', 'output'", "SCORE"
-    )
-    # Likewise a pass/fail label needs a recorded verdict: an absent one is
-    # "(not set)", not "Failed".
-    has_verdict = eval_output_presence_expr(
-        f"{config}, 'output', 'output'", "PASS_FAIL"
-    )
-    # Preselect immutable row ids with a narrow lookup, not physical versions
-    # by their mutable config. Then collapse *all* versions of qualifying ids.
-    return f"""
-                WITH {subjects} AS ({subject_sql})
-                SELECT
-                    {latest_alias}.*,
-                    {trace_alias}.project_id AS eval_project_id{dated_projection}
-                FROM (
-                    SELECT {_usage_eval_latest_projection(scan_alias, include_config=include_config)},
-                        JSONExtractString({config}, 'project_id')
-                            AS eval_stamped_project_id,
-                        JSONExtractString({config}, 'target_type')
-                            AS eval_target_type,
-                        {has_numeric_score} AS eval_has_numeric_score,
-                        {has_verdict} AS eval_has_verdict
-                    FROM usage_apicalllog AS {scan_alias}
-                    PREWHERE {scope}
-                      AND {scan_alias}.source_id = %({template_param})s
-                      AND {scan_alias}.id IN (
-                          SELECT {lookup}.id FROM usage_apicalllog AS {lookup}
-                          PREWHERE {lookup_scope}
-                            AND {lookup}.source_id = %({template_param})s
-                          WHERE {subject_match}
-                      )
-                    ORDER BY {scan_alias}._peerdb_version DESC
-                    LIMIT 1 BY {scan_alias}.id
-                ) AS {latest_alias}
-                LEFT JOIN ({trace_relation}) AS {trace_alias}
-                  ON {trace_alias}.trace_id =
-                     toUUIDOrZero({latest_alias}.eval_trace_id)
-                WHERE {latest_alias}._peerdb_is_deleted = 0
-                  AND {latest_alias}.deleted = 0
-                  AND {latest_alias}.status IN ('success', 'error')
-                  AND {candidate}
-                  AND {owned}
-                ORDER BY ({latest_alias}.eval_target_type = 'trace') DESC,
-                         {latest_alias}.created_at DESC,
-                         {latest_alias}.id DESC
-                LIMIT 1 BY {election_key}
-    """
 
 
 def _sanitize_attr_key(key: str) -> str:
@@ -1016,11 +762,28 @@ class DashboardQueryBuilder:
                 configs = configs.filter(project_id__in=self.project_ids)
             template_id = configs.values_list("eval_template_id", flat=True).first()
         elif decoded["property_kind"] == "eval_template":
-            template_id = (
-                self._visible_eval_templates(definition_id)
-                .values_list("id", flat=True)
-                .first()
+            from django.db.models import Q
+
+            from model_hub.models.choices import OwnerChoices
+            from model_hub.models.evals_metric import EvalTemplate
+
+            templates = EvalTemplate.no_workspace_objects.filter(
+                id=definition_id,
+                deleted=False,
             )
+            if self.organization_id:
+                # Dashboard discovery, the eval list, and configured project
+                # evals all expose global system templates. Preserve tenant
+                # isolation for customer-owned templates while accepting that
+                # shared system identity at query time as well.
+                templates = templates.filter(
+                    Q(organization_id=self.organization_id)
+                    | Q(
+                        organization_id__isnull=True,
+                        owner=OwnerChoices.SYSTEM.value,
+                    )
+                )
+            template_id = templates.values_list("id", flat=True).first()
         elif decoded["property_kind"] == "eval":
             # Read-only compatibility identities predate the config/template
             # split. Preserve their legacy resolution without publishing them
@@ -1104,49 +867,23 @@ class DashboardQueryBuilder:
                     metric_name,
                     role="metric",
                 )
-            sql, params = self._build_system_metric_query(
+            return self._build_system_metric_query(
                 metric_name, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "eval_metric":
-            sql, params = self._build_eval_metric_query(
+            return self._build_eval_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "annotation_metric":
-            sql, params = self._build_annotation_metric_query(
+            return self._build_annotation_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "custom_attribute":
-            sql, params = self._build_custom_attr_query(
+            return self._build_custom_attr_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
-        return self._exact_custom_window(sql, params)
-
-    def _exact_custom_window(self, sql: str, params: dict) -> tuple[str, dict]:
-        """Keep a custom window's sub-second bounds (TH-10545).
-
-        clickhouse-driver renders a ``datetime`` parameter without its
-        microseconds, so a custom window of [12:00:00.25, 12:00:00.75) became
-        empty. A custom window's ``%(start_date)s`` / ``%(end_date)s`` are
-        rendered at DateTime64(6) precision instead, for every metric of the
-        widget alike. Whole-second bounds keep their SQL text unchanged
-        (``exact_datetime_bound_sql``). Rolling presets are not touched: their
-        bounds are "now", and a sub-second shift of a rolling window is not a
-        different window.
-        """
-
-        tr = self.config.get("time_range") or self.config.get("timeRange") or {}
-        if not (tr.get("custom_start") and tr.get("custom_end")):
-            return sql, params
-        if tr.get("frozen_preset"):
-            # A rolling preset the request froze into concrete bounds.
-            return sql, params
-        for name in ("start_date", "end_date"):
-            if name in params:
-                bound = exact_datetime_bound_sql(params, name)
-                sql = sql.replace(f"%({name})s", bound)
-        return sql, params
 
     @staticmethod
     def _reject_unknown_cataloged_system_dimension(
@@ -1986,7 +1723,6 @@ class DashboardQueryBuilder:
             params,
             "s_",
             trace_id_expr="s.trace_id" if has_annotation_bd else "trace_id",
-            project_id_expr="s.project_id" if has_annotation_bd else "project_id",
         )
         params.update(subquery_params)
         all_where = [*where_clauses, *subquery_clauses]
@@ -2132,9 +1868,7 @@ class DashboardQueryBuilder:
                 )
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        # A trace's score is plotted at the trace's start, never at the
-        # evaluation's execution time (TH-10545); see _latest_recorded_eval_sql.
-        select_parts = [f"{bucket_fn}(e.eval_bucket_at) AS time_bucket"]
+        select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
         select_parts.append(f"{agg_expr} AS value")
@@ -2146,13 +1880,6 @@ class DashboardQueryBuilder:
             _usage_main_scope = (
                 "usage_main_scan.workspace_id = toUUID(%(workspace_id)s)"
             )
-            if self.organization_id:
-                # Narrowing only: the organization is the sort-key prefix, so
-                # the scan prunes by it now that it has no upper time bound.
-                _usage_main_scope = (
-                    "usage_main_scan.organization_id = toUUID(%(organization_id)s)"
-                    f" AND {_usage_main_scope}"
-                )
         else:
             _scope_filter = "e.organization_id = toUUID(%(organization_id)s)"
             _dataset_scope = "organization_id = toUUID(%(organization_id)s)"
@@ -2165,30 +1892,56 @@ class DashboardQueryBuilder:
         # template/time filters. On large tenants that was the Code 159 hot path.
         # Keeping the deletion predicates outside LIMIT 1 BY is required: an
         # inner live filter would resurrect a superseded row after a tombstone.
-        subjects = _eval_window_subjects_sql(include_spanless=True)
-        latest_recorded = _latest_recorded_eval_sql(
-            scan_alias="usage_main_scan",
-            latest_alias="usage_main_latest",
-            scope=_usage_main_scope,
-            template_param="eval_template_id",
-            subject_sql=subjects,
-            trace_alias="usage_trace_project",
-            dated=True,
-        )
+        # Resolve ownership from the narrow ``traces`` primary-key prefix.  The
+        # previous candidate relation reread this same usage slice before the
+        # main latest-state scan.  Large but otherwise healthy slices therefore
+        # crossed the query-wide row budget only because every usage row was
+        # consumed twice.  Project membership is immutable; latest-live and
+        # ambiguous-ID handling remain exact in the project-bounded relation.
+        trace_projects = latest_live_project_traces_sql()
         eval_source = f"""
-            ({latest_recorded}) AS e
+            (
+                SELECT
+                    usage_main_latest.*,
+                    usage_trace_project.project_id AS eval_project_id
+                FROM (
+                    SELECT {_usage_eval_latest_projection("usage_main_scan")}
+                    FROM usage_apicalllog AS usage_main_scan
+                    PREWHERE {_usage_main_scope}
+                      AND usage_main_scan.source_id = %(eval_template_id)s
+                      AND usage_main_scan.created_at >= %(start_date)s
+                      AND usage_main_scan.created_at < %(end_date)s
+                    ORDER BY usage_main_scan._peerdb_version DESC
+                    LIMIT 1 BY usage_main_scan.id
+                ) AS usage_main_latest
+                LEFT JOIN ({trace_projects}) AS usage_trace_project
+                  ON usage_trace_project.trace_id =
+                     toUUIDOrZero(usage_main_latest.eval_trace_id)
+                WHERE usage_main_latest._peerdb_is_deleted = 0
+                  AND usage_main_latest.deleted = 0
+                  AND usage_main_latest.status = 'success'
+                  AND (
+                    usage_main_latest.eval_trace_id = ''
+                    OR usage_trace_project.project_id IN %(project_ids)s
+                  )
+                ORDER BY usage_main_latest.created_at DESC,
+                         usage_main_latest.id DESC
+                LIMIT 1 BY if(
+                    usage_main_latest.eval_trace_id = '',
+                    concat('row:', toString(usage_main_latest.id)),
+                    concat('trace:', usage_main_latest.eval_trace_id)
+                )
+            ) AS e
         """
 
         where_parts = [
             _scope_filter,
             "e._peerdb_is_deleted = 0",
             "e.deleted = 0",
-            # After the election: a trace whose latest result failed shows no
-            # number rather than an older success.
             "e.status = 'success'",
             "e.source_id = %(eval_template_id)s",
-            "e.eval_bucket_at >= %(start_date)s",
-            "e.eval_bucket_at < %(end_date)s",
+            "e.created_at >= %(start_date)s",
+            "e.created_at < %(end_date)s",
         ]
 
         joins = []
@@ -2269,60 +2022,44 @@ class DashboardQueryBuilder:
                 ev_tid = bd.get("config_id") or bd.get("label_id") or bd_name
                 ev_tid = self._resolve_eval_template_identity(bd, ev_tid)
                 bd_output_type = (
-                    _known_eval_filter_output_type(
-                        bd.get("output_type") or bd.get("outputType")
-                    )
-                    or ""
-                )
-                # Same fallback as the system-metric breakdown: a missing or
-                # unusable hint takes the template's own type, so one eval
-                # gets one label whatever metric it breaks down (TH-10545).
-                if not bd_output_type and ev_tid:
-                    bd_output_type = self._configured_eval_output_type(ev_tid) or ""
+                    bd.get("output_type") or bd.get("outputType") or ""
+                ).upper()
 
                 if ev_tid == eval_template_id:
                     if bd_output_type == "PASS_FAIL":
-                        label_expr = eval_pass_fail_label_expr(
+                        bd_expr = eval_pass_fail_label_expr(
                             "e.eval_score", "e.eval_output_str"
                         )
-                        bd_expr = f"if(e.eval_has_verdict, {label_expr}, '(not set)')"
                     elif bd_output_type in ("CHOICE", "CHOICES"):
                         bd_expr = (
                             "if(e.eval_output_str = '', '(not set)', e.eval_output_str)"
                         )
                     else:
-                        # A missing score is stored as 0; a real 0 is "0".
                         bd_expr = (
-                            "if(e.eval_has_numeric_score, "
-                            "toString(round(e.eval_score * 100)), '(not set)')"
+                            "if(e.eval_score = 0, '(not set)', "
+                            "toString(round(e.eval_score * 100)))"
                         )
                 else:
                     ev_alias = f"ev_bd{bd_idx}"
                     param_key = f"_ev_bd{bd_idx}_tid"
                     params[param_key] = ev_tid
                     need_eval_join[ev_alias] = param_key
-                    # No successful latest result: unmatched LEFT JOIN rows
-                    # carry defaults (not NULL) under join_use_nulls = 0, and
-                    # every elected row has a trace id.
-                    not_set = _cross_eval_unmatched_sql(ev_alias)
                     if bd_output_type == "PASS_FAIL":
                         label_expr = eval_pass_fail_label_expr(
                             f"{ev_alias}.eval_score", f"{ev_alias}.eval_output_str"
                         )
-                        no_verdict = f"NOT {ev_alias}.eval_has_verdict"
                         bd_expr = (
-                            f"if({not_set} OR {no_verdict}, '(not set)', {label_expr})"
+                            f"if({ev_alias}.id IS NULL, '(not set)', {label_expr})"
                         )
                     elif bd_output_type in ("CHOICE", "CHOICES"):
                         bd_expr = (
-                            f"if({not_set} OR "
+                            f"if({ev_alias}.id IS NULL OR "
                             f"{ev_alias}.eval_output_str = '', '(not set)', "
                             f"{ev_alias}.eval_output_str)"
                         )
                     else:
-                        no_score = f"NOT {ev_alias}.eval_has_numeric_score"
                         bd_expr = (
-                            f"if({not_set} OR {no_score}, '(not set)', "
+                            f"if({ev_alias}.id IS NULL, '(not set)', "
                             f"toString(round({ev_alias}.eval_score * 100)))"
                         )
 
@@ -2431,33 +2168,7 @@ class DashboardQueryBuilder:
             elif f_type == "eval_metric":
                 ev_tid = f_name
                 ev_tid = self._resolve_eval_template_identity(f, ev_tid)
-                f_out_type = self._eval_filter_output_type(f, ev_tid)
-
-                if f_out_type is None:
-                    canonical_filter = f.get("canonical_filter")
-                    filter_config = (
-                        canonical_filter.get("filter_config")
-                        if isinstance(canonical_filter, dict)
-                        else None
-                    )
-                    saved_filter_type = (
-                        str(filter_config.get("filter_type") or "").lower()
-                        if isinstance(filter_config, dict)
-                        else ""
-                    )
-                    if saved_filter_type in {"text", "string", "categorical"}:
-                        # Unknown/untyped outputs have no trustworthy numeric
-                        # value. In particular, SCORE's storage default (0)
-                        # must not make a missing text result match equals "0".
-                        where_parts.append("0 = 1")
-                        continue
-                    try:
-                        val = _coerce_numeric_filter_operand(
-                            val, op, *_filter_leaf_identity(f)
-                        )
-                    except InvalidMetricCombinationError:
-                        where_parts.append("0 = 1")
-                        continue
+                f_out_type = (f.get("output_type") or "SCORE").upper()
 
                 if ev_tid == eval_template_id:
                     if f_out_type == "PASS_FAIL":
@@ -2472,21 +2183,13 @@ class DashboardQueryBuilder:
                         )
                         params[val_key] = _coerce_string_filter_value(val, op)
                     else:
-                        # A missing score is stored as 0: it is no value.
-                        where_parts.append(
-                            f"(e.eval_has_numeric_score AND "
-                            f"e.eval_score {op_symbol} %({val_key})s)"
-                        )
+                        where_parts.append(f"e.eval_score {op_symbol} %({val_key})s")
                         params[val_key] = _coerce_filter_value(val, op)
                 else:
                     ev_alias = f"ev_f{i}"
                     fkey = f"_evf_{i}_tid"
                     params[fkey] = ev_tid
                     need_eval_join[ev_alias] = fkey
-                    # A trace whose latest result for that template failed, or
-                    # that has none, has no value to compare (decision 2): its
-                    # unmatched row's defaults must not satisfy the filter.
-                    where_parts.append(f"NOT {_cross_eval_unmatched_sql(ev_alias)}")
                     if f_out_type == "PASS_FAIL":
                         ev_col = eval_pass_fail_label_expr(
                             f"{ev_alias}.eval_score", f"{ev_alias}.eval_output_str"
@@ -2499,10 +2202,7 @@ class DashboardQueryBuilder:
                         params[val_key] = _coerce_string_filter_value(val, op)
                     else:
                         ev_col = f"{ev_alias}.eval_score"
-                        where_parts.append(
-                            f"({ev_alias}.eval_has_numeric_score AND "
-                            f"{ev_col} {op_symbol} %({val_key})s)"
-                        )
+                        where_parts.append(f"{ev_col} {op_symbol} %({val_key})s")
                         params[val_key] = _coerce_filter_value(val, op)
 
             elif f_type == "custom_attribute":
@@ -2536,8 +2236,23 @@ class DashboardQueryBuilder:
             # The previous ``s.trace_id = e.eval_trace_id`` ON clause was
             # correlated only after the right side had been read, allowing an
             # eval + span-attribute dashboard to scan every tenant's spans.
+            # Reuse the already tenant/template/time-bounded eval candidates;
+            # converting their UUID projection back to String matches the
+            # physical spans.trace_id type without changing membership.
+            usage_trace_candidates = f"""
+                SELECT DISTINCT
+                    toUUIDOrZero(usage_trace_candidate.eval_trace_id) AS trace_id
+                FROM usage_apicalllog AS usage_trace_candidate
+                PREWHERE {_usage_main_scope.replace("usage_main_scan", "usage_trace_candidate")}
+                  AND usage_trace_candidate.source_id = %(eval_template_id)s
+                  AND usage_trace_candidate.created_at >= %(start_date)s
+                  AND usage_trace_candidate.created_at < %(end_date)s
+                WHERE usage_trace_candidate.eval_trace_id != ''
+            """
             span_trace_candidates = (
-                f"SELECT toString(trace_id) AS trace_id FROM ({subjects})"
+                "SELECT toString(trace_id) AS trace_id FROM ("
+                f"{usage_trace_candidates}"
+                ") AS usage_span_trace_candidates"
             )
             bounded_spans_join = f"""(
                 SELECT *
@@ -2547,11 +2262,8 @@ class DashboardQueryBuilder:
                   AND s.parent_span_id = ''
                   AND s._peerdb_is_deleted = 0
             ) AS s"""
-            # Join the root of the result's own (project, trace) pair: another
-            # selected project may hold the same trace UUID.
             joins.append(
-                f"LEFT JOIN {bounded_spans_join} ON s.trace_id = {_trace_id_expr} "
-                "AND s.project_id = e.eval_project_id"
+                f"LEFT JOIN {bounded_spans_join} ON s.trace_id = {_trace_id_expr}"
             )
 
         _join_scope = (
@@ -2560,30 +2272,44 @@ class DashboardQueryBuilder:
             else f"AND {'{alias}'}.organization_id = toUUID(%(organization_id)s)"
         )
         for ev_alias, param_key in need_eval_join.items():
-            # Cross-eval JOIN: the other template's latest recorded result per
-            # trace, elected exactly like the main source. The ON clause keeps
-            # only a successful winner, so a failed one is "(not set)". It
-            # follows the same chart subjects as the primary template.
+            # Cross-eval JOIN: preselect only this config/range, collapse row
+            # versions, then keep its latest successful attempt per trace.
+            # The one-day edge buffer covers normal async eval ingestion skew
+            # without restoring the previous unbounded all-history FINAL.
             scan_alias = f"usage_cross_{ev_alias}_scan"
             latest_alias = f"usage_cross_{ev_alias}_latest"
-            cross_latest = _latest_recorded_eval_sql(
-                scan_alias=scan_alias,
-                latest_alias=latest_alias,
-                scope=_usage_main_scope.replace("usage_main_scan", scan_alias),
-                template_param=param_key,
-                subject_sql=subjects,
-                trace_alias=f"usage_cross_{ev_alias}_trace",
-                dated=False,
+            cross_scope = (
+                f"{scan_alias}.workspace_id = toUUID(%(workspace_id)s)"
+                if self.workspace_id
+                else f"{scan_alias}.organization_id = toUUID(%(organization_id)s)"
             )
             cross_source = f"""
-                ({cross_latest}) AS {ev_alias}
+                (
+                    SELECT *
+                    FROM (
+                        SELECT {_usage_eval_latest_projection(scan_alias)}
+                        FROM usage_apicalllog AS {scan_alias}
+                        PREWHERE {cross_scope}
+                          AND {scan_alias}.source_id = %({param_key})s
+                          AND {scan_alias}.created_at >=
+                              %(start_date)s - INTERVAL 1 DAY
+                          AND {scan_alias}.created_at <
+                              %(end_date)s + INTERVAL 1 DAY
+                        ORDER BY {scan_alias}._peerdb_version DESC
+                        LIMIT 1 BY {scan_alias}.id
+                    ) AS {latest_alias}
+                    WHERE {latest_alias}._peerdb_is_deleted = 0
+                      AND {latest_alias}.deleted = 0
+                      AND {latest_alias}.status = 'success'
+                      AND {latest_alias}.eval_trace_id != ''
+                    ORDER BY {latest_alias}.created_at DESC,
+                             {latest_alias}.id DESC
+                    LIMIT 1 BY {latest_alias}.eval_trace_id
+                ) AS {ev_alias}
             """
             joins.append(
                 f"LEFT JOIN {cross_source} "
                 f"ON {ev_alias}.eval_trace_id = {_trace_id_expr} "
-                # A trace UUID shared by two selected projects elects one
-                # winner per project; join each project's own.
-                f"AND {ev_alias}.eval_project_id = e.eval_project_id "
                 f"AND {ev_alias}.source_id = %({param_key})s "
                 f"{_join_scope.format(alias=ev_alias)} "
                 f"AND {ev_alias}.status = 'success' "
@@ -3050,11 +2776,6 @@ class DashboardQueryBuilder:
                 params,
                 "ann_metric_",
                 trace_id_expr=annotation_subject_trace_id,
-                project_id_expr=annotation_subject_project_id,
-                eval_subject_sql=(
-                    "SELECT toUUIDOrZero(trace_id) AS trace_id "
-                    f"FROM ({annotation_subject_trace_candidates}) AS annotation_eval_subject"
-                ),
             )
             if len(membership_clauses) != len(membership_filters):
                 raise InvalidMetricCombinationError(
@@ -3627,81 +3348,53 @@ class DashboardQueryBuilder:
                 eval_template_id = self._resolve_eval_template_identity(
                     bd, eval_template_id
                 )
-                # An empty, "reason" or unknown payload type falls back to the
-                # template's type (TH-10545, D5).
                 output_type = (
-                    _known_eval_filter_output_type(
-                        bd.get("output_type") or bd.get("outputType")
-                    )
-                    or ""
-                )
+                    bd.get("output_type") or bd.get("outputType") or ""
+                ).upper()
+                # Auto-detect output type from PG if missing
                 if not output_type and eval_template_id:
-                    output_type = self._configured_eval_output_type(eval_template_id)
+                    try:
+                        from model_hub.models.evals_metric import EvalTemplate
+
+                        et = EvalTemplate.objects.filter(id=eval_template_id).first()
+                        if et:
+                            output_type = (
+                                (et.config or {})
+                                .get("output", "SCORE")
+                                .upper()
+                                .replace("/", "_")
+                            )
+                    except Exception:
+                        pass
 
                 alias = f"ev{ann_idx}"
                 param_key = f"_ev_bd_cfg_{ann_idx}"
-                scope_key = f"_ev_bd_scope_{ann_idx}"
                 params[param_key] = eval_template_id
-                scan_alias = f"usage_sys_bd_{alias}_scan"
-                if self.workspace_id:
-                    bd_scope = f"{scan_alias}.workspace_id = toUUID(%({scope_key})s)"
-                    params[scope_key] = self.workspace_id
-                    if self.organization_id:
-                        # The same tenant scope as the eval metric and the eval
-                        # filter elect in (TH-10545).
-                        org_key = f"_ev_bd_org_scope_{ann_idx}"
-                        bd_scope = (
-                            f"{scan_alias}.organization_id = toUUID(%({org_key})s) "
-                            f"AND {bd_scope}"
-                        )
-                        params[org_key] = self.organization_id
-                else:
-                    bd_scope = f"{scan_alias}.organization_id = toUUID(%({scope_key})s)"
-                    params[scope_key] = self.organization_id
                 ann_idx += 1
 
                 # Use materialized columns for fast extraction
-                not_set = _cross_eval_unmatched_sql(alias)
                 if output_type == "PASS_FAIL":
                     label_expr = eval_pass_fail_label_expr(
                         f"{alias}.eval_score", f"{alias}.eval_output_str"
                     )
-                    no_verdict = f"NOT {alias}.eval_has_verdict"
-                    val_expr = (
-                        f"if({not_set} OR {no_verdict}, '(not set)', {label_expr})"
-                    )
+                    val_expr = f"if({alias}.id IS NULL, '(not set)', {label_expr})"
                 elif output_type in ("CHOICE", "CHOICES"):
-                    # An empty choice is "(not set)" here too, as in the
-                    # eval-metric breakdowns (TH-10545).
                     val_expr = (
-                        f"if({not_set} OR {alias}.eval_output_str = '', "
-                        f"'(not set)', {alias}.eval_output_str)"
+                        f"if({alias}.id IS NULL, '(not set)', {alias}.eval_output_str)"
                     )
                 else:
                     # SCORE: show as percentage
                     val_expr = (
-                        f"if({not_set} OR NOT {alias}.eval_has_numeric_score, "
-                        f"'(not set)', toString(round({alias}.eval_score * 100)))"
+                        f"if({alias}.id IS NULL, '(not set)', "
+                        f"toString(round({alias}.eval_score * 100)))"
                     )
 
-                # Each trace's LATEST RECORDED result for the template, in the
-                # dashboard's tenant scope, elected exactly like the eval-score
-                # widget (TH-10545). One row per trace, so spans are never
-                # multiplied by repeated runs; a failed winner is "(not set)".
-                latest_recorded = _latest_recorded_eval_sql(
-                    scan_alias=scan_alias,
-                    latest_alias=f"usage_sys_bd_{alias}_latest",
-                    scope=bd_scope,
-                    template_param=param_key,
-                    subject_sql=_eval_window_subjects_sql(),
-                    trace_alias=f"usage_sys_bd_{alias}_trace",
-                    dated=False,
-                )
                 join_clause = (
-                    f"LEFT JOIN ({latest_recorded}) AS {alias} "
+                    f"LEFT JOIN usage_apicalllog AS {alias} FINAL "
                     f"ON {alias}.eval_trace_id = s.trace_id "
-                    f"AND {alias}.eval_project_id = s.project_id "
-                    f"AND {alias}.status = 'success'"
+                    f"AND {alias}.source_id = %({param_key})s "
+                    f"AND {alias}.status = 'success' "
+                    f"AND {alias}._peerdb_is_deleted = 0"
                 )
                 result.append(
                     {"type": "annotation", "expr": val_expr, "join": join_clause}
@@ -3895,59 +3588,14 @@ class DashboardQueryBuilder:
 
         return clauses, params
 
-    def _visible_eval_templates(self, template_id):
-        """Same template boundary for registry identities and legacy type hints."""
-        from django.db.models import Q
-
-        from model_hub.models.choices import OwnerChoices
-        from model_hub.models.evals_metric import EvalTemplate
-
-        tenant = Q(organization_id__isnull=True, owner=OwnerChoices.SYSTEM.value)
-        if self.organization_id:
-            tenant |= Q(organization_id=self.organization_id)
-        workspace = Q(workspace_id__isnull=True)
-        if self.workspace_id:
-            workspace |= Q(workspace_id=self.workspace_id)
-        return EvalTemplate.no_workspace_objects.filter(
-            id=template_id, deleted=False
-        ).filter(tenant & workspace)
-
-    def _configured_eval_output_type(self, template_id: str) -> str | None:
-        from django.core.exceptions import ValidationError
-
-        try:
-            output = (
-                self._visible_eval_templates(template_id)
-                .values_list("config__output", flat=True)
-                .first()
-            )
-        except (ValueError, ValidationError):
-            return None  # A malformed legacy id cannot name a template.
-        return _known_eval_filter_output_type(output)
-
-    def _eval_filter_output_type(
-        self, filter_item: dict, eval_template_id: str
-    ) -> str | None:
-        output_type = _known_eval_filter_output_type(filter_item.get("output_type"))
-        if output_type is None and _leaf_carries_canonical_filter(filter_item):
-            output_type = self._configured_eval_output_type(eval_template_id)
-        return output_type
-
     def _build_subquery_filters(
         self,
         filters: list[dict],
         params: dict,
         prefix: str,
         trace_id_expr: str = "trace_id",
-        eval_subject_sql: str | None = None,
-        project_id_expr: str = "project_id",
     ) -> tuple[list[str], dict]:
-        """Build IN-subquery clauses for eval/annotation metric filters on spans.
-
-        Eval membership compares (project, trace) pairs: each pair elects its
-        own latest result, so a trace UUID held by two selected projects
-        matches each project on that project's own result (TH-10545).
-        """
+        """Build IN-subquery clauses for eval/annotation metric filters on spans."""
         clauses: list[str] = []
         extra_params: dict[str, Any] = {}
         idx = 0
@@ -4011,26 +3659,24 @@ class DashboardQueryBuilder:
                 # authoritative statement of what ``eval_score`` /
                 # ``eval_output_str`` hold. Defaulting to SCORE compiled a
                 # Float64 comparison for every choice/pass-fail filter whose
-                # payload omitted the optional hint. A payload type the
-                # compiler cannot use (empty, "reason", anything unknown) also
-                # falls back to the template's type instead of failing the
-                # whole widget (TH-10545).
-                output_type = self._eval_filter_output_type(f, eval_template_id)
+                # payload omitted the optional hint.
+                output_type = (
+                    f.get("output_type")
+                    or (
+                        resolve_eval_filter_metadata(
+                            eval_template_id, self.project_ids
+                        ).output_type
+                        if _leaf_carries_canonical_filter(f)
+                        else None
+                    )
+                    or "SCORE"
+                ).upper()
                 scope_key = f"{prefix}scope_id_{idx}"
                 scan_alias = f"usage_{prefix}eval_filter_scan_{idx}"
                 latest_alias = f"usage_{prefix}eval_filter_latest_{idx}"
-                org_scope_key = f"{prefix}org_scope_id_{idx}"
                 if self.workspace_id:
                     _sub_scope = f"{scan_alias}.workspace_id = toUUID(%({scope_key})s)"
                     _sub_scope_val = self.workspace_id
-                    if self.organization_id:
-                        # organization_id is the ReplacingMergeTree sort-key
-                        # prefix; workspace alone is logically scoped but scans
-                        # other org partitions before filtering to the workspace.
-                        _sub_scope = (
-                            f"{scan_alias}.organization_id = "
-                            f"toUUID(%({org_scope_key})s) AND {_sub_scope}"
-                        )
                 else:
                     _sub_scope = (
                         f"{scan_alias}.organization_id = toUUID(%({scope_key})s)"
@@ -4043,32 +3689,6 @@ class DashboardQueryBuilder:
                 # collapse row versions. Live/status predicates deliberately
                 # stay outside LIMIT 1 BY so a tombstone cannot resurrect an
                 # older successful version.
-                untyped_presence = False
-                if output_type is None:
-                    canonical_filter = f.get("canonical_filter")
-                    filter_config = (
-                        canonical_filter.get("filter_config")
-                        if isinstance(canonical_filter, dict)
-                        else None
-                    )
-                    saved_filter_type = (
-                        str(filter_config.get("filter_type") or "").lower()
-                        if isinstance(filter_config, dict)
-                        else ""
-                    )
-                    if saved_filter_type in {"text", "string", "categorical"}:
-                        if not is_presence:
-                            # No safe column to compare text with.
-                            clauses.append("0 = 1")
-                            idx += 1
-                            continue
-                        # Presence compares nothing: it asks whether the
-                        # elected result recorded any output, so "is not set"
-                        # still admits traces that never ran the eval
-                        # (TH-10545).
-                        output_type = "CHOICE"
-                        untyped_presence = True
-
                 if output_type == "PASS_FAIL":
                     # Use the same score-or-text predicate as the time-series
                     # and breakdown paths, but retain this branch's bounded
@@ -4088,46 +3708,19 @@ class DashboardQueryBuilder:
                 elif output_type in ("CHOICE", "CHOICES"):
                     eval_col = f"{latest_alias}.eval_output_str"
                     filter_value = _coerce_string_filter_value(val, op)
-                else:
-                    canonical_filter = f.get("canonical_filter")
-                    filter_config = (
-                        canonical_filter.get("filter_config")
-                        if isinstance(canonical_filter, dict)
-                        else None
-                    )
-                    saved_filter_type = (
-                        str(filter_config.get("filter_type") or "").lower()
-                        if isinstance(filter_config, dict)
-                        else ""
-                    )
-                    if output_type is None and saved_filter_type in {
-                        "text",
-                        "string",
-                        "categorical",
-                    }:
-                        # A missing numeric score is physically stored as 0.
-                        # Do not let a legacy text filter such as equals "0"
-                        # accidentally select that untyped/reason-only result.
-                        clauses.append("0 = 1")
-                        idx += 1
-                        continue
-                    # SCORE: the only remaining type after normalization.
+                elif output_type == "SCORE":
                     eval_col = f"{latest_alias}.eval_score"
-                    try:
-                        filter_value = (
-                            None
-                            if is_presence or is_range
-                            else _coerce_numeric_filter_operand(
-                                val, op, leaf_column, leaf_operator
-                            )
+                    filter_value = (
+                        None
+                        if is_presence or is_range
+                        else _coerce_numeric_filter_operand(
+                            val, op, leaf_column, leaf_operator
                         )
-                    except InvalidMetricCombinationError:
-                        if output_type is not None:
-                            raise  # Known numeric template: keep the validation error.
-                        clauses.append("0 = 1")
-                        idx += 1
-                        continue
-                    output_type = "SCORE"
+                    )
+                else:
+                    raise InvalidMetricCombinationError(
+                        f"Unsupported eval filter output type: {output_type}"
+                    )
 
                 needs_raw_output = is_presence or is_range
                 if needs_raw_output:
@@ -4138,48 +3731,28 @@ class DashboardQueryBuilder:
                     # The physical eval_score is non-nullable: absent, null,
                     # and invalid output all materialize as zero. Inspect raw
                     # typed output only for presence/ranges, preserving a real
-                    # zero. Other queries never project the raw config; the
-                    # election reads only its project stamp and target type.
-                    output_json = (
-                        f"JSONExtractString({latest_alias}.config), 'output', 'output'"
-                    )
+                    # zero and avoiding large config reads on other queries.
                     filter_condition = eval_output_presence_expr(
-                        output_json, output_type
+                        f"JSONExtractString({latest_alias}.config), 'output', 'output'",
+                        output_type,
                     )
-                    if untyped_presence:
-                        # Text, a choice, a verdict or a number all count.
-                        filter_condition = (
-                            f"({filter_condition} OR "
-                            f"{eval_output_presence_expr(output_json, 'PASS_FAIL')})"
-                        )
                     if is_range:
                         filter_condition += f" AND {eval_col} {range_condition}"
                 else:
                     filter_condition = f"{eval_col} {op_symbol} %({val_key})s"
-                    if output_type == "SCORE":
-                        # A missing score is stored as 0: it is no value.
-                        filter_condition = (
-                            f"{latest_alias}.eval_has_numeric_score AND "
-                            f"{filter_condition}"
-                        )
 
-                # Membership follows each trace's LATEST RECORDED result for
-                # the template, elected exactly like the eval-score widget
-                # (TH-10545): every range sees the same verdict for a trace,
-                # and a failed latest result matches nothing.
-                latest_recorded = _latest_recorded_eval_sql(
-                    scan_alias=scan_alias,
-                    latest_alias=f"{latest_alias}_elected",
-                    scope=_sub_scope,
-                    template_param=eval_id_key,
-                    subject_sql=eval_subject_sql or _eval_window_subjects_sql(),
-                    trace_alias=f"{latest_alias}_trace",
-                    dated=False,
-                    include_config=needs_raw_output,
-                )
-                subquery = f"""({project_id_expr}, {trace_id_expr}) {membership} (
-                    SELECT {latest_alias}.eval_project_id, {latest_alias}.eval_trace_id
-                    FROM ({latest_recorded}) AS {latest_alias}
+                subquery = f"""{trace_id_expr} {membership} (
+                    SELECT {latest_alias}.eval_trace_id
+                    FROM (
+                        SELECT {_usage_eval_latest_projection(scan_alias, include_config=needs_raw_output)}
+                        FROM usage_apicalllog AS {scan_alias}
+                        PREWHERE {_sub_scope}
+                          AND {scan_alias}.source_id = %({eval_id_key})s
+                          AND {scan_alias}.created_at >= %(start_date)s
+                          AND {scan_alias}.created_at < %(end_date)s
+                        ORDER BY {scan_alias}._peerdb_version DESC
+                        LIMIT 1 BY {scan_alias}.id
+                    ) AS {latest_alias}
                     WHERE {latest_alias}._peerdb_is_deleted = 0
                       AND {latest_alias}.deleted = 0
                       AND {latest_alias}.status = 'success'
@@ -4189,8 +3762,6 @@ class DashboardQueryBuilder:
                 clauses.append(subquery)
                 extra_params[eval_id_key] = eval_template_id
                 extra_params[scope_key] = _sub_scope_val
-                if self.workspace_id and self.organization_id:
-                    extra_params[org_scope_key] = self.organization_id
                 if not is_presence and not is_range:
                     extra_params[val_key] = filter_value
                 idx += 1
@@ -4592,30 +4163,6 @@ def _leaf_carries_canonical_filter(filter_item: dict) -> bool:
     """
 
     return isinstance(filter_item.get("canonical_filter"), dict)
-
-
-_EVAL_FILTER_OUTPUT_TYPES = frozenset({"PASS_FAIL", "CHOICE", "CHOICES", "SCORE"})
-
-
-def _known_eval_filter_output_type(value: Any) -> str | None:
-    """The payload's eval output type when the filter compiler supports it.
-
-    Empty, ``"reason"`` or other unknown hints return ``None`` so the caller
-    falls back to the template's configured type.
-    """
-
-    normalized = str(value or "").strip().upper().replace("/", "_").replace(" ", "_")
-    return normalized if normalized in _EVAL_FILTER_OUTPUT_TYPES else None
-
-
-def _cross_eval_unmatched_sql(alias: str) -> str:
-    """True on a LEFT JOINed eval relation row that holds no elected result.
-
-    Unmatched columns are NULL under ``join_use_nulls = 1`` and type defaults
-    under the default ``0``; every elected row has a non-empty trace id.
-    """
-
-    return f"({alias}.id IS NULL OR {alias}.eval_trace_id = '')"
 
 
 def _filter_leaf_identity(filter_item: dict) -> tuple[str, str]:
