@@ -377,8 +377,56 @@ def resolve_server_url_for_version(version) -> str:
     return ""
 
 
+def _verification_provider_matches(version, provider, current_provider):
+    authored = (version.configuration_snapshot or {}).get("provider")
+    if authored:
+        return authored == provider
+    # Only Retell also has an unambiguous credential storage type.
+    return provider == "retell" and current_provider == provider
+
+
+def _key_for_verification(agent, provider):
+    if provider not in ("vapi", "retell", "bland"):
+        return None
+    # Read the key and its ownership evidence together, even during an edit.
+    versions = agent.versions.select_related(
+        "credentials", "agent_definition__credentials_legacy__agent_version"
+    ).order_by("-version_number")
+    version = versions.filter(status="active").first() or versions.first()
+    if version is None:
+        return None
+    definition = version.agent_definition
+    if not _verification_provider_matches(version, provider, definition.provider):
+        return None
+
+    row = getattr(version, "credentials", None)
+    if row is None or not row.api_key:
+        row = getattr(definition, "credentials_legacy", None)
+    storage_type = "vapi" if provider == "bland" else provider
+    if (
+        row is None
+        or row.provider_type != storage_type
+        or row.agent_definition_id not in (None, agent.pk)
+    ):
+        return None
+
+    owner = row.agent_version
+    if owner is not None:
+        if owner.agent_definition_id != agent.pk:
+            return None
+        if not _verification_provider_matches(owner, provider, definition.provider):
+            return None
+    elif storage_type == "vapi":
+        # Migration 0071 used this encoding for multiple providers. Without a
+        # version link, match the assistant saved alongside the key to the pin.
+        assistant = (version.configuration_snapshot or {}).get("assistant_id")
+        if not row.assistant_id.strip() or row.assistant_id != assistant:
+            return None
+    return row.get_api_key() or None
+
+
 def resolve_stored_api_key(
-    *, organization, workspace=None, agent_id=None, assistant_id=None, masked_value=None
+    *, organization, provider, workspace=None, agent_id=None, masked_value=None
 ):
     """Resolve the decrypted API key for a masked request, scoped to the caller's tenant.
 
@@ -403,8 +451,7 @@ def resolve_stored_api_key(
     else:
         return None
 
-    version = agent.active_version or agent.latest_version
-    key = resolve_api_key_for_version(version) or None
+    key = _key_for_verification(agent, provider)
 
     if key and masked_value:
         from agentcc.services.credential_manager import mask_key

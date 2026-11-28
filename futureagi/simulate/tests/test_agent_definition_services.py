@@ -7,6 +7,8 @@ Tests cover:
 - is_masked: various masking patterns
 """
 
+from unittest.mock import patch
+
 import pytest
 
 from simulate.models import AgentDefinition, AgentVersion
@@ -316,13 +318,94 @@ class TestResolveApiKeyForVersion:
 
 
 class TestResolveStoredApiKey:
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/tracer/observability-provider/verify_api_key/",
+            "/tracer/observability-provider/verify_assistant_id/",
+            "/simulate/api/agent-definition-operations/fetch_assistant_from_provider/",
+        ],
+    )
+    def test_mask_cannot_move_between_providers(self, agent_version, auth_client, path):
+        row = ProviderCredentials.objects.create(
+            agent_version=agent_version, provider_type="vapi", api_key="test-saved-key"
+        )
+        payload = {
+            "agent_id": str(agent_version.agent_definition_id),
+            "provider": "bland",
+            "api_key": row.get_masked_api_key(),
+        }
+        if not path.endswith("/verify_api_key/"):
+            payload["assistant_id"] = "test-pathway"
+        with patch("requests.get") as upstream:
+            response = auth_client.post(path, payload, format="json")
+        assert response.status_code == 400
+        upstream.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("authored", "source", "expected"),
+        [
+            ("bland", "version", True),
+            (None, "version", False),
+            ("bland", "matching-assistant", True),
+            ("bland", "other-assistant", False),
+            ("bland", "vapi-owner", False),
+            ("bland", "bland-owner", True),
+            ("bland", "retell-row", False),
+        ],
+    )
+    def test_bland_mask_checks_key_origin(
+        self, agent_definition, agent_version, auth_client, authored, source, expected
+    ):
+        # The editable provider alone cannot identify a vapi-encoded key.
+        agent_definition.provider = "bland"
+        agent_definition.save(update_fields=["provider"])
+        agent_version.configuration_snapshot = {
+            "provider": authored,
+            "assistant_id": "test-pathway",
+        }
+        agent_version.save(update_fields=["configuration_snapshot"])
+        owner = agent_version if source == "version" else None
+        if source in ("vapi-owner", "bland-owner"):
+            owner = agent_definition.create_version(
+                description="Other", commit_message="Other"
+            )
+            owner.configuration_snapshot = {"provider": source.removesuffix("-owner")}
+            owner.save(update_fields=["configuration_snapshot"])
+        row = ProviderCredentials.objects.create(
+            agent_definition=agent_definition if source != "version" else None,
+            agent_version=owner,
+            provider_type="retell" if source == "retell-row" else "vapi",
+            assistant_id="other" if source == "other-assistant" else "test-pathway",
+            api_key="test-saved-key",
+        )
+        with patch("requests.get") as upstream:
+            upstream.return_value.status_code = 200
+            response = auth_client.post(
+                "/tracer/observability-provider/verify_api_key/",
+                {
+                    "agent_id": str(agent_definition.id),
+                    "provider": "bland",
+                    "api_key": row.get_masked_api_key(),
+                },
+                format="json",
+            )
+        if expected:
+            assert response.status_code == 200
+            headers = upstream.call_args.kwargs["headers"]
+            assert headers["authorization"] == "test-saved-key"
+        else:
+            assert response.status_code == 400
+            upstream.assert_not_called()
+
     def test_returns_none_for_none_org(self):
-        assert resolve_stored_api_key(organization=None) is None
+        assert resolve_stored_api_key(organization=None, provider="vapi") is None
 
     def test_returns_none_when_agent_not_found(self, organization):
         assert (
             resolve_stored_api_key(
                 organization=organization,
+                provider="vapi",
                 agent_id="00000000-0000-0000-0000-000000000000",
             )
             is None
@@ -340,7 +423,9 @@ class TestResolveStoredApiKey:
             api_key="sk-real-key-12345",
         )
         key = resolve_stored_api_key(
-            organization=organization, agent_id=str(agent_definition.id)
+            organization=organization,
+            provider="vapi",
+            agent_id=str(agent_definition.id),
         )
         assert key == "sk-real-key-12345"
 
@@ -359,6 +444,7 @@ class TestResolveStoredApiKey:
         )
         key = resolve_stored_api_key(
             organization=organization,
+            provider="vapi",
             agent_id=str(agent_definition.id),
             masked_value="sk-r...2345",
         )
@@ -379,6 +465,7 @@ class TestResolveStoredApiKey:
         )
         key = resolve_stored_api_key(
             organization=organization,
+            provider="vapi",
             agent_id=str(agent_definition.id),
             masked_value="sk-r...9999",
         )
@@ -394,6 +481,7 @@ class TestResolveStoredApiKey:
         )
         key = resolve_stored_api_key(
             organization=organization,
+            provider="vapi",
             agent_id=str(agent_definition.id),
             masked_value="sk-r...2345",
         )

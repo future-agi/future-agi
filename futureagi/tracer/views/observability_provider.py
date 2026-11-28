@@ -190,11 +190,13 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     organization=get_request_organization(request),
                     workspace=getattr(request, "workspace", None),
                     agent_id=agent_id,
+                    provider=provider,
                     masked_value=api_key,
                 )
                 if not api_key:
-                    msg = "Could not resolve the api key. Please recheck the same"
-                    return self._gm.bad_request(msg)
+                    return self._gm.bad_request(
+                        "Enter the API key for this provider and try again."
+                    )
 
             # VAPI/RETELL/BLAND support key verification; reject the rest clearly.
             if provider in (
@@ -215,8 +217,10 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     f"API key verification is not supported for provider: {provider}"
                 )
         except Exception as e:
-            logger.exception(f"Error verifying API key: {e}")
-            return self._gm.bad_request(f"Error verifying API key: {e}")
+            logger.error("verify_api_key_failed", error_type=type(e).__name__)
+            return self._gm.bad_request(
+                "Could not verify the API key. Check the key and try again."
+            )
 
     @validated_request(
         request_serializer=VerifyAssistantIdRequestSerializer,
@@ -234,12 +238,13 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     organization=get_request_organization(request),
                     workspace=getattr(request, "workspace", None),
                     agent_id=agent_id,
-                    assistant_id=assistant_id,
+                    provider=provider,
                     masked_value=api_key,
                 )
                 if not api_key:
-                    msg = "Could not resolve the api key. Please recheck the same"
-                    return self._gm.bad_request(msg)
+                    return self._gm.bad_request(
+                        "Enter the API key for this provider and try again."
+                    )
 
             # VAPI/RETELL/BLAND have an assistant/pathway to verify against.
             if provider in (
@@ -263,5 +268,7 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     f"Assistant ID verification is not supported for provider: {provider}"
                 )
         except Exception as e:
-            logger.exception(f"Error verifying assistant ID: {e}")
-            return self._gm.bad_request(f"Error verifying assistant ID: {e}")
+            logger.error("verify_assistant_id_failed", error_type=type(e).__name__)
+            return self._gm.bad_request(
+                "Could not verify the assistant ID. Check the ID and API key and try again."
+            )
