@@ -1262,7 +1262,7 @@ def test_an_agent_its_tab_shows_no_environment_for_is_still_kept_while_one_tests
     auth_client, organization, workspace, user
 ):
     # Deleting asks whether anything tests the agent, not what its tab lists: an adaptation
-    # the list hides, or a build in another workspace, still holds it.
+    # the list hides, or a build the viewer's list doesn't show, still holds it.
     adapted = _agent(organization, workspace, "Adapted only")
     adaptation = _environment(adapted, 1)
     HostedHarnessJob.all_objects.filter(id=adaptation.id).update(
@@ -1294,6 +1294,43 @@ def test_an_agent_its_tab_shows_no_environment_for_is_still_kept_while_one_tests
         assert operations.status_code == status.HTTP_409_CONFLICT, operations.content
         agent.refresh_from_db()
         assert agent.deleted is False
+
+
+@pytest.mark.django_db
+def test_an_agent_reads_as_tested_wherever_the_server_keeps_it(
+    auth_client, organization, workspace, user
+):
+    # The page offers Delete only where the server would delete: the rows and the detail
+    # say whether anything still tests the agent, even what its tab doesn't list.
+    adapted = _agent(organization, workspace, "Adapted only")
+    adaptation = _environment(adapted, 1)
+    HostedHarnessJob.all_objects.filter(id=adaptation.id).update(
+        payload={**adaptation.payload, "metadata": {"adaptation": {"mode": "run"}}}
+    )
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    elsewhere = _agent(organization, workspace, "Built elsewhere")
+    HostedHarnessJob.all_objects.filter(id=_environment(elsewhere, 2).id).update(
+        workspace=sibling
+    )
+    listed = _agent(organization, workspace, "Listed")
+    _environment(listed, 3)
+    untested = _agent(organization, workspace, "Untested")
+
+    rows = _rows(auth_client)
+    for agent, tested in (
+        (adapted, True),
+        (elsewhere, True),
+        (listed, True),
+        (untested, False),
+    ):
+        assert rows[agent.agent_name]["tested_by_environment"] is tested
+        detail = auth_client.get(f"{AGENTS}{agent.id}/")
+        assert detail.status_code == status.HTTP_200_OK, detail.content
+        assert detail.json()["tested_by_environment"] is tested
+        deleted = auth_client.delete(f"{AGENTS}{agent.id}/delete/")
+        assert (deleted.status_code == status.HTTP_409_CONFLICT) is tested
 
 
 @pytest.mark.django_db
