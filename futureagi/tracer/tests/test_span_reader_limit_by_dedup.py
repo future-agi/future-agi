@@ -49,13 +49,19 @@ def _dedup_reads():
         (
             "roots_by_trace_ids",
             lambda r: r.roots_by_trace_ids(
-                ["t1", "t2"], include_heavy=False, dedup_via_limit_by=True
+                ["t1", "t2"],
+                include_heavy=False,
+                dedup_via_limit_by=True,
+                project_id="p1",
             ),
         ),
         (
             "list_by_ids",
             lambda r: r.list_by_ids(
-                ["s1", "s2"], include_heavy=True, dedup_via_limit_by=True
+                ["s1", "s2"],
+                include_heavy=True,
+                dedup_via_limit_by=True,
+                project_id="p1",
             ),
         ),
     ]

@@ -60,7 +60,7 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in fetching children span ids: {str(e)}")
             return []
 
-    def get_all_spans(self, trace_id) -> list[CHSpan]:
+    def get_all_spans(self, trace_id, *, project_id) -> list[CHSpan]:
         """Return every span in a trace, ordered by start_time.
 
         Was: filter parent_span_id__isnull=True roots, then recursively
@@ -77,9 +77,12 @@ class TraceErrorAnalysisDB:
         Return type changed from `list[ObservationSpan]` (no callers
         depend on the ORM model type — this method is currently unused
         outside the class).
+
+        ``project_id`` is the trace's verified project: the same trace id can
+        exist in another project or organization.
         """
         with get_reader() as reader:
-            return reader.list_by_trace(str(trace_id))
+            return reader.list_by_trace(str(trace_id), project_id=str(project_id))
 
     def get_or_create_error_pattern(
         self,
@@ -236,8 +239,13 @@ class TraceErrorAnalysisDB:
         """
         try:
             trace_id = str(getattr(trace, "id", trace))
+            project_id = getattr(trace, "project_id", None)
+            if not project_id:
+                # No verified project: an unscoped read could return another
+                # tenant's copy of this trace id.
+                return []
             with get_reader() as reader:
-                spans = reader.list_by_trace(trace_id)
+                spans = reader.list_by_trace(trace_id, project_id=str(project_id))
             return [s for s in spans if (s.status or "").upper() == "ERROR"]
         except Exception as e:
             logger.exception(f"Error in get_error_spans_for_trace: {str(e)}")

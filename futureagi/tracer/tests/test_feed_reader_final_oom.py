@@ -17,6 +17,8 @@ the primary-key prefix prunes too. A revert of either fails here, not as a prod
 OOM.
 """
 
+import pytest
+
 from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
 
@@ -166,11 +168,14 @@ def test_session_trace_ids_is_final_oom_safe():
     _assert_final_oom_safe(client, "spans.project_id = %(p)s")
 
 
-def test_list_by_session_keeps_legacy_unscoped_contract():
+def test_list_by_session_refuses_an_unscoped_read():
+    # A session id can be held by several tenants: no project, no SQL.
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
+
     client = _RecordingClient()
-    _reader_with(client).list_by_session("s1")
-    assert "spans.project_id = %(project_id)s" not in client.sql
-    assert client.params == {"session_id": "s1"}
+    with pytest.raises(UnscopedSpanReadError):
+        _reader_with(client).list_by_session("s1")
+    assert client.sql is None
 
 
 def test_list_by_session_prunes_by_project_when_supplied():

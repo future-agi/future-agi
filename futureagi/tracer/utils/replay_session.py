@@ -636,16 +636,21 @@ def _is_voice_trace_query(trace_query: QuerySet) -> bool:
     """
     from tracer.services.clickhouse.v2 import get_reader
 
-    trace_ids = list(trace_query.values_list("id", flat=True)[:10])
-    if not trace_ids:
+    sampled = list(trace_query.values_list("id", "project_id")[:10])
+    if not sampled:
         return False
 
     # Single bulk read across all sampled trace_ids, then short-circuit on
     # the first conversation-typed span. CH-side observation_type filtering
     # is not exposed on the reader yet (D-027 review queue), so we filter
-    # in Python — sampled set is bounded at 10 traces.
+    # in Python — sampled set is bounded at 10 traces. Pinned to the traces'
+    # own projects: the same trace id can exist in another project or
+    # organization.
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.list_by_trace_ids(
+            [str(t) for t, _ in sampled],
+            project_ids=sorted({str(p) for _, p in sampled}),
+        )
     return any(s.observation_type == "conversation" for s in spans)
 
 
@@ -653,12 +658,15 @@ def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
     """Fetch the raw_log from the first conversation span in the trace query."""
     from tracer.services.clickhouse.v2 import get_reader
 
-    trace_id = trace_query.values_list("id", flat=True).first()
-    if not trace_id:
+    first = trace_query.values_list("id", "project_id").first()
+    if not first:
         return None
+    trace_id, project_id = first
 
+    # Pinned to the trace's own project: the same trace id can exist in
+    # another project or organization.
     with get_reader() as reader:
-        spans = reader.list_by_trace(str(trace_id))
+        spans = reader.list_by_trace(str(trace_id), project_id=str(project_id))
 
     conversation_span = next(
         (s for s in spans if s.observation_type == "conversation"), None
@@ -784,12 +792,17 @@ def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
     """
     from tracer.services.clickhouse.v2 import get_reader
 
-    trace_ids = list(trace_query.values_list("id", flat=True))
-    if not trace_ids:
+    traces = list(trace_query.values_list("id", "project_id"))
+    if not traces:
         return []
 
+    # Pinned to the traces' own projects: the same trace id can exist in
+    # another project or organization.
     with get_reader() as reader:
-        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.list_by_trace_ids(
+            [str(t) for t, _ in traces],
+            project_ids=sorted({str(p) for _, p in traces}),
+        )
 
     return [
         _chspan_to_legacy_dict(s) for s in spans if s.observation_type == "conversation"

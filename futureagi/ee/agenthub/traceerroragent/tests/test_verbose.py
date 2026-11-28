@@ -619,9 +619,20 @@ def run_text_v2(trace_id, save_to_db=False):
 
     header(f"Text Agent Compass v2 — Trace: {trace_id}")
 
+    from tracer.services.clickhouse.v2 import get_reader
+
+    # The agent reads spans in the trace's project, resolved the way the
+    # error-analysis task resolves it.
+    with get_reader() as reader:
+        root = reader.root_ids_by_trace_ids([str(trace_id)]).get(str(trace_id))
+    if not root:
+        print(f"{RED}ERROR: No root span found for trace {trace_id}{RESET}")
+        return
+
     start = time.time()
     agent = TraceErrorAnalysisAgent(
         trace_id=trace_id,
+        project_id=str(root[1]),
         enable_memory=False,
         save_to_db=save_to_db,
         token_budget=500000,

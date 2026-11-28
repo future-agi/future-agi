@@ -2490,8 +2490,13 @@ def _build_representative_trace(
     span_context: dict | None = None,
     judge: tuple[str | None, float | None] | None = None,
     _prefetched: bool = False,
+    project_id: str | None = None,
 ) -> RepresentativeTrace:
     """Turn a Trace into a RepresentativeTrace dataclass.
+
+    The single-trace root fallback reads the root span only in
+    ``project_id`` (the cluster's project); without it the root stays None,
+    since the same trace id can exist in another project or organization.
 
     Prefetched values (``root``, ``totals``, ``score``, ``investigation_report``)
     can be supplied by ``_fetch_representative_traces`` to avoid the per-
@@ -2505,8 +2510,8 @@ def _build_representative_trace(
     """
     trace_id_str = str(trace.id)
 
-    if not _prefetched and root is None:
-        root = _get_root_span(trace_id_str)
+    if not _prefetched and root is None and project_id:
+        root = _get_root_span(trace_id_str, project_id)
     if not _prefetched and totals is None:
         totals = _get_trace_totals(trace_id_str)
     latency, prompt_tokens, completion_tokens = totals or (None, None, None)
@@ -2779,6 +2784,7 @@ def _fetch_representative_traces(
             },
             judge=_judge_for(str(trace.id)),
             _prefetched=True,
+            project_id=project_id,
         )
         for trace in deduped
     ]

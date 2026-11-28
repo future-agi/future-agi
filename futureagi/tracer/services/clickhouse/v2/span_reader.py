@@ -32,6 +32,7 @@ read-only.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from collections.abc import Iterable, Iterator
@@ -59,6 +60,8 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     restore_promoted_attributes,
     restore_promoted_in_attributes_extra,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Field list that the eval runner actually reads off of an ObservationSpan.
@@ -649,6 +652,84 @@ class TraceUnit:
     start_time: datetime
 
 
+class UnscopedSpanReadError(ValueError):
+    """A span read that can return span content was called without a tenant
+    scope (``project_id``, ``project_ids`` or ``org_id``).
+
+    A trace, session, parent or span id is not unique across tenants: a
+    replay, re-import or shared provider account writes the same id into
+    several projects and organizations. A read keyed only by such an id
+    returns whichever tenant's copy ClickHouse finds, so these reads refuse to
+    run without the scope the caller has already verified."""
+
+
+def _scope_project_ids(project_ids: Iterable[str] | None) -> tuple[str, ...] | None:
+    """``project_ids`` as the de-duplicated tuple the SQL binds, or None."""
+    if project_ids is None:
+        return None
+    return tuple(dict.fromkeys(str(pid) for pid in project_ids))
+
+
+def _require_scope(
+    method: str,
+    *,
+    project_id: str | None = None,
+    project_ids: tuple[str, ...] | None = None,
+    org_id: str | None = None,
+) -> None:
+    """Raise ``UnscopedSpanReadError`` unless the read carries a tenant scope.
+
+    The test is the one each method uses to add its predicate (a truthy
+    ``project_id`` / ``org_id``), so an empty string or None is no scope. A
+    ``project_ids`` tuple, even an empty one, is a scope: an empty tuple
+    reads nothing."""
+    if project_id or org_id or project_ids is not None:
+        return
+    raise UnscopedSpanReadError(
+        f"CHSpanReader.{method} needs project_id, project_ids or org_id: "
+        "the same trace, session or span id can exist in more than one project"
+    )
+
+
+@dataclass(frozen=True)
+class _ReadScope:
+    """The tenant scope a read's SQL applied, used to check each row before
+    it is hydrated from ``trajectory_items``. ``project_ids`` None means the
+    read did not pin projects (an org-only read); ``org_id`` None likewise."""
+
+    project_ids: frozenset[str] | None = None
+    org_id: str | None = None
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
+        org_id: str | None = None,
+    ) -> _ReadScope:
+        allowed: frozenset[str] | None = None
+        if project_id:
+            allowed = frozenset({_uuid_text(project_id)})
+        if project_ids is not None:
+            listed = frozenset(_uuid_text(pid) for pid in project_ids)
+            # The SQL ANDs both predicates when both are given.
+            allowed = listed if allowed is None else allowed & listed
+        return cls(
+            project_ids=allowed,
+            org_id=_uuid_text(org_id) if org_id else None,
+        )
+
+    def allows(self, project_id: object, org_id: object = None) -> bool:
+        if self.project_ids is not None and (
+            not project_id or _uuid_text(project_id) not in self.project_ids
+        ):
+            return False
+        if self.org_id is not None and org_id is not None:
+            return _uuid_text(org_id) == self.org_id
+        return True
+
+
 class CHSpanReader:
     """Read-only span fetcher backed by ClickHouse `spans FINAL`.
 
@@ -864,7 +945,7 @@ class CHSpanReader:
                         for caller in askers[aliases[raw]]
                     )
         out.sort(key=lambda s: (getattr(s, column), s.start_time, s.id))
-        return self._hydrate_chspans(out)
+        return self._hydrate_chspans(out, scope=_ReadScope.of(project_id=project_id))
 
     @staticmethod
     def _with_remapped_id(span: CHSpan, column: str, value: str) -> CHSpan:
@@ -932,26 +1013,79 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
-    def _hydrate_chspans(self, spans: list[CHSpan]) -> list[CHSpan]:
+    @staticmethod
+    def _log_scope_violation(
+        scope: _ReadScope, project_id: object, span_id: object
+    ) -> None:
+        logger.error(
+            "trajectory_hydration_scope_violation span_id=%s project_id=%s "
+            "allowed_project_ids=%s org_id=%s",
+            span_id,
+            project_id,
+            sorted(scope.project_ids) if scope.project_ids is not None else None,
+            scope.org_id,
+        )
+
+    def _hydrate_chspans(
+        self, spans: list[CHSpan], *, scope: _ReadScope
+    ) -> list[CHSpan]:
         """Batch-hydrate Phase 1 ``items_v1`` spans from ``trajectory_items``.
 
         Issues ZERO queries when all spans use ``payload_encoding == 'inline'``.
+
+        Only rows inside ``scope`` (the tenant scope the read's SQL applied)
+        are hydrated. A row outside it cannot come back from a scoped read;
+        if one does, it is returned as read and logged as
+        ``trajectory_hydration_scope_violation``, never filled from another
+        tenant's items. Order and length are preserved.
         """
         if not spans or not is_trajectory_store_read_enabled():
             return spans
-        return hydrate_chspans(
-            spans,
-            lambda sql, params: self._client.query(sql, parameters=params).result_rows,
-        )
+        allowed = [
+            i
+            for i, span in enumerate(spans)
+            if scope.allows(span.project_id, span.org_id)
+        ]
+        if len(allowed) != len(spans):
+            kept = set(allowed)
+            for i, span in enumerate(spans):
+                if i not in kept:
+                    self._log_scope_violation(scope, span.project_id, span.id)
+            if not allowed:
+                return spans
+
+        def _query(sql: str, params: dict[str, Any]):
+            return self._client.query(sql, parameters=params).result_rows
+
+        if len(allowed) == len(spans):
+            return hydrate_chspans(spans, _query)
+        hydrated = hydrate_chspans([spans[i] for i in allowed], _query)
+        out = list(spans)
+        for i, span in zip(allowed, hydrated, strict=True):
+            out[i] = span
+        return out
 
     def _hydrate_dict_rows(
         self,
         rows: list[dict[str, Any]],
         *,
+        scope: _ReadScope,
         project_id_fallback: str | None = None,
         attr_key: str = "attributes_extra",
     ) -> list[dict[str, Any]]:
+        """Hydrate dict span rows in place; same scope rule as
+        ``_hydrate_chspans``. A row's project is its ``project_id`` key, or
+        ``project_id_fallback`` when the row does not carry one."""
         if not rows or not is_trajectory_store_read_enabled():
+            return rows
+        in_scope = []
+        for row in rows:
+            row_pid = row.get("project_id") or project_id_fallback
+            if scope.allows(row_pid):
+                in_scope.append(row)
+            else:
+                self._log_scope_violation(scope, row_pid, row.get("id", ""))
+        if not in_scope:
             return rows
 
         def _query(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -962,12 +1096,13 @@ class CHSpanReader:
                 if len(r) >= 3
             ]
 
-        return hydrate_span_dicts(
-            rows,
+        hydrate_span_dicts(
+            in_scope,
             _query,
             project_id_fallback=project_id_fallback,
             attr_key=attr_key,
         )
+        return rows
 
     def get(
         self,
@@ -979,12 +1114,12 @@ class CHSpanReader:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
         if absent (matches the pattern most callers wrap with try/except).
 
-        ``project_id`` (optional) scopes to one tenant; omit for prior behavior.
-
-        ``project_ids`` (optional) restricts the read to a caller's projects.
-        A replay, re-import or shared provider account writes the same span id
-        into several projects; the most recently written live copy wins, the
-        rule the trace-detail read (``read_span_detail``) applies.
+        ``project_id`` scopes to one tenant. ``project_ids`` restricts the
+        read to a caller's projects. One of them is required
+        (``UnscopedSpanReadError`` otherwise): a replay, re-import or shared
+        provider account writes the same span id into several projects. With
+        ``project_ids`` the most recently written live copy wins, the rule
+        the trace-detail read (``read_span_detail``) applies.
 
         ``id`` is below the primary-key prefix, so a bare ``id =`` read prunes
         only via the ``idx_id`` bloom — which CH 25.3 disables under FINAL by
@@ -992,6 +1127,8 @@ class CHSpanReader:
         part and the fat ``attributes_extra`` granule buffers blow the memory
         limit on a wide (voice) span. Re-enable skip indexes; ``id`` is stable
         across a row's ReplacingMergeTree versions, so the bloom is safe."""
+        pids = _scope_project_ids(project_ids)
+        _require_scope("get", project_id=project_id, project_ids=pids)
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["id = %(span_id)s"]
         params: dict[str, Any] = {"span_id": span_id}
@@ -999,8 +1136,8 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
-        if project_ids is not None:
-            params["pids"] = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+        if pids is not None:
+            params["pids"] = pids
             if not params["pids"]:
                 return None
             where.append("project_id IN %(pids)s")
@@ -1016,7 +1153,8 @@ class CHSpanReader:
         ).result_rows
         if not rows:
             return None
-        return self._hydrate_chspans([_row_to_chspan(rows[0])])[0]
+        scope = _ReadScope.of(project_id=project_id, project_ids=pids)
+        return self._hydrate_chspans([_row_to_chspan(rows[0])], scope=scope)[0]
 
     def newest_trace_project(
         self, trace_id: str, project_ids: Iterable[str]
@@ -1139,12 +1277,15 @@ class CHSpanReader:
         *,
         include_heavy: bool = True,
         project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
     ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace=trace, deleted=False).
 
         Returned in start_time, id order so the eval runner's trace-walking
         logic sees spans in a deterministic chronological order. ``project_id``
-        (optional) scopes the read to one tenant; omit for prior behavior.
+        (one tenant) or ``project_ids`` (the caller's projects) is required:
+        a trace id can be held by several projects and organizations
+        (``UnscopedSpanReadError`` otherwise).
 
         With ``include_heavy=False`` the fat JSON columns (attributes_extra /
         span_events / resource_attrs) come back as '' — opt out when only
@@ -1155,6 +1296,10 @@ class CHSpanReader:
         leaving a full merge that OOMs on a fat (voice) trace's spans. Re-enable
         skip indexes (``trace_id`` is a stable sorting-key column, so safe).
         """
+        pids = _scope_project_ids(project_ids)
+        _require_scope("list_by_trace", project_id=project_id, project_ids=pids)
+        if pids is not None and not pids:
+            return []
         select = _active_select_sql(include_heavy)
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["trace_id = %(trace_id)s"]
@@ -1162,6 +1307,9 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if pids is not None:
+            where.append("project_id IN %(pids)s")
+            params["pids"] = pids
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
@@ -1169,21 +1317,34 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id, project_ids=pids),
+        )
 
     def first_span_by_type(
-        self, trace_id: str, observation_type: str, *, project_id: str | None = None
+        self,
+        trace_id: str,
+        observation_type: str,
+        *,
+        project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
     ) -> CHSpan | None:
         """First span of a given type in a trace, ordered by start_time.
 
         Single-row CH read — replaces listing every span in a trace just to
         find the first LLM/TOOL/etc. span.
 
-        A trace id can be held by several projects (replays, re-imports).
-        Callers that know the trace's tenant must pass ``project_id``: it keeps
-        another project's copy out of the answer and prunes by the
-        primary-key prefix.
+        A trace id can be held by several projects (replays, re-imports), so
+        ``project_id`` or ``project_ids`` is required
+        (``UnscopedSpanReadError`` otherwise): it keeps another tenant's copy
+        out of the answer, and ``project_id`` prunes by the primary-key
+        prefix.
         """
+        pids = _scope_project_ids(project_ids)
+        _require_scope("first_span_by_type", project_id=project_id, project_ids=pids)
+        if pids is not None and not pids:
+            return None
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
         # the ``idx_trace_id`` bloom (off under FINAL without the setting).
         where = ["trace_id = %(trace_id)s", "lower(observation_type) = %(otype)s"]
@@ -1194,6 +1355,9 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if pids is not None:
+            where.append("project_id IN %(pids)s")
+            params["pids"] = pids
         rows = self._client.query(
             f"SELECT {_active_select_sql(False)} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
@@ -1203,7 +1367,10 @@ class CHSpanReader:
         ).result_rows
         if not rows:
             return None
-        return self._hydrate_chspans([_row_to_chspan(rows[0])])[0]
+        return self._hydrate_chspans(
+            [_row_to_chspan(rows[0])],
+            scope=_ReadScope.of(project_id=project_id, project_ids=pids),
+        )[0]
 
     # ─── All spans in a session ──────────────────────────────────────────────
     def list_by_session(
@@ -1221,10 +1388,11 @@ class CHSpanReader:
         matches a ``new_id``, so the resolved id == the span's own id and this is
         a byte-identical no-op (gate B).
 
-        ``project_id`` is optional for backward compatibility. Callers that know
-        the session's tenant must pass it so the primary-key prefix prunes the
-        read and duplicate ids cannot mix spans across projects.
+        ``project_id`` is required (``UnscopedSpanReadError`` otherwise): the
+        primary-key prefix prunes the read and duplicate ids cannot mix spans
+        across projects.
         """
+        _require_scope("list_by_session", project_id=project_id)
         remap_join = remap_left_join(
             "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
@@ -1241,7 +1409,10 @@ class CHSpanReader:
             "ORDER BY start_time, id",
             parameters=params,
         ).result_rows
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id),
+        )
 
     # ─── Bulk fetch by trace ids ──────────────────────────────────────────────
     def list_by_trace_ids(
@@ -1249,6 +1420,7 @@ class CHSpanReader:
         trace_ids: list[str],
         *,
         project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
         include_heavy: bool = True,
         limit: int | None = None,
     ) -> list[CHSpan]:
@@ -1257,12 +1429,12 @@ class CHSpanReader:
         Returns spans across multiple traces in (trace_id, start_time, id) order.
         Empty input returns empty list.
 
-        ``project_id`` (optional) scopes the read to one tenant. ``trace_id`` sits
-        below ``project_id`` in the sorting key and is absent from the primary key,
-        so an unscoped ``trace_id IN`` read cannot prune parts and a FINAL merge
-        spans the whole table — pass ``project_id`` whenever the caller knows the
-        traces belong to a single project so the primary-key prefix prunes the
-        scan. Omit for prior (cross-project) behavior.
+        ``project_id`` (one tenant) or ``project_ids`` (the caller's projects)
+        is required (``UnscopedSpanReadError`` otherwise): a trace id can be
+        held by several projects and organizations. ``trace_id`` sits below
+        ``project_id`` in the sorting key and is absent from the primary key,
+        so pass ``project_id`` whenever the traces belong to a single project
+        so the primary-key prefix prunes the scan.
 
         ``include_heavy`` defaults to True here (unlike ``roots_by_trace_ids``,
         which defaults to lean) because most callers consume span_events /
@@ -1273,7 +1445,9 @@ class CHSpanReader:
 
         ``limit`` (optional) returns at most that many spans, the earliest in that order.
         """
-        if not trace_ids:
+        pids = _scope_project_ids(project_ids)
+        _require_scope("list_by_trace_ids", project_id=project_id, project_ids=pids)
+        if not trace_ids or (pids is not None and not pids):
             return []
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["trace_id IN %(trace_ids)s"]
@@ -1281,6 +1455,9 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if pids is not None:
+            where.append("project_id IN %(pids)s")
+            params["pids"] = pids
         if limit is not None:
             params["limit"] = int(limit)
         select = _active_select_sql(include_heavy)
@@ -1292,7 +1469,10 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id, project_ids=pids),
+        )
 
     # ─── Root spans only (parentless) across many traces ─────────────────────
     def roots_by_trace_ids(
@@ -1312,13 +1492,15 @@ class CHSpanReader:
         resource_attrs come back as '' — decoding them dominates the read
         (a voice conversation root carries its whole raw_log in
         attributes_extra). input/output/attrs_string stay real. ``project_id``
-        (optional) scopes the read to one tenant; omit for prior behavior.
+        or ``org_id`` is required (``UnscopedSpanReadError`` otherwise): a
+        trace id can be held by several projects and organizations.
         ``cutoff`` (optional) drops a root whose latest version was written
         after that time; see ``_CUTOFF_WHERE``.
 
         NOTE: structural root (parentless span), NOT the cluster-RCA agent's
         argMin "representative trace" — deliberately different reads.
         """
+        _require_scope("roots_by_trace_ids", project_id=project_id, org_id=org_id)
         if not trace_ids:
             return []
         select = _active_select_sql(include_heavy)
@@ -1352,7 +1534,10 @@ class CHSpanReader:
                 _FINAL_SKIP_INDEX_SETTINGS if cutoff is None else _CUTOFF_SETTINGS
             )
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id, org_id=org_id),
+        )
 
     def roots_by_session_ids(
         self, session_ids: list[str], *, project_id: str
@@ -1585,6 +1770,7 @@ class CHSpanReader:
             pre_vals = [(r.get("input"), r.get("output")) for r in v1_rows]
             self._hydrate_dict_rows(
                 v1_rows,
+                scope=_ReadScope.of(project_id=project_id),
                 project_id_fallback=str(project_id),
                 attr_key="_unused_activity_attr",
             )
@@ -1683,23 +1869,47 @@ class CHSpanReader:
 
     # ─── Children of a parent span ────────────────────────────────────────────
     def list_by_parent(
-        self, parent_span_id: str, *, limit: int | None = None
+        self,
+        parent_span_id: str,
+        *,
+        limit: int | None = None,
+        project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
     ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(parent_span_id=, deleted=False)
         ordered by start_time, id. `limit` caps the result for display-list paths
-        (e.g. `[:20]` slices that the AI-tools `get_span` does)."""
+        (e.g. `[:20]` slices that the AI-tools `get_span` does).
+
+        ``project_id`` or ``project_ids`` is required
+        (``UnscopedSpanReadError`` otherwise): a span id can be held by
+        several projects and organizations."""
+        pids = _scope_project_ids(project_ids)
+        _require_scope("list_by_parent", project_id=project_id, project_ids=pids)
+        if pids is not None and not pids:
+            return []
         lim_clause = f" LIMIT {int(limit)}" if limit else ""
+        where = ["parent_span_id = %(parent)s"]
+        params: dict[str, Any] = {"parent": parent_span_id}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        if pids is not None:
+            where.append("project_id IN %(pids)s")
+            params["pids"] = pids
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
         # the ``idx_parent_span_id`` bloom (off under FINAL without the setting);
         # parent_span_id is stable across versions, so the bloom is safe.
         rows = self._client.query(
             f"SELECT {_active_select_sql(True)} FROM spans FINAL "
-            "WHERE parent_span_id = %(parent)s "
+            f"WHERE {' AND '.join(where)} "
             f"ORDER BY start_time, id{lim_clause}",
-            parameters={"parent": parent_span_id},
+            parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id, project_ids=pids),
+        )
 
     # ─── Spans by id batch ────────────────────────────────────────────────────
     def list_by_ids(
@@ -1728,7 +1938,12 @@ class CHSpanReader:
         WHERE/ORDER BY columns are read by CH regardless, so a caller never has
         to request a column just to filter or sort on it. ``include_heavy``
         still stubs the three fat columns.
+
+        ``project_id`` or ``org_id`` is required (``UnscopedSpanReadError``
+        otherwise): a span id can be held by several projects and
+        organizations.
         """
+        _require_scope("list_by_ids", project_id=project_id, org_id=org_id)
         if not span_ids:
             return []
         include_traj = is_trajectory_store_read_enabled()
@@ -1786,12 +2001,16 @@ class CHSpanReader:
             if needs_hydration and dicts:
                 self._hydrate_dict_rows(
                     dicts,
+                    scope=_ReadScope.of(project_id=project_id, org_id=org_id),
                     project_id_fallback=str(project_id) if project_id else None,
                     attr_key="attributes_extra",
                 )
             allowed = set(columns)
             return [{k: d[k] for k in columns if k in allowed} for d in dicts]
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id, org_id=org_id),
+        )
 
     def export_fields_by_ids(
         self,
@@ -1809,7 +2028,12 @@ class CHSpanReader:
         method keeps the read on canonical CH25 ``spans`` while avoiding
         ``FINAL`` and selecting only the columns implied by the requested
         mapping.
+
+        ``project_id`` or ``org_id`` is required (``UnscopedSpanReadError``
+        otherwise): a span id can be held by several projects and
+        organizations.
         """
+        _require_scope("export_fields_by_ids", project_id=project_id, org_id=org_id)
         if not span_ids:
             return {}
 
@@ -1859,9 +2083,11 @@ class CHSpanReader:
         ).result_rows
 
         dicts = [dict(zip(aliases, row, strict=False)) for row in rows]
+        export_scope = _ReadScope.of(project_id=project_id, org_id=org_id)
         if needs_hydration and dicts:
             self._hydrate_dict_rows(
                 dicts,
+                scope=export_scope,
                 project_id_fallback=str(project_id) if project_id else None,
                 attr_key="attributes_extra",
             )
@@ -1922,6 +2148,7 @@ class CHSpanReader:
                 if to_hydrate:
                     self._hydrate_dict_rows(
                         to_hydrate,
+                        scope=export_scope,
                         project_id_fallback=str(project_id) if project_id else None,
                         attr_key="attributes_extra",
                     )
@@ -2090,6 +2317,7 @@ class CHSpanReader:
         trace_ids: list[str],
         *,
         project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Fetch all spans for the given traces, returning only columns needed
         for child-tree serialization (excludes resource_attrs).
@@ -2097,8 +2325,16 @@ class CHSpanReader:
         Uses argMax dedup (no FINAL) with external GROUP BY spill to avoid OOM.
         Returns {trace_id: [row_dict, ...]} ordered by start_time DESC within
         each trace (matching legacy ObservationSpan.Meta.ordering).
+
+        ``project_id`` or ``project_ids`` is required
+        (``UnscopedSpanReadError`` otherwise): a trace id can be held by
+        several projects and organizations.
         """
-        if not trace_ids:
+        pids = _scope_project_ids(project_ids)
+        _require_scope(
+            "child_tree_spans_by_trace_ids", project_id=project_id, project_ids=pids
+        )
+        if not trace_ids or (pids is not None and not pids):
             return {}
 
         include_traj = is_trajectory_store_read_enabled()
@@ -2119,6 +2355,9 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if pids is not None:
+            where.append("project_id IN %(pids)s")
+            params["pids"] = pids
 
         rows = self._client.query(
             f"SELECT {', '.join(select_exprs)} "
@@ -2138,6 +2377,7 @@ class CHSpanReader:
             if include_traj:
                 self._hydrate_dict_rows(
                     all_dicts,
+                    scope=_ReadScope.of(project_id=project_id, project_ids=pids),
                     project_id_fallback=str(project_id) if project_id else None,
                     attr_key="attributes_extra",
                 )
@@ -2508,7 +2748,10 @@ class CHSpanReader:
             f"ORDER BY start_time, id{lim_clause}",
             parameters=params,
         ).result_rows
-        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id),
+        )
 
     def count_by_project(
         self,
@@ -3524,7 +3767,11 @@ class CHSpanReader:
         are read by CH regardless, so a caller never has to request a column
         just to filter or sort on it. ``include_heavy`` still stubs the three
         fat columns.
+
+        ``project_id`` is required (``UnscopedSpanReadError`` otherwise): a
+        trace id can be held by several projects and organizations.
         """
+        _require_scope("list_root_spans_by_trace_ids", project_id=project_id)
         if not trace_ids:
             return {}
         if columns is not None and "trace_id" not in columns:
@@ -3581,11 +3828,15 @@ class CHSpanReader:
             if needs_hydration and dicts:
                 self._hydrate_dict_rows(
                     dicts,
+                    scope=_ReadScope.of(project_id=project_id),
                     project_id_fallback=str(project_id) if project_id else None,
                     attr_key="attributes_extra",
                 )
             return {d["trace_id"]: {k: d[k] for k in columns} for d in dicts}
-        hydrated = self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        hydrated = self._hydrate_chspans(
+            [_row_to_chspan(r) for r in rows],
+            scope=_ReadScope.of(project_id=project_id),
+        )
         return {span.trace_id: span for span in hydrated}
 
     def aggregate_by_session_ids(

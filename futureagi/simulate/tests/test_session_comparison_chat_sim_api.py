@@ -470,7 +470,11 @@ class TestSessionComparisonChatSimViewUnit:
         assert "comparison_metrics" in data["result"]
         assert "comparison_transcripts" in data["result"]
         assert "comparison_recordings" in data["result"]
-        mock_span.assert_called_once_with("trace-456")
+        mock_span.assert_called_once()
+        assert mock_span.call_args.args == ("trace-456",)
+        # The baseline trace id comes from row metadata, so the span read is
+        # pinned to the caller's organization's projects.
+        assert "project_ids" in mock_span.call_args.kwargs
         span = mock_span.return_value
         mock_metrics.assert_called_once_with(fake_call_exec, "trace-456", _span=span)
         mock_transcripts.assert_called_once_with(

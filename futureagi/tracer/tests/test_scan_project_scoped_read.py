@@ -10,6 +10,8 @@ filter fails loudly here rather than as an out-of-memory crash in production.
 
 from unittest.mock import patch
 
+import pytest
+
 from tracer.queries.feed import _project_cluster_inputs_corpus
 from tracer.queries.scan_clustering import get_trace_input_data
 from tracer.queries.trace_scanner import fetch_trace_data
@@ -78,26 +80,37 @@ def test_list_by_trace_ids_adds_project_predicate_when_scoped():
     assert client.params.get("pid") == "proj-9"
 
 
-def test_list_by_trace_ids_unscoped_by_default():
+def test_list_by_trace_ids_refuses_an_unscoped_read():
+    # A trace id can be held by several tenants: no scope, no SQL.
+    from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
+
     client = _RecordingClient()
-    _reader_with(client).list_by_trace_ids(["t1"])
+    with pytest.raises(UnscopedSpanReadError):
+        _reader_with(client).list_by_trace_ids(["t1"])
+    assert client.sql is None
+
+
+def test_list_by_trace_ids_project_ids_scope_binds_an_in_predicate():
+    client = _RecordingClient()
+    _reader_with(client).list_by_trace_ids(["t1"], project_ids=["p1", "p2", "p1"])
+    assert "project_id IN %(pids)s" in client.sql
+    assert client.params["pids"] == ("p1", "p2")
     assert "project_id = %(pid)s" not in client.sql
-    assert "pid" not in client.params
 
 
 # ─── reader level: heavy (default) vs lean projection ─────────────────────────
 def test_list_by_trace_ids_heavy_by_default():
     # Default must stay byte-identical for the ~13 general callers.
     client = _RecordingClient()
-    _reader_with(client).list_by_trace_ids(["t1"])
+    _reader_with(client).list_by_trace_ids(["t1"], project_id="p")
     assert "attributes_extra" in client.sql  # fat column read in full
 
 
 def test_list_by_trace_ids_limits_rows_only_when_asked():
     client = _RecordingClient()
-    _reader_with(client).list_by_trace_ids(["t1"])
+    _reader_with(client).list_by_trace_ids(["t1"], project_id="p")
     assert "LIMIT" not in client.sql
-    _reader_with(client).list_by_trace_ids(["t1"], limit=5001)
+    _reader_with(client).list_by_trace_ids(["t1"], project_id="p", limit=5001)
     # Bound as a parameter, never put into the SQL text.
     assert client.sql.endswith("ORDER BY trace_id, start_time, id LIMIT %(limit)s")
     assert client.params["limit"] == 5001
@@ -105,7 +118,7 @@ def test_list_by_trace_ids_limits_rows_only_when_asked():
 
 def test_list_by_trace_ids_lean_stubs_fat_columns():
     client = _RecordingClient()
-    _reader_with(client).list_by_trace_ids(["t1"], include_heavy=False)
+    _reader_with(client).list_by_trace_ids(["t1"], project_id="p", include_heavy=False)
     # the fat columns that dominate FINAL memory are stubbed, not read
     assert "attributes_extra" not in client.sql
     assert "span_events" not in client.sql
@@ -125,7 +138,7 @@ def test_list_by_trace_ids_omits_is_deleted_predicate():
     # setting (deleted-row resurrection); the engine drops deleted rows under FINAL
     # anyway. A revert that re-adds it fails here.
     client = _RecordingClient()
-    _reader_with(client).list_by_trace_ids(["t1"])
+    _reader_with(client).list_by_trace_ids(["t1"], project_id="p")
     assert "is_deleted = 0" not in client.sql  # the WHERE predicate, not the column
 
 

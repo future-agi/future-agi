@@ -140,6 +140,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
 
         agent = TraceErrorAnalysisAgent(
             trace_id=str(trace_id),
+            project_id=str(project.id),
             enable_memory=True,
             save_to_db=True,
             token_budget=500000,

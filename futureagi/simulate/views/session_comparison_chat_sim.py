@@ -22,6 +22,7 @@ from simulate.utils.session_comparison import (
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
+from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession
 
 logger = structlog.get_logger(__name__)
@@ -124,8 +125,21 @@ class SessionComparisonChatSimView(APIView):
             )
 
             if baseline_type == "trace":
-                # Fetch the conversation span once and reuse across all extractors
-                span = fetch_voice_conversation_span(baseline_id)
+                # Fetch the conversation span once and reuse across all
+                # extractors. The baseline trace id comes from row metadata,
+                # so the read is pinned to the caller's organization.
+                organization = (
+                    getattr(request, "organization", None) or request.user.organization
+                )
+                span = fetch_voice_conversation_span(
+                    baseline_id,
+                    # Every workspace of the organization: the row is
+                    # already pinned to it, and the baseline trace may sit
+                    # in another workspace's project.
+                    project_ids=Project.no_workspace_objects.filter(
+                        organization=organization
+                    ).values_list("id", flat=True),
+                )
                 result_metrics = fetch_voice_trace_comparison_metrics(
                     call_exec, baseline_id, _span=span
                 )
