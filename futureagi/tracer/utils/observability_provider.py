@@ -39,6 +39,7 @@ RETELL_MIN_WINDOW = timedelta(seconds=1)
 RETELL_WINDOW_HINT_MAX = timedelta(hours=6)
 RETELL_WINDOW_GROW_AFTER = 3
 RETELL_DIGEST_HISTORY = 8
+RETELL_CHECKPOINT_WRITE_ATTEMPTS = 5
 RETELL_MAX_PAGES_PER_WINDOW = 50
 RETELL_BOOTSTRAP_MAX_PAGES = 10
 RETELL_BEHIND_WARN = timedelta(minutes=20)
@@ -248,19 +249,27 @@ def _read_retell_state(provider) -> dict:
 
 
 def _write_retell_state(provider_id, retell_state: dict) -> bool:
-    row = (
-        ObservabilityProvider.all_objects.filter(id=provider_id)
-        .values_list("poll_state", flat=True)
-        .first()
-    )
-    merged = dict(row) if isinstance(row, dict) else {}
-    merged["retell"] = retell_state
-    n = ObservabilityProvider.all_objects.filter(id=provider_id).update(
-        poll_state=merged
-    )
-    if n == 0:
-        logger.error("provider_poll_state_write_skipped", provider_id=str(provider_id))
-    return n == 1
+    rows = ObservabilityProvider.all_objects.using("default").filter(id=provider_id)
+    for attempt in range(RETELL_CHECKPOINT_WRITE_ATTEMPTS):
+        row = rows.values_list("poll_state").first()
+        if row is None:
+            logger.error(
+                "provider_poll_state_write_skipped", provider_id=str(provider_id)
+            )
+            return False
+        (observed,) = row
+        root = observed if isinstance(observed, dict) else {}
+        if attempt == 0:
+            original_retell = root.get("retell")
+        elif root.get("retell") != original_retell:
+            # Another checkpoint won; only sibling changes are safe to merge.
+            break
+        merged = {**root, "retell": retell_state}
+        if rows.filter(poll_state=observed).update(poll_state=merged):
+            return True
+
+    logger.warning("provider_poll_state_write_conflict", provider_id=str(provider_id))
+    return False
 
 
 def _advance_watermark(provider_id, new: datetime) -> int:  # monotonic
