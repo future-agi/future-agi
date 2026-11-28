@@ -429,19 +429,25 @@ def create_selected_harness_run(
     # A repeat of a split run selects from the locked version that run recorded, so it
     # still replays once the pair is unlocked or relocked.
     repeat_lock = repeat.locked_version if repeat is not None else None
+    requested_keys = scenario_keys
+    chosen_lock_id = None
     if split is not None:
         from simulate.services.harness_versioning.locked_versions import select_split
 
         # Before the checks and the readiness plan: a split's scenarios are its lock's.
-        scenario_keys = select_split(
+        selection = select_split(
             environment,
             resolve_run_pins(
                 environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
             ),
             split,
-            scenario_keys,
+            requested_keys,
             locked_version=repeat_lock,
-        ).scenario_keys
+        )
+        chosen_lock_id, scenario_keys = (
+            selection.locked_version.id,
+            selection.scenario_keys,
+        )
     if not scenario_keys:
         raise HostedHarnessError(
             "scenario_selection_empty",
@@ -537,10 +543,23 @@ def create_selected_harness_run(
         )
         locked_version = None
         if split is not None:
-            # Again under the lock: the pair may have been unlocked or relocked since.
-            locked_version = select_split(
-                environment, resolved, split, scenario_keys, locked_version=repeat_lock
-            ).locked_version
+            # Again under the lock, which locking or unlocking the pair takes too: the
+            # pair may have been unlocked or relocked since the scenarios were chosen,
+            # and the checks above were made for those.
+            current = select_split(
+                environment, resolved, split, requested_keys, locked_version=repeat_lock
+            )
+            if (
+                current.locked_version.id != chosen_lock_id
+                or current.scenario_keys != scenario_keys
+            ):
+                raise HostedHarnessError(
+                    "split_changed",
+                    "These versions were unlocked or locked again while the run"
+                    " started. Start it again.",
+                    status_code=409,
+                )
+            locked_version = current.locked_version
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
