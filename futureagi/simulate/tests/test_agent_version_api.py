@@ -12,9 +12,11 @@ Tests cover:
 """
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
+from django.db import OperationalError, connection, transaction
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
@@ -101,6 +103,133 @@ def _url(agent_id, suffix=""):
 
 def _version_url(agent_id, version_id, suffix=""):
     return f"/simulate/agent-definitions/{agent_id}/versions/{version_id}/{suffix}"
+
+
+@pytest.mark.parametrize("writer", ["edit", "patch", "create"])
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [({}, "active"), ({"assistant_id": None}, ""), ({"assistant_id": ""}, "")],
+    ids=["omitted", "null", "blank"],
+)
+def test_credential_edit_uses_active_identity(
+    auth_client,
+    agent_definition,
+    agent_version,
+    second_version,
+    writer,
+    fields,
+    expected,
+):
+    snapshot = {**agent_version.configuration_snapshot, "assistant_id": "active"}
+    AgentVersion.objects.filter(pk=agent_version.pk).update(
+        configuration_snapshot=snapshot
+    )
+    row = ProviderCredentials.objects.create(
+        agent_version=agent_version,
+        provider_type="vapi",
+        assistant_id="active",
+        api_key="original",
+    )
+    AgentDefinition.objects.filter(pk=agent_definition.pk).update(
+        assistant_id="draft-assistant"
+    )
+    sibling_snapshot = second_version.configuration_snapshot.copy()
+    payload = {"api_key": "replacement", **fields}
+    if writer == "create":
+        response = auth_client.post(
+            _url(agent_definition.pk, "create/"),
+            {"commit_message": "Rotate key", **payload},
+            format="json",
+        )
+        assert response.status_code == 201, response.content
+        saved = response.json()["version"]
+        assert saved["configuration_snapshot"]["assistant_id"] == expected
+        target = AgentVersion.objects.get(pk=saved["id"])
+        row.refresh_from_db()
+        agent_version.refresh_from_db()
+        assert (row.get_api_key(), row.assistant_id) == ("original", "active")
+        assert agent_version.configuration_snapshot == snapshot
+    else:
+        if writer == "edit":
+            response = auth_client.put(
+                f"/simulate/agent-definitions/{agent_definition.pk}/edit/",
+                payload,
+                format="json",
+            )
+        else:
+            response = auth_client.patch(
+                f"/simulate/api/agent-definition-operations/{agent_definition.pk}/",
+                payload,
+                format="json",
+            )
+        assert response.status_code == 200, response.content
+        target = AgentVersion.objects.get(pk=agent_version.pk)
+        assert target.configuration_snapshot == {**snapshot, "assistant_id": expected}
+    assert target.configuration_snapshot["provider"] == "vapi"
+    assert target.credentials.provider_type == "vapi"
+    assert target.configuration_snapshot["assistant_id"] == expected
+    assert target.credentials.assistant_id == expected
+    assert target.credentials.get_api_key() == "replacement"
+    second_version.refresh_from_db()
+    assert second_version.configuration_snapshot == sibling_snapshot
+    assert not ProviderCredentials.objects.filter(agent_version=second_version).exists()
+
+
+def _competing_definition_lock_is_blocked(agent_id):
+    try:
+        with transaction.atomic():
+            AgentDefinition.no_workspace_objects.select_for_update(nowait=True).get(
+                pk=agent_id
+            )
+    except OperationalError as error:
+        cause = error.__cause__
+        code = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        if code == "55P03":
+            return True
+        raise
+    finally:
+        connection.close()
+    return False
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("operation", ["edit", "create", "activate", "restore"])
+def test_version_selection_excludes_a_competing_definition_writer(
+    auth_client, agent_definition, agent_version, operation
+):
+    # Probe from a separate connection at the first version read, not after
+    # an UPDATE might have taken the definition lock as a side effect.
+    blocked = []
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        def check_lock(execute, sql, params, many, context):
+            if not blocked and 'FROM "simulate_agent_version"' in sql:
+                probe = executor.submit(
+                    _competing_definition_lock_is_blocked, agent_definition.pk
+                )
+                blocked.append(probe.result(timeout=10))
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(check_lock):
+            if operation == "edit":
+                response = auth_client.put(
+                    f"/simulate/agent-definitions/{agent_definition.pk}/edit/",
+                    {"assistant_id": "updated"},
+                    format="json",
+                )
+            elif operation == "create":
+                response = auth_client.post(
+                    _url(agent_definition.pk, "create/"),
+                    {"commit_message": "Create version"},
+                    format="json",
+                )
+            else:
+                response = auth_client.post(
+                    _version_url(agent_definition.pk, agent_version.pk, f"{operation}/")
+                )
+    expected_status = 201 if operation == "create" else 200
+    assert response.status_code == expected_status, response.content
+    assert blocked == [True]
 
 
 # ============================================================================

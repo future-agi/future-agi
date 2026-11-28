@@ -5,6 +5,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from simulate.models import AgentDefinition, AgentVersion
@@ -141,20 +142,39 @@ def merge_websocket_secrets(
     return merged
 
 
-def _has_credential_fields(data: ProviderCredentialsInput) -> bool:
-    return data.provider_was_provided or any(
-        value is not None
-        for value in [
-            data.api_key,
-            data.assistant_id,
-            data.livekit_url,
-            data.livekit_api_key,
-            data.livekit_api_secret,
-            data.livekit_agent_name,
-            data.livekit_config_json,
-            data.livekit_max_concurrency,
-        ]
+def locked_credential_version(agent, *, lock_source=False):
+    """Select the edit target while the caller holds the definition lock."""
+    versions = agent.versions.select_for_update(of=("self",)).order_by(
+        "-version_number"
     )
+    if lock_source:
+        rows = ProviderCredentials.objects.select_for_update()
+        versions = versions.prefetch_related(
+            Prefetch("credentials", queryset=rows),
+            Prefetch("agent_definition__credentials_legacy", queryset=rows),
+        )
+    return (
+        versions.filter(status=AgentVersion.StatusChoices.ACTIVE).first()
+        or versions.first()
+    )
+
+
+def credential_provider(agent, version):
+    snapshot = version.configuration_snapshot if version else None
+    if isinstance(snapshot, dict) and snapshot.get("provider"):
+        return snapshot["provider"]
+    return agent.provider or ""
+
+
+def snapshot_created_version(version):
+    """Include new settings without replacing the version's credential identity."""
+    version.refresh_from_db(using="default")
+    snapshot = version.create_snapshot(commit_message=version.commit_message or "")
+    for field in ("provider", "assistant_id"):
+        if field in version.configuration_snapshot:
+            snapshot[field] = version.configuration_snapshot[field]
+    version.configuration_snapshot = snapshot
+    version.save(update_fields=["configuration_snapshot"])
 
 
 def _typed(value: str) -> bool:
@@ -185,15 +205,16 @@ def _apply_secrets(creds, *, api_key: str, api_secret: str, provider_changed: bo
 def _apply_non_secrets(
     creds,
     *,
-    assistant_id: str,
+    assistant_id: str | None,
     server_url: str,
     agent_name: str,
     config_json: dict | None,
     max_concurrency: int | None,
     provider_changed: bool,
 ):
+    if provider_changed or assistant_id is not None:
+        creds.assistant_id = assistant_id or ""
     if provider_changed:
-        creds.assistant_id = assistant_id
         creds.server_url = server_url
         creds.agent_name = agent_name
         creds.config_json = config_json if config_json is not None else {}
@@ -203,8 +224,6 @@ def _apply_non_secrets(
             else settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
         )
     else:
-        if assistant_id:
-            creds.assistant_id = assistant_id
         if server_url:
             creds.server_url = server_url
         if agent_name:
@@ -216,30 +235,53 @@ def _apply_non_secrets(
 
 
 def _adopt_legacy_credentials(version):
-    """Migrate credentials from the old agent_definition FK to this version."""
-    try:
-        agent = version.agent_definition
-        legacy = agent.credentials_legacy
-        if legacy and not legacy.agent_version:
-            legacy.agent_version = version
-            legacy.agent_definition = None
-            legacy.save(update_fields=["agent_version", "agent_definition"])
-            return True
-    except ProviderCredentials.DoesNotExist:
-        pass
-    return False
+    row = (
+        ProviderCredentials.objects.select_for_update()
+        .filter(agent_definition_id=version.agent_definition_id, agent_version=None)
+        .first()
+    )
+    if row is not None:
+        row.agent_version = version
+        row.agent_definition = None
+        row.save(update_fields=["agent_version", "agent_definition"])
+    return row
 
 
-def sync_provider_credentials(version, data: ProviderCredentialsInput):
-    """Create or update version-scoped ProviderCredentials."""
-    if not _has_credential_fields(data):
-        # When no credential fields are provided, attempt to adopt legacy
-        # credentials from the old agent_definition FK if they exist.
-        if version.pk is not None:
-            _adopt_legacy_credentials(version)
+@transaction.atomic
+def sync_provider_credentials(
+    version, data: ProviderCredentialsInput, *, new_version=False
+):
+    """Write credentials and authored identity fields to the same version."""
+    # The target is already authorized, including harness versions created in a
+    # different workspace from the ambient request. Never select a sibling here.
+    target = AgentVersion.no_workspace_objects.select_for_update(of=("self",)).get(
+        pk=version.pk
+    )
+    creds = (
+        ProviderCredentials.objects.select_for_update()
+        .filter(agent_version=target)
+        .first()
+    )
+    if creds is None:
+        creds = _adopt_legacy_credentials(target)
+    if not data.has_credential_fields:
+        if creds is not None:
+            version.credentials = creds
         return
 
-    provider = (data.provider or "").strip()
+    provider = data.provider.strip()
+    snapshot = target.configuration_snapshot
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    assistant_supplied = "assistant_id" in data.model_fields_set
+    assistant_id = (data.assistant_id or "").strip() if assistant_supplied else None
+    if creds is None and not data.needs_credential_row:
+        # A clear still belongs in the snapshot, but an agent without credentials
+        # does not acquire an empty row just because a form sent null.
+        target.configuration_snapshot = {**snapshot, "assistant_id": ""}
+        target.save(update_fields=["configuration_snapshot"])
+        version.configuration_snapshot = target.configuration_snapshot
+        return
 
     if provider in ("livekit", "livekit_bridge"):
         provider_type = ProviderCredentials.ProviderType.LIVEKIT
@@ -254,7 +296,6 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_type = ProviderCredentials.ProviderType.RETELL
         api_key = (data.api_key or "").strip()
         api_secret = ""
-        assistant_id = (data.assistant_id or "").strip()
         server_url = ""
         agent_name = ""
         config_json = None
@@ -263,23 +304,21 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_type = ProviderCredentials.ProviderType.VAPI
         api_key = (data.api_key or "").strip()
         api_secret = ""
-        assistant_id = (data.assistant_id or "").strip()
         server_url = ""
         agent_name = ""
         config_json = None
         max_concurrency = data.livekit_max_concurrency
 
-    try:
-        creds = ProviderCredentials.objects.get(agent_version=version)
-    except ProviderCredentials.DoesNotExist:
-        if _adopt_legacy_credentials(version):
-            creds = ProviderCredentials.objects.get(agent_version=version)
-        else:
-            creds = ProviderCredentials(
-                agent_version=version,
-                provider_type=provider_type,
-            )
+    if creds is None:
+        creds = ProviderCredentials(agent_version=target, provider_type=provider_type)
     provider_changed = creds.provider_type != provider_type
+    if (
+        assistant_id is None
+        and not creds.assistant_id
+        and not provider_changed
+        and snapshot.get("provider", provider) == provider
+    ):
+        creds.assistant_id = snapshot.get("assistant_id") or ""
     if not provider_changed and (creds.api_key or creds.api_secret):
         refuse_moved_secrets(
             stored_url=creds.server_url,
@@ -302,6 +341,16 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_changed=provider_changed,
     )
     creds.save()
+    identity = {}
+    if data.provider_was_provided or (new_version and provider):
+        identity["provider"] = provider
+    if assistant_supplied or provider_changed or new_version:
+        identity["assistant_id"] = creds.assistant_id
+    if identity:
+        target.configuration_snapshot = {**snapshot, **identity}
+        target.save(update_fields=["configuration_snapshot"])
+    version.configuration_snapshot = target.configuration_snapshot
+    version.credentials = creds
 
 
 def resolve_api_key_for_version(version):

@@ -43,12 +43,15 @@ from simulate.serializers.response.agent_version import (
 from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
     CredentialsNeedReentry,
+    credential_provider,
     delete_agent,
     delete_agents,
     is_masked,
+    locked_credential_version,
     merge_websocket_secrets,
     resolve_api_key_for_version,
     resolve_stored_api_key,
+    snapshot_created_version,
     sync_provider_credentials,
 )
 from simulate.services.agent_overview import (
@@ -78,6 +81,7 @@ try:
 except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
+from tfc.routers import force_primary
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
@@ -331,7 +335,7 @@ class CreateAgentDefinitionView(APIView):
                 ]
             )
 
-            with transaction.atomic():
+            with transaction.atomic(), force_primary():
                 # Create agent definition — livekit_* fields are NOT model
                 # columns, they're routed to ProviderCredentials below.
                 agent = AgentDefinition.objects.create(
@@ -366,17 +370,8 @@ class CreateAgentDefinitionView(APIView):
 
                 # Route livekit/provider credentials to ProviderCredentials table,
                 # now linked to the version instead of the agent definition.
-                creds_input = ProviderCredentialsInput(
-                    provider=provider or "",
-                    api_key=api_key,
-                    assistant_id=assistant_id,
-                    livekit_url=validated.get("livekit_url"),
-                    livekit_api_key=validated.get("livekit_api_key"),
-                    livekit_api_secret=validated.get("livekit_api_secret"),
-                    livekit_agent_name=validated.get("livekit_agent_name"),
-                    livekit_config_json=validated.get("livekit_config_json"),
-                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                    provider_was_provided="provider" in request.data,
+                creds_input = ProviderCredentialsInput.from_validated(
+                    validated, request.data, agent.provider or ""
                 )
                 sync_provider_credentials(version, creds_input)
 
@@ -389,11 +384,7 @@ class CreateAgentDefinitionView(APIView):
                         workspace=agent.workspace,
                     )
 
-                # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
-                version.configuration_snapshot = version.create_snapshot(
-                    commit_message=version.commit_message or ""
-                )
-                version.save(update_fields=["configuration_snapshot"])
+                snapshot_created_version(version)
 
             if replay_session_id:
                 link_agent_to_replay_session(
@@ -783,13 +774,6 @@ class EditAgentDefinitionView(APIView):
         Update an existing agent definition.
         """
         try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
-
             # Update agent fields directly from validated data. NOTE:
             # ``livekit_*`` fields are NOT model columns on AgentDefinition;
             # they live on the related ProviderCredentials row and are
@@ -817,58 +801,41 @@ class EditAgentDefinitionView(APIView):
                 "websocket_url",
                 "websocket_headers",
             ]
-            changed_fields = []
-            for field in update_fields:
-                if field == "api_key" and preserve_existing_api_key:
-                    continue
-                if field in validated:
-                    setattr(agent, field, validated[field])
-                    changed_fields.append(field)
-            if "knowledge_base" in validated:
-                agent.knowledge_base_id = validated["knowledge_base"]
-                changed_fields.append("knowledge_base")
-            # Only what this request set: a full save of this copy could undo an
-            # observability link another request wrote meanwhile.
-            with transaction.atomic():
-                current = (
-                    AgentDefinition.objects.select_for_update(of=("self",))
-                    .only("id", "websocket_url", "websocket_headers")
-                    .get(pk=agent.pk)
+            with transaction.atomic(), force_primary():
+                agent = AgentDefinition.objects.select_for_update(of=("self",)).get(
+                    id=agent_id,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
                 )
-                for field, value in merge_websocket_secrets(
-                    validated, current.websocket_url, current.websocket_headers
-                ).items():
+                version = locked_credential_version(
+                    agent, lock_source=preserve_existing_api_key
+                )
+                creds_input = ProviderCredentialsInput.from_validated(
+                    validated, request.data, credential_provider(agent, version)
+                )
+                websocket_fields = merge_websocket_secrets(
+                    validated, agent.websocket_url, agent.websocket_headers
+                )
+                changed_fields = []
+                for field in update_fields:
+                    if field == "api_key" and preserve_existing_api_key:
+                        continue
+                    if field in validated:
+                        setattr(agent, field, validated[field])
+                        changed_fields.append(field)
+                if "knowledge_base" in validated:
+                    agent.knowledge_base_id = validated["knowledge_base"]
+                    changed_fields.append("knowledge_base")
+                for field, value in websocket_fields.items():
                     setattr(agent, field, value)
                 agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Route livekit_* fields to ProviderCredentials so they
                 # actually persist (setattr on the model is a no-op for these
                 # since they aren't real columns).
-                if preserve_existing_api_key:
-                    version = agent.active_version or agent.latest_version
-                    existing_api_key = (
-                        resolve_api_key_for_version(version) if version else None
-                    )
-                else:
-                    existing_api_key = None
-                version = agent.active_version or agent.latest_version
-
-                creds_input = ProviderCredentialsInput(
-                    provider=validated.get("provider") or agent.provider or "",
-                    api_key=(
-                        existing_api_key
-                        if preserve_existing_api_key
-                        else validated.get("api_key")
-                    ),
-                    assistant_id=validated.get("assistant_id"),
-                    livekit_url=validated.get("livekit_url"),
-                    livekit_api_key=validated.get("livekit_api_key"),
-                    livekit_api_secret=validated.get("livekit_api_secret"),
-                    livekit_agent_name=validated.get("livekit_agent_name"),
-                    livekit_config_json=validated.get("livekit_config_json"),
-                    livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-                    provider_was_provided="provider" in request.data,
-                )
+                if preserve_existing_api_key and version:
+                    creds_input.api_key = resolve_api_key_for_version(version)
                 if version:
                     sync_provider_credentials(version, creds_input)
                 if "production_project_id" in validated:

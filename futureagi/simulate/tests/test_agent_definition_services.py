@@ -94,6 +94,45 @@ def test_provider_keys_are_left_out_of_the_input_repr():
 
 
 class TestSyncProviderCredentials:
+    def test_snapshot_failure_rolls_back_the_key_edit(self, agent_version, monkeypatch):
+        row = ProviderCredentials.objects.create(
+            agent_version=agent_version, provider_type="vapi", api_key="original"
+        )
+        original_snapshot = agent_version.configuration_snapshot.copy()
+        save = AgentVersion.save
+
+        def fail_snapshot(instance, *args, **kwargs):
+            if "configuration_snapshot" in kwargs.get("update_fields", ()):
+                raise RuntimeError("snapshot not saved")
+            return save(instance, *args, **kwargs)
+
+        monkeypatch.setattr(AgentVersion, "save", fail_snapshot)
+        with pytest.raises(RuntimeError, match="snapshot not saved"):
+            sync_provider_credentials(
+                agent_version,
+                ProviderCredentialsInput(
+                    provider="vapi", api_key="replacement", assistant_id="new-assistant"
+                ),
+            )
+        row.refresh_from_db()
+        agent_version.refresh_from_db()
+        assert (row.get_api_key(), row.assistant_id) == ("original", "")
+        assert agent_version.configuration_snapshot == original_snapshot
+
+    def test_assistant_only_edit_merges_into_current_snapshot(self, agent_version):
+        snapshot = {"provider": "vapi", "description": "changed after the first read"}
+        AgentVersion.objects.filter(pk=agent_version.pk).update(
+            configuration_snapshot=snapshot
+        )
+        sync_provider_credentials(
+            agent_version, ProviderCredentialsInput(provider="vapi", assistant_id=None)
+        )
+        agent_version.refresh_from_db()
+        assert agent_version.configuration_snapshot == {**snapshot, "assistant_id": ""}
+        assert not ProviderCredentials.objects.filter(
+            agent_version=agent_version
+        ).exists()
+
     def test_creates_vapi_credentials(self, agent_version):
         sync_provider_credentials(
             agent_version,
@@ -123,6 +162,9 @@ class TestSyncProviderCredentials:
         assert creds.provider_type == ProviderCredentials.ProviderType.RETELL
         assert creds.get_api_key() == "sk-retell-key"
         assert creds.assistant_id == "asst_retell"
+        agent_version.refresh_from_db()
+        assert agent_version.configuration_snapshot["provider"] == "retell"
+        assert agent_version.configuration_snapshot["assistant_id"] == "asst_retell"
 
     def test_creates_livekit_credentials(self, agent_version):
         sync_provider_credentials(

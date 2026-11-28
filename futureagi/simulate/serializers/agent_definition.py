@@ -15,7 +15,9 @@ from simulate.serializers.websocket_fields import (
 from simulate.services.agent_definition import (
     CredentialsNeedReentry,
     WebsocketFields,
+    credential_provider,
     is_masked,
+    locked_credential_version,
     merge_websocket_secrets,
     sync_provider_credentials,
 )
@@ -47,18 +49,13 @@ def _extract_credentials_input(
     (they're real model columns) and are copied into the input model by
     read-only lookup.
     """
-    return ProviderCredentialsInput(
-        provider=validated_data.get("provider") or fallback_provider,
-        api_key=validated_data.get("api_key"),
-        assistant_id=validated_data.get("assistant_id"),
-        livekit_url=validated_data.pop("livekit_url", None),
-        livekit_api_key=validated_data.pop("livekit_api_key", None),
-        livekit_api_secret=validated_data.pop("livekit_api_secret", None),
-        livekit_agent_name=validated_data.pop("livekit_agent_name", None),
-        livekit_config_json=validated_data.pop("livekit_config_json", None),
-        livekit_max_concurrency=validated_data.pop("livekit_max_concurrency", None),
-        provider_was_provided="provider" in validated_data,
+    credentials = ProviderCredentialsInput.from_validated(
+        validated_data, validated_data, fallback_provider
     )
+    for field in credentials.model_fields_set:
+        if field.startswith("livekit_"):
+            validated_data.pop(field)
+    return credentials
 
 
 def _save_credentials(version, creds_input):
@@ -479,8 +476,9 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         )
         validated_data.update(_merged_websocket(validated_data, instance))
 
+        version = locked_credential_version(instance)
         creds_input = _extract_credentials_input(
-            validated_data, fallback_provider=instance.provider or ""
+            validated_data, fallback_provider=credential_provider(instance, version)
         )
 
         new_api_key = validated_data.get("api_key")
@@ -489,8 +487,6 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
 
         instance = super().update(instance, validated_data)
 
-        creds_input.provider = instance.provider or creds_input.provider
-        version = instance.active_version or instance.latest_version
         if version:
             _save_credentials(version, creds_input)
         return instance
@@ -640,6 +636,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
                 organization=organization
             )
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         # Serialize concurrent writes on this agent (see
         # AgentDefinitionSerializer.update for the same pattern).
@@ -647,8 +644,9 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             pk=instance.pk
         )
 
+        version = locked_credential_version(instance)
         creds_input = _extract_credentials_input(
-            validated_data, fallback_provider=instance.provider or ""
+            validated_data, fallback_provider=credential_provider(instance, version)
         )
 
         instance.agent_name = validated_data.get("agent_name", instance.agent_name)
@@ -677,8 +675,6 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             instance.knowledge_base = validated_data.get("knowledge_base")
         instance.save()
 
-        creds_input.provider = instance.provider or creds_input.provider
-        version = instance.active_version or instance.latest_version
         if version:
             _save_credentials(version, creds_input)
         return instance
