@@ -2017,6 +2017,36 @@ class TestSplitRuns:
 
         assert (created, again.id, again.locked_version_id) == (False, run.id, first.id)
 
+    def test_a_relock_while_the_run_starts_refuses_it(self, user, workspace, storage):
+        # The first lock left TEST[0] out. A relock with it lands after the run chose
+        # TEST[1:], so the run would record the new lock with the old roster.
+        from simulate.services import hosted_harness
+
+        environment, first = _locked(user, workspace, "sp-relock-race", storage)
+        [left_out] = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id, scenario_key=TEST[0]
+        ).values_list("scenario_id", flat=True)
+        HarnessLockedVersionMember.no_workspace_objects.filter(
+            locked_version=first, scenario_id=left_out
+        ).delete()
+        plan = hosted_harness._readiness_plan
+
+        def relock_then_plan(*args, **kwargs):
+            _unlock(first)
+            _lock(environment, "2026.11.2")
+            return plan(*args, **kwargs)
+
+        with (
+            patch.object(hosted_harness, "_readiness_plan", relock_then_plan),
+            pytest.raises(HostedHarnessError) as caught,
+        ):
+            _split_run(environment, "test")
+
+        assert (caught.value.code, caught.value.status_code) == ("split_changed", 409)
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment
+        ).exists()
+
     def test_a_whole_split_repeat_of_a_picked_run_is_a_conflict(
         self, user, workspace, storage
     ):
