@@ -1,6 +1,7 @@
 """Validation for project tags, which PostgreSQL stores as jsonb."""
 
 import math
+from collections.abc import Iterable
 
 # Tags are labels. On Python 3.11 the C JSON codec shares the interpreter's
 # 1000-frame recursion budget, and a request parses, checks, saves and renders
@@ -45,11 +46,12 @@ def tag_validation_error(tags):
     Python's stack.
     """
     # A virtual level-0 parent lets a scalar ``tags`` value share the loop.
-    pending = [([tags], 0)]
+    pending: list[tuple[list[object] | dict[str, object], int]] = [([tags], 0)]
     while pending:
         container, depth = pending.pop()
         if depth > TAG_MAX_NESTING_DEPTH:
             return TAGS_TOO_DEEP
+        children: Iterable[object]
         if isinstance(container, dict):
             # JSON object keys are always strings.
             if any(_is_jsonb_incompatible_string(key) for key in container):

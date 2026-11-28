@@ -368,7 +368,7 @@ def test_tags_far_past_nesting_limit_return_400(tag_endpoint, route, depth):
 
 
 def nested_value(depth):
-    value = "release"
+    value: object = "release"
     for _ in range(depth):
         value = [value]
     return value
@@ -380,7 +380,7 @@ def test_tag_nesting_limit_boundary():
     assert TAG_MAX_NESTING_DEPTH == TAG_LIMIT
     assert tag_validation_error(nested_value(TAG_LIMIT)) is None
     assert tag_validation_error(nested_value(TAG_LIMIT + 1)) == TOO_DEEP
-    deep_object = {"label": "release"}
+    deep_object: dict[str, object] = {"label": "release"}
     for _ in range(TAG_LIMIT - 1):
         deep_object = {"label": deep_object}
     assert tag_validation_error([deep_object]) == TOO_DEEP
