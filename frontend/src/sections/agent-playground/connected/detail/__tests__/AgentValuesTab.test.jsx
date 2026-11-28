@@ -130,16 +130,30 @@ describe("AgentValuesTab", () => {
   });
 
   it("keeps nothing typed for one agent once another is shown", () => {
+    state.values = loaded([
+      { name: "DB_URL", required: true, madeByEnvironment: false },
+      { name: "API_HOST", required: false, madeByEnvironment: false },
+    ]);
     const { rerender } = render(<AgentValuesTab />);
-    fireEvent.click(screen.getAllByRole("button", { name: "Change" })[0]);
+    // A change kept in the draft...
+    fireEvent.click(
+      within(screen.getByTestId("agent-value-DB_URL")).getByRole("button", {
+        name: "Change",
+      }),
+    );
     fireEvent.change(screen.getByLabelText("New value for DB_URL"), {
       target: { value: "pg://first" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Keep" }));
     expect(screen.getByText("Changes DB_URL")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Change" }));
-    fireEvent.change(screen.getByLabelText("New value for DB_URL"), {
-      target: { value: "pg://typed" },
+    // ...and a value still being typed.
+    fireEvent.click(
+      within(screen.getByTestId("agent-value-API_HOST")).getByRole("button", {
+        name: "Change",
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("New value for API_HOST"), {
+      target: { value: "typed" },
     });
 
     route.agentId = "agent-2";
@@ -151,9 +165,11 @@ describe("AgentValuesTab", () => {
     rerender(<AgentValuesTab />);
 
     expect(screen.queryByText("Changes DB_URL")).not.toBeInTheDocument();
-    expect(screen.queryByText("Save values")).not.toBeInTheDocument();
     expect(
-      screen.queryByLabelText("New value for DB_URL"),
+      screen.queryByRole("button", { name: "Save values" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("New value for API_HOST"),
     ).not.toBeInTheDocument();
     expect(mutate).not.toHaveBeenCalled();
   });
