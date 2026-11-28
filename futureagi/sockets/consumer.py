@@ -9,6 +9,7 @@ from django.db import DatabaseError
 
 from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
+from sockets.prompt_jobs import JOB_UNAVAILABLE, is_prompt_job, prompt_job_access
 from sockets.saml_guard import SamlSocketGuard
 from sockets.targets import relay_group
 from sockets.template_scope import template_workspace_access
@@ -264,34 +265,35 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
             await self.send_json({"type": "error", "message": str(e)})
 
-    async def _deny_subscription(
-        self, template_id, *, version, reason="workspace_access_denied", reopen=None
-    ) -> bool:
+    async def _deny_subscription(self, target, *, version) -> bool:
         """Revoke only the subscription checked by this authorization lookup."""
         async with self._subscription_lock:
             if self._socket_closed() or self._membership.check_version != version:
                 return False
-            group = self.current_subscription
+            return await self._deny_subscription_locked(target)
+
+    async def _deny_subscription_locked(self, target) -> bool:
+        # A denied join must not revoke a different, authorized subscription.
+        group = self._uuid_group_name(target)
+        if group == self.current_subscription:
             self.current_subscription = None
             self._membership.set_template(None)
-            cleared_version = self._membership.check_version
-            if group is not None:
-                await self._leave_group(group)
-            if self._socket_closed():
-                return False
-            denial = {
+            version = self._membership.check_version
+            await self._leave_group(group)
+        else:
+            version = self._membership.check_version
+        if self._socket_closed():
+            return False
+        job = is_prompt_job(target)
+        await self.send_json(
+            {
                 "type": "subscription_denied",
-                "uuid": str(template_id),
-                "reason": reason,
-                "message": "Subscription unavailable",
+                "uuid": str(target),
+                "reason": "result_unavailable" if job else "workspace_access_denied",
+                "message": JOB_UNAVAILABLE if job else "Subscription unavailable",
             }
-            if reopen is not None:
-                denial["reopen"] = reopen
-            await self.send_json(denial)
-            return (
-                not self._socket_closed()
-                and self._membership.check_version == cleared_version
-            )
+        )
+        return not self._socket_closed() and self._membership.check_version == version
 
     async def handle_subscribe(self, content):
         async with self._subscription_lock:
@@ -312,8 +314,13 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
-        # Job and legacy string targets are not template IDs. Bare UUIDs
-        # may identify a template; authorize before changing group membership.
+        if is_prompt_job(uuid) and not await prompt_job_access(
+            self.user.id, self.organization_id, uuid
+        ):
+            await self._deny_subscription_locked(uuid)
+            return
+
+        # Bare UUIDs may identify a template; authorize before joining.
         try:
             template_id = UUID(str(uuid))
         except ValueError:
@@ -467,6 +474,20 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         elif target.get("kind") == "subscription":
             if self._uuid_group_name(target["id"]) != self.current_subscription:
                 return
+            if is_prompt_job(target["id"]):
+                version = self._membership.check_version
+                checks = self._check_generations()
+                allowed = self.user is not None and await prompt_job_access(
+                    self.user.id, self.organization_id, target["id"]
+                )
+                if (
+                    version != self._membership.check_version
+                    or self._answering_must_stop(checks)
+                ):
+                    return
+                if not allowed:
+                    await self._deny_subscription(target["id"], version=version)
+                    return
         else:
             return
         try:
