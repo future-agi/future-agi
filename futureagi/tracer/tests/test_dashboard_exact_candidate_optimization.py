@@ -156,8 +156,7 @@ def _assert_scalar_replay(
     assert "toStartOfHour(custom_metric_source.start_time) <" in compact
     assert f">= toStartOfHour(toDateTime64( {start}, 6, 'UTC' ))" in compact
     assert (
-        f"< toStartOfHour(toDateTime64( {end}, 6, 'UTC' )) + INTERVAL 1 HOUR"
-        in compact
+        f"< toStartOfHour(toDateTime64( {end}, 6, 'UTC' )) + INTERVAL 1 HOUR" in compact
     )
     assert "tupleElement(latest_metric_state, 1) = 0" in live
     assert "ARRAY JOIN [metric_winner] AS latest_metric_state" in live
