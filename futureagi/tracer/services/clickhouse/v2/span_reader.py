@@ -36,7 +36,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -2452,32 +2452,6 @@ class CHSpanReader:
         "created_at",
     )
 
-    @staticmethod
-    def _child_tree_packed_sql(
-        cols: Sequence[tuple[str, str]], where: Sequence[str]
-    ) -> str:
-        """The child-tree read with pointers: every column comes from ONE
-        ``argMax`` over a tuple, so two physical rows with an equal
-        ``_version`` (an items_v1 row and its inline copy) never mix into a
-        preview labelled inline. The tuple is unpacked in an outer SELECT,
-        so the output columns stay ``id, trace_id, *cols`` in order."""
-        packed = ", ".join(expr for expr, _alias in cols)
-        unpacked = ", ".join(
-            f"tupleElement(latest_child_row, {i}) AS {alias}"
-            for i, (_expr, alias) in enumerate(cols, start=1)
-        )
-        return (
-            f"SELECT child_id AS id, child_trace_id AS trace_id, {unpacked} "
-            "FROM ("
-            "SELECT id AS child_id, trace_id AS child_trace_id, "
-            f"argMax(tuple({packed}), _version) AS latest_child_row "
-            "FROM spans "
-            f"PREWHERE {' AND '.join(where)} "
-            "GROUP BY id, trace_id "
-            "HAVING argMax(is_deleted, _version) = 0"
-            ") AS latest_child_spans"
-        )
-
     def child_tree_spans_by_trace_ids(
         self,
         trace_ids: list[str],
@@ -2522,7 +2496,27 @@ class CHSpanReader:
             params["pids"] = pids
 
         if include_traj:
-            sql = self._child_tree_packed_sql(cols, where)
+            # Every column comes from ONE argMax over a tuple, so two physical
+            # rows with an equal _version (an items_v1 row and its inline
+            # copy) never mix into a preview labelled inline. The tuple is
+            # unpacked in an outer SELECT, so the output columns stay
+            # ``id, trace_id, *cols`` in order.
+            packed = ", ".join(expr for expr, _alias in cols)
+            unpacked = ", ".join(
+                f"tupleElement(latest_child_row, {i}) AS {alias}"
+                for i, (_expr, alias) in enumerate(cols, start=1)
+            )
+            sql = (
+                f"SELECT child_id AS id, child_trace_id AS trace_id, {unpacked} "
+                "FROM ("
+                "SELECT id AS child_id, trace_id AS child_trace_id, "
+                f"argMax(tuple({packed}), _version) AS latest_child_row "
+                "FROM spans "
+                f"PREWHERE {' AND '.join(where)} "
+                "GROUP BY id, trace_id "
+                "HAVING argMax(is_deleted, _version) = 0"
+                ") AS latest_child_spans"
+            )
         else:
             select_exprs = ["id", "trace_id"]
             for expr, alias in cols:

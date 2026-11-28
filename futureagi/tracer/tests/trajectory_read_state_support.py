@@ -57,7 +57,7 @@ class SchemaProbe:
             raise self.error
         if "system." in sql and self.system_error is not None:
             raise self.system_error
-        if "currentDatabase()" in sql:
+        if sql.strip() == trajectory_hydration._PROBE_DATABASE_SQL:
             return [("fake_db",)]
         if "hasColumnInTable" in sql:
             return [
