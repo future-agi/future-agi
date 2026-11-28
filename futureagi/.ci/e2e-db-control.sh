@@ -30,13 +30,17 @@ scratch() {
   "${pg[@]}" createdb -U "$user" "$1"
 }
 
+# The stack's own `manage.py migrate --noinput`, stopped before post_migrate
+# (e2e_db_migrate.py says why). Passed as text: .ci/ is not in the image.
+boundary=$(< "$here/e2e_db_migrate.py")
+
 # migrate DATABASE DUMP: a scratch database migrated from zero, and its dump.
 # `migrate` alone, as the stack's bootstrap service would run it: same image,
 # same environment, only the database name differs.
 migrate() {
   scratch "$1"
   if ! bin/e2e compose run --rm --no-deps -T -e "PG_DB=$1" --entrypoint python \
-    postgres-schema-bootstrap manage.py migrate --noinput > "$work/$1.log" 2>&1; then
+    postgres-schema-bootstrap -c "$boundary" > "$work/$1.log" 2>&1; then
     tail -n 40 "$work/$1.log"
     echo "::error title=E2E database dump::The scratch migrate failed."
     return 1

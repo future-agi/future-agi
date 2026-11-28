@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -767,6 +768,23 @@ class ProducerTest(Workspace):
         )
 
 
+# A call of the fetch tool, with the lines a trailing backslash continues.
+FETCH_CALL = re.compile(r"python3?\b[^\n]*?fetch_migrated_db\.py(?:[^\n]*\\\n)*[^\n]*")
+
+
+def e2e_fetch_calls(text):
+    return FETCH_CALL.findall(text)
+
+
+def e2e_fetches_of_another_workflow(text):
+    """E2E's fetch calls that do not name E2E's workflow: they would take the backend's dump."""
+    return [
+        call
+        for call in e2e_fetch_calls(text)
+        if "--workflow .github/workflows/e2e-ci.yml" not in call
+    ]
+
+
 class BackendWorkflowTest(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / ".github/workflows/backend-ci.yml").read_text()
@@ -1016,15 +1034,28 @@ class BackendWorkflowTest(unittest.TestCase):
         )[0]
         self.assertIn("--create-db", saml)
         self.assertNotIn("db_dump.py", saml)
-        # E2E has a dump of its own (.ci/e2e_db.py): the stack's image, the
-        # stack's settings, after post_migrate. This workflow's dump is
-        # pytest's database before post_migrate and must never reach a stack.
+        # E2E has a dump of its own (.ci/e2e_db.py): the stack's image and
+        # the stack's settings. This workflow's dump is pytest's database and
+        # must never reach a stack.
         self.assertNotIn("backend-db-", e2e)
         self.assertNotIn("inputs-key", e2e)
-        fetches = [line for line in e2e.split("\n") if 'fetch_migrated_db.py"' in line]
-        self.assertTrue(fetches)
-        for line in fetches:
-            self.assertIn("--workflow .github/workflows/e2e-ci.yml", line)
+        self.assertTrue(e2e_fetch_calls(e2e))
+        self.assertEqual(e2e_fetches_of_another_workflow(e2e), [])
+
+    def test_every_e2e_fetch_is_found_however_it_is_written(self):
+        for call in (
+            'python3 -I "$tools/fetch_migrated_db.py" "$record" --name "$key"',
+            "python3 -I $tools/fetch_migrated_db.py $record --name $key",
+            "python3 futureagi/.ci/fetch_migrated_db.py rec",
+            'python3 -I "$tools/fetch_migrated_db.py" \\\n    --name x',
+        ):
+            with self.subTest(call):
+                self.assertEqual(e2e_fetches_of_another_workflow(call), [call])
+        ok = 'python3 -I "$t/fetch_migrated_db.py" r --workflow .github/workflows/e2e-ci.yml'
+        self.assertEqual(e2e_fetches_of_another_workflow(ok), [])
+        # Naming the file is not calling it.
+        listing = "for tool in e2e_db.py db_dump.py fetch_migrated_db.py; do"
+        self.assertEqual(e2e_fetch_calls(listing), [])
 
 
 if __name__ == "__main__":
