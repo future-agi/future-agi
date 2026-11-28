@@ -6,8 +6,35 @@ import { E2E } from '../../lib/env';
 import type { Page, TestInfo } from '@playwright/test';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { POLL } from '../../lib/state-probe';
+// Each flow id is a whole quoted string literal, so `yarn catalog:check` and e2e-coverage
+// read the same ids from this file that Playwright lists (e2e/scripts/flow-ids.mjs).
+const FLOW_IDS: Record<number, string> = {
+  1: 'SKILLS-E2E-101',
+  3: 'SKILLS-E2E-103',
+  4: 'SKILLS-E2E-104',
+  5: 'SKILLS-E2E-105',
+  6: 'SKILLS-E2E-106',
+  7: 'SKILLS-E2E-107',
+  8: 'SKILLS-E2E-108',
+  9: 'SKILLS-E2E-109',
+  10: 'SKILLS-E2E-110',
+  11: 'SKILLS-E2E-111',
+  12: 'SKILLS-E2E-112',
+  13: 'SKILLS-E2E-113',
+  14: 'SKILLS-E2E-114',
+  15: 'SKILLS-E2E-115',
+  16: 'SKILLS-E2E-116',
+  17: 'SKILLS-E2E-117',
+  18: 'SKILLS-E2E-118',
+  19: 'SKILLS-E2E-119',
+};
+const flowId = (n: number) => {
+  const id = FLOW_IDS[n];
+  if (!id) throw new Error(`no flow id for F${n}`);
+  return id;
+};
 const meta = (n: number, goal: string, steps: string[], checks: string[]) => ({ tag: ['@flow'],
-  annotation: flowAnnotation({ id: `SKILLS-E2E-${100 + n}`, area: 'skills', userGoal: goal, steps, backendChecks: checks }) });
+  annotation: flowAnnotation({ id: flowId(n), area: 'skills', userGoal: goal, steps, backendChecks: checks }) });
 test.describe.configure({ timeout: 180000 });
 test.beforeEach(async ({page}) => { page.setDefaultTimeout(20000); });
 
@@ -46,7 +73,7 @@ async function captureState(page:Page, info:TestInfo, name:string, ready:()=>Pro
 
 for (const [flow, language] of [[1, 'python'], [6, 'typescript']] as const) {
   const goal = `Inspect the two skill versions loaded by a ${language} request`;
-  test(`SKILLS-E2E-${100 + flow}: F${flow} ${goal}`, meta(flow, goal,
+  test(`${flowId(flow)}: F${flow} ${goal}`, meta(flow, goal,
     ['Publish a context with three linked skills and read only two with the installed SDK', 'Filter Observe by the immutable version and inspect its skill load'],
     ['The two stored skill links match the published identities, digests, and agent; the unread link is absent']),
   async ({ scenario: s, page, probe }, info) => {
@@ -273,7 +300,7 @@ async ({ scenario:s, page, probe }) => {
 });
 
 for (const [flow, goal] of [[3,'Read production adoption and the reason an agent stays on v1'],[11,'Open failing requests after a production change'],[16,'Distinguish an unreleased follower from a pinned skill']] as const) {
-  test(`SKILLS-E2E-${100+flow}: F${flow} ${goal}`,meta(flow,goal,['Serve production requests on v1', 'Move the production label in the UI', 'Serve fresh and version-pinned requests and inspect Runtime'],
+  test(`${flowId(flow)}: F${flow} ${goal}`,meta(flow,goal,['Serve production requests on v1', 'Move the production label in the UI', 'Serve fresh and version-pinned requests and inspect Runtime'],
     ['The version and agent cohort comes from actual reads before and after the move']),async ({scenario:s,page,probe}) => {
     test.setTimeout(300000);
     const main = s.agent('support',[s.refund],false);
