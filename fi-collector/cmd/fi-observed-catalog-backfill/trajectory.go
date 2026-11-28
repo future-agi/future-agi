@@ -92,13 +92,23 @@ type promotedSide struct {
 	toolRefs []string
 }
 
+// contentUnavailableMarker tags a logical row whose promoted attribute could
+// not be rebuilt. It is not a column: buildPage removes it before extraction
+// and records the span as a content gap.
+const contentUnavailableMarker = "\x00trajectory_content_unavailable"
+
+// contentUnavailableReason is the receipt reason of a span catalogued
+// without its promoted input/output attribute.
+const contentUnavailableReason = "trajectory_content_unavailable"
+
 // logicalRows turns the page's latest rows into what dedup off stores for
 // catalog purposes: pointer and content columns removed, and on items_v1 rows
 // the sentinels replaced by the promoted attribute rebuilt from
 // trajectory_items. A side whose items cannot be read gets its sentinels
 // removed but its attribute is not catalogued (never the preview); such rows
-// are counted in unavailable. A failed items query is an error, so the page
-// is not advanced.
+// are counted in unavailable and tagged with contentUnavailableMarker, so
+// the scan records them as a gap. A failed items query is an error, so the
+// page is not advanced.
 func (s *sourceReader) logicalRows(ctx context.Context, project string, rows []map[string]any, schema sourceSchema) ([]map[string]any, int, error) {
 	if !schema.pointers {
 		return rows, 0, nil
@@ -198,6 +208,7 @@ func (s *sourceReader) logicalRows(ctx context.Context, project string, rows []m
 		}
 		if missing {
 			unavailable++
+			p.row[contentUnavailableMarker] = true
 		}
 	}
 	return rows, unavailable, nil

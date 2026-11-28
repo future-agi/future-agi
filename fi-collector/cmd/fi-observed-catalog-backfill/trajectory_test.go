@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -300,5 +302,97 @@ func TestBackfillSchemaProbeIgnoresUnrelatedRows(t *testing.T) {
 	schema, err := reader.schema(context.Background())
 	if err != nil || schema.pointers {
 		t.Fatalf("schema %+v %v", schema, err)
+	}
+}
+
+// TestBackfillContentGapIsRecordedDurably: a scan over a trajectory span whose
+// items are gone publishes the span's other attributes, and records the gap
+// ahead of the checkpoint: the span's identity in the receipt file under its
+// own reason, a count in the checkpoint, and the gap reason in the page
+// receipt. A resumed scan does not record it again. Before, the only trace
+// was a per-page stdout count.
+func TestBackfillContentGapIsRecordedDurably(t *testing.T) {
+	on, _, _ := sourceRows(t, false)
+	reader := (&fakeTrajectorySource{columns: withPointerColumns("String"), row: on}).serve(t)
+	cfg := options{project: exampleScope().ProjectID, source: reader, since: trajectoryHour, until: trajectoryHour.Add(time.Hour),
+		apply: true, checkpointPath: filepath.Join(t.TempDir(), "progress.json"), maxPages: 2, pageSize: 10, limits: observedcatalog.DefaultLimits()}
+	publisher := &testPublisher{}
+	var output bytes.Buffer
+	if err := runSpans(context.Background(), cfg, &testScopeReader{scope: exampleScope()}, publisher, &output); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := loadCheckpoint(cfg.checkpointPath, scanBinding(cfg, exampleScope()), lastHour(cfg.until))
+	if err != nil || !progress.Complete || progress.ContentUnavailableSpans != 1 || progress.QuarantinedSpans != 0 || publisher.calls != 1 {
+		t.Fatalf("checkpoint %+v %v, publishes %d", progress, err, publisher.calls)
+	}
+	audit := cfg.checkpointPath + ".quarantine.jsonl"
+	data, err := os.ReadFile(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt quarantinedSpan
+	if err := json.Unmarshal(data, &receipt); err != nil || receipt.Reason != contentUnavailableReason || receipt.Key.Span != on["id"] || receipt.Key.Trace != on["trace_id"] {
+		t.Fatalf("content gap receipt %s: %v", data, err)
+	}
+	if bytes.Contains(data, []byte("attributes_extra")) || bytes.Count(data, []byte("\n")) != 1 {
+		t.Fatalf("the receipt holds exactly one identity and no attribute: %s", data)
+	}
+	var page map[string]any
+	if err := json.Unmarshal(bytes.SplitN(output.Bytes(), []byte("\n"), 2)[0], &page); err != nil {
+		t.Fatal(err)
+	}
+	if page["trajectory_content_unavailable_spans"] != float64(1) || page["recorded_trajectory_content_unavailable_spans"] != float64(1) ||
+		!reflect.DeepEqual(page["gap_reasons"], []any{contentUnavailableReason}) {
+		t.Fatalf("page receipt does not name the gap: %v", page)
+	}
+	// A completed checkpoint is not scanned again, so the gap is not repeated.
+	if err := runSpans(context.Background(), cfg, &testScopeReader{scope: exampleScope()}, publisher, io.Discard); err != nil || publisher.calls != 1 {
+		t.Fatal("completed scan was repeated", err)
+	}
+	if after, _ := os.ReadFile(audit); !bytes.Equal(after, data) {
+		t.Fatal("resume recorded the gap again")
+	}
+}
+
+// TestBackfillContentGapSkipsTombstonesAndOutOfRangeRows: only spans the scan
+// catalogues are recorded as content gaps, and the marker never reaches the
+// extractor.
+func TestBackfillContentGapSkipsTombstonesAndOutOfRangeRows(t *testing.T) {
+	on, _, _ := sourceRows(t, false)
+	scope := exampleScope()
+	for name, mutate := range map[string]func(map[string]any){
+		"tombstone":    func(row map[string]any) { row["is_deleted"] = "1" },
+		"out of range": func(map[string]any) {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := map[string]any{}
+			for k, v := range on {
+				row[k] = v
+			}
+			mutate(row)
+			reader := (&fakeTrajectorySource{columns: withPointerColumns("String"), row: row}).serve(t)
+			keys, err := reader.identityPage(context.Background(), scope.ProjectID, trajectoryHour, physicalKey{}, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := reader.payloadPage(context.Background(), scope.ProjectID, trajectoryHour, keys)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows %d: %v", len(rows), err)
+			}
+			if _, ok := rows[0][contentUnavailableMarker]; !ok {
+				t.Fatal("fixture: the row must be tagged")
+			}
+			since := trajectoryHour
+			if name == "out of range" {
+				since = trajectoryHour.Add(30 * time.Minute)
+			}
+			_, report, err := buildPage(rows, scope, since, trajectoryHour.Add(time.Hour), observedcatalog.DefaultLimits())
+			if err != nil || len(report.ContentUnavailable) != 0 {
+				t.Fatalf("gap recorded for a span that is not catalogued: %+v %v", report, err)
+			}
+			if _, ok := rows[0][contentUnavailableMarker]; ok {
+				t.Fatal("the marker must be removed")
+			}
+		})
 	}
 }
