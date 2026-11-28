@@ -13,19 +13,14 @@ import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
-import {
-  continueHarnessDesign,
-  useHarnessReleases,
-} from "src/api/harness/releases";
+import { continueHarnessDesign } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
 
-import { UseReleaseDialog } from "./ReleaseGallery";
 import {
   CONTINUABLE_DESIGN_CODES,
   DESIGN_STEPS,
   designProgress,
   errorMessage,
-  shortDigest,
 } from "./harnessShared";
 
 const GLYPHS = {
@@ -35,28 +30,18 @@ const GLYPHS = {
   pending: { icon: "solar:record-circle-linear", color: "text.secondary" },
 };
 
-// A design job (environment-releases.md §7.9): the builder's steps, what was sealed and
-// using it with your agent, or Continue for a design that stopped waiting for an answer.
+// A design job (environment-releases.md §7.9): the builder's steps while it runs, or
+// Continue for a design that stopped waiting for an answer. Nothing once it's finished.
 export default function DesignProgress({ job, conversation, stage, failure }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const done = designProgress(conversation);
   const currentIndex = DESIGN_STEPS.findIndex((step) => !done.has(step.key));
   const design = job?.metadata?.design || {};
-  const result = job?.metadata?.design_result;
   const completed = stage === "completed";
   const failed = stage === "failed" || stage === "canceled";
   const continuable =
     failed && CONTINUABLE_DESIGN_CODES.includes(failure?.code);
-  const { data: releases = [] } = useHarnessReleases({
-    enabled: Boolean(result),
-  });
-  // By digest: once published as a prebuilt environment, the system release is listed in
-  // place of the organization's copy, and both are the same content.
-  const sealed = releases.find(
-    (one) => one.digest === result?.environment?.digest,
-  );
-  const [using, setUsing] = useState(false);
   const [continuing, setContinuing] = useState(false);
   const [error, setError] = useState("");
   const [idempotencyKey] = useState(harnessIdempotencyKey);
@@ -85,14 +70,15 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
     }
   };
 
+  // A finished design is the environment itself; its Ready pill and tabs say the rest.
+  if (completed) return null;
+
   return (
     <Box sx={{ mb: 2 }} aria-label="Design progress">
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        {completed
-          ? "Designed environment"
-          : design.template
-            ? `Customizing ${design.template.suite?.name || "a template"}`
-            : "Designing your environment"}
+        {design.template
+          ? `Customizing ${design.template.suite?.name || "a template"}`
+          : "Designing your environment"}
         {design.resume_from ? " (continued)" : ""}
       </Typography>
       <Stack spacing={0.75}>
@@ -130,27 +116,6 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
           Documents: {design.documents.map((one) => one.name).join(", ")}
         </Typography>
       )}
-      {result && (
-        <Stack spacing={1} sx={{ mt: 1.5 }}>
-          <Typography variant="body2">
-            Sealed <strong>{result.environment.name}</strong> with{" "}
-            {result.suite.scenarios} scenarios ·{" "}
-            {shortDigest(result.environment.digest)}
-          </Typography>
-          {/* The one way to test your own agent on a sealed design from here. */}
-          <Box>
-            <Button
-              size="small"
-              variant="contained"
-              disabled={!sealed}
-              onClick={() => setUsing(true)}
-              startIcon={<Iconify icon="solar:link-circle-linear" width={16} />}
-            >
-              Use with my agent
-            </Button>
-          </Box>
-        </Stack>
-      )}
       {continuable && (
         <Stack spacing={1} sx={{ mt: 1.5 }}>
           <Typography variant="body2" color="text.secondary">
@@ -176,13 +141,6 @@ export default function DesignProgress({ job, conversation, stage, failure }) {
             </Button>
           </Box>
         </Stack>
-      )}
-      {sealed && using && (
-        <UseReleaseDialog
-          open
-          release={sealed}
-          onClose={() => setUsing(false)}
-        />
       )}
       {error && (
         <Alert severity="error" variant="outlined" sx={{ mt: 1 }}>

@@ -275,6 +275,29 @@ describe("DesignForm", () => {
     );
   });
 
+  it("shows nothing once the design is finished", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <QueryClientProvider client={new QueryClient()}>
+          <DesignProgress
+            job={{
+              job_id: "done-job",
+              metadata: {
+                design: {},
+                design_result: {
+                  environment: { name: "refund_desk", digest: "sha256:abc" },
+                  suite: { scenarios: 10 },
+                },
+              },
+            }}
+            stage="completed"
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("continues a server-paused design and opens the next hosted job", async () => {
     mocks.resume.mockResolvedValue({ job: { job_id: "resumed-job" } });
     render(
