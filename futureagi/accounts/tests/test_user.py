@@ -11,10 +11,6 @@ from django.core.cache import cache
 from django.test import override_settings
 from rest_framework import status
 
-# The endpoint compares against this module's SECRET_KEY, which the test
-# settings' override does not reach, so send the value the view will read.
-from tfc.settings import settings
-
 
 def assert_unknown_field(response, field_name):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
