@@ -934,8 +934,9 @@ def _new_checks(cases: list[EvidenceImportCase], existing: list[dict]) -> list[d
             elif any(other != check for other in definitions):
                 raise HostedHarnessError(
                     "evidence_check_conflict",
-                    "A check with the same name has a different definition; "
-                    f"draft case {case.position + 1} again",
+                    f"Case {case.position + 1} defines a check differently from "
+                    "another check with the same name. Discard this import from "
+                    "Draft imports, then re-import its sources and draft again.",
                     status_code=409,
                 )
     return added

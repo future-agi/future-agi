@@ -895,7 +895,10 @@ class TestNewChecks:
 
         with (
             _certifies(),
-            pytest.raises(HostedHarnessError, match="draft case 2 again") as refused,
+            pytest.raises(
+                HostedHarnessError,
+                match="Case 2 .*Discard this import .*re-import .*draft again",
+            ) as refused,
         ):
             add_to_suite(
                 first.evidence_import,
