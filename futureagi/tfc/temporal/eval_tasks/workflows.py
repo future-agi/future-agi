@@ -323,9 +323,9 @@ async def _fail_task(task_id: str, exc: Exception | None = None) -> None:
             "EvalTaskReadBudgetExceeded",
         }:
             try:
-                reason = SelectionFailure(cause.message).value
+                reason = SelectionFailure(cause.message).name
             except ValueError:
-                reason = SelectionFailure.OTHER.value
+                reason = SelectionFailure.SELECTOR_ERROR.name
     _set_status(STATUS_FAILED)
     await _set_db_status(task_id, STATUS_FAILED, failure_reason=reason)
 

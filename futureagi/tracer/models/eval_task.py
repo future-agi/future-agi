@@ -6,6 +6,7 @@ from django.utils.translation import gettext_lazy as _
 from tfc.utils.base_model import BaseModel
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 
 
 class RunType(models.TextChoices):
@@ -72,9 +73,13 @@ class EvalTask(BaseModel):
     status = models.CharField(
         max_length=255, choices=EvalTaskStatus.choices, blank=True, null=True
     )
-    # A control failure can precede every EvalLogger entry. Only a public
-    # selector reason (never an exception chain or a query) belongs here.
-    failure_reason = models.CharField(max_length=255, blank=True, null=True)
+    # Store the selector code, not the mutable public copy or the exception text.
+    failure_reason = models.CharField(
+        max_length=32,
+        choices=[(reason.name, reason.name) for reason in SelectionFailure],
+        blank=True,
+        null=True,
+    )
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)
     # Forward watermark for continuous tasks: every in-scope row created at/before
@@ -104,8 +109,11 @@ class EvalTask(BaseModel):
     )
 
     @property
-    def visible_failure_reason(self):
-        return self.failure_reason if self.status == EvalTaskStatus.FAILED else None
+    def visible_failure_reason(self) -> str | None:
+        if self.status != EvalTaskStatus.FAILED or not self.failure_reason:
+            return None
+        reason = SelectionFailure.__members__.get(self.failure_reason)
+        return reason.value if reason is not None else None
 
     def __str__(self):
         return f"Eval Task {self.id}"

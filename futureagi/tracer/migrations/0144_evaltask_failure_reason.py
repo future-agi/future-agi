@@ -11,6 +11,19 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="evaltask",
             name="failure_reason",
-            field=models.CharField(blank=True, max_length=255, null=True),
+            field=models.CharField(
+                blank=True,
+                choices=[
+                    ("READ_BUDGET", "READ_BUDGET"),
+                    ("ROW_LIMIT", "ROW_LIMIT"),
+                    ("AMBIGUOUS_SPAN", "AMBIGUOUS_SPAN"),
+                    ("UNSUPPORTED_FILTER", "UNSUPPORTED_FILTER"),
+                    ("ANNOTATION_METADATA", "ANNOTATION_METADATA"),
+                    ("EVAL_METADATA", "EVAL_METADATA"),
+                    ("SELECTOR_ERROR", "SELECTOR_ERROR"),
+                ],
+                max_length=32,
+                null=True,
+            ),
         ),
     ]

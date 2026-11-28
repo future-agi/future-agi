@@ -26,6 +26,6 @@ class SelectionFailure(StrEnum):
     EVAL_METADATA = (
         "Evaluation task evaluation metadata is temporarily unavailable. Retry."
     )
-    OTHER = (
+    SELECTOR_ERROR = (
         "The evaluation task could not select rows. Check the task filters and retry."
     )

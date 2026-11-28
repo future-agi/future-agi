@@ -124,6 +124,9 @@ def test_failed_selection_reason_in_empty_logs(
         assert response.status_code == 200
         return response.json()["result"]
 
+    eval_task.refresh_from_db()
+    expected_code = {BUDGET_REASON: "READ_BUDGET", GENERIC_REASON: "SELECTOR_ERROR"}
+    assert eval_task.failure_reason == expected_code.get(expected)
     failed = logs()
     assert failed["status"] == "failed" and failed["total_count"] == 0
     assert failed["failure_reason"] == expected
@@ -149,7 +152,7 @@ def test_failed_selection_reason_in_empty_logs(
 @pytest.mark.parametrize("status", [EvalTaskStatus.FAILED, EvalTaskStatus.PENDING])
 def test_details_only_expose_a_current_failure(auth_client, eval_task, status):
     eval_task.status = status
-    eval_task.failure_reason = BUDGET_REASON
+    eval_task.failure_reason = "READ_BUDGET"
     eval_task.save(update_fields=["status", "failure_reason"])
     expected = BUDGET_REASON if status == EvalTaskStatus.FAILED else None
 
@@ -166,7 +169,7 @@ def test_details_only_expose_a_current_failure(auth_client, eval_task, status):
 @pytest.mark.django_db(transaction=True)
 def test_resume_clears_reason_before_worker_starts(monkeypatch, auth_client, eval_task):
     eval_task.status = EvalTaskStatus.FAILED
-    eval_task.failure_reason = BUDGET_REASON
+    eval_task.failure_reason = "READ_BUDGET"
     eval_task.save(update_fields=["status", "failure_reason"])
 
     start = Mock(return_value=str(eval_task.pk))
@@ -209,7 +212,7 @@ def test_failed_dispatch_does_not_reuse_an_older_reason(monkeypatch, eval_task):
     # An earlier selection failure, then a restart whose dispatch fails before
     # selection runs: that new failure must not show the old diagnosis.
     eval_task.status = EvalTaskStatus.FAILED
-    eval_task.failure_reason = BUDGET_REASON
+    eval_task.failure_reason = "READ_BUDGET"
     eval_task.save(update_fields=["status", "failure_reason"])
 
     def refuse(*_args, **_kwargs):

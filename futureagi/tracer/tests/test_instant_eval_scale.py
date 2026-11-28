@@ -1094,7 +1094,7 @@ def test_a_stopped_run_with_rows_left_is_resumed_not_retried_or_extended(
     checked credits for. A paused or stalled run is resumed first, which
     checks credits for every row it reads."""
     task = _half_answered_run(auth_client, observe_project, yes_no, status_)
-    EvalTask.objects.filter(pk=task.pk).update(failure_reason="Previous run")
+    EvalTask.objects.filter(pk=task.pk).update(failure_reason="READ_BUDGET")
     monkeypatch.setattr(instant_eval_scale, "_workflow_gone", lambda task: True)
     calls = _credit_cap(monkeypatch)
     before = len(started)
