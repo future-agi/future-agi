@@ -20,6 +20,8 @@ from model_hub.serializers.develop_dataset_contracts import (
     SyntheticDatasetUpdateResponseSerializer,
 )
 from model_hub.tasks.develop_dataset import (
+    SYNTHETIC_GENERATION_ERROR_KEY,
+    clear_synthetic_generation_error,
     create_synthetic_dataset,
     generate_new_columns,
     generate_new_rows,
@@ -398,9 +400,17 @@ class UpdateSyntheticDatasetConfigView(APIView):
                 if config_data.get("kb_id"):
                     config_data["kb_id"] = str(config_data["kb_id"])
                 dataset.synthetic_dataset_config = config_data
+                # The data tab must not show the last run's failure while
+                # this one is starting.
+                if isinstance(dataset.dataset_config, dict):
+                    dataset.dataset_config.pop(SYNTHETIC_GENERATION_ERROR_KEY, None)
                 dataset.save()
 
                 request_uuid = task_manager.start_task(str(dataset.id))
+                # Clear again now that this request is the latest: a replaced
+                # run that failed after the save above may have written its
+                # reason, and from here on it can no longer write one.
+                clear_synthetic_generation_error(dataset.id, request_uuid)
                 create_synthetic_dataset.delay(
                     validated_data=validated_data,
                     dataset_id=dataset.id,

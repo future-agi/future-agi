@@ -82,6 +82,7 @@ import useWavesurferCache from "src/hooks/use-wavesurfer-cache";
 import AddRowData from "./AddRowData";
 import DatasetLoader from "../../develop/loaders/DatasetLoader";
 import { useEditSyntheticDataStore } from "src/sections/develop/AddRowDrawer/EditSyntheticData/state";
+import useSyntheticGenerationFailure from "src/sections/develop/AddRowDrawer/EditSyntheticData/useSyntheticGenerationFailure";
 import RunningSkeletonRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 import { APP_CONSTANTS } from "src/utils/constants";
 import {
@@ -148,19 +149,20 @@ const selectionColumnDef = {
 };
 
 const CustomRowOverlay = ({
-  failedToGenerateData,
   setOpenSummaryDrawer,
   gridApiRef,
   updateProcessingSyntheticData,
 }) => {
   const { dataset } = useParams();
-  const { data: tableData } = useQuery(
-    getDatasetQueryOptions(dataset, 0, [], [], "", { enabled: false }),
-  );
+  // Same state the summary drawer reads, so both agree on a failed run.
+  const {
+    failed,
+    reason: failureReason,
+    result,
+  } = useSyntheticGenerationFailure(dataset);
 
   const getStatus = () => {
-    const result = tableData?.data?.result;
-    if (failedToGenerateData) return "failed-to-generate-synthetic";
+    if (failed) return "failed-to-generate-synthetic";
     if (getResultIsSyntheticRegenerate(result)) return "regenerating-synthetic";
     return "default-synthetic";
   };
@@ -186,17 +188,15 @@ const CustomRowOverlay = ({
         status: getStatus(),
         onAction: () => setOpenSummaryDrawer(true),
         gridApiRef,
-        isSyntheticDataset: getResultIsSyntheticDataset(
-          tableData?.data?.result,
-        ),
+        isSyntheticDataset: getResultIsSyntheticDataset(result),
         updateProcessingSyntheticData,
+        failureReason,
       })}
     </Box>
   );
 };
 
 CustomRowOverlay.propTypes = {
-  failedToGenerateData: PropTypes.bool,
   setOpenSummaryDrawer: PropTypes.func,
   gridApiRef: PropTypes.object,
   updateProcessingSyntheticData: PropTypes.func,
@@ -613,11 +613,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   }, []);
 
   const cellHeight = useDevelopCellHeight((s) => s.cellHeight);
-  const {
-    setOpenSummaryDrawer,
-    failedToGenerateData,
-    setFailedToGenerateData,
-  } = useEditSyntheticDataStore();
+  const { setOpenSummaryDrawer, setFailedToGenerateData } =
+    useEditSyntheticDataStore();
 
   // Grid Options
   const defaultColDef = useMemo(
@@ -1381,7 +1378,6 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   pinnedBottomRowData={_viewOptions.bottomRow ? bottomRow : []}
                   loadingOverlayComponent={CustomRowOverlay}
                   loadingOverlayComponentParams={{
-                    failedToGenerateData,
                     setOpenSummaryDrawer,
                     gridApiRef,
                     updateProcessingSyntheticData,

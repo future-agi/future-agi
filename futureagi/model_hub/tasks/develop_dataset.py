@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import structlog
+from django.db import transaction
 
 from accounts.models.organization import Organization
 from model_hub.utils.compare_cleanup import (
@@ -346,6 +347,133 @@ def generate_new_columns(
             cell.save()
 
 
+# dataset_config key holding why the last synthetic generation failed. The
+# dataset table response returns dataset_config, and the data tab shows it.
+SYNTHETIC_GENERATION_ERROR_KEY = "synthetic_generation_error"
+
+# The only reasons the data tab may show. An exception's own text can carry
+# internal detail (hosts, queries, provider responses), so it is never stored.
+SYNTHETIC_GENERATION_FAILED = "generation_failed"
+SYNTHETIC_USAGE_LIMIT_REACHED = "usage_limit_reached"
+SYNTHETIC_USAGE_NOT_RECORDED = "usage_not_recorded"
+SYNTHETIC_GENERATION_FAILURE_MESSAGES = {
+    SYNTHETIC_GENERATION_FAILED: "Generation failed; try again or contact support",
+    SYNTHETIC_USAGE_LIMIT_REACHED: (
+        "Your plan's synthetic data generation limit has been reached. "
+        "Upgrade your plan or try again in the next billing period."
+    ),
+    SYNTHETIC_USAGE_NOT_RECORDED: (
+        "Usage for this generation could not be recorded for your "
+        "organization. Check your plan and credits, then try again."
+    ),
+}
+
+
+class SyntheticGenerationFailure(ValueError):
+    """A synthetic generation failure the user can act on, named by ``code``."""
+
+    def __init__(self, code, detail=""):
+        super().__init__(detail or code)
+        self.code = code
+
+
+def _synthetic_generation_failure(error):
+    """The fixed code and message the data tab shows for ``error``."""
+    code = getattr(error, "code", None)
+    if (
+        not isinstance(error, SyntheticGenerationFailure)
+        or code not in SYNTHETIC_GENERATION_FAILURE_MESSAGES
+    ):
+        code = SYNTHETIC_GENERATION_FAILED
+    return {"code": code, "message": SYNTHETIC_GENERATION_FAILURE_MESSAGES[code]}
+
+
+def _synthetic_generation_max_attempts(info):
+    """How many attempts Temporal makes for this activity; 0 means unlimited."""
+    policy = getattr(info, "retry_policy", None)
+    if policy is not None:
+        return policy.maximum_attempts
+    # The policy the drop-in workflow gives this activity.
+    from tfc.temporal.drop_in.workflow import TaskRunnerInput, _resolve_retry_policy
+
+    metadata = create_synthetic_dataset._metadata
+    return _resolve_retry_policy(
+        TaskRunnerInput(
+            activity_name=create_synthetic_dataset._activity_name,
+            args=[],
+            kwargs={},
+            max_retries=metadata.get("max_retries"),
+            retry_delay=metadata.get("retry_delay"),
+        )
+    ).maximum_attempts
+
+
+def _is_final_synthetic_generation_attempt(error):
+    """Whether ``error`` ends the run instead of being retried.
+
+    Outside a Temporal activity nothing retries the call, so it is final. A
+    non-retryable error, or one the retry policy names, is final on any
+    attempt.
+    """
+    from temporalio import activity
+    from temporalio.exceptions import ApplicationError
+
+    if not activity.in_activity():
+        return True
+    if isinstance(error, ApplicationError) and error.non_retryable:
+        return True
+    info = activity.info()
+    policy = getattr(info, "retry_policy", None)
+    error_type = (
+        error.type if isinstance(error, ApplicationError) else type(error).__name__
+    )
+    if policy is not None and error_type in (policy.non_retryable_error_types or ()):
+        return True
+    max_attempts = _synthetic_generation_max_attempts(info)
+    return bool(max_attempts) and info.attempt >= max_attempts
+
+
+def _set_synthetic_generation_error(dataset_id, request_uuid, failure):
+    """Record why synthetic generation failed, or clear it when ``failure`` is None.
+
+    ``failure`` is a ``{"code", "message"}`` dict from
+    ``_synthetic_generation_failure``. The dataset row is locked while the
+    request is checked, so a run that a newer request has replaced cannot
+    write over the newer run's state.
+    """
+    with transaction.atomic():
+        # The workspace-scoped manager can join nullable relations, which
+        # Postgres cannot lock; the id already names the dataset.
+        dataset = Dataset.no_workspace_objects.select_for_update(of=("self",)).get(
+            id=dataset_id
+        )
+        if request_uuid and not SyntheticTaskManager().is_latest_request(
+            str(dataset_id), request_uuid
+        ):
+            return
+        dataset_config = (
+            dict(dataset.dataset_config)
+            if isinstance(dataset.dataset_config, dict)
+            else {}
+        )
+        if failure is None:
+            if SYNTHETIC_GENERATION_ERROR_KEY not in dataset_config:
+                return
+            del dataset_config[SYNTHETIC_GENERATION_ERROR_KEY]
+        else:
+            dataset_config[SYNTHETIC_GENERATION_ERROR_KEY] = {
+                **failure,
+                "request_id": request_uuid,
+            }
+        dataset.dataset_config = dataset_config
+        dataset.save(update_fields=["dataset_config"])
+
+
+def clear_synthetic_generation_error(dataset_id, request_uuid):
+    """Remove the recorded failure reason while ``request_uuid`` is the latest."""
+    _set_synthetic_generation_error(dataset_id, request_uuid, None)
+
+
 @temporal_activity(time_limit=3600 * 12, queue="tasks_xl")
 def create_synthetic_dataset(
     validated_data,
@@ -361,6 +489,9 @@ def create_synthetic_dataset(
         task_manager = SyntheticTaskManager()
         if not request_uuid:
             request_uuid = task_manager.start_task(str(dataset_id))
+
+        # A new run, or a retry of this one, must not show the last failure.
+        _set_synthetic_generation_error(dataset_id, request_uuid, None)
 
         from tfc.constants.api_calls import APICallTypeChoices
 
@@ -378,7 +509,10 @@ def create_synthetic_dataset(
                 str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not _usage_check.allowed:
-                raise ValueError(_usage_check.reason or "Usage limit exceeded")
+                raise SyntheticGenerationFailure(
+                    SYNTHETIC_USAGE_LIMIT_REACHED,
+                    _usage_check.reason or "Usage limit exceeded",
+                )
 
         agent = SyntheticDataAgent(dataset_id=dataset_id, request_uuid=request_uuid)
 
@@ -522,12 +656,16 @@ def create_synthetic_dataset(
                 )
 
                 if not api_call_log_row:
-                    raise ValueError(
-                        "API call not allowed : Error validating the api call."
+                    raise SyntheticGenerationFailure(
+                        SYNTHETIC_USAGE_NOT_RECORDED,
+                        "API call not allowed : Error validating the api call.",
                     )
 
                 if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                    raise ValueError("API call not allowed : ", api_call_log_row.status)
+                    raise SyntheticGenerationFailure(
+                        SYNTHETIC_USAGE_NOT_RECORDED,
+                        f"API call not allowed : {api_call_log_row.status}",
+                    )
 
             # Dual-write: emit usage event for new billing system (cost-based)
             try:
@@ -573,13 +711,26 @@ def create_synthetic_dataset(
                 pass  # Metering failure must not break the action
 
     except Exception as e:
-        logger.exception(f"Error in create_synthetic_dataset: {str(e)}")
+        # The exception text can hold internal detail, so log its type only.
+        failure = _synthetic_generation_failure(e)
+        logger.error(
+            "synthetic_generation_failed",
+            dataset_id=str(dataset_id),
+            request_uuid=request_uuid,
+            error_type=type(e).__name__,
+            failure_code=failure["code"],
+        )
         try:
-            dataset = Dataset.objects.get(id=dataset_id)
-            dataset.status = StatusType.FAILED.value
-            dataset.save()
-        except Exception as inner_e:
-            logger.error(f"Error updating dataset status: {str(inner_e)}")
+            # Dataset has no status field, so keep the reason where the data
+            # tab reads it. A failure Temporal will retry is not the run's
+            # outcome yet, so the data tab keeps showing generation.
+            if _is_final_synthetic_generation_attempt(e):
+                _set_synthetic_generation_error(dataset_id, request_uuid, failure)
+        except Exception as inner_e:  # noqa: BLE001 - the original failure is re-raised below
+            logger.error(
+                "synthetic_generation_failure_record_failed",
+                error_type=type(inner_e).__name__,
+            )
         raise e
 
 
