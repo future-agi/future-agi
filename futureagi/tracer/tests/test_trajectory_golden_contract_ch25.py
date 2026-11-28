@@ -12,6 +12,8 @@ v2 schema and requires every read surface to return the dedup-off bytes.
 from __future__ import annotations
 
 import json
+import os
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,26 +65,43 @@ class _NativeAnalytics:
         )
 
 
+def _ci_requires_clickhouse() -> bool:
+    """These tests are the reader half of the writer/reader contract, so CI
+    must run them: there a missing or unreachable ClickHouse fails the module
+    instead of skipping it. Locally they still skip without a test server."""
+    return os.environ.get("GITHUB_ACTIONS") == "true"
+
+
 @pytest.fixture(scope="module")
 def contract_database():
-    with _ch_test_owned_database("test_traj_contract_") as database:
-        _ch_test_apply_v2_schema(database)
-        http = _open_ch_test_http_client(database=database)
+    with ExitStack() as stack:
         try:
-            for table, name in (
-                ("trajectory_items", "items.jsonl"),
-                ("spans", "spans.jsonl"),
-            ):
-                http.raw_insert(
-                    table,
-                    insert_block=(CONTRACT_DIR / name).read_bytes(),
-                    fmt="JSONEachRow",
+            database = stack.enter_context(
+                _ch_test_owned_database("test_traj_contract_")
+            )
+            _ch_test_apply_v2_schema(database)
+            http = _open_ch_test_http_client(database=database)
+            stack.callback(http.close)
+            native = stack.enter_context(_ch_test_native_client(database=database))
+        except pytest.skip.Exception as exc:
+            if _ci_requires_clickhouse():
+                pytest.fail(
+                    "the trajectory contract tests must run in CI, but the test"
+                    f" ClickHouse was not available: {exc}",
+                    pytrace=False,
                 )
-            with _ch_test_native_client(database=database) as native:
-                assert native.execute("SELECT version()")[0][0].startswith("25.3.")
-                yield database, http, native
-        finally:
-            http.close()
+            raise
+        for table, name in (
+            ("trajectory_items", "items.jsonl"),
+            ("spans", "spans.jsonl"),
+        ):
+            http.raw_insert(
+                table,
+                insert_block=(CONTRACT_DIR / name).read_bytes(),
+                fmt="JSONEachRow",
+            )
+        assert native.execute("SELECT version()")[0][0].startswith("25.3.")
+        yield database, http, native
 
 
 def _reader(http) -> span_reader.CHSpanReader:

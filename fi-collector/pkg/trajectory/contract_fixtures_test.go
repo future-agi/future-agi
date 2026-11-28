@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/future-agi/future-agi/fi-collector/internal/trajectorycontract"
@@ -53,6 +54,25 @@ func TestTrajectoryContractFixturesUpToDate(t *testing.T) {
 			t.Errorf("%s drifted from the converter output; regenerate with "+
 				"go test ./pkg/trajectory -run TestTrajectoryContractFixturesUpToDate -update "+
 				"and keep the Python reader tests green", path)
+		}
+	}
+}
+
+// TestTrajectoryContractCorpusCarriesUnicodeEscapes keeps the shared corpus
+// honest about JSON escapes: at least one payload must carry an escaped
+// accent, an escaped surrogate pair and an escaped U+2028 as the six-character
+// sequences, which the reader must return unchanged.
+func TestTrajectoryContractCorpusCarriesUnicodeEscapes(t *testing.T) {
+	for _, escape := range []string{`é`, `🚀`, ` `} {
+		found := false
+		for _, c := range trajectorycontract.Corpus() {
+			if (c.WantInput && strings.Contains(c.Input, escape)) || (c.WantOutput && strings.Contains(c.Output, escape)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("no extracted corpus payload carries the escape %s", escape)
 		}
 	}
 }

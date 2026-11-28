@@ -72,6 +72,26 @@ jobs:
       - name: Collector unit and race tests
         working-directory: fi-collector
         run: go test -race ./...
+      - name: Regenerate the trajectory contract fixtures after a failure
+        # A drifted fixture fails TestTrajectoryContractFixturesUpToDate above.
+        # Rewrite the files from the converter so the artifact below holds the
+        # exact bytes to commit (also run as a no-op after unrelated failures).
+        if: failure()
+        working-directory: fi-collector
+        run: go test -count=1 -run '^TestTrajectoryContractFixturesUpToDate$' ./pkg/trajectory -update
+      - name: Upload the regenerated trajectory contract fixtures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trajectory-contract-fixtures
+          path: futureagi/tracer/tests/fixtures/trajectory_contract
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Trajectory extraction benchmark (logged, not gated)
+        # Records ns/op and allocations for the 50-turn extraction so the cost
+        # of the byte-exact envelope is visible on every collector change.
+        working-directory: fi-collector
+        run: go test -count=3 -run '^$' -bench '^BenchmarkExtractSpan50Turn$' -benchmem ./pkg/trajectory
       - name: Non-race pricing, latency, waits and authenticated regressions
         working-directory: fi-collector
         env:

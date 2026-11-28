@@ -25,7 +25,9 @@ type ExtractionResult struct {
 }
 
 // extractFaultHook lets tests corrupt a side template between extraction and
-// the reconstruct self-check. Always nil outside tests.
+// the reconstruct self-check. Always nil outside tests. It is a plain package
+// variable read on every extraction, so no test in this package that calls
+// ExtractSpan (directly or through the converter) may use t.Parallel.
 var extractFaultHook func(side string, t *SideTemplate)
 
 // ExtractSpan inspects a span's input and output JSON payloads and, when at

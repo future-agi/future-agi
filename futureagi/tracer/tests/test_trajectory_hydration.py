@@ -217,8 +217,170 @@ def test_checksum_mismatch_returns_unavailable(settings, monkeypatch):
     # The preview stays; a wrong rebuild is never shown as the full content.
     assert rows[0]["input"] == "preview"
     messages = [c.args[0] for c in log.warning.call_args_list]
-    assert any("trajectory_hydration_checksum_mismatch" in m for m in messages)
+    # Logged once, under its own reason; not again as missing items.
+    assert len(messages) == 1, messages
+    assert messages[0].startswith("trajectory_hydration_checksum_mismatch")
     assert original != tampered
+
+
+def _failing_side_rows() -> tuple[list[dict], list[dict], str]:
+    """Dict rows whose input side cannot rebuild, one per failure reason.
+
+    Each row carries a promoted input sentinel; the output side is inline.
+    Returns the rows, the item rows a query returns and the stored content.
+    """
+    h = _h("u1")
+    stored = '{"role":"user","content":"stored"}'
+    shape, _original = _side(["[", "]"], "m", [stored])
+    extra = json.dumps({"keep": 1, SENTINEL_PROMOTED_INPUT_KEY: "input.value"})
+
+    def row(span_id: str, **overrides) -> dict:
+        return {
+            "project_id": PROJECT_ID,
+            "id": span_id,
+            "input": "preview",
+            "output": "inline out",
+            "input_item_hashes": [h],
+            "output_item_hashes": [],
+            "tool_def_hashes": [],
+            "item_scope_id": SESSION_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": _envelope(**{"in": shape}),
+            "span_attributes": extra,
+            **overrides,
+        }
+
+    rows = [
+        # Two m-slots for one hash: _collect_required_refs returns no refs.
+        row(
+            "bad-count",
+            payload_envelope=_envelope(
+                **{"in": {**shape, "r": "mm", "g": ["[", ",", "]"]}}
+            ),
+        ),
+        # An s-slot without sh.
+        row(
+            "no-sh",
+            payload_envelope=_envelope(**{"in": {**shape, "r": "s"}}),
+            input_item_hashes=[],
+        ),
+        row("missing", input_item_hashes=[_h("absent")]),
+        row("tampered"),
+        # items_v1 with an envelope the reader rejects.
+        row("v1", payload_envelope=json.dumps({"v": 1, "in": {"f": "msg_array"}})),
+    ]
+    items = [
+        {
+            "scope_id": SESSION_ID,
+            "item_hash": h,
+            "content": stored.replace("stored", "STORED"),
+        }
+    ]
+    return rows, items, stored
+
+
+@pytest.mark.unit
+def test_failed_side_logs_once_per_reason_and_keeps_preview(settings, monkeypatch):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    log = MagicMock()
+    monkeypatch.setattr(trajectory_hydration, "logger", log)
+    rows, items, _stored = _failing_side_rows()
+    calls = []
+
+    def fake_query(sql, params):
+        calls.append(params)
+        return items
+
+    hydrate_span_dicts(rows, fake_query)
+    assert len(calls) == 1
+    assert [r["input"] for r in rows] == ["preview"] * len(rows)
+    assert [r["output"] for r in rows] == ["inline out"] * len(rows)
+    events = [
+        (c.args[0].split(" ", 1)[0], c.args[3])
+        for c in log.warning.call_args_list
+        if c.args[0].startswith("trajectory_hydration_")
+    ]
+    # Malformed templates are logged, not silently served as previews, and
+    # every failure is logged exactly once.
+    assert sorted(events) == sorted(
+        [
+            ("trajectory_hydration_invalid_template", "bad-count"),
+            ("trajectory_hydration_invalid_template", "no-sh"),
+            ("trajectory_hydration_missing_items", "missing"),
+            ("trajectory_hydration_checksum_mismatch", "tampered"),
+        ]
+    )
+
+
+@pytest.mark.unit
+def test_promoted_attribute_is_never_restored_from_a_preview(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    rows, items, _stored = _failing_side_rows()
+    hydrate_span_dicts(rows, lambda _sql, _params: items)
+    for row in rows:
+        attrs = json.loads(row["span_attributes"])
+        assert attrs == {"keep": 1}, (row["id"], attrs)
+
+    # The same rows as CHSpan instances.
+    rows, items, _stored = _failing_side_rows()
+    spans = [
+        span_reader.CHSpan(
+            id=row["id"],
+            project_id=PROJECT_ID,
+            trace_id=TRACE_ID,
+            parent_span_id="",
+            name="llm.call",
+            observation_type="llm",
+            operation_name="chat",
+            start_time=datetime(2026, 11, 22, 0, 0, tzinfo=UTC),
+            end_time=datetime(2026, 11, 22, 0, 0, 1, tzinfo=UTC),
+            latency_ms=1000,
+            model="gpt-4o",
+            provider="openai",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            cost=0.001,
+            status="OK",
+            status_message="",
+            org_id=None,
+            project_version_id=None,
+            end_user_id=None,
+            trace_session_id=SESSION_ID,
+            prompt_version_id=None,
+            prompt_label_id=None,
+            custom_eval_config_id=None,
+            input=row["input"],
+            output=row["output"],
+            tags="[]",
+            span_events="[]",
+            metadata="{}",
+            resource_attrs="{}",
+            attributes_extra=row["span_attributes"],
+            input_item_hashes=tuple(row["input_item_hashes"]),
+            output_item_hashes=(),
+            tool_def_hashes=(),
+            item_scope_id=SESSION_ID,
+            payload_encoding=ENCODING_ITEMS_V1,
+            payload_envelope=row["payload_envelope"],
+        )
+        for row in rows
+    ]
+    tuple_items = [(i["scope_id"], i["item_hash"], i["content"]) for i in items]
+    for span in hydrate_chspans(spans, lambda _sql, _params: tuple_items):
+        assert span.input == "preview", span.id
+        assert json.loads(span.attributes_extra) == {"keep": 1}, span.id
+
+    # An inline side next to a failed one is still restored.
+    row = _failing_side_rows()[0][3]
+    row["span_attributes"] = json.dumps(
+        {
+            SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+            SENTINEL_PROMOTED_OUTPUT_KEY: "output.value",
+        }
+    )
+    hydrate_span_dicts([row], lambda _sql, _params: items)
+    assert json.loads(row["span_attributes"]) == {"output.value": "inline out"}
 
 
 @pytest.mark.unit
@@ -275,6 +437,12 @@ def test_reconstruct_payload_v2_golden():
             assert env[side]["il"] == len(want), (case["case"], side)
             rebuilt += 1
     assert rebuilt >= 20
+    # JSON escapes reach the reader as the six-character sequences and come
+    # back unchanged (fixture case unicode_escape_sequences).
+    escaped = [c for c in payloads if c["case"] == "unicode_escape_sequences"]
+    assert len(escaped) == 1 and escaped[0]["input_extracted"]
+    for escape in ("\\u00e9", "\\ud83d\\ude80", "\\u2028"):
+        assert escape in escaped[0]["input"], escape
     assert {c["case"] for c in payloads if not c["input_extracted"]} >= {
         "non_utf8_stays_inline",
         "plain_text_both_sides",

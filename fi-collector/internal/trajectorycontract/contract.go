@@ -211,6 +211,16 @@ func Corpus() []Case {
 			Output:    `[{"role":"assistant","content":"A single pixel."}]`,
 			WantInput: true, WantOutput: true,
 		},
+		{
+			// Raw string literals: the payload carries the six-character
+			// escapes, not the decoded characters. Appended last so the ids of
+			// every earlier case stay the same.
+			Name:      "unicode_escape_sequences",
+			Session:   "contract-session-f",
+			Input:     `{"messages":[{"role":"user","content":"caf\u00e9 vs caf\u00C9, rocket \ud83d\ude80, a\u2028b\u2029c, \u0041\u002f"}],"model":"gpt-4o"}`,
+			Output:    `[{"role":"assistant","content":"r\u00e9sum\u00e9 \ud83d\ude00 line\u2028break"}]`,
+			WantInput: true, WantOutput: true,
+		},
 	}
 }
 

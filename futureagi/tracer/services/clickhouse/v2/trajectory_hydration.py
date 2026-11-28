@@ -455,38 +455,87 @@ def restore_promoted_in_attributes_extra(
     return raw_extra
 
 
+# One warning per side that keeps its preview, named by the reason.
+_SIDE_FAILURE_EVENTS = {
+    "invalid_template": (
+        "trajectory_hydration_invalid_template side=%s project_id=%s span_id=%s"
+        " scope_id=%s"
+    ),
+    "missing_items": (
+        "trajectory_hydration_missing_items side=%s project_id=%s span_id=%s"
+        " scope_id=%s"
+    ),
+    "checksum_mismatch": (
+        "trajectory_hydration_checksum_mismatch side=%s project_id=%s span_id=%s"
+        " scope_id=%s"
+    ),
+}
+
+_SIDES = ("in", "out")
+
+
+def _hydrate_side(
+    shape: Any,
+    hashes: Sequence[str] | None,
+    tools: Sequence[str] | None,
+    resolve: Callable[[str], str | None],
+) -> tuple[str | None, str | None]:
+    """``(text, None)`` when the side rebuilds, else ``(None, reason)``."""
+    if _side_slot_refs(shape, hashes, tools) is None:
+        return None, "invalid_template"
+    try:
+        text = reconstruct_payload(shape, hashes, tools, resolve)
+    except TrajectoryContentUnavailable:
+        return None, "checksum_mismatch"
+    if text is None:
+        return None, "missing_items"
+    return text, None
+
+
 def _hydrate_envelope_fields(
     env: dict[str, Any],
     *,
     project_id: str,
     item_scope_id: str,
+    span_id: Any,
     input_hashes: Sequence[str] | None,
     output_hashes: Sequence[str] | None,
     tool_hashes: Sequence[str] | None,
     resolved: dict[tuple[str, str, str], str],
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, frozenset[str]]:
+    """Rebuild both sides of one span.
+
+    Returns the rebuilt input and output (``None`` for a side that is inline
+    or did not rebuild) and the sides that keep their stored preview. Each
+    such side is logged once, with the reason.
+    """
+
     def _resolve(prefixed_hash: str) -> str | None:
         s, raw = _resolve_scope_and_hash(prefixed_hash, item_scope_id)
         return resolved.get((project_id, s, raw))
 
-    def _side(
-        side: str, hashes: Sequence[str] | None, tools: Sequence[str] | None
-    ) -> str | None:
+    texts: dict[str, str | None] = {}
+    previews: set[str] = set()
+    for side, hashes, tools in (
+        ("in", input_hashes, tool_hashes),
+        ("out", output_hashes, None),
+    ):
         shape = env.get(side)
         if shape is None:
-            return None
-        try:
-            return reconstruct_payload(shape, hashes, tools, _resolve)
-        except TrajectoryContentUnavailable:
+            texts[side] = None
+            continue
+        text, reason = _hydrate_side(shape, hashes, tools, _resolve)
+        texts[side] = text
+        if reason is not None:
+            previews.add(side)
             logger.warning(
-                "trajectory_hydration_checksum_mismatch side=%s project_id=%s scope_id=%s",
+                _SIDE_FAILURE_EVENTS[reason],
                 side,
                 project_id,
+                span_id or "",
                 item_scope_id,
             )
-            return None
-
-    return _side("in", input_hashes, tool_hashes), _side("out", output_hashes, None)
+    return texts["in"], texts["out"], frozenset(previews)
 
 
 def hydrate_span_dicts(
@@ -504,69 +553,64 @@ def hydrate_span_dicts(
         return rows
 
     envelopes: dict[int, dict[str, Any]] = {}
+    # items_v1 rows whose envelope is unreadable: either side may hold a preview.
+    unreadable: set[int] = set()
     refs: list[tuple[str, str, str]] = []
     for idx, row in enumerate(rows):
         if row.get("payload_encoding") != ENCODING_ITEMS_V1:
             continue
         env = _parse_envelope(row.get("payload_envelope"))
         if not env:
+            unreadable.add(idx)
             continue
         pid = str(row.get("project_id") or project_id_fallback or "")
         scope = str(row.get("item_scope_id") or "")
-        span_refs = _collect_required_refs(
-            project_id=pid,
-            item_scope_id=scope,
-            input_hashes=row.get("input_item_hashes"),
-            output_hashes=row.get("output_item_hashes"),
-            tool_hashes=row.get("tool_def_hashes"),
-            envelope=env,
+        # Every readable envelope is hydrated, so a side whose template does
+        # not match its hash arrays is logged rather than silently skipped.
+        envelopes[idx] = env
+        refs.extend(
+            _collect_required_refs(
+                project_id=pid,
+                item_scope_id=scope,
+                input_hashes=row.get("input_item_hashes"),
+                output_hashes=row.get("output_item_hashes"),
+                tool_hashes=row.get("tool_def_hashes"),
+                envelope=env,
+            )
         )
-        if span_refs:
-            envelopes[idx] = env
-            refs.extend(span_refs)
 
     resolved: dict[tuple[str, str, str], str] = {}
     if refs:
         resolved = fetch_trajectory_items_dict_rows(query_fn, refs)
 
     for idx, row in enumerate(rows):
+        previews: frozenset[str] = (
+            frozenset(_SIDES) if idx in unreadable else frozenset()
+        )
         env = envelopes.get(idx)
         if env is not None:
-            pid = str(row.get("project_id") or project_id_fallback or "")
-            scope = str(row.get("item_scope_id") or "")
-            hydrated_in, hydrated_out = _hydrate_envelope_fields(
+            hydrated_in, hydrated_out, previews = _hydrate_envelope_fields(
                 env,
-                project_id=pid,
-                item_scope_id=scope,
+                project_id=str(row.get("project_id") or project_id_fallback or ""),
+                item_scope_id=str(row.get("item_scope_id") or ""),
+                span_id=row.get("id"),
                 input_hashes=row.get("input_item_hashes"),
                 output_hashes=row.get("output_item_hashes"),
                 tool_hashes=row.get("tool_def_hashes"),
                 resolved=resolved,
             )
-            if env.get("in") is not None and hydrated_in is None:
-                logger.warning(
-                    "trajectory_hydration_missing_items side=in project_id=%s span_id=%s scope_id=%s",
-                    pid,
-                    row.get("id", ""),
-                    scope,
-                )
-            elif hydrated_in is not None:
+            if hydrated_in is not None:
                 row["input"] = hydrated_in
-            if env.get("out") is not None and hydrated_out is None:
-                logger.warning(
-                    "trajectory_hydration_missing_items side=out project_id=%s span_id=%s scope_id=%s",
-                    pid,
-                    row.get("id", ""),
-                    scope,
-                )
-            elif hydrated_out is not None:
+            if hydrated_out is not None:
                 row["output"] = hydrated_out
 
         if attr_key in row:
+            # A promoted attribute is never restored from a preview: the
+            # sentinel is still removed, and the attribute stays absent.
             row[attr_key] = restore_promoted_in_attributes_extra(
                 row[attr_key],
-                span_input=row.get("input"),
-                span_output=row.get("output"),
+                span_input=None if "in" in previews else row.get("input"),
+                span_output=None if "out" in previews else row.get("output"),
             )
 
     return rows
@@ -584,67 +628,70 @@ def hydrate_chspans(
         return spans
 
     envelopes: dict[int, dict[str, Any]] = {}
+    # items_v1 spans whose envelope is unreadable: either side may hold a preview.
+    unreadable: set[int] = set()
     refs: list[tuple[str, str, str]] = []
     for idx, span in enumerate(spans):
         if getattr(span, "payload_encoding", ENCODING_INLINE) != ENCODING_ITEMS_V1:
             continue
         env = _parse_envelope(getattr(span, "payload_envelope", ""))
         if not env:
+            unreadable.add(idx)
             continue
         pid = str(getattr(span, "project_id", "") or "")
         scope = str(getattr(span, "item_scope_id", "") or "")
-        span_refs = _collect_required_refs(
-            project_id=pid,
-            item_scope_id=scope,
-            input_hashes=getattr(span, "input_item_hashes", ()),
-            output_hashes=getattr(span, "output_item_hashes", ()),
-            tool_hashes=getattr(span, "tool_def_hashes", ()),
-            envelope=env,
+        # Every readable envelope is hydrated, so a side whose template does
+        # not match its hash arrays is logged rather than silently skipped.
+        envelopes[idx] = env
+        refs.extend(
+            _collect_required_refs(
+                project_id=pid,
+                item_scope_id=scope,
+                input_hashes=getattr(span, "input_item_hashes", ()),
+                output_hashes=getattr(span, "output_item_hashes", ()),
+                tool_hashes=getattr(span, "tool_def_hashes", ()),
+                envelope=env,
+            )
         )
-        if span_refs:
-            envelopes[idx] = env
-            refs.extend(span_refs)
 
     resolved = fetch_trajectory_items_tuple_rows(query_fn, refs) if refs else {}
     out = list(spans)
     for idx, span in enumerate(out):
         updates: dict[str, Any] = {}
+        previews: frozenset[str] = (
+            frozenset(_SIDES) if idx in unreadable else frozenset()
+        )
         env = envelopes.get(idx)
         if env is not None:
-            pid = str(span.project_id or "")
-            scope = str(span.item_scope_id or "")
-            hydrated_in, hydrated_out = _hydrate_envelope_fields(
+            hydrated_in, hydrated_out, previews = _hydrate_envelope_fields(
                 env,
-                project_id=pid,
-                item_scope_id=scope,
+                project_id=str(span.project_id or ""),
+                item_scope_id=str(span.item_scope_id or ""),
+                span_id=getattr(span, "id", ""),
                 input_hashes=span.input_item_hashes,
                 output_hashes=span.output_item_hashes,
                 tool_hashes=span.tool_def_hashes,
                 resolved=resolved,
             )
-            if env.get("in") is not None and hydrated_in is None:
-                logger.warning(
-                    "trajectory_hydration_missing_items side=in project_id=%s span_id=%s scope_id=%s",
-                    pid,
-                    getattr(span, "id", ""),
-                    scope,
-                )
-            elif hydrated_in is not None:
+            if hydrated_in is not None:
                 updates["input"] = hydrated_in
-            if env.get("out") is not None and hydrated_out is None:
-                logger.warning(
-                    "trajectory_hydration_missing_items side=out project_id=%s span_id=%s scope_id=%s",
-                    pid,
-                    getattr(span, "id", ""),
-                    scope,
-                )
-            elif hydrated_out is not None:
+            if hydrated_out is not None:
                 updates["output"] = hydrated_out
 
         raw_extra = getattr(span, "attributes_extra", None)
         if isinstance(raw_extra, str) and _SENTINEL_MARKER in raw_extra:
-            eff_in = updates.get("input", getattr(span, "input", None))
-            eff_out = updates.get("output", getattr(span, "output", None))
+            # A promoted attribute is never restored from a preview: the
+            # sentinel is still removed, and the attribute stays absent.
+            eff_in = (
+                None
+                if "in" in previews
+                else updates.get("input", getattr(span, "input", None))
+            )
+            eff_out = (
+                None
+                if "out" in previews
+                else updates.get("output", getattr(span, "output", None))
+            )
             restored_extra = restore_promoted_in_attributes_extra(
                 raw_extra,
                 span_input=eff_in,

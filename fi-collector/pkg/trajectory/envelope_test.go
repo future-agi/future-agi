@@ -217,6 +217,11 @@ func TestExtractSpanByteExactVariants(t *testing.T) {
 		"duplicate_message": `[{"role":"user","content":"same"},{"role":"user","content":"same"}]`,
 		"surrounding_space": "  \n\t[{\"role\":\"user\",\"content\":\"x\"}]\n  ",
 		"tools_between":     `{"tools":[{"type":"function","function":{"name":"f"}}],"model":"m","messages":[{"role":"system","content":"s"},{"role":"user","content":"u"}],"system":[{"type":"text","text":"sys"}]}`,
+		// Raw string literals, so the payloads carry the escape sequences
+		// themselves rather than the decoded characters.
+		"escaped_accent":         `{"messages":[{"role":"user","content":"caf\u00e9 vs caf\u00C9 vs café"}]}`,
+		"escaped_surrogate_pair": `[{"role":"user","content":"rocket \ud83d\ude80 and 🚀"}]`,
+		"escaped_line_separator": `{"messages":[{"role":"user","content":"a\u2028b\u2029c"}],"model":"m"}`,
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -226,6 +231,22 @@ func TestExtractSpanByteExactVariants(t *testing.T) {
 			}
 			requireRoundTrip(t, ext, input, "")
 		})
+	}
+	// The escapes must survive into the stored items verbatim: an item that
+	// held the decoded character would hash and rebuild differently.
+	for name, escape := range map[string]string{
+		"escaped_accent":         `\u00e9`,
+		"escaped_surrogate_pair": `\ud83d\ude80`,
+		"escaped_line_separator": `\u2028`,
+	} {
+		ext := ExtractSpan(envTestProject, envTestSession, envTestTrace, cases[name], "", 128)
+		found := false
+		for _, it := range ext.Items {
+			found = found || strings.Contains(it.Content, escape)
+		}
+		if !strings.Contains(cases[name], escape) || !found {
+			t.Fatalf("%s: escape %s missing from the payload or its items %+v", name, escape, ext.Items)
+		}
 	}
 	ext := ExtractSpan(envTestProject, envTestSession, envTestTrace, cases["duplicate_message"], "", 128)
 	if len(ext.InputHashes) != 2 || ext.InputHashes[0] != ext.InputHashes[1] {
