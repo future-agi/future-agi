@@ -1,9 +1,10 @@
 """Set up pytest-django's real database before measuring any shard test.
 
 For dump qualification, record the state immediately before post_migrate in a
-fresh migrate and in a restore. Comparing here avoids treating freshly generated
-UUIDs and timestamps in signal handlers as lost migration data. Both runs must
-then execute the normal signal handlers and satisfy the same seed witnesses.
+fresh migrate and in a restore, and save the dump there. Comparing here avoids
+treating freshly generated UUIDs and timestamps in signal handlers as lost
+migration data. Both runs must then execute the normal signal handlers and
+satisfy the same seed witnesses.
 """
 
 import os
@@ -26,39 +27,35 @@ def _record_seed_boundary():
         return
 
     original = migrate.emit_post_migrate_signal
+    # With CI_PRESEED_DUMP, also save the whole database here, at the boundary.
+    saved = os.getenv("CI_PRESEED_DUMP")
+    tool = [sys.executable, "-I", str(Path(__file__).with_name("db_dump.py"))]
+    service = (
+        "docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db"
+    )
 
     def record(*args, **kwargs):
         db = connection.settings_dict["NAME"]
         if db not in {"test_tfc_test", "test_ci_roundtrip", "test_ci_public"}:
             raise ValueError("expected the isolated pytest database")
         digest = subprocess.check_output(
-            [
-                sys.executable,
-                "-I",
-                str(Path(__file__).with_name("db_dump.py")),
-                "seed-digest",
-                "test_user",
-                db,
-                "docker",
-                "compose",
-                "-f",
-                "docker-compose.test.yml",
-                "-p",
-                "futureagi-test",
-                "exec",
-                "-T",
-                "test-db",
-            ],
-            timeout=150,
+            [*tool, "seed-digest", "test_user", db, *service.split()], timeout=150
         )
-        # Refuse an absent or ambiguous capture; never store application rows.
+        # Refuse an absent or ambiguous capture.
         with Path(path).open("xb") as target:
             target.write(digest)
+        if saved:
+            if Path(saved).exists():
+                raise FileExistsError(saved)
+            subprocess.check_call(
+                [*tool, "dump", saved, "test_user", db, *service.split()], timeout=300
+            )
         return original(*args, **kwargs)
 
     with patch.object(migrate, "emit_post_migrate_signal", record):
         yield
     assert Path(path).is_file(), "pytest did not run the expected migrate"
+    assert not saved or Path(saved).is_file(), "pytest did not save the database"
 
 
 @pytest.mark.django_db

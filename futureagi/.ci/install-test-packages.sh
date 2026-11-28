@@ -17,48 +17,57 @@ options=(
   -o Acquire::https::Timeout=20
   -o APT::Update::Error-Mode=any
 )
-# A mid-sync archive fails update with "unexpected size" (exit 100) and clears
-# within minutes, so retry it. A timeout (exit 124) means a slow source: stop.
+# refresh TRIES BOUND. A mid-sync archive fails update with "unexpected size"
+# (exit 100) and clears within minutes, so a source given more than one try is
+# asked again. A timeout (exit 124) means a slow source: stop.
 refresh() {
-  local try status
-  for try in 1 2 3; do
-    timeout 120s sudo apt-get "${options[@]}" update && return 0
+  local tries=$1 bound=$2 try status
+  for ((try = 1; try <= tries; try++)); do
+    timeout "$bound" sudo apt-get "${options[@]}" update && return 0
     status=$?
-    if [[ $status == 124 || $try == 3 ]]; then return "$status"; fi
+    if [[ $status == 124 || $try == "$tries" ]]; then return "$status"; fi
     echo "::warning::apt index refresh failed (exit $status); retry in $((try * 20))s"
     sleep $((try * 20))
   done
 }
+# download TRIES REFRESH_BOUND DOWNLOAD_BOUND
 download() {
-  refresh && timeout 180s sudo apt-get "${options[@]}" install -y --download-only \
+  refresh "$1" "$2" && timeout "$3" sudo apt-get "${options[@]}" install -y --download-only \
     --no-install-recommends "${packages[@]}"
 }
 if [[ ! -f "$cache/complete" ]]; then
   echo "APT cache miss: refresh Ubuntu indexes and download ffmpeg/ffprobe + xmlsec1 + pgbouncer"
+  started=$SECONDS
   # Only Ubuntu supplies these packages. Do not refresh unrelated repositories.
-  # The runner's mirror+file source selects azure.archive.ubuntu.com over HTTP:
-  # observed transfers of the 9 MB libcodec2 package took multiple minutes even
-  # when index refresh took seconds. Prefer Ubuntu's canonical HTTPS archive,
-  # keeping the distro suites/components and Signed-By checks, without editing
-  # host sources. The cache keeps this file: its lists are named by these URIs.
-  sed 's|^URIs:.*|URIs: https://archive.ubuntu.com/ubuntu|' \
-    "$runner_sources" > "$cache/sources/ubuntu.sources"
-  apt_source=canonical
-  echo "APT source: canonical (https://archive.ubuntu.com/ubuntu)"
-  # Separate bounds make the formerly quiet 33-39 minute stall diagnosable.
-  # Retries are for asset transport only, never tests or package installation.
-  if ! download; then
+  # Two Ubuntu sources, both checked against the runner's Signed-By keyring.
+  # The runner's own mirror list goes first, with one short try. Measured on
+  # 40 shards of one queue run (27 Nov 2026): the mirror refreshed the indexes
+  # in 3 s and fetched the packages in 1 to 2 s on all 9 shards that reached
+  # it, while archive.ubuntu.com took 49 to 178 s to fetch them on 8 shards
+  # and failed on 9 after 120 to 299 s. The short bound is for the opposite
+  # day: the mirror once took minutes over the 9 MB libcodec2 package. The
+  # cache keeps the source file: its lists are named by these URIs.
+  cp "$runner_sources" "$cache/sources/ubuntu.sources"
+  apt_source=runner
+  echo "APT source: runner ($runner_sources), one bounded try"
+  if ! download 1 30s 30s; then
     # Lists must all come from one source. Complete .debs stay: apt re-checks
-    # their hashes against the new indexes.
-    echo "::warning::canonical Ubuntu archive failed; retrying with the runner's own apt sources"
+    # their hashes against the new indexes. Same suites, components and
+    # Signed-By; only the URIs change, and no host source is edited.
+    echo "::warning::the runner's apt mirror did not finish within its bound; retrying with Ubuntu's canonical archive"
     sudo rm -rf "$cache/lists" "$cache/archives/partial"
     mkdir -p "$cache/lists/partial" "$cache/archives/partial"
-    cp "$runner_sources" "$cache/sources/ubuntu.sources"
-    apt_source=runner
-    echo "APT source: runner ($runner_sources)"
-    download
+    sed 's|^URIs:.*|URIs: https://archive.ubuntu.com/ubuntu|' \
+      "$runner_sources" > "$cache/sources/ubuntu.sources"
+    apt_source=canonical
+    echo "APT source: canonical (https://archive.ubuntu.com/ubuntu)"
+    # Separate bounds make the formerly quiet 33-39 minute stall diagnosable.
+    # Retries are for asset transport only, never tests or package installation.
+    download 3 120s 180s
   fi
   echo "$apt_source" > "$cache/complete"
+  # One line to grep when the two sources are measured again.
+  echo "APT packages served by the $apt_source source in $((SECONDS - started))s"
 else
   echo "APT cache hit: $(cat "$cache/complete") source indexes and archives (no network)"
 fi

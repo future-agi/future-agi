@@ -100,6 +100,44 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts
+      - name: One latest migration per app
+        # Django refuses to migrate an app that has two latest migrations, so
+        # every leg would build its images, boot and fail (the verdict came
+        # after 42 minutes on 27 Nov 2026). This says so before the plan step:
+        # a failed job then has no `any` output, no leg starts, and E2E Tests
+        # Pass fails at once. The script comes from the base commit and reads
+        # the candidate's migration files as text out of Git, so nothing of
+        # the candidate runs here. Django's own check in Backend CI stays the
+        # authority.
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          policy=${BASE_SHA:-$GITHUB_SHA}
+          # A pull request's event base is not refreshed until the head merges
+          # the base, so it can predate the base tip this test merge was built
+          # on. The merge's own first parent is that tip; the plan step below
+          # takes it for the same reason.
+          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+            policy=$(git rev-parse --verify --quiet 'HEAD^1^{commit}') || policy=
+          fi
+          script=futureagi/.ci/migration_leaves.py
+          if [[ -z $policy ]] || ! git cat-file -e "$policy^{commit}" || [[ -z $(git ls-tree "$policy" -- "$script") ]]; then
+            echo "The base commit has no migration check; Django's check in Backend CI decides."
+            exit 0
+          fi
+          # This checkout holds no file contents: Git fetches the script and
+          # the candidate's files now. A failed fetch leaves nothing to judge,
+          # and a doubt passes. Only a clash the script has read says no.
+          mkdir "$RUNNER_TEMP/candidate"
+          if ! git show "$policy:$script" > "$RUNNER_TEMP/migration-leaves.py" ||
+            ! git archive HEAD ':(glob)futureagi/**/migrations/*.py' ':(glob)futureagi/**/apps.py' |
+              tar -x -C "$RUNNER_TEMP/candidate"; then
+            echo "::warning title=Migration check::Could not read the migration files out of Git; Django's check in Backend CI decides."
+            exit 0
+          fi
+          cd "$RUNNER_TEMP/candidate"
+          python3 -I "$RUNNER_TEMP/migration-leaves.py" futureagi
       - name: The e2e-standalone label, from the event or the pull request now
         id: labels
         env:
