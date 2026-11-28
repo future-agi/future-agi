@@ -1,7 +1,8 @@
 # Admission gate for outside pull requests.
 #
 # Deterministic checks (no LLM) that enforce CONTRIBUTION_POLICY.md before any human or
-# AI reviewer spends time on a PR. Members/owners and the bypass list are skipped.
+# AI reviewer spends time on a PR. Members/owners, branches pushed to this repo and the bypass list
+# are skipped.
 #
 # Outcome: one sticky comment listing what's missing, plus a label:
 #   admitted           all checks passed
@@ -60,7 +61,11 @@ jobs:
             const author = pr.user.login;
             const bypass = process.env.BYPASS.split(',').map(s => s.trim()).filter(Boolean);
 
-            if (['MEMBER', 'OWNER', 'COLLABORATOR'].includes(assoc) || bypass.includes(author) || author.endsWith('[bot]')) {
+            // A head branch in this repo means the author already has write access. Members whose org
+            // membership is private show up as CONTRIBUTOR in the webhook payload, so assoc alone misses them.
+            const internalBranch = pr.head.repo && pr.head.repo.full_name === pr.base.repo.full_name;
+
+            if (internalBranch || ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(assoc) || bypass.includes(author) || author.endsWith('[bot]')) {
               core.info(`skip: ${author} (${assoc})`);
               core.setOutput('verdict', 'skip');
               return;
