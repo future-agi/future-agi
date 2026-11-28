@@ -91,8 +91,8 @@ const TABS = [
 // ── Main view ─────────────────────────────────────────────────────────────────
 // The ⋯ menu's rows, as in the prototype: one line each, a quiet note on the
 // right, and small section labels.
-// Render with `disabled`: MenuList reads that prop off the element to skip it
-// when choosing the item that gets initial focus.
+// MenuList skips it when choosing the item that gets initial focus
+// (muiSkipListHighlight, set below).
 function MenuSectionLabel({ children }) {
   return (
     <ListSubheader
@@ -111,9 +111,9 @@ function MenuSectionLabel({ children }) {
     </ListSubheader>
   );
 }
+MenuSectionLabel.muiSkipListHighlight = true;
 MenuSectionLabel.propTypes = {
   children: PropTypes.node,
-  disabled: PropTypes.bool,
 };
 
 // `rest` carries the autoFocus/tabIndex that MenuList injects into its children.
@@ -483,7 +483,7 @@ export default function ErrorFeedDetailView() {
                     transformOrigin={{ vertical: "top", horizontal: "right" }}
                     slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
                   >
-                    <MenuSectionLabel disabled>Export</MenuSectionLabel>
+                    <MenuSectionLabel>Export</MenuSectionLabel>
                     <ActionItem
                       icon="solar:document-text-linear"
                       label="Traces"
@@ -523,7 +523,7 @@ export default function ErrorFeedDetailView() {
                     transformOrigin={{ vertical: "top", horizontal: "right" }}
                     slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
                   >
-                    <MenuSectionLabel disabled>Status</MenuSectionLabel>
+                    <MenuSectionLabel>Status</MenuSectionLabel>
                     {[
                       ["resolved", "Resolve", "solar:check-linear"],
                       [

@@ -106,12 +106,16 @@ export default function ImportTranscriptDialog({
   }
 
   // Dropped or browsed files join the ones already added, up to the limit.
+  // A file of the wrong type is refused on its own: the others in the same
+  // drop are still added.
   const addFiles = async (picked, rejected = []) => {
-    if (rejected.length) {
-      setFileProblem(EVIDENCE_COPY.wrongType(rejected[0].file.name));
+    const refused = rejected.length
+      ? EVIDENCE_COPY.wrongType(rejected[0].file.name)
+      : "";
+    if (!picked.length) {
+      if (refused) setFileProblem(refused);
       return;
     }
-    if (!picked.length) return;
     if (files.length + picked.length > MAX_EVIDENCE_SOURCES) {
       setFileProblem(EVIDENCE_COPY.transcriptsTooMany);
       return;
@@ -127,7 +131,7 @@ export default function ImportTranscriptDialog({
       setFileProblem(EVIDENCE_COPY.transcriptTooLong(long.name));
       return;
     }
-    setFileProblem("");
+    setFileProblem(refused);
     setFiles((current) => [
       ...current,
       ...read.map((one) => ({
