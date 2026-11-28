@@ -482,10 +482,14 @@ class OutsideTest(unittest.TestCase):
         # Both stacks set FI_SKIP_CH25_MIGRATION=1; their bootstraps apply the
         # ClickHouse schema on every start.
         "tracer/migrations/0078_ch25_apply_schema.py": "skipped",
-        # On Distributed, e2e-db-restore.sh adds them with Temporal's CLI (the
-        # stack refuses the migration's own command outside migrate);
-        # Standalone's Temporal starts with them.
-        "tracer/migrations/0093_register_eval_task_search_attributes.py": "replayed",
+        # Bridged by CI until the start-up registers them: on Distributed,
+        # e2e-db-restore.sh adds them with Temporal's CLI (the stack refuses
+        # the migration's own command outside migrate). Standalone's Temporal
+        # starts with them. The product change that registers them at start-up
+        # deletes the bridge (e2e_db.BRIDGES).
+        "tracer/migrations/0093_register_eval_task_search_attributes.py": (
+            "bridged by CI until the start-up registers them"
+        ),
         # Reads ClickHouse only for queue items, and a new database has none.
         "model_hub/migrations/0117_backfill_queueitem_project.py": "nothing",
         # Clears cached Redis keys, and a new stack's Redis is empty.
@@ -551,9 +555,61 @@ class OutsideTest(unittest.TestCase):
         bootstrap = (ROOT / "deploy/standalone/bin/bootstrap.py").read_text()
         self.assertIn('os.environ.setdefault("FI_SKIP_CH25_MIGRATION", "1")', bootstrap)
         self.assertIn("steps.register_search_attributes(log)", bootstrap)
-        self.assertIn("temporal operator search-attribute", RESTORE.read_text())
-        self.assertIn(
-            "tfc/temporal/eval_tasks/search_attributes.py", RESTORE.read_text()
+        script = RESTORE.read_text()
+        self.assertIn(e2e_db.BRIDGES["distributed"], script)
+        self.assertIn('"$here/../tfc/temporal/eval_tasks/search_attributes.py"', script)
+
+    def test_the_bridge_can_create_every_attribute_the_product_defines(self):
+        # Fails when the product's file holds anything the bridge cannot make.
+        found = e2e_db.search_attributes(ROOT / "futureagi" / e2e_db.SEARCH_ATTRIBUTES)
+        self.assertEqual(
+            found,
+            [
+                ("EvalTaskOrgId", "Keyword"),
+                ("EvalTaskProjectId", "Keyword"),
+                ("EvalTaskRunType", "Keyword"),
+                ("EvalTaskStatus", "Keyword"),
+            ],
+        )
+
+    def test_the_reader_refuses_what_the_bridge_cannot_create(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = pathlib.Path(tmp.name) / "search_attributes.py"
+        head = "from temporalio.common import SearchAttributeKey\n"
+        for body in (
+            'X = SearchAttributeKey.for_int("EvalTaskCount")\n',
+            "NAME = 'EvalTaskOrgId'\nX = SearchAttributeKey.for_keyword(NAME)\n",
+            'X = SearchAttributeKey.for_keyword("bad name")\n',
+            "",
+        ):
+            with self.subTest(body=body):
+                path.write_text(head + body)
+                with self.assertRaises(ValueError):
+                    e2e_db.search_attributes(path)
+        path.write_text(head + 'A = SearchAttributeKey.for_keyword("EvalTaskOrgId")\n')
+        self.assertEqual(e2e_db.search_attributes(path), [("EvalTaskOrgId", "Keyword")])
+        self.assertEqual(
+            run_tool("search-attributes", str(path)), (0, "EvalTaskOrgId\n")
+        )
+
+    def test_the_bridges_address_and_namespace_are_the_stacks_own(self):
+        compose = (ROOT / "docker-compose.distributed.yml").read_text()
+        self.assertIn("  TEMPORAL_HOST: temporal:7233\n", compose)
+        self.assertIn("  TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}\n", compose)
+        # Nothing in the E2E stack moves the namespace off its default.
+        for path in ("e2e/stack/e2e.env", "e2e/stack/docker-compose.e2e.yml"):
+            self.assertNotIn("TEMPORAL_NAMESPACE", (ROOT / path).read_text(), path)
+        at = "--address temporal:7233 --namespace default"
+        self.assertIn("at=(" + at + ")", RESTORE.read_text())
+        workflow = (ROOT / ".github/workflows/e2e-ci.yml").read_text()
+        self.assertIn("search-attribute list " + at + ")", workflow)
+
+    def test_the_bridge_only_lists_and_creates(self):
+        verbs = re.findall(r'"\$\{cli\[@\]\}" (\S+)', RESTORE.read_text())
+        self.assertEqual(sorted(set(verbs)), ["create", "list"])
+        self.assertNotRegex(
+            RESTORE.read_text(), r"search-attribute (remove|update|delete)"
         )
 
 
@@ -627,9 +683,12 @@ class SwitchTest(Workspace):
         "standalone": {"key": "ks", "found": True},
     }
 
-    def decide(self, switch, totals=None, db=None):
+    def decide(self, switch, totals=None, db=None, bridged=tuple(e2e_db.BRIDGES)):
         lines, result = e2e_db.plan(
-            switch, totals or self.TOTALS, self.BOTH_FOUND if db is None else db
+            switch,
+            totals or self.TOTALS,
+            self.BOTH_FOUND if db is None else db,
+            bridged,
         )
         return lines, {stack: entry["restore"] for stack, entry in result.items()}
 
@@ -692,6 +751,35 @@ class SwitchTest(Workspace):
                 )
                 self.assertEqual(restores, {"distributed": expected})
 
+    def test_distributed_never_restores_without_its_bridge_whatever_the_switch(self):
+        lines, restores = self.decide("distributed,standalone", bridged=())
+        self.assertEqual(restores, {"distributed": False, "standalone": True})
+        self.assertIn(
+            "distributed: migrates from zero: this commit's restore step cannot add "
+            "Temporal's eval-task search attributes (migration tracer 0093).",
+            lines,
+        )
+        # The command line reads the bridges from the restore step it is given.
+        out = self.dir / "db.json"
+        script = self.dir / "restore.sh"
+        script.write_text("#!/usr/bin/env bash\nsay restored\n")
+        both = json.dumps(self.BOTH_FOUND)
+        for given, expected in ((script, False), (RESTORE, True), (None, False)):
+            with self.subTest(script=given):
+                extra = ["--restore-script", str(given)] if given else []
+                code, printed = run_tool(
+                    "plan",
+                    "distributed",
+                    json.dumps(self.TOTALS),
+                    both,
+                    str(out),
+                    *extra,
+                )
+                self.assertEqual(code, 0, printed)
+                self.assertIs(
+                    json.loads(out.read_text())["distributed"]["restore"], expected
+                )
+
     def test_the_command_line_writes_the_result_and_names_only_known_stacks(self):
         out = self.dir / "db.json"
         code, printed = run_tool(
@@ -700,6 +788,8 @@ class SwitchTest(Workspace):
             '{"distributed": 8}',
             '{"distributed": {"key": "kd", "found": true}}',
             str(out),
+            "--restore-script",
+            str(RESTORE),
         )
         self.assertEqual(code, 0, printed)
         self.assertEqual(
@@ -1387,8 +1477,13 @@ class WorkflowTest(unittest.TestCase):
                 ' --workflow .github/workflows/e2e-ci.yml --name "$key" &&',
                 'python3 -I "$tools/e2e_db.py" verify "$records/$stack" "$key"; then',
                 'python3 -I "$tools/e2e_db.py" plan "$E2E_DB_REUSE" "$TOTALS" "$db"'
-                ' "$RUNNER_TEMP/e2e-db-plan.json"',
+                ' "$RUNNER_TEMP/e2e-db-plan.json" \\',
             ],
+        )
+        # The bridges are read from the restore step the legs run.
+        self.assertIn(
+            '  --restore-script "$GITHUB_WORKSPACE/futureagi/.ci/e2e-db-restore.sh"\n',
+            step,
         )
         # A dev push fetches for every stack; any other run only for a named one.
         self.assertIn('if [[ $DEV_PUSH == true || $named == *" $stack "* ]] &&\n', step)
@@ -1431,6 +1526,66 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn(
             f"      E2E_DB_RESTORES: ${{{{ {self.MINE}.restore == true }}}}\n", e2e
         )
+
+    def test_every_distributed_leg_of_a_restoring_run_checks_temporals_attributes(self):
+        e2e = self.job("e2e")
+        check = self.step(e2e, "Check Temporal's eval-task search attributes")
+        # After the suite, whatever its outcome; the leg from zero checks too.
+        self.assertLess(
+            e2e.index("      - name: Upload Redis diagnostics\n"), e2e.index(check)
+        )
+        self.assertIn(
+            "if: ${{ !cancelled() && steps.boot.outcome == 'success' && "
+            f"matrix.stack == 'distributed' && {self.MINE}.restore == true }}}}\n",
+            check,
+        )
+        self.assertNotIn("matrix.shard", check)
+        self.assertNotIn("continue-on-error", check)
+        names = [
+            n
+            for n, _ in e2e_db.search_attributes(
+                ROOT / "futureagi" / e2e_db.SEARCH_ATTRIBUTES
+            )
+        ]
+        for listed, fails in (
+            ("  Name  Type\n" + "".join(f"  {n}  Keyword\n" for n in names), False),
+            ("  Name  Type\n" + "".join(f"  {n}  Keyword\n" for n in names[1:]), True),
+            ("  Name  Type\n" + "".join(f"  {n}  Int\n" for n in names), True),
+        ):
+            with self.subTest(listed=listed):
+                work = pathlib.Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+                (work / "futureagi").mkdir()
+                (work / "futureagi/.ci").symlink_to(ROOT / "futureagi/.ci")
+                (work / "futureagi/tfc").symlink_to(ROOT / "futureagi/tfc")
+                (work / "bin").mkdir()
+                (work / "listed").write_text(listed)
+                (work / "bin/e2e").write_text(
+                    '#!/usr/bin/env bash\necho "$*" >> calls\ncat listed\n'
+                )
+                (work / "bin/e2e").chmod(0o755)
+                run = subprocess.run(
+                    ["bash", "-e", "-c", self.run_block(check)],
+                    cwd=work,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(run.returncode != 0, fails, run.stdout + run.stderr)
+                self.assertEqual(
+                    (work / "calls").read_text(),
+                    "compose exec -T temporal temporal operator search-attribute list"
+                    " --address temporal:7233 --namespace default\n",
+                )
+                if fails:
+                    self.assertIn("::error title=E2E database reuse::", run.stdout)
+                else:
+                    self.assertEqual(
+                        run.stdout.splitlines(),
+                        [
+                            f"Temporal search attribute on this leg: {n} Keyword"
+                            for n in names
+                        ],
+                    )
 
     def test_a_restore_step_that_stops_falls_back_and_never_fails_the_leg(self):
         restore = self.step(self.job("e2e"), "Restore the saved database dump")
