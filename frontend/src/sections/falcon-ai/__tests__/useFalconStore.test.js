@@ -233,6 +233,15 @@ describe("useFalconStore", () => {
     expect(useFalconStore.getState().messages).toHaveLength(0);
   });
 
+  it("should clear streaming state when switching conversations", () => {
+    useFalconStore.getState().setCurrentConversation("c1");
+    useFalconStore.getState().setStreaming(true, "assistant-1");
+    useFalconStore.getState().setCurrentConversation("c2");
+    expect(useFalconStore.getState().currentConversationId).toBe("c2");
+    expect(useFalconStore.getState().isStreaming).toBe(false);
+    expect(useFalconStore.getState().streamingMessageId).toBeNull();
+  });
+
   // --- Reset ---
 
   it("should reset chat state", () => {
