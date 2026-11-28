@@ -664,7 +664,7 @@ class CandidateScope(unittest.TestCase):
         # No job keeps a narrower guard, so a stray label starts none.
         self.assertNotIn("!(" + edit + ")", text)
 
-    def test_private_overlay_requires_an_internal_event_in_the_upstream_repository(self):
+    def test_overlay_requires_an_internal_event_in_the_upstream_repository(self):
         workflow = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
         selector = workflow.split("      - id: overlay\n")[1].split(
             "      - id: shards"
