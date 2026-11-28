@@ -202,9 +202,11 @@ func TestSeenReuseBoundedByMaxReuseAge(t *testing.T) {
 	}
 }
 
-// The legacy constructor's 7-day project default is clamped to the 48h cap.
+// The legacy constructor clamps the old 7-day project TTL to the 48h cap.
 func TestSeenLegacyConstructorClampsReuseAge(t *testing.T) {
-	s := NewSeenStore(nil, 100, DefaultSessionTTL, DefaultProjectTTL)
+	// The pre-v2 defaults (24h session, 7-day project) as literals: the
+	// config defaults may change, the clamp must not.
+	s := NewSeenStore(nil, 100, 24*time.Hour, 7*24*time.Hour)
 	if got := s.MaxReuseAge(); got != SeenMaxReuseAge {
 		t.Fatalf("MaxReuseAge=%s, want %s", got, SeenMaxReuseAge)
 	}
@@ -216,7 +218,7 @@ func TestSeenLegacyConstructorClampsReuseAge(t *testing.T) {
 	if newItems, reused, _ := s.CheckNew(context.Background(), items); len(newItems) != 2 || reused != 0 {
 		t.Fatalf("5 days later: new=%d reused=%d, want 2/0 (no reuse beyond 48h)", len(newItems), reused)
 	}
-	if s2 := NewSeenStore(nil, 100, time.Minute, 0); s2.MaxReuseAge() != SeenMaxReuseAge || s2.rSession != SeenMinReuseAge/2 {
+	if s2 := NewSeenStore(nil, 100, time.Minute, 7*24*time.Hour); s2.MaxReuseAge() != SeenMaxReuseAge || s2.rSession != SeenMinReuseAge/2 {
 		t.Fatalf("clamp: max=%s rSession=%s", s2.MaxReuseAge(), s2.rSession)
 	}
 }
