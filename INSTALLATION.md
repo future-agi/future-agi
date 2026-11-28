@@ -1277,6 +1277,107 @@ Distributed's MinIO can be mirrored to any S3 endpoint with `mc mirror`. In
 Standalone the stored files live in the `app-data` volume; back that volume up
 alongside Postgres.
 
+### Trajectory item store: backup, restore and erasure
+
+When the trajectory item store is in use (ClickHouse schema `040` applied and
+the collector's `FI_TRAJECTORY_DEDUP_MODE` not `off`), a span may hold
+pointers into the `trajectory_items` table instead of its full input and
+output. The two tables must be backed up and restored together, and the
+collectors' Redis "seen" sets must be cleared after a restore.
+
+Back up and restore:
+
+1. Pause the `trajectory-items-gc` and `retention-hard-delete` schedules
+   (`python manage.py register_temporal_schedules --pause <schedule id>`,
+   once per schedule, or the Temporal UI) and stop the collectors.
+2. Back up `spans` first, then `trajectory_items`
+   (`BACKUP TABLE spans ...`, then `BACKUP TABLE trajectory_items ...`), so
+   the items backup holds everything the spans backup points at.
+3. Restore both tables.
+4. Run `python manage.py trajectory_seen_reset`. It sets a new `traj:epoch`
+   and removes every `traj:seen:*` key, so no collector reuses an item the
+   restore removed. It prints counts only.
+5. Start the collectors.
+6. Run `python manage.py trajectory_audit --since <backup time>` and expect
+   `"violations": 0`.
+7. Re-apply span erasures made after the backup time, then
+   `trajectory_erase` for those projects (below).
+8. Unpause the schedules.
+
+Standalone needs no step 4 on its own: its Redis keeps nothing on disk and the
+updater restores only with the app container stopped, so the collector starts
+with an empty seen store. Distributed runs Redis with `appendonly yes` and
+needs the reset.
+
+Garbage collection. The daily `trajectory-items-gc` job deletes item copies
+that no span still present can reference: per project, copies persisted more
+than 72 hours before the project's oldest span row (or before now, when the
+project has no span rows). It is a no-op until `040` is applied, and it deletes
+nothing unless all of these hold:
+
+- `FI_TRAJECTORY_GC_DELETES_ENABLED=true` is set on the backend. While it is
+  off (the default), item copies that no span references are kept, so
+  storage only grows.
+- On replicated ClickHouse, every replica of `spans` and `trajectory_items` is
+  writable and at most 5 minutes behind, and the cluster used to reach them
+  (`FI_TRAJECTORY_CH_CLUSTER`, or the one single-shard cluster whose hosts
+  match the replicas) lists every replica.
+- A collector has written the reuse contract key (`traj:contract:v2`), and
+  for the last 8 days every daily GC run has found that key and no legacy
+  `traj:seen:<project>:<scope>` key in Redis. GC keeps the start of that
+  period in `traj:gc:quiet_since`. A collector on the legacy seen store keeps
+  reusing items from its in-process cache for up to 7 days (its default
+  `project_ttl`; do not raise it) after its Redis key is gone, so the absence
+  of legacy keys alone proves nothing. The period starts over when GC sees a
+  legacy key or no contract key, when it stops checking for 3 days (switch
+  off, schedule paused, refused or latched), and when `trajectory_seen_reset`
+  runs. So the first delete comes at least 8 days after the switch is turned
+  on, and after an upgrade from the legacy seen store, or a rollback to it,
+  at least 8 days after the last legacy key is gone. Status `waiting` means
+  the period is still running.
+- The GC latch (`traj:gc:latch`) is not set, and an audit of the last two days
+  of spans finds no missing or over-age item. The audit reads every replica
+  on replicated ClickHouse, and it runs during the 8-day period too, so reuse
+  past the bound by a legacy collector also sets the latch. A violation sets
+  the latch, and GC then stays stopped until an operator checks the cause and
+  runs
+  `python manage.py trajectory_audit --since <latch time> --clear-gc-latch`
+  (it clears the latch only when that audit is clean; add `--force` to clear
+  it anyway).
+
+Deleting single traces or sessions removes their spans only. Item content they
+referenced stays until GC removes it under the rule above (72 hours before the
+project's oldest remaining span), or until the project is erased.
+
+Replaying collector dead-letter spans. If the collector could not insert a
+span batch it writes it to its dead-letter file; the items those spans point
+at were stored already. Replay the file into `spans` within 72 hours of the
+failure, or first set `FI_TRAJECTORY_GC_DELETES_ENABLED=false` (or pause the
+`trajectory-items-gc` schedule), replay, and turn GC back on afterwards. A
+later replay can point at items GC has removed in the meantime. After the
+replay, run `python manage.py trajectory_audit --since <failure time>` and
+expect `"violations": 0`.
+
+Erasing a project (GDPR). Item content is removed together with the spans
+that reference it:
+
+1. Delete the project in the app, then delete its rows from ClickHouse
+   `spans` with a mutation that waits for every replica:
+
+   ```sql
+   ALTER TABLE spans DELETE WHERE project_id = '<project uuid>'
+   SETTINGS mutations_sync = 2;
+   ```
+
+   Use this statement rather than a lightweight `DELETE FROM spans`: `spans`
+   has projections. Rows marked `is_deleted = 1` are still rows: the erasure
+   step below counts every physical row and waits until none is left.
+2. Run `python manage.py trajectory_erase --project <project uuid>`. It
+   refuses while the project still exists or any replica holds a span row for
+   it. Otherwise it starts a background workflow that stops the collectors
+   accepting the project, clears its seen sets, deletes its items, and checks
+   again 72 hours later.
+
 ---
 
 ## Troubleshooting

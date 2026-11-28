@@ -44,6 +44,17 @@ from tracer.tasks.external_eval import (
     process_external_evals,
 )
 
+# Trajectory store lifecycle (GC schedule and erasure workflow steps)
+from tracer.tasks.trajectory_lifecycle import (
+    trajectory_erasure_clear_seen,
+    trajectory_erasure_delete_items,
+    trajectory_erasure_gate,
+    trajectory_erasure_invalidate,
+    trajectory_erasure_stalled,
+    trajectory_erasure_verify,
+    trajectory_items_gc,
+)
+
 __all__ = [
     # Error Analysis
     "analyze_single_trace",
@@ -62,4 +73,11 @@ __all__ = [
     "compute_derived_metric",
     "dispatch_derived_metrics",
     "refresh_derived_metric_project",
+    "trajectory_erasure_clear_seen",
+    "trajectory_erasure_delete_items",
+    "trajectory_erasure_gate",
+    "trajectory_erasure_invalidate",
+    "trajectory_erasure_stalled",
+    "trajectory_erasure_verify",
+    "trajectory_items_gc",
 ]
