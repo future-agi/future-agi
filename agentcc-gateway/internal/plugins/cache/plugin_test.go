@@ -397,6 +397,31 @@ func TestBuildCacheKey_TemperatureAffectsKey(t *testing.T) {
 	}
 }
 
+// TestBuildCacheKey_ResponseShapeAffectsKey covers the settings that decide the
+// shape of the response body: absent and two different values must all key
+// differently, or an n=1 entry answers an n=3 request.
+func TestBuildCacheKey_ResponseShapeAffectsKey(t *testing.T) {
+	one, three, two, yes, no := 1, 3, 2, true, false
+	for name, values := range map[string][2]func(*models.ChatCompletionRequest){
+		"n":            {func(r *models.ChatCompletionRequest) { r.N = &one }, func(r *models.ChatCompletionRequest) { r.N = &three }},
+		"logprobs":     {func(r *models.ChatCompletionRequest) { r.Logprobs = &no }, func(r *models.ChatCompletionRequest) { r.Logprobs = &yes }},
+		"top_logprobs": {func(r *models.ChatCompletionRequest) { r.TopLogprobs = &one }, func(r *models.ChatCompletionRequest) { r.TopLogprobs = &two }},
+		"modalities":   {func(r *models.ChatCompletionRequest) { r.Modalities = []string{"text"} }, func(r *models.ChatCompletionRequest) { r.Modalities = []string{"text", "audio"} }},
+		"audio":        {func(r *models.ChatCompletionRequest) { r.Audio = &models.AudioConfig{Voice: "alloy", Format: "wav"} }, func(r *models.ChatCompletionRequest) { r.Audio = &models.AudioConfig{Voice: "echo", Format: "wav"} }},
+	} {
+		absent, first, second := makeReq("gpt-4o", "hello"), makeReq("gpt-4o", "hello"), makeReq("gpt-4o", "hello")
+		values[0](first)
+		values[1](second)
+		keys := map[string]bool{}
+		for _, req := range []*models.ChatCompletionRequest{absent, first, second} {
+			keys[BuildCacheKey("default", req)] = true
+		}
+		if len(keys) != 3 {
+			t.Errorf("%s: absent and two different values share a cache key", name)
+		}
+	}
+}
+
 // --- Semantic Cache Tests ---
 
 func newTestSemanticPlugin() (*Plugin, *cache.Store, *cache.SemanticStore) {
