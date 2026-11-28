@@ -34,6 +34,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"github.com/future-agi/future-agi/fi-collector/pkg/trajectory"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"golang.org/x/sync/semaphore"
@@ -92,6 +93,8 @@ type Server struct {
 	metering        Metering
 	log             *slog.Logger
 	pricer          chexp.Pricer
+	trajCfg         trajectory.Config
+	trajSeen        *trajectory.SeenStore
 	grpc            *grpc.Server
 	httpd           *http.Server
 
@@ -146,6 +149,8 @@ type Server struct {
 	pendMu          sync.Mutex
 	pend            []map[string]any
 	pendCurated     *curatedwriter.Batch
+	pendTraj        *trajectory.Batch
+	pendUsage       []*pendingUsage
 	pendProperty    []observedcatalog.ScopedSpan
 	pendRoots       []traceavailable.Root
 	// Input positions, not span IDs: duplicate IDs can have different chunk
@@ -178,6 +183,8 @@ type Option struct {
 	pricer          chexp.Pricer
 	propertyCatalog PropertyCatalogWriter
 	router          auth.SimulationRouter
+	trajCfg         *trajectory.Config
+	trajSeen        *trajectory.SeenStore
 }
 
 // TraceNotifier receives ended roots only after their canonical batch is stored.
@@ -204,6 +211,13 @@ func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
 // with no router at all (no authenticator and no option) drops the requests of
 // sandbox keys, so they are never stored under the project name they carry.
 func WithSimulationRouter(r auth.SimulationRouter) Option { return Option{router: r} }
+
+// WithTrajectory configures Phase 0 intra-span compaction, Phase 1
+// content-addressed trajectory deduplication, and dedup-aware storage billing.
+func WithTrajectory(cfg trajectory.Config, seen *trajectory.SeenStore) Option {
+	normalized := cfg.Normalize()
+	return Option{trajCfg: &normalized, trajSeen: seen}
+}
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -239,6 +253,8 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	var propertyCatalogWriter PropertyCatalogWriter
 	var traceNotifier TraceNotifier
 	var router auth.SimulationRouter
+	var trajCfg trajectory.Config
+	var trajSeen *trajectory.SeenStore
 	if authenticator != nil {
 		router = authenticator
 	}
@@ -258,6 +274,12 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		if o.propertyCatalog != nil {
 			propertyCatalogWriter = o.propertyCatalog
 		}
+		if o.trajCfg != nil {
+			trajCfg = *o.trajCfg
+		}
+		if o.trajSeen != nil {
+			trajSeen = o.trajSeen
+		}
 	}
 
 	s := &Server{
@@ -270,6 +292,8 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		metering:        metering,
 		log:             log,
 		pricer:          pricer,
+		trajCfg:         trajCfg,
+		trajSeen:        trajSeen,
 		propertyCatalog: propertyCatalogWriter,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
@@ -557,21 +581,30 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		return partialSuccessResponse(prepared.routed), false, nil
 	}
-	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
+	res, err := chexp.ConvertWithOptions(ctx, req.Traces(), h.s.pricer, chexp.ConvertOptions{
+		Trajectory: h.s.trajCfg,
+		Seen:       h.s.trajSeen,
+	})
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), false, err
 	}
 	if ctx.Err() != nil {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
 	}
-	if h.s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
+	var deferredUsage *pendingUsage
+	if res.Usage.DedupApplied {
+		deferredUsage = h.s.buildPendingUsage(ctx, req.Traces(), res.Usage)
+	}
+	if h.s.enqueueRoutedWithTrajectory(res.Rows, res.Identities, res.Trajectory, deferredUsage, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectShutdown)
 	}
-	h.s.emitUsage(ctx, req.Traces())
+	if deferredUsage == nil {
+		h.s.emitUsageWithReport(ctx, req.Traces(), res.Usage)
+	}
 
 	resp := ptraceotlp.NewExportResponse()
 	setProjectPartialSuccess(resp, prepared.rejectedSpans)
-	return resp, len(rows) > 0, nil
+	return resp, len(res.Rows) > 0, nil
 }
 
 // handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
@@ -681,7 +714,10 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
 		return
 	}
-	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), s.pricer)
+	res, err := chexp.ConvertWithOptions(ctx, req.Traces(), s.pricer, chexp.ConvertOptions{
+		Trajectory: s.trajCfg,
+		Seen:       s.trajSeen,
+	})
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
 		s.rejectHTTP(w, ct, &rejection{reason: "convert", msg: "convert: " + err.Error()})
@@ -691,13 +727,19 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, ct, rejectProjectUnavailable)
 		return
 	}
-	if s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
+	var deferredUsage *pendingUsage
+	if res.Usage.DedupApplied {
+		deferredUsage = s.buildPendingUsage(ctx, req.Traces(), res.Usage)
+	}
+	if s.enqueueRoutedWithTrajectory(res.Rows, res.Identities, res.Trajectory, deferredUsage, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
 		s.rejectHTTP(w, ct, rejectShutdown)
 		return
 	}
-	enqueued = len(rows) > 0
+	enqueued = len(res.Rows) > 0
 
-	s.emitUsage(ctx, req.Traces())
+	if deferredUsage == nil {
+		s.emitUsageWithReport(ctx, req.Traces(), res.Usage)
+	}
 
 	// ExportTraceServiceResponse — same wire shape, encoded to match the
 	// request's content-type. The spec requires the response media type to
@@ -818,8 +860,22 @@ func (s *Server) enqueueRouted(
 	workspaceProjectIDs map[string]struct{},
 	hiddenProjectIDs map[string]struct{},
 ) enqueueOutcome {
+	return s.enqueueRoutedWithTrajectory(rows, ids, nil, nil, routed, organizationID, workspaceID, workspaceProjectIDs, hiddenProjectIDs)
+}
+
+func (s *Server) enqueueRoutedWithTrajectory(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	traj *trajectory.Batch,
+	usage *pendingUsage,
+	routed auth.RouteOutcome,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+	hiddenProjectIDs map[string]struct{},
+) enqueueOutcome {
 	if routed.Hidden != "" {
-		return s.enqueueParcels(parcel{rows: rows, ids: ids})
+		return s.enqueueParcels(parcel{rows: rows, ids: ids, traj: traj, usage: usage})
 	}
 	if len(hiddenProjectIDs) > 0 {
 		var visible, hidden []map[string]any
@@ -833,18 +889,26 @@ func (s *Server) enqueueRouted(
 			visible = append(visible, row)
 		}
 		if len(hidden) > 0 {
-			// The payload's identities go with the visible rows, or with the
-			// hidden ones when nothing else is left.
+			// The payload's identities and trajectory batch go with the visible
+			// rows, or with the hidden ones when nothing else is left.
 			if len(visible) == 0 {
-				return s.enqueueParcels(parcel{rows: hidden, ids: ids})
+				return s.enqueueParcels(parcel{rows: hidden, ids: ids, traj: traj, usage: usage})
 			}
 			return s.enqueueParcels(
 				parcel{rows: hidden},
-				parcel{rows: visible, ids: ids, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
+				parcel{rows: visible, ids: ids, traj: traj, usage: usage, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
 			)
 		}
 	}
-	return s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
+	return s.enqueueParcels(parcel{
+		rows:           rows,
+		ids:            ids,
+		traj:           traj,
+		usage:          usage,
+		organizationID: organizationID,
+		workspaceID:    workspaceID,
+		projectIDs:     workspaceProjectIDs,
+	})
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a
@@ -885,6 +949,8 @@ const (
 type parcel struct {
 	rows           []map[string]any
 	ids            *curatedwriter.Batch
+	traj           *trajectory.Batch
+	usage          *pendingUsage
 	organizationID string
 	workspaceID    string
 	projectIDs     map[string]struct{}
@@ -992,6 +1058,15 @@ func (s *Server) appendLocked(p parcel) {
 		}
 		s.pendCurated.Merge(p.ids)
 	}
+	if p.traj != nil && !p.traj.Empty() {
+		if s.pendTraj == nil {
+			s.pendTraj = trajectory.NewBatch()
+		}
+		s.pendTraj.Merge(p.traj)
+	}
+	if p.usage != nil {
+		s.pendUsage = append(s.pendUsage, p.usage)
+	}
 }
 
 // flushLoop runs limits.inserts flushers until stopCh closes, and returns
@@ -1035,12 +1110,16 @@ func (s *Server) drainNow(ctx context.Context) {
 	s.pendMu.Lock()
 	batch := s.pend
 	curated := s.pendCurated
+	traj := s.pendTraj
+	usages := s.pendUsage
 	property := s.pendProperty
 	roots := s.pendRoots
 	rootRows, propertyRows := s.pendRootRows, s.pendPropertyRows
 	leases := s.pendLeases
 	s.pend = nil
 	s.pendCurated = nil
+	s.pendTraj = nil
+	s.pendUsage = nil
 	s.pendProperty = nil
 	s.pendRoots = nil
 	s.pendRootRows, s.pendPropertyRows = nil, nil
@@ -1080,7 +1159,29 @@ func (s *Server) drainNow(ctx context.Context) {
 	}
 	// Observation only: retain the count through canonical and sidecar ownership.
 	defer func() { s.pendMu.Lock(); s.bufferedRows -= len(batch); s.pendMu.Unlock() }()
+
+	// Phase 1 Trajectory Store invariant: durably commit unique trajectory_items
+	// BEFORE inserting spans that point to them, and mark items seen in the
+	// 2-tier SeenStore ONLY AFTER the ClickHouse insert commits. If
+	// trajectory_items fails after retries, atomically restore every compacted
+	// span in this drain to inline encoding and emit raw-byte usage so neither
+	// dangling pointers nor billing under-counts can ever occur.
+	trajFallback := false
+	if traj != nil && len(traj.Items()) > 0 {
+		if err := s.writer.InsertTable(ctx, "trajectory_items", traj.ToRows(stamp)); err != nil {
+			s.log.Warn("trajectory_items insert failed; falling back to inline spans",
+				"items", len(traj.Items()), "spans", len(traj.Fallbacks()), "err", err)
+			traj.RestoreInline()
+			trajFallback = true
+		} else if s.trajSeen != nil {
+			s.trajSeen.MarkCommitted(ctx, traj.Items())
+		}
+	}
+
 	confirmed, _ := s.writer.InsertConfirmed(ctx, batch)
+	for _, u := range usages {
+		s.emitPendingUsage(u, trajFallback)
+	}
 	roots = confirmedSidecars(roots, rootRows, confirmed)
 	property = confirmedSidecars(property, propertyRows, confirmed)
 	if s.traceNotifier != nil && len(roots) > 0 {

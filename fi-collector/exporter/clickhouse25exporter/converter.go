@@ -22,6 +22,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
 	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
+	"github.com/future-agi/future-agi/fi-collector/pkg/trajectory"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -228,13 +229,49 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // distinct end_user_id / trace_session_id); cross-batch duplicates collapse on
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
+// ConvertOptions controls optional Phase 0 intra-span compaction and Phase 1
+// content-addressed trajectory deduplication during conversion. Zero value
+// preserves exact legacy behavior.
+type ConvertOptions struct {
+	Trajectory trajectory.Config
+	Seen       *trajectory.SeenStore
+}
+
+// ConvertResult bundles the converted span rows with their curated dimension
+// identities, deduplicated trajectory items + inline fallbacks, and exact
+// dedup-aware storage accounting.
+type ConvertResult struct {
+	Rows       []map[string]any
+	Identities *curatedwriter.Batch
+	Trajectory *trajectory.Batch
+	Usage      trajectory.UsageReport
+}
+
 func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
+	res, err := ConvertWithOptions(ctx, traces, pricer, ConvertOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	return res.Rows, res.Identities, nil
+}
+
+// ConvertWithOptions walks an OTLP Traces payload once and produces span rows,
+// curated identities, Phase 1 deduplicated trajectory items (with automatic
+// inline fallback snapshots), and exact storage-billing metrics.
+func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer, opts ConvertOptions) (ConvertResult, error) {
 	if reason := normalization.IngestionHold(traces); reason != "" {
-		return nil, nil, fmt.Errorf("%s", reason)
+		return ConvertResult{}, fmt.Errorf("%s", reason)
 	}
 	normalization.Prepare(traces)
+	cfg := opts.Trajectory.Normalize()
+
 	rows := make([]map[string]any, 0, traces.SpanCount())
 	ids := curatedwriter.NewBatch()
+	var trajBatch *trajectory.Batch
+	var allTrajItems []trajectory.Item
+	dedupApplied := false
+
+	var report trajectory.UsageReport
 
 	rss := traces.ResourceSpans()
 	for i := 0; i < rss.Len(); i++ {
@@ -254,6 +291,8 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 		// didn't tag it (legacy SDKs) — see the gating note in spanToRow.
 		projectType := stringAttr(rs.Resource().Attributes(), resAttrProjectTy, "")
 		fromOpenRouter := isOpenRouterResource(rs, serviceName)
+		dedupProject := cfg.EnabledForProject(projectID)
+		compactAttrs := cfg.CompactSpanAttrs || dedupProject
 
 		sss := rs.ScopeSpans()
 		for j := 0; j < sss.Len(); j++ {
@@ -261,17 +300,97 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 			ss := scope.Spans()
 			for k := 0; k < ss.Len(); k++ {
 				span := ss.At(k)
-				row, identity, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, fromOpenRouter, pricer)
+				row, identity, origInput, origOutput, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, fromOpenRouter, pricer, compactAttrs)
 				if err != nil {
-					return nil, nil, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
+					return ConvertResult{}, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
 				}
+				// collectTrace runs against the original lossless input/output
+				// BEFORE Phase 1 replaces spans.input/output with 512B previews,
+				// because trace-level evals read traces.input/output directly.
+				collectTraceWithIO(ids, row, projectID, origInput, origOutput)
+
+				if dedupProject {
+					pid, _ := row["project_id"].(string)
+					tid, _ := row["trace_id"].(string)
+					sid, _ := row["trace_session_id"].(string)
+					ext := trajectory.ExtractSpan(pid, sid, tid, origInput, origOutput, cfg.PreviewMaxBytes)
+					if ext.Applied {
+						dedupApplied = true
+						if trajBatch == nil {
+							trajBatch = trajectory.NewBatch()
+						}
+						// Strip redundant flattened message/tool keys from attrs_string and
+						// overflow once their structured input/output was extracted into items.
+						var stripped map[string]any
+						var strippedStr map[string]string
+						var strippedBytes int64
+						of, _ := row["attributes_extra"].(map[string]any)
+						as, _ := row["attrs_string"].(map[string]string)
+						stripped, strippedStr, strippedBytes = stripFlattenedTrajectoryAttrs(as, of)
+						trajBatch.AddFallback(trajectory.SpanFallback{
+							Row:                 row,
+							OrigInput:           origInput,
+							OrigOutput:          origOutput,
+							StrippedAttrs:       stripped,
+							StrippedStringAttrs: strippedStr,
+						})
+						row["input"] = ext.InputPreview
+						row["output"] = ext.OutputPreview
+						row["input_item_hashes"] = ext.InputHashes
+						row["output_item_hashes"] = ext.OutputHashes
+						row["tool_def_hashes"] = ext.ToolDefHashes
+						row["item_scope_id"] = ext.ItemScopeID
+						row["payload_encoding"] = trajectory.EncodingItemsV1
+						row["payload_envelope"] = ext.EnvelopeJSON
+
+						report.OrigExtractedBytes += int64(len(origInput)) + int64(len(origOutput)) + strippedBytes
+						report.KeptSpanOverheadBytes += int64(len(ext.InputPreview)) + int64(len(ext.OutputPreview)) +
+							int64(len(ext.ItemScopeID)) + int64(len(ext.EnvelopeJSON)) +
+							stringSliceBytes(ext.InputHashes) + stringSliceBytes(ext.OutputHashes) + stringSliceBytes(ext.ToolDefHashes)
+						allTrajItems = append(allTrajItems, ext.Items...)
+					}
+				}
+
 				rows = append(rows, row)
 				identity.addTo(ids)
-				collectTrace(ids, row, projectID)
 			}
 		}
 	}
-	return rows, ids, nil
+
+	report.DedupApplied = dedupApplied
+	if len(allTrajItems) > 0 {
+		var newItems []trajectory.Item
+		if opts.Seen != nil {
+			// Read-only check at convert time: items are only marked committed
+			// in SeenStore AFTER ClickHouse commits `trajectory_items` in drainNow.
+			newItems, report.ReusedItems, report.ReusedItemBytes = opts.Seen.CheckNew(ctx, allTrajItems)
+		} else {
+			// Still deduplicate within the batch when no SeenStore is wired.
+			seen := make(map[trajectory.ItemKey]struct{}, len(allTrajItems))
+			for _, it := range allTrajItems {
+				k := it.Key()
+				if _, dup := seen[k]; dup {
+					report.ReusedItems++
+					report.ReusedItemBytes += int64(len(it.Content))
+					continue
+				}
+				seen[k] = struct{}{}
+				newItems = append(newItems, it)
+			}
+		}
+		for _, it := range newItems {
+			trajBatch.AddItem(it)
+			report.NewItems++
+			report.NewItemBytes += int64(len(it.Content))
+		}
+	}
+
+	return ConvertResult{
+		Rows:       rows,
+		Identities: ids,
+		Trajectory: trajBatch,
+		Usage:      report,
+	}, nil
 }
 
 // collectTrace derives the `traces` identity from a ROOT span (no parent) — the
@@ -281,6 +400,12 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 // stamps a RANDOM project_id for an unauthenticated producer and a traces row
 // keyed on a random project resolves to nothing.
 func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID string) {
+	input, _ := row["input"].(string)
+	output, _ := row["output"].(string)
+	collectTraceWithIO(ids, row, rawProjectID, input, output)
+}
+
+func collectTraceWithIO(ids *curatedwriter.Batch, row map[string]any, rawProjectID, input, output string) {
 	if parent, _ := row["parent_span_id"].(string); parent != "" {
 		return // not the root — the root span of this trace writes the row
 	}
@@ -306,8 +431,6 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 		return
 	}
 	name, _ := row["name"].(string)
-	input, _ := row["input"].(string)
-	output, _ := row["output"].(string)
 	createdAt, _ := row["start_time"].(string)
 	t := curatedwriter.Trace{
 		ID:        traceID,
@@ -342,7 +465,8 @@ func spanToRow(
 	resourceAttrs map[string]any,
 	fromOpenRouter bool,
 	pricer Pricer,
-) (map[string]any, spanIdentity, error) {
+	compactAttrs bool,
+) (map[string]any, spanIdentity, string, string, error) {
 	// Pre-allocate destination maps. Sizing is a heuristic — typical LLM
 	// spans have 20-50 attrs, but customer-instrumented spans run smaller.
 	attrsStr := make(map[string]string, 16)
@@ -459,10 +583,32 @@ func spanToRow(
 	// Inputs/outputs: the first non-empty content key in inputContentKeys /
 	// outputContentKeys. OpenInference `input.value` / `output.value` still
 	// win; the GenAI keys after them fill spans that only carry those
-	// (OpenRouter Broadcast, plain OTel GenAI). The source attribute stays
-	// where adapter.Split put it; this only fills the hot column.
-	input := contentValue(attrsStr, overflow, inputContentKeys)
-	output := contentValue(attrsStr, overflow, outputContentKeys)
+	// (OpenRouter Broadcast, plain OTel GenAI).
+	//
+	// When compactAttrs (Phase 0) is enabled, remove the duplicate full text
+	// from attributes_extra / attrs_string and record a ~40-byte sentinel key
+	// so span_reader.merge_span_attributes() restores the exact attribute on
+	// read without storing the payload twice on disk.
+	input, inKey, inWasJSON := contentValueWithSource(attrsStr, overflow, inputContentKeys)
+	output, outKey, outWasJSON := contentValueWithSource(attrsStr, overflow, outputContentKeys)
+	if compactAttrs {
+		if inKey != "" {
+			delete(attrsStr, inKey)
+			delete(overflow, inKey)
+			overflow[trajectory.SentinelPromotedInputKey] = inKey
+			if inWasJSON {
+				overflow[trajectory.SentinelPromotedInputJSON] = true
+			}
+		}
+		if outKey != "" {
+			delete(attrsStr, outKey)
+			delete(overflow, outKey)
+			overflow[trajectory.SentinelPromotedOutputKey] = outKey
+			if outWasJSON {
+				overflow[trajectory.SentinelPromotedOutputJSON] = true
+			}
+		}
+	}
 
 	// CH-derived dimensions (P3b step2): stamp the DETERMINISTIC end_user_id /
 	// trace_session_id so collector-written spans unify with the read-side
@@ -528,7 +674,7 @@ func spanToRow(
 		"_version":          versionNanos,
 		"is_deleted":        uint8(0),
 	}
-	return row, identity, nil
+	return row, identity, input, output, nil
 }
 
 // spanIdentity is the per-span CURATED dimension identity (P3b step2 HALF 2):
@@ -880,40 +1026,106 @@ var (
 	}
 )
 
-// contentValue returns the first non-empty value among keys. A key can be in
-// either tier, depending on adapter.Split: input.value / output.value always
-// go to overflow, and the GenAI keys go to attrs_string when they arrive as
-// strings and to overflow when they arrive as maps or arrays (which are
-// JSON-encoded here).
-func contentValue(attrsStr map[string]string, overflow map[string]any, keys []string) string {
+// contentValueWithSource returns the first non-empty value among keys along
+// with the winning key name and whether a non-string overflow object/slice was
+// JSON-encoded to produce it.
+func contentValueWithSource(attrsStr map[string]string, overflow map[string]any, keys []string) (val string, sourceKey string, wasJSON bool) {
 	for _, k := range keys {
 		if s, ok := attrsStr[k]; ok && s != "" {
-			return s
+			return s, k, false
 		}
-		if s := overflowAsString(overflow, k); s != "" {
-			return s
+		if s, encoded := overflowAsStringWithKind(overflow, k); s != "" {
+			return s, k, encoded
 		}
 	}
-	return ""
+	return "", "", false
 }
 
-// overflowAsString lifts the value at `key` from the overflow map and
-// returns its string form. Plain strings pass through; nested objects get
-// JSON-encoded so the hot column still holds something useful. Missing
-// key → empty string (CH `input` is `String DEFAULT ”`).
-func overflowAsString(overflow map[string]any, key string) string {
+// overflowAsStringWithKind lifts the value at `key` from the overflow map and
+// returns its string form plus whether it was JSON-encoded from a non-string.
+func overflowAsStringWithKind(overflow map[string]any, key string) (string, bool) {
 	v, ok := overflow[key]
 	if !ok || v == nil {
-		return ""
+		return "", false
 	}
 	if s, ok := v.(string); ok {
-		return s
+		return s, false
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(b)
+	return string(b), true
+}
+
+// isIndexedAttrPrefix reports whether k starts with prefix followed immediately
+// by an ASCII digit (e.g. "gen_ai.prompt.0.content"). This prevents stripping
+// non-message metadata such as "gen_ai.prompt.name" or "gen_ai.prompt.template.variables".
+func isIndexedAttrPrefix(k, prefix string) bool {
+	if !strings.HasPrefix(k, prefix) || len(k) <= len(prefix) {
+		return false
+	}
+	c := k[len(prefix)]
+	return c >= '0' && c <= '9'
+}
+
+func isFlattenedTrajectoryAttrKey(k string) bool {
+	return isIndexedAttrPrefix(k, "llm.input_messages.") ||
+		isIndexedAttrPrefix(k, "llm.output_messages.") ||
+		isIndexedAttrPrefix(k, "gen_ai.prompt.") ||
+		isIndexedAttrPrefix(k, "gen_ai.completion.") ||
+		isIndexedAttrPrefix(k, "gen_ai.input.messages.") ||
+		isIndexedAttrPrefix(k, "gen_ai.output.messages.") ||
+		isIndexedAttrPrefix(k, "llm.tools.")
+}
+
+// stripFlattenedTrajectoryAttrs removes redundant OpenInference/OpenLLMetry
+// flattened message/tool keys from both attrs_string and overflow once the
+// span's messages have been extracted into trajectory_items. Returns the
+// stripped key/values (for lossless inline fallback) and their approximate byte size.
+func stripFlattenedTrajectoryAttrs(attrsStr map[string]string, overflow map[string]any) (map[string]any, map[string]string, int64) {
+	var stripped map[string]any
+	var strippedStr map[string]string
+	var totalBytes int64
+	for k, v := range overflow {
+		if isFlattenedTrajectoryAttrKey(k) {
+			if stripped == nil {
+				stripped = make(map[string]any)
+			}
+			stripped[k] = v
+			totalBytes += int64(len(k)) + attrValueBytes(v)
+			delete(overflow, k)
+		}
+	}
+	for k, v := range attrsStr {
+		if isFlattenedTrajectoryAttrKey(k) {
+			if strippedStr == nil {
+				strippedStr = make(map[string]string)
+			}
+			strippedStr[k] = v
+			totalBytes += int64(len(k)) + int64(len(v))
+			delete(attrsStr, k)
+		}
+	}
+	return stripped, strippedStr, totalBytes
+}
+
+func attrValueBytes(v any) int64 {
+	if s, ok := v.(string); ok {
+		return int64(len(s))
+	}
+	if b, err := json.Marshal(v); err == nil {
+		return int64(len(b))
+	}
+	return 0
+}
+
+func stringSliceBytes(ss []string) int64 {
+	var total int64
+	for _, s := range ss {
+		total += int64(len(s))
+	}
+	return total
 }
 
 // statusString maps OTel StatusCode → CH `status` LowCardinality strings.

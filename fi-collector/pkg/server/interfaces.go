@@ -12,6 +12,21 @@ type UsageEmitter interface {
 	EmitIngestion(orgID string, numTraces, numSpans int, payloadBytes int64, dedupKey string)
 }
 
+// DedupUsageEmitter is an optional extension implemented by *auth.UsageEmitter
+// when trajectory dedup or dedup-aware storage billing is active. Kept optional
+// so existing UsageEmitter test doubles continue to compile unchanged.
+type DedupUsageEmitter interface {
+	UsageEmitter
+	EmitIngestionDedup(
+		orgID string,
+		numTraces, numSpans int,
+		rawBytes, storedBytes, newItemBytes, savedBytes int64,
+		newItems, reusedItems int,
+		billDeduped bool,
+		dedupKey string,
+	)
+}
+
 // Metering is the quota enforcement contract the server depends on.
 type Metering interface {
 	CheckUsage(ctx context.Context, orgID, eventType string, amount int64) auth.CheckResult

@@ -3788,6 +3788,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 org_project_ids=org_project_ids,
                 org=org,
                 read_deadline=kwargs.get("read_deadline"),
+                bounded_export=bool(kwargs.get("bounded_export")),
             )
 
         except ListCursorError as exc:
@@ -4687,6 +4688,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         org_project_ids=None,
         org=None,
         read_deadline=None,
+        bounded_export=False,
     ):
         """List traces-of-session using ClickHouse backend.
 
@@ -5280,14 +5282,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 )
             )
             try:
-                content_query, content_params = builder.build_content_query(
-                    chunk_trace_ids,
-                    root_identities=builder.content_root_identities_for_rows(
+                content_kwargs: dict[str, Any] = {
+                    "root_identities": builder.content_root_identities_for_rows(
                         chunk_rows
                     ),
                     # Whole-trace usage and the first LLM span's content, for
                     # traces whose root carries neither (OpenRouter Broadcast).
-                    include_trace_rollup=True,
+                    "include_trace_rollup": True,
+                }
+                if bounded_export:
+                    content_kwargs["include_trajectory"] = True
+                content_query, content_params = builder.build_content_query(
+                    chunk_trace_ids,
+                    **content_kwargs,
                 )
             except ValueError:
                 # Never publish a cursor checkpoint for roots that cannot be
@@ -5457,6 +5464,29 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
+        if bounded_export and content_rows:
+            from tracer.services.clickhouse.v2.trajectory_hydration import (
+                hydrate_span_dicts,
+                is_trajectory_store_read_enabled,
+            )
+
+            if is_trajectory_store_read_enabled():
+                hydrate_span_dicts(
+                    content_rows,
+                    lambda traj_sql, traj_params: list(
+                        analytics.execute_ch_query(
+                            traj_sql,
+                            traj_params,
+                            timeout_ms=read_deadline.remaining_ms(
+                                TRACE_LIST_ENRICHMENT_TIMEOUT_MS
+                            ),
+                            settings=page_read_settings,
+                        ).data
+                        or []
+                    ),
+                    project_id_fallback=None if org_scope else str(project_id),
+                    attr_key="attributes_extra",
+                )
         content_map = merge_content_rows(
             result.data,
             content_rows,

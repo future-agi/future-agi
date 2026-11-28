@@ -32,6 +32,7 @@ read-only.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
@@ -46,6 +47,17 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
 from tracer.services.clickhouse.v2.query_settings import (
     application_read_settings,
     current_settings,
+)
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    _SENTINEL_MARKER,
+    ENCODING_INLINE,
+    ENCODING_ITEMS_V1,
+    TRAJECTORY_SPAN_COLUMNS,
+    hydrate_chspans,
+    hydrate_span_dicts,
+    is_trajectory_store_read_enabled,
+    restore_promoted_attributes,
+    restore_promoted_in_attributes_extra,
 )
 
 
@@ -120,6 +132,15 @@ class CHSpan:
     trace_name: str = ""
     # Ingestion/arrival time used by retention, not the displayed event time.
     created_at: datetime | None = None
+
+    # Phase 1 Trajectory Store (040_trajectory_items.sql) pointer fields.
+    # Defaults preserve compatibility with pre-040 fixtures and inline rows.
+    input_item_hashes: tuple[str, ...] = ()
+    output_item_hashes: tuple[str, ...] = ()
+    tool_def_hashes: tuple[str, ...] = ()
+    item_scope_id: str = ""
+    payload_encoding: str = ENCODING_INLINE
+    payload_envelope: str = ""
 
     @property
     def pk(self):
@@ -198,7 +219,10 @@ _READ_COLUMNS: tuple[str, ...] = (
     "created_at",
 )
 
+_TRAJECTORY_READ_COLUMNS: tuple[str, ...] = _READ_COLUMNS + TRAJECTORY_SPAN_COLUMNS
+
 _SELECT_SQL = ", ".join(_READ_COLUMNS)
+_TRAJECTORY_SELECT_SQL = ", ".join(_TRAJECTORY_READ_COLUMNS)
 
 # Same positional shape with the heavy JSON columns stubbed to '' — decoding
 # attributes_extra/span_events/resource_attrs dominates wide reads (a voice
@@ -212,6 +236,24 @@ _HEAVY_COLUMNS = {
 _LEAN_SELECT_SQL = ", ".join(
     "''" if col in _HEAVY_COLUMNS else col for col in _READ_COLUMNS
 )
+_TRAJECTORY_LEAN_SELECT_SQL = ", ".join(
+    "''" if col in _HEAVY_COLUMNS else col for col in _TRAJECTORY_READ_COLUMNS
+)
+
+
+def _active_read_columns() -> tuple[str, ...]:
+    return (
+        _TRAJECTORY_READ_COLUMNS
+        if is_trajectory_store_read_enabled()
+        else _READ_COLUMNS
+    )
+
+
+def _active_select_sql(include_heavy: bool) -> str:
+    if is_trajectory_store_read_enabled():
+        return _TRAJECTORY_SELECT_SQL if include_heavy else _TRAJECTORY_LEAN_SELECT_SQL
+    return _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+
 
 # ClickHouse 25.3 turns skip indexes OFF under FINAL by default. A trace-id-keyed
 # read of this table has no usable primary-key prefilter (trace_id is below the PK),
@@ -295,14 +337,15 @@ def _output_name(column: str) -> str:
     return column.rsplit(" AS ", 1)[-1].strip() if " AS " in column else column.strip()
 
 
-def _named_select(include_heavy: bool, read: tuple[str, ...] = _READ_COLUMNS) -> str:
+def _named_select(include_heavy: bool, read: tuple[str, ...] | None = None) -> str:
     """``_SELECT_SQL`` / ``_LEAN_SELECT_SQL`` with the stubs named, so an
     enclosing query can project them (``'' AS span_events``, not a bare ``''``)."""
+    cols = _active_read_columns() if read is None else read
     return ", ".join(
         f"'' AS {_output_name(col)}"
         if not include_heavy and col in _HEAVY_COLUMNS
         else col
-        for col in read
+        for col in cols
     )
 
 
@@ -311,7 +354,7 @@ def _dedup_sql(
     order_by: str,
     *,
     include_heavy: bool,
-    read: tuple[str, ...] = _READ_COLUMNS,
+    read: tuple[str, ...] | None = None,
     latest_where: str = "",
 ) -> str:
     """ReplacingMergeTree resolved without ``FINAL``. Same column shape/order as
@@ -326,14 +369,16 @@ def _dedup_sql(
     caller asks for (``service_name``, ``observation_type``), so the subquery
     keeps reading the full set.
     """
-    projection = ", ".join(_output_name(col) for col in read)
+    active_read = _active_read_columns()
+    outer_read = active_read if read is None else read
+    projection = ", ".join(_output_name(col) for col in outer_read)
     latest = f" AND {latest_where}" if latest_where else ""
     aliases = ", ".join(
         f"{col} AS {alias}" for col, alias in _DEDUP_KEY_ALIASES.items()
     )
     return (
         f"SELECT {projection} FROM ("
-        f" SELECT {_named_select(include_heavy)}, {aliases}"
+        f" SELECT {_named_select(include_heavy, active_read)}, {aliases}"
         f" FROM spans WHERE {where}"
         f" ORDER BY _version DESC"
         f" LIMIT 1 BY {_DEDUP_KEY}"
@@ -393,11 +438,15 @@ _DATA_KEYS: tuple[str, ...] = (
     "created_at",
 )
 
+_TRAJECTORY_DATA_KEYS: tuple[str, ...] = _DATA_KEYS + TRAJECTORY_SPAN_COLUMNS
+
 # Allowlist for the ``columns`` projection arg: logical name (the CHSpan field)
-# → the ``_READ_COLUMNS`` entry that produces it. Caller strings are resolved
-# through this map, never interpolated. ``strict`` pins the two tuples together —
-# a column added to one and not the other shifts the positional decode.
-_PROJECTION_SQL: dict[str, str] = dict(zip(_DATA_KEYS, _READ_COLUMNS, strict=True))
+# → the ``_TRAJECTORY_READ_COLUMNS`` entry that produces it. Caller strings are
+# resolved through this map, never interpolated. ``strict`` pins the two tuples
+# together — a column added to one and not the other shifts the positional decode.
+_PROJECTION_SQL: dict[str, str] = dict(
+    zip(_TRAJECTORY_DATA_KEYS, _TRAJECTORY_READ_COLUMNS, strict=True)
+)
 
 
 def _projection_columns(columns: list[str]) -> tuple[str, ...]:
@@ -410,6 +459,9 @@ def _projection_columns(columns: list[str]) -> tuple[str, ...]:
     if not columns:
         raise ValueError("columns must name at least one span column")
     unknown = [c for c in columns if c not in _PROJECTION_SQL]
+    if not is_trajectory_store_read_enabled():
+        # Before 040 is applied these columns do not exist in ClickHouse.
+        unknown.extend(c for c in columns if c in TRAJECTORY_SPAN_COLUMNS)
     if unknown:
         raise ValueError(f"unknown span column(s): {', '.join(unknown)}")
     return tuple(_PROJECTION_SQL[c] for c in columns)
@@ -445,6 +497,12 @@ _EXPORT_COLUMN_SQL: dict[str, str] = {
     "attributes_extra": "attributes_extra",
     "eval_status": "eval_status",
     "semconv_source": "semconv_source",
+    "input_item_hashes": "input_item_hashes",
+    "output_item_hashes": "output_item_hashes",
+    "tool_def_hashes": "tool_def_hashes",
+    "item_scope_id": "item_scope_id",
+    "payload_encoding": "payload_encoding",
+    "payload_envelope": "payload_envelope",
 }
 
 _EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
@@ -494,7 +552,13 @@ def _export_columns_for_fields(field_names: set[str]) -> set[str]:
     columns: set[str] = set()
     for field_name in field_names:
         columns.update(_EXPORT_FIELD_COLUMNS.get(field_name, {field_name}))
-    return {column for column in columns if column in _EXPORT_COLUMN_SQL}
+    # The trajectory pointer columns are internal: they are added by the
+    # hydration path itself, never selected because a caller named them.
+    return {
+        column
+        for column in columns
+        if column in _EXPORT_COLUMN_SQL and column not in TRAJECTORY_SPAN_COLUMNS
+    }
 
 
 # CH returns the toString() forms with literal 'NULL' for missing UUIDs in some
@@ -521,10 +585,25 @@ def _row_to_dict(keys: tuple[str, ...] | list[str], row: tuple) -> dict[str, Any
     return d
 
 
-def _row_to_chspan(row: tuple) -> CHSpan:
-    data = _row_to_dict(_DATA_KEYS, row)
+def _row_to_chspan(row: tuple, keys: tuple[str, ...] | None = None) -> CHSpan:
+    row_keys = (
+        keys
+        if keys is not None
+        else (
+            _TRAJECTORY_DATA_KEYS
+            if len(row) == len(_TRAJECTORY_DATA_KEYS)
+            else _DATA_KEYS
+        )
+    )
+    data = _row_to_dict(row_keys, row)
     if (data.get("attrs_string") or {}).get("fi.cost.kind") == "unknown":
         data["cost"] = None
+    for hash_key in ("input_item_hashes", "output_item_hashes", "tool_def_hashes"):
+        if hash_key in data:
+            raw_val = data[hash_key]
+            data[hash_key] = tuple(str(x) for x in raw_val) if raw_val else ()
+    if "payload_encoding" in data and not data["payload_encoding"]:
+        data["payload_encoding"] = ENCODING_INLINE
     return CHSpan(**data)
 
 
@@ -781,11 +860,19 @@ class CHSpanReader:
                 raw = getattr(span, column)
                 if raw in in_batch:
                     out.extend(
-                        replace(span, **{column: caller})
+                        self._with_remapped_id(span, column, caller)
                         for caller in askers[aliases[raw]]
                     )
         out.sort(key=lambda s: (getattr(s, column), s.start_time, s.id))
-        return out
+        return self._hydrate_chspans(out)
+
+    @staticmethod
+    def _with_remapped_id(span: CHSpan, column: str, value: str) -> CHSpan:
+        if column == "trace_session_id":
+            return replace(span, trace_session_id=value)
+        if column == "end_user_id":
+            return replace(span, end_user_id=value)
+        raise ValueError(f"Unsupported remapped span column: {column!r}")
 
     def _resolve_other(
         self, spans: list[CHSpan], column: str, remap_table: str
@@ -794,7 +881,7 @@ class CHSpanReader:
         resolved to its survivor, so one session or user isn't read as two."""
         groups = self.remap_groups(remap_table, (getattr(s, column) for s in spans))
         return [
-            replace(s, **{column: groups[v]})
+            self._with_remapped_id(s, column, groups[v])
             if (v := getattr(s, column)) in groups
             else s
             for s in spans
@@ -845,6 +932,43 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
+    def _hydrate_chspans(self, spans: list[CHSpan]) -> list[CHSpan]:
+        """Batch-hydrate Phase 1 ``items_v1`` spans from ``trajectory_items``.
+
+        Issues ZERO queries when all spans use ``payload_encoding == 'inline'``.
+        """
+        if not spans or not is_trajectory_store_read_enabled():
+            return spans
+        return hydrate_chspans(
+            spans,
+            lambda sql, params: self._client.query(sql, parameters=params).result_rows,
+        )
+
+    def _hydrate_dict_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        project_id_fallback: str | None = None,
+        attr_key: str = "attributes_extra",
+    ) -> list[dict[str, Any]]:
+        if not rows or not is_trajectory_store_read_enabled():
+            return rows
+
+        def _query(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            res = self._client.query(sql, parameters=params).result_rows
+            return [
+                {"scope_id": r[0], "item_hash": r[1], "content": r[2]}
+                for r in res
+                if len(r) >= 3
+            ]
+
+        return hydrate_span_dicts(
+            rows,
+            _query,
+            project_id_fallback=project_id_fallback,
+            attr_key=attr_key,
+        )
+
     def get(
         self,
         span_id: str,
@@ -885,14 +1009,14 @@ class CHSpanReader:
                 " trace_id DESC, start_time DESC"
             )
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {_active_select_sql(True)} FROM spans FINAL "
             f"WHERE {' AND '.join(where)}{order_by} LIMIT 1",
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if not rows:
             return None
-        return _row_to_chspan(rows[0])
+        return self._hydrate_chspans([_row_to_chspan(rows[0])])[0]
 
     def newest_trace_project(
         self, trace_id: str, project_ids: Iterable[str]
@@ -1031,7 +1155,7 @@ class CHSpanReader:
         leaving a full merge that OOMs on a fat (voice) trace's spans. Re-enable
         skip indexes (``trace_id`` is a stable sorting-key column, so safe).
         """
-        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        select = _active_select_sql(include_heavy)
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["trace_id = %(trace_id)s"]
         params: dict[str, Any] = {"trace_id": trace_id}
@@ -1045,7 +1169,7 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def first_span_by_type(
         self, trace_id: str, observation_type: str, *, project_id: str | None = None
@@ -1071,13 +1195,15 @@ class CHSpanReader:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
         rows = self._client.query(
-            f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {_active_select_sql(False)} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id LIMIT 1",
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return _row_to_chspan(rows[0]) if rows else None
+        if not rows:
+            return None
+        return self._hydrate_chspans([_row_to_chspan(rows[0])])[0]
 
     # ─── All spans in a session ──────────────────────────────────────────────
     def list_by_session(
@@ -1109,13 +1235,13 @@ class CHSpanReader:
             where.append("spans.project_id = %(project_id)s")
             params["project_id"] = str(project_id)
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {_active_select_sql(True)} FROM spans FINAL "
             f"{remap_join} "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
             parameters=params,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     # ─── Bulk fetch by trace ids ──────────────────────────────────────────────
     def list_by_trace_ids(
@@ -1157,7 +1283,7 @@ class CHSpanReader:
             params["pid"] = str(project_id)
         if limit is not None:
             params["limit"] = int(limit)
-        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        select = _active_select_sql(include_heavy)
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
@@ -1166,7 +1292,7 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     # ─── Root spans only (parentless) across many traces ─────────────────────
     def roots_by_trace_ids(
@@ -1195,7 +1321,7 @@ class CHSpanReader:
         """
         if not trace_ids:
             return []
-        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        select = _active_select_sql(include_heavy)
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = [
             "trace_id IN %(trace_ids)s",
@@ -1226,7 +1352,7 @@ class CHSpanReader:
                 _FINAL_SKIP_INDEX_SETTINGS if cutoff is None else _CUTOFF_SETTINGS
             )
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def roots_by_session_ids(
         self, session_ids: list[str], *, project_id: str
@@ -1358,34 +1484,11 @@ class CHSpanReader:
         versions, so it is filtered after the dedup."""
         if not trace_ids:
             return []
+
         aliases = ", ".join(
             f"{col} AS {alias}" for col, alias in _DEDUP_KEY_ALIASES.items()
         )
         shown = "(observation_type = 'tool' OR upper(status) = 'ERROR')"
-        sql = (
-            "SELECT trace_id, id, name, observation_type, start_time, status,"
-            " status_head, input_head, output_head, input_chars, output_chars,"
-            f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
-            " AS in_trace, created_at FROM ("
-            " SELECT trace_id, id, name, observation_type, start_time, created_at, status,"
-            " substringUTF8(status_message, 1, %(err)s) AS status_head,"
-            " substringUTF8(input, 1, %(chars)s) AS input_head,"
-            " substringUTF8(output, 1, %(chars)s) AS output_head,"
-            " lengthUTF8(input) AS input_chars,"
-            " lengthUTF8(output) AS output_chars,"
-            " countMatches(input, %(image)s) AS images,"
-            " countMatches(input, %(audio)s) AS audio,"
-            f" is_deleted, {aliases}"
-            " FROM spans"
-            " WHERE project_id = %(pid)s AND trace_id IN %(tids)s"
-            " AND parent_span_id IS NOT NULL AND parent_span_id != ''"
-            " ORDER BY _version DESC"
-            f" LIMIT 1 BY {_DEDUP_KEY}"
-            ") WHERE is_deleted = 0"
-            f" AND ({shown} OR images > 0 OR audio > 0)"
-            " ORDER BY trace_id, upper(status) = 'ERROR' DESC, start_time, id"
-            " LIMIT %(per)s BY trace_id"
-        )
         image, audio = media_patterns
         params = {
             "pid": str(project_id),
@@ -1395,16 +1498,150 @@ class CHSpanReader:
             "audio": audio,
             "per": int(per_trace),
         }
-        out: list[dict[str, Any]] = []
+        include_traj = is_trajectory_store_read_enabled()
+        if not include_traj:
+            sql = (
+                "SELECT trace_id, id, name, observation_type, start_time, status,"
+                " status_head, input_head, output_head, input_chars, output_chars,"
+                f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
+                " AS in_trace, created_at FROM ("
+                " SELECT trace_id, id, name, observation_type, start_time, created_at, status,"
+                " substringUTF8(status_message, 1, %(err)s) AS status_head,"
+                " substringUTF8(input, 1, %(chars)s) AS input_head,"
+                " substringUTF8(output, 1, %(chars)s) AS output_head,"
+                " lengthUTF8(input) AS input_chars,"
+                " lengthUTF8(output) AS output_chars,"
+                " countMatches(input, %(image)s) AS images,"
+                " countMatches(input, %(audio)s) AS audio,"
+                f" is_deleted, {aliases}"
+                " FROM spans"
+                " WHERE project_id = %(pid)s AND trace_id IN %(tids)s"
+                " AND parent_span_id IS NOT NULL AND parent_span_id != ''"
+                " ORDER BY _version DESC"
+                f" LIMIT 1 BY {_DEDUP_KEY}"
+                ") WHERE is_deleted = 0"
+                f" AND ({shown} OR images > 0 OR audio > 0)"
+                " ORDER BY trace_id, upper(status) = 'ERROR' DESC, start_time, id"
+                " LIMIT %(per)s BY trace_id"
+            )
+            out: list[dict[str, Any]] = []
+            ids = [str(t) for t in trace_ids]
+            for start in range(0, len(ids), self._ACTIVITY_BATCH):
+                batch = tuple(ids[start : start + self._ACTIVITY_BATCH])
+                rows = self._client.query(
+                    sql, parameters={**params, "tids": batch}, settings={}
+                ).result_rows
+                out.extend(
+                    dict(zip(self._ACTIVITY_KEYS, row, strict=True)) for row in rows
+                )
+            out.sort(key=lambda s: (s["trace_id"], s["start_time"], s["id"]))
+            return out
+
+        traj_cols = ", ".join(TRAJECTORY_SPAN_COLUMNS)
+        # Keep SQL LIMIT %(per)s BY trace_id so high-fan-out traces stay strictly
+        # bounded on the ClickHouse side; proven errors/tools/inline media rank
+        # ahead of speculative items_v1 candidates.
+        sql = (
+            "SELECT trace_id, id, name, observation_type, start_time, status,"
+            " status_head, input_head, output_head, input_chars, output_chars,"
+            f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
+            f" AS in_trace, created_at, {traj_cols} FROM ("
+            " SELECT trace_id, id, name, observation_type, start_time, created_at, status,"
+            " substringUTF8(status_message, 1, %(err)s) AS status_head,"
+            " substringUTF8(input, 1, %(chars)s) AS input_head,"
+            " substringUTF8(output, 1, %(chars)s) AS output_head,"
+            " lengthUTF8(input) AS input_chars,"
+            " lengthUTF8(output) AS output_chars,"
+            " countMatches(input, %(image)s) AS images,"
+            " countMatches(input, %(audio)s) AS audio,"
+            f" {traj_cols},"
+            f" is_deleted, {aliases}"
+            " FROM spans"
+            " WHERE project_id = %(pid)s AND trace_id IN %(tids)s"
+            " AND parent_span_id IS NOT NULL AND parent_span_id != ''"
+            " ORDER BY _version DESC"
+            f" LIMIT 1 BY {_DEDUP_KEY}"
+            ") WHERE is_deleted = 0"
+            f" AND ({shown} OR images > 0 OR audio > 0"
+            " OR (payload_encoding = 'items_v1' AND length(input_item_hashes) > 0))"
+            " ORDER BY trace_id, upper(status) = 'ERROR' DESC,"
+            " (observation_type = 'tool' OR images > 0 OR audio > 0) DESC,"
+            " start_time, id"
+            " LIMIT %(per)s BY trace_id"
+        )
+        all_keys = self._ACTIVITY_KEYS + TRAJECTORY_SPAN_COLUMNS
+        raw_out: list[dict[str, Any]] = []
         ids = [str(t) for t in trace_ids]
         for start in range(0, len(ids), self._ACTIVITY_BATCH):
             batch = tuple(ids[start : start + self._ACTIVITY_BATCH])
             rows = self._client.query(
                 sql, parameters={**params, "tids": batch}, settings={}
             ).result_rows
-            out.extend(dict(zip(self._ACTIVITY_KEYS, row, strict=True)) for row in rows)
-        out.sort(key=lambda s: (s["trace_id"], s["start_time"], s["id"]))
-        return out
+            raw_out.extend(dict(zip(all_keys, row, strict=True)) for row in rows)
+
+        # Hydrate only items_v1 rows (ZERO queries against trajectory_items for inline spans).
+        v1_rows = [r for r in raw_out if r.get("payload_encoding") == ENCODING_ITEMS_V1]
+        if v1_rows:
+            pre_vals = [(r.get("input"), r.get("output")) for r in v1_rows]
+            self._hydrate_dict_rows(
+                v1_rows,
+                project_id_fallback=str(project_id),
+                attr_key="_unused_activity_attr",
+            )
+            img_re = re.compile(image)
+            aud_re = re.compile(audio)
+            limit_chars = int(field_chars)
+            for r, (pre_in, pre_out) in zip(v1_rows, pre_vals, strict=True):
+                raw_env = r.get("payload_envelope")
+                try:
+                    env = (
+                        json.loads(raw_env)
+                        if isinstance(raw_env, str) and raw_env
+                        else (raw_env if isinstance(raw_env, dict) else {})
+                    )
+                except (ValueError, TypeError):
+                    env = {}
+                if env.get("in") is not None and r.get("input") != pre_in:
+                    full_in = str(r.get("input") or "")
+                    r["input_chars"] = len(full_in)
+                    r["input"] = full_in[:limit_chars]
+                    r["images"] = len(img_re.findall(full_in))
+                    r["audio"] = len(aud_re.findall(full_in))
+                if env.get("out") is not None and r.get("output") != pre_out:
+                    full_out = str(r.get("output") or "")
+                    r["output_chars"] = len(full_out)
+                    r["output"] = full_out[:limit_chars]
+
+        # Re-apply shown/media filter and per_trace cap (failed first, then start_time, id).
+        per_limit = int(per_trace)
+        by_trace: dict[str, list[dict[str, Any]]] = {}
+        for r in raw_out:
+            is_shown = (
+                r.get("observation_type") == "tool"
+                or str(r.get("status") or "").upper() == "ERROR"
+            )
+            if not (
+                is_shown
+                or int(r.get("images") or 0) > 0
+                or int(r.get("audio") or 0) > 0
+            ):
+                continue
+            for col in TRAJECTORY_SPAN_COLUMNS:
+                r.pop(col, None)
+            by_trace.setdefault(str(r["trace_id"]), []).append(r)
+
+        result: list[dict[str, Any]] = []
+        for t_rows in by_trace.values():
+            t_rows.sort(
+                key=lambda s: (
+                    0 if str(s.get("status") or "").upper() == "ERROR" else 1,
+                    s["start_time"],
+                    s["id"],
+                )
+            )
+            result.extend(t_rows[:per_limit])
+        result.sort(key=lambda s: (s["trace_id"], s["start_time"], s["id"]))
+        return result
 
     # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
     def totals_by_trace_ids(
@@ -1456,13 +1693,13 @@ class CHSpanReader:
         # the ``idx_parent_span_id`` bloom (off under FINAL without the setting);
         # parent_span_id is stable across versions, so the bloom is safe.
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {_active_select_sql(True)} FROM spans FINAL "
             "WHERE parent_span_id = %(parent)s "
             f"ORDER BY start_time, id{lim_clause}",
             parameters={"parent": parent_span_id},
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     # ─── Spans by id batch ────────────────────────────────────────────────────
     def list_by_ids(
@@ -1494,11 +1731,29 @@ class CHSpanReader:
         """
         if not span_ids:
             return []
-        read = _projection_columns(columns) if columns is not None else None
+        include_traj = is_trajectory_store_read_enabled()
+        effective_columns = list(columns) if columns is not None else None
+        needs_hydration = False
+        if effective_columns is not None:
+            col_set = set(effective_columns)
+            if include_traj and (col_set & {"input", "output", "attributes_extra"}):
+                needs_hydration = True
+                extras = ["project_id", *TRAJECTORY_SPAN_COLUMNS]
+                if "attributes_extra" in col_set:
+                    extras.extend(["input", "output"])
+                for col in extras:
+                    if col not in col_set:
+                        effective_columns.append(col)
+                        col_set.add(col)
+        read = (
+            _projection_columns(effective_columns)
+            if effective_columns is not None
+            else None
+        )
         select = (
             _named_select(include_heavy, read)
             if read
-            else (_SELECT_SQL if include_heavy else _LEAN_SELECT_SQL)
+            else _active_select_sql(include_heavy)
         )
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
         # the ``idx_id`` bloom (off under FINAL without the setting); a fat
@@ -1516,7 +1771,7 @@ class CHSpanReader:
                 " AND ".join(where),
                 "ORDER BY id",
                 include_heavy=include_heavy,
-                read=read or _READ_COLUMNS,
+                read=read,
             )
             settings: dict[str, Any] = {}
         else:
@@ -1526,9 +1781,17 @@ class CHSpanReader:
             )
             settings = _FINAL_SKIP_INDEX_SETTINGS
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
-        if columns is not None:
-            return [_row_to_dict(columns, r) for r in rows]
-        return [_row_to_chspan(r) for r in rows]
+        if effective_columns is not None and columns is not None:
+            dicts = [_row_to_dict(effective_columns, r) for r in rows]
+            if needs_hydration and dicts:
+                self._hydrate_dict_rows(
+                    dicts,
+                    project_id_fallback=str(project_id) if project_id else None,
+                    attr_key="attributes_extra",
+                )
+            allowed = set(columns)
+            return [{k: d[k] for k in columns if k in allowed} for d in dicts]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def export_fields_by_ids(
         self,
@@ -1551,11 +1814,24 @@ class CHSpanReader:
             return {}
 
         columns = _export_columns_for_fields(field_names)
+        include_traj = is_trajectory_store_read_enabled()
+        wants_io = bool(columns & {"input", "output"})
+        needs_hydration = include_traj and wants_io
+        query_columns = set(columns)
+        if needs_hydration:
+            query_columns.add("project_id")
+            query_columns.update(TRAJECTORY_SPAN_COLUMNS)
         select_exprs = ["id"]
         aliases = ["id"]
-        for alias in sorted(columns):
+        for alias in sorted(query_columns):
+            # Never alias an aggregate to the bare key column name (`project_id`),
+            # or ClickHouse 25.3's analyzer rejects `PREWHERE project_id = ...`
+            # with Code 184 ILLEGAL_AGGREGATION.
+            sql_alias = (
+                f"{alias}_str" if include_traj and alias == "project_id" else alias
+            )
             select_exprs.append(
-                f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {alias}"
+                f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {sql_alias}"
             )
             aliases.append(alias)
 
@@ -1582,7 +1858,77 @@ class CHSpanReader:
             },
         ).result_rows
 
-        return {str(row[0]): dict(zip(aliases, row, strict=False)) for row in rows}
+        dicts = [dict(zip(aliases, row, strict=False)) for row in rows]
+        if needs_hydration and dicts:
+            self._hydrate_dict_rows(
+                dicts,
+                project_id_fallback=str(project_id) if project_id else None,
+                attr_key="attributes_extra",
+            )
+        elif include_traj and "attributes_extra" in columns and dicts:
+            # Avoid scanning full input/output on span_attributes-only exports
+            # unless a returned row actually carries a Phase 0 promotion sentinel.
+            sentinel_rows = [
+                d
+                for d in dicts
+                if isinstance(d.get("attributes_extra"), str)
+                and _SENTINEL_MARKER in d["attributes_extra"]
+            ]
+            if sentinel_rows:
+                sentinel_ids = tuple(str(d["id"]) for d in sentinel_rows)
+                io_cols = ["input", "output"]
+                if include_traj:
+                    io_cols.extend(["project_id", *TRAJECTORY_SPAN_COLUMNS])
+                io_select = ["id"]
+                io_aliases = ["id"]
+                for alias in sorted(set(io_cols)):
+                    sql_alias = f"{alias}_str" if alias == "project_id" else alias
+                    io_select.append(
+                        f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {sql_alias}"
+                    )
+                    io_aliases.append(alias)
+                io_where = ["id IN %(ids)s"]
+                io_params: dict[str, Any] = {"ids": sentinel_ids}
+                if project_id:
+                    io_where.append("project_id = %(pid)s")
+                    io_params["pid"] = str(project_id)
+                if org_id:
+                    io_where.append("org_id = %(oid)s")
+                    io_params["oid"] = str(org_id)
+                io_rows = self._client.query(
+                    "SELECT "
+                    f"{', '.join(io_select)} "
+                    "FROM spans "
+                    f"PREWHERE {' AND '.join(io_where)} "
+                    "GROUP BY id "
+                    "HAVING argMax(is_deleted, _version) = 0",
+                    parameters=io_params,
+                    settings={
+                        "max_threads": 1,
+                        "max_bytes_before_external_group_by": 256 * 1024 * 1024,
+                    },
+                ).result_rows
+                io_by_id = {
+                    str(r[0]): dict(zip(io_aliases, r, strict=False)) for r in io_rows
+                }
+                to_hydrate: list[dict[str, Any]] = []
+                for d in sentinel_rows:
+                    io_data = io_by_id.get(str(d["id"]))
+                    if io_data:
+                        for k, v in io_data.items():
+                            if k != "id":
+                                d[k] = v
+                        to_hydrate.append(d)
+                if to_hydrate:
+                    self._hydrate_dict_rows(
+                        to_hydrate,
+                        project_id_fallback=str(project_id) if project_id else None,
+                        attr_key="attributes_extra",
+                    )
+        allowed = {"id"} | columns
+        return {
+            str(d["id"]): {k: v for k, v in d.items() if k in allowed} for d in dicts
+        }
 
     # ─── Batch helpers for dataset child-tree export ─────────────────────────
 
@@ -1690,6 +2036,16 @@ class CHSpanReader:
         ("start_time", "start_time"),
     )
 
+    _CHILD_TREE_TRAJ_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("toString(project_id)", "project_id_str"),
+        ("input_item_hashes", "input_item_hashes"),
+        ("output_item_hashes", "output_item_hashes"),
+        ("tool_def_hashes", "tool_def_hashes"),
+        ("item_scope_id", "item_scope_id"),
+        ("payload_encoding", "payload_encoding"),
+        ("payload_envelope", "payload_envelope"),
+    )
+
     _CHILD_TREE_ALIASES: tuple[str, ...] = (
         "id",
         "trace_id",
@@ -1718,6 +2074,17 @@ class CHSpanReader:
         "start_time",
     )
 
+    _CHILD_TREE_TRAJ_ALIASES: tuple[str, ...] = (
+        *_CHILD_TREE_ALIASES,
+        "project_id",
+        "input_item_hashes",
+        "output_item_hashes",
+        "tool_def_hashes",
+        "item_scope_id",
+        "payload_encoding",
+        "payload_envelope",
+    )
+
     def child_tree_spans_by_trace_ids(
         self,
         trace_ids: list[str],
@@ -1734,8 +2101,17 @@ class CHSpanReader:
         if not trace_ids:
             return {}
 
+        include_traj = is_trajectory_store_read_enabled()
+        cols = (
+            self._CHILD_TREE_COLUMNS + self._CHILD_TREE_TRAJ_COLUMNS
+            if include_traj
+            else self._CHILD_TREE_COLUMNS
+        )
+        aliases = (
+            self._CHILD_TREE_TRAJ_ALIASES if include_traj else self._CHILD_TREE_ALIASES
+        )
         select_exprs = ["id", "trace_id"]
-        for expr, alias in self._CHILD_TREE_COLUMNS:
+        for expr, alias in cols:
             select_exprs.append(f"argMax({expr}, _version) AS {alias}")
 
         where = ["trace_id IN %(tids)s"]
@@ -1757,9 +2133,32 @@ class CHSpanReader:
             },
         ).result_rows
 
+        all_dicts = [dict(zip(aliases, row, strict=False)) for row in rows]
+        if all_dicts:
+            if include_traj:
+                self._hydrate_dict_rows(
+                    all_dicts,
+                    project_id_fallback=str(project_id) if project_id else None,
+                    attr_key="attributes_extra",
+                )
+            else:
+                for d in all_dicts:
+                    if (
+                        isinstance(d.get("attributes_extra"), str)
+                        and _SENTINEL_MARKER in d["attributes_extra"]
+                    ):
+                        d["attributes_extra"] = restore_promoted_in_attributes_extra(
+                            d["attributes_extra"],
+                            span_input=d.get("input"),
+                            span_output=d.get("output"),
+                        )
+
         result: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            d = dict(zip(self._CHILD_TREE_ALIASES, row, strict=False))
+        for d in all_dicts:
+            if include_traj:
+                for col in TRAJECTORY_SPAN_COLUMNS:
+                    d.pop(col, None)
+                d.pop("project_id", None)
             tid = str(d["trace_id"])
             result.setdefault(tid, []).append(d)
 
@@ -2106,12 +2505,12 @@ class CHSpanReader:
             params["pvid"] = project_version_id
         lim_clause = f" LIMIT {int(limit)}" if limit else ""
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {_active_select_sql(True)} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
             f"ORDER BY start_time, id{lim_clause}",
             parameters=params,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def count_by_project(
         self,
@@ -3132,11 +3531,29 @@ class CHSpanReader:
             return {}
         if columns is not None and "trace_id" not in columns:
             raise ValueError("columns must include 'trace_id' — it keys the result")
-        read = _projection_columns(columns) if columns is not None else None
+        include_traj = is_trajectory_store_read_enabled()
+        effective_columns = list(columns) if columns is not None else None
+        needs_hydration = False
+        if effective_columns is not None:
+            col_set = set(effective_columns)
+            if include_traj and (col_set & {"input", "output", "attributes_extra"}):
+                needs_hydration = True
+                extras = ["project_id", *TRAJECTORY_SPAN_COLUMNS]
+                if "attributes_extra" in col_set:
+                    extras.extend(["input", "output"])
+                for col in extras:
+                    if col not in col_set:
+                        effective_columns.append(col)
+                        col_set.add(col)
+        read = (
+            _projection_columns(effective_columns)
+            if effective_columns is not None
+            else None
+        )
         select = (
             _named_select(include_heavy, read)
             if read
-            else (_SELECT_SQL if include_heavy else _LEAN_SELECT_SQL)
+            else _active_select_sql(include_heavy)
         )
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = [
@@ -3161,10 +3578,17 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        if columns is not None:
-            projected = (_row_to_dict(columns, r) for r in rows)
-            return {row["trace_id"]: row for row in projected}
-        return {span.trace_id: span for span in map(_row_to_chspan, rows)}
+        if effective_columns is not None and columns is not None:
+            dicts = [_row_to_dict(effective_columns, r) for r in rows]
+            if needs_hydration and dicts:
+                self._hydrate_dict_rows(
+                    dicts,
+                    project_id_fallback=str(project_id) if project_id else None,
+                    attr_key="attributes_extra",
+                )
+            return {d["trace_id"]: {k: d[k] for k in columns} for d in dicts}
+        hydrated = self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return {span.trace_id: span for span in hydrated}
 
     def aggregate_by_session_ids(
         self,
@@ -3539,10 +3963,24 @@ class CHSpanReader:
 
     @staticmethod
     def attributes_extra_as_dict(span: CHSpan) -> dict:
+        if not is_trajectory_store_read_enabled():
+            try:
+                return (
+                    json.loads(span.attributes_extra) if span.attributes_extra else {}
+                )
+            except json.JSONDecodeError:
+                return {}
         try:
-            return json.loads(span.attributes_extra) if span.attributes_extra else {}
+            parsed = json.loads(span.attributes_extra) if span.attributes_extra else {}
         except json.JSONDecodeError:
             return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return restore_promoted_attributes(
+            parsed,
+            span_input=span.input,
+            span_output=span.output,
+        )
 
     @staticmethod
     def to_django_dict(span: CHSpan) -> dict[str, Any]:
@@ -3628,11 +4066,16 @@ def merge_span_attributes(
     attrs_number: dict[str, Any] | None,
     attrs_bool: dict[str, Any] | None,
     attributes_extra: Any,
+    *,
+    span_input: str | None = None,
+    span_output: str | None = None,
 ) -> dict[str, Any]:
     """Merge typed maps + ``attributes_extra`` into one ``span_attributes`` dict.
 
     Single source of truth. Maps first, ``attributes_extra`` (str or dict)
     overrides; bad JSON skipped; ``attrs_bool`` coerced to real booleans.
+    Phase 0 promoted-input/output sentinels are popped and restored from
+    ``span_input`` / ``span_output`` when supplied.
     """
     out: dict[str, Any] = {}
     out.update(attrs_string or {})
@@ -3646,13 +4089,19 @@ def merge_span_attributes(
             extra = {}
     if isinstance(extra, dict):
         out.update(extra)
+    restore_promoted_attributes(out, span_input=span_input, span_output=span_output)
     return out
 
 
 def _ch_span_attributes(span: CHSpan) -> dict[str, Any]:
     """CHSpan adapter for :func:`merge_span_attributes`."""
     return merge_span_attributes(
-        span.attrs_string, span.attrs_number, span.attrs_bool, span.attributes_extra
+        span.attrs_string,
+        span.attrs_number,
+        span.attrs_bool,
+        span.attributes_extra,
+        span_input=span.input,
+        span_output=span.output,
     )
 
 

@@ -1317,6 +1317,28 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         has_next = len(trace_result.data) > page_size
         traces_data = trace_result.data[:page_size]
 
+        if traces_data:
+            from tracer.services.clickhouse.v2.trajectory_hydration import (
+                hydrate_span_dicts,
+                is_trajectory_store_read_enabled,
+            )
+
+            if is_trajectory_store_read_enabled():
+                hydrate_span_dicts(
+                    traces_data,
+                    lambda traj_sql, traj_params: list(
+                        analytics.execute_ch_query(
+                            traj_sql,
+                            traj_params,
+                            timeout_ms=read_deadline.remaining_ms(
+                                SESSION_LIST_QUERY_TIMEOUT_MS
+                            ),
+                        ).data
+                        or []
+                    ),
+                    project_id_fallback=project_id,
+                )
+
         if not traces_data:
             next_session_id, previous_session_id = get_session_navigation(
                 request,

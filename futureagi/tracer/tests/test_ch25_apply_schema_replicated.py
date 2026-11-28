@@ -348,6 +348,10 @@ class TestGoldenOutputForShippedFiles:
                 "tracer_eval_logger_v2",
                 "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger_v2', '{replica}', _version, is_deleted)",
             ),
+            (
+                "trajectory_items",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/trajectory_items', '{replica}', persisted_at)",
+            ),
         ],
     )
     def test_engine_substr_matches(self, table, expected_engine_substr):

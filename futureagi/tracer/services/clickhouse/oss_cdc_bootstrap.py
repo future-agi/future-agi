@@ -127,6 +127,18 @@ _SPAN_COLUMNS = {
     "top_p": "Nullable(Float64) MATERIALIZED if(mapContains(attrs_number, 'gen_ai.request.top_p'), attrs_number['gen_ai.request.top_p'], NULL)",
     "max_tokens": "Nullable(Int32) MATERIALIZED if(mapContains(attrs_number, 'gen_ai.request.max_tokens'), toInt32(attrs_number['gen_ai.request.max_tokens']), NULL)",
 }
+# The six pointer columns 040_trajectory_items.sql adds to spans. The OSS
+# bootstrap never creates them, but an operator may apply 040 by hand, so
+# inspection accepts spans with none of them or with all six exactly as 040
+# declares them. Any partial or different set is still refused.
+_TRAJECTORY_SPAN_COLUMNS = {
+    "input_item_hashes": "Array(String) DEFAULT []",
+    "output_item_hashes": "Array(String) DEFAULT []",
+    "tool_def_hashes": "Array(String) DEFAULT []",
+    "item_scope_id": "String DEFAULT ''",
+    "payload_encoding": "LowCardinality(String) DEFAULT 'inline'",
+    "payload_envelope": "String DEFAULT ''",
+}
 _LEDGER_DDL = """
 CREATE TABLE IF NOT EXISTS schema_versions (
     filename String, sha256 FixedString(64),
@@ -393,6 +405,18 @@ def _check_table(
         expected.update(
             {key: _column(_tokens(value)) for key, value in _SPAN_COLUMNS.items()}
         )
+        present = set(_TRAJECTORY_SPAN_COLUMNS) & set(columns)
+        if present and present != set(_TRAJECTORY_SPAN_COLUMNS):
+            raise BootstrapError(
+                f"{name}: partial 040 trajectory columns {sorted(present)}"
+            )
+        if present:
+            expected.update(
+                {
+                    key: _column(_tokens(value))
+                    for key, value in _TRAJECTORY_SPAN_COLUMNS.items()
+                }
+            )
     if name == "trace_session" and not native and not source_owned:
         expected.update(
             {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
+	"github.com/future-agi/future-agi/fi-collector/pkg/trajectory"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -14,19 +15,90 @@ import (
 // This keeps gRPC's existing basis; HTTP intentionally changes even on full
 // success from decompressed-body length to accepted semantic protobuf bytes.
 func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces) {
+	s.emitUsageWithReport(ctx, traces, trajectory.UsageReport{})
+}
+
+// pendingUsage captures a request's billing inputs at enqueue time so that when
+// Phase 1 trajectory deduplication is active, emission is deferred until
+// drainNow knows whether `trajectory_items` committed or fell back to inline.
+type pendingUsage struct {
+	orgID      string
+	traceCount int
+	spanCount  int
+	rawBytes   int64
+	dedupKey   string
+	report     trajectory.UsageReport
+}
+
+func (s *Server) buildPendingUsage(ctx context.Context, traces ptrace.Traces, report trajectory.UsageReport) *pendingUsage {
 	result := auth.FromContext(ctx)
 	if result == nil || traces.SpanCount() == 0 {
-		return
+		return nil
 	}
-	// Single-trace export = a provider-pull call (deterministic trace id, re-polled):
-	// key billing on it so re-polls bill once. Multi-trace SDK batch → random id.
 	ids := distinctTraceIDs(traces)
 	dedupKey := ""
 	if len(ids) == 1 {
 		dedupKey = hex.EncodeToString(ids[0][:])
 	}
-	payloadBytes := int64((&ptrace.ProtoMarshaler{}).TracesSize(traces))
-	s.usage.EmitIngestion(result.OrgID, len(ids), traces.SpanCount(), payloadBytes, dedupKey)
+	rawBytes := int64((&ptrace.ProtoMarshaler{}).TracesSize(traces))
+	report.RawBytes = rawBytes
+	return &pendingUsage{
+		orgID:      result.OrgID,
+		traceCount: len(ids),
+		spanCount:  traces.SpanCount(),
+		rawBytes:   rawBytes,
+		dedupKey:   dedupKey,
+		report:     report,
+	}
+}
+
+func (s *Server) emitPendingUsage(u *pendingUsage, fallbackInline bool) {
+	if u == nil {
+		return
+	}
+	report := u.report
+	if fallbackInline {
+		// trajectory_items failed and spans were written inline: never bill a
+		// deduped byte count when full inline payloads were persisted instead.
+		report.DedupApplied = false
+		report.OrigExtractedBytes = 0
+		report.KeptSpanOverheadBytes = 0
+		report.NewItemBytes = 0
+		report.ReusedItemBytes = 0
+		report.NewItems = 0
+		report.ReusedItems = 0
+	}
+	if report.DedupApplied || fallbackInline || s.trajCfg.CompactSpanAttrs || s.trajCfg.BillDedupedBytes {
+		if du, ok := s.usage.(DedupUsageEmitter); ok {
+			du.EmitIngestionDedup(
+				u.orgID,
+				u.traceCount,
+				u.spanCount,
+				u.rawBytes,
+				report.StoredTotalBytes(),
+				report.NewItemBytes,
+				report.DedupSavedBytes(),
+				report.NewItems,
+				report.ReusedItems,
+				s.trajCfg.BillDedupedBytes,
+				u.dedupKey,
+			)
+			return
+		}
+	}
+	s.usage.EmitIngestion(u.orgID, u.traceCount, u.spanCount, u.rawBytes, u.dedupKey)
+}
+
+// emitUsageWithReport emits either legacy EmitIngestion (preserving exact
+// byte-identical properties when trajectory features are off) or
+// EmitIngestionDedup with raw/stored/saved/item telemetry when dedup,
+// compaction, or dedup-adjusted billing is active.
+func (s *Server) emitUsageWithReport(ctx context.Context, traces ptrace.Traces, report trajectory.UsageReport) {
+	u := s.buildPendingUsage(ctx, traces, report)
+	if u == nil {
+		return
+	}
+	s.emitPendingUsage(u, false)
 }
 
 func (s *Server) checkUsage(ctx context.Context) (auth.CheckResult, bool) {

@@ -96,6 +96,19 @@ _PHYSICAL_SPAN_COLUMNS = (
     "_version",
 )
 
+# Trajectory-store pointer columns (040_trajectory_items.sql). They exist only
+# once 040 is applied, so they join the packed set only while the read flag is
+# on; with it off a dotted filter key such as ``metadata.payload_encoding`` must
+# never pull a bare pointer column into the collapse.
+_TRAJECTORY_POINTER_COLUMNS = (
+    "input_item_hashes",
+    "output_item_hashes",
+    "tool_def_hashes",
+    "item_scope_id",
+    "payload_encoding",
+    "payload_envelope",
+)
+
 # The deployed ReplacingMergeTree sorting key, in its declared order. The hour
 # is a key *expression*, so it is grouped rather than selected; the other five
 # are plain key columns and pass through the collapse unchanged.
@@ -123,6 +136,9 @@ _PHYSICAL_SPAN_FLOOR_COLUMNS = frozenset(
 )
 _PHYSICAL_SPAN_COLUMN_REFERENCE_RE = re.compile(
     r"\b(" + "|".join(_PHYSICAL_SPAN_COLUMNS) + r")\b"
+)
+_TRAJECTORY_POINTER_REFERENCE_RE = re.compile(
+    r"\b(" + "|".join(_TRAJECTORY_POINTER_COLUMNS) + r")\b"
 )
 
 
@@ -772,16 +788,23 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         names here before reading the reference set; the rewritten copy is used
         for that decision alone and never emitted.
         """
-        referenced = set(
-            _PHYSICAL_SPAN_COLUMN_REFERENCE_RE.findall(
-                rewrite_v1_sql_to_v2(consumer_sql)
-            )
-        )
-        return tuple(
+        rewritten = rewrite_v1_sql_to_v2(consumer_sql)
+        referenced = set(_PHYSICAL_SPAN_COLUMN_REFERENCE_RE.findall(rewritten))
+        packed = tuple(
             column
             for column in _PHYSICAL_SPAN_COLUMNS
             if column not in _PHYSICAL_SPAN_KEY_COLUMNS
             and (column in _PHYSICAL_SPAN_FLOOR_COLUMNS or column in referenced)
+        )
+        from tracer.services.clickhouse.v2.trajectory_hydration import (
+            is_trajectory_store_read_enabled,
+        )
+
+        if not is_trajectory_store_read_enabled():
+            return packed
+        pointers = set(_TRAJECTORY_POINTER_REFERENCE_RE.findall(rewritten))
+        return packed + tuple(
+            column for column in _TRAJECTORY_POINTER_COLUMNS if column in pointers
         )
 
     def _latest_state_source_sql(self, alias, *, scope_sql, consumer_sql):
@@ -953,7 +976,9 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             else ""
         )
 
-    def build_content_query(self, span_ids, *, span_identities=None):
+    def build_content_query(
+        self, span_ids, *, span_identities=None, include_trajectory: bool = False
+    ):
         identities = self._normalize_span_identities(span_identities)
         ids = tuple(dict.fromkeys(str(value) for value in span_ids if value))
         if not ids or identities == ():
@@ -979,6 +1004,16 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             "service_name, _version, input, output, attributes_extra, "
             "attrs_string, attrs_number, attrs_bool"
         )
+        if include_trajectory:
+            from tracer.services.clickhouse.v2.trajectory_hydration import (
+                TRAJECTORY_SPAN_COLUMNS,
+                is_trajectory_store_read_enabled,
+            )
+
+            if is_trajectory_store_read_enabled():
+                content_columns_sql = (
+                    f"{content_columns_sql}, {', '.join(TRAJECTORY_SPAN_COLUMNS)}"
+                )
         source = self._filter_match_source_sql(
             scope, consumer_sql=f"{content_columns_sql} {project_version}"
         )

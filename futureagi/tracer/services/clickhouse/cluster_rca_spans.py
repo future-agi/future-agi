@@ -164,6 +164,38 @@ def read_span(project_id: str, span_id: str) -> dict[str, Any] | None:
     return _chspan_to_agent_dict(span) if span else None
 
 
+def _hydrate_rca_rows(
+    project_id: str, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Hydrate any items_v1 rows in place and strip trajectory pointer columns."""
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        ENCODING_ITEMS_V1,
+        TRAJECTORY_SPAN_COLUMNS,
+        hydrate_span_dicts,
+    )
+
+    if any(r.get("payload_encoding") == ENCODING_ITEMS_V1 for r in rows):
+
+        def _query(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            res = _execute_read(sql, params)
+            return [
+                {"scope_id": r[0], "item_hash": r[1], "content": r[2]}
+                for r in res
+                if len(r) >= 3
+            ]
+
+        hydrate_span_dicts(
+            rows,
+            _query,
+            project_id_fallback=str(project_id),
+            attr_key="_unused_rca_attr",
+        )
+    for r in rows:
+        for col in TRAJECTORY_SPAN_COLUMNS:
+            r.pop(col, None)
+    return rows
+
+
 def list_spans_in_traces(
     project_id: str,
     trace_ids: Iterable[str],
@@ -172,10 +204,17 @@ def list_spans_in_traces(
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
     """Paginated span list across a trace set. Returns (page, total_distinct)."""
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TRAJECTORY_SPAN_COLUMNS,
+        is_trajectory_store_read_enabled,
+    )
+
     ids = _ids_list(trace_ids)
     if not ids:
         return [], 0
-    cols = ", ".join(_SPAN_COLS)
+    include_traj = is_trajectory_store_read_enabled()
+    query_cols = _SPAN_COLS + TRAJECTORY_SPAN_COLUMNS if include_traj else _SPAN_COLS
+    cols = ", ".join(query_cols)
     base = (
         "FROM spans WHERE project_id = %(pid)s AND is_deleted = 0 "
         "AND toString(trace_id) IN %(tids)s"
@@ -187,8 +226,10 @@ def list_spans_in_traces(
             "LIMIT 1 BY id LIMIT %(limit)s OFFSET %(offset)s",
             params,
         ),
-        _SPAN_COLS,
+        query_cols,
     )
+    if include_traj:
+        _hydrate_rca_rows(project_id, page)
     total_rows = _execute_read(f"SELECT uniqExact(id) {base}", params)
     return page, (int(total_rows[0][0]) if total_rows else 0)
 
@@ -202,10 +243,17 @@ def search_spans_in_traces(
 ) -> list[dict[str, Any]]:
     """Case-insensitive substring search over span input/output/name/
     status_message within a trace set."""
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TRAJECTORY_SPAN_COLUMNS,
+        is_trajectory_store_read_enabled,
+    )
+
     ids = _ids_list(trace_ids)
     if not ids or not query_text:
         return []
-    cols = ", ".join(_SPAN_COLS)
+    include_traj = is_trajectory_store_read_enabled()
+    query_cols = _SPAN_COLS + TRAJECTORY_SPAN_COLUMNS if include_traj else _SPAN_COLS
+    cols = ", ".join(query_cols)
     text_pred = (
         "(positionCaseInsensitive(input, %(q)s) > 0 "
         "OR positionCaseInsensitive(output, %(q)s) > 0 "
@@ -223,7 +271,8 @@ def search_spans_in_traces(
         LIMIT %(limit)s
     """
     params = {"pid": str(project_id), "tids": ids, "q": query_text, "limit": limit}
-    return _rows_to_dicts(_execute_read(query, params), _SPAN_COLS)
+    rows = _rows_to_dicts(_execute_read(query, params), query_cols)
+    return _hydrate_rca_rows(project_id, rows) if include_traj else rows
 
 
 # group_by token → (CH column, extra predicate) for span_count aggregation.
@@ -272,39 +321,115 @@ def trace_roots(project_id: str, trace_ids: Iterable[str]) -> dict[str, dict[str
     for list(traces) snippets, read(session) member previews, etc. — a single
     batched query instead of N per-trace fetches.
     """
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        is_trajectory_store_read_enabled,
+    )
+
     ids = _ids_list(trace_ids)
     if not ids:
         return {}
+    if not is_trajectory_store_read_enabled():
+        query = """
+            SELECT
+                trace_id,
+                argMin(input, start_time)       AS input,
+                argMin(output, start_time)      AS output,
+                any(trace_name)                 AS trace_name,
+                toString(any(trace_session_id)) AS trace_session_id,
+                max(status = 'ERROR')           AS has_error,
+                min(start_time)                 AS first_start
+            FROM (
+                SELECT trace_id, input, output, trace_name, trace_session_id,
+                       status, start_time, id
+                FROM spans
+                WHERE project_id = %(pid)s AND is_deleted = 0
+                  AND toString(trace_id) IN %(tids)s
+                LIMIT 1 BY id
+            )
+            GROUP BY trace_id
+        """
+        rows = _execute_read(query, {"pid": str(project_id), "tids": ids})
+        return {
+            str(r[0]): {
+                "input": r[1],
+                "output": r[2],
+                "trace_name": r[3],
+                "trace_session_id": r[4] or None,
+                "has_error": bool(r[5]),
+                "first_start": str(r[6]) if r[6] else None,
+            }
+            for r in rows
+        }
+
+    # Pack I/O and trajectory pointer columns into a single argMin tuple keyed
+    # on (start_time, id) so equal-timestamp spans can never mix pointers from
+    # one span with previews from another.
     query = """
         SELECT
             trace_id,
-            argMin(input, start_time)  AS input,
-            argMin(output, start_time) AS output,
-            any(trace_name)            AS trace_name,
-            toString(any(trace_session_id)) AS trace_session_id,
-            max(status = 'ERROR')      AS has_error,
-            min(start_time)            AS first_start
+            root_io.1 AS input,
+            root_io.2 AS output,
+            trace_name,
+            trace_session_id,
+            has_error,
+            first_start,
+            root_io.3 AS input_item_hashes,
+            root_io.4 AS output_item_hashes,
+            root_io.5 AS tool_def_hashes,
+            root_io.6 AS item_scope_id,
+            root_io.7 AS payload_encoding,
+            root_io.8 AS payload_envelope
         FROM (
-            SELECT trace_id, input, output, trace_name, trace_session_id,
-                   status, start_time, id
-            FROM spans
-            WHERE project_id = %(pid)s AND is_deleted = 0
-              AND toString(trace_id) IN %(tids)s
-            LIMIT 1 BY id
+            SELECT
+                trace_id,
+                argMin(
+                    tuple(input, output, input_item_hashes, output_item_hashes,
+                          tool_def_hashes, item_scope_id, payload_encoding,
+                          payload_envelope),
+                    tuple(start_time, id)
+                )                               AS root_io,
+                any(trace_name)                 AS trace_name,
+                toString(any(trace_session_id)) AS trace_session_id,
+                max(status = 'ERROR')           AS has_error,
+                min(start_time)                 AS first_start
+            FROM (
+                SELECT trace_id, input, output, trace_name, trace_session_id,
+                       status, start_time, id,
+                       input_item_hashes, output_item_hashes, tool_def_hashes,
+                       item_scope_id, payload_encoding, payload_envelope
+                FROM spans
+                WHERE project_id = %(pid)s AND is_deleted = 0
+                  AND toString(trace_id) IN %(tids)s
+                LIMIT 1 BY id
+            )
+            GROUP BY trace_id
         )
-        GROUP BY trace_id
     """
     rows = _execute_read(query, {"pid": str(project_id), "tids": ids})
-    out: dict[str, dict[str, Any]] = {}
+    dicts: list[dict[str, Any]] = []
     for r in rows:
-        out[str(r[0])] = {
-            "input": r[1],
-            "output": r[2],
-            "trace_name": r[3],
-            "trace_session_id": r[4] or None,
-            "has_error": bool(r[5]),
-            "first_start": str(r[6]) if r[6] else None,
-        }
+        dicts.append(
+            {
+                "trace_id": str(r[0]),
+                "input": r[1],
+                "output": r[2],
+                "trace_name": r[3],
+                "trace_session_id": r[4] or None,
+                "has_error": bool(r[5]),
+                "first_start": str(r[6]) if r[6] else None,
+                "input_item_hashes": r[7],
+                "output_item_hashes": r[8],
+                "tool_def_hashes": r[9],
+                "item_scope_id": r[10],
+                "payload_encoding": r[11],
+                "payload_envelope": r[12],
+            }
+        )
+    _hydrate_rca_rows(project_id, dicts)
+    out: dict[str, dict[str, Any]] = {}
+    for d in dicts:
+        tid = d.pop("trace_id")
+        out[tid] = d
     return out
 
 
@@ -417,36 +542,106 @@ def distinct_sessions(project_id: str, trace_ids: Iterable[str]) -> list[str]:
 def traces_in_session(project_id: str, session_id: str) -> dict[str, dict[str, Any]]:
     """Per-trace root info for all traces in one session (chronological via
     first_start). Powers read(session). Returns {trace_id: root-info}."""
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        is_trajectory_store_read_enabled,
+    )
+
     if not session_id:
         return {}
+    if not is_trajectory_store_read_enabled():
+        query = """
+            SELECT
+                trace_id,
+                argMin(input, start_time)  AS input,
+                argMin(output, start_time) AS output,
+                any(trace_name)            AS trace_name,
+                max(status = 'ERROR')      AS has_error,
+                min(start_time)            AS first_start
+            FROM (
+                SELECT trace_id, input, output, trace_name, status, start_time, id
+                FROM spans
+                WHERE project_id = %(pid)s AND is_deleted = 0
+                  AND toString(trace_session_id) = %(sid)s
+                LIMIT 1 BY id
+            )
+            GROUP BY trace_id
+            ORDER BY first_start
+        """
+        rows = _execute_read(query, {"pid": str(project_id), "sid": str(session_id)})
+        return {
+            str(r[0]): {
+                "input": r[1],
+                "output": r[2],
+                "trace_name": r[3],
+                "has_error": bool(r[4]),
+                "first_start": str(r[5]) if r[5] else None,
+            }
+            for r in rows
+        }
+
     query = """
         SELECT
             trace_id,
-            argMin(input, start_time)  AS input,
-            argMin(output, start_time) AS output,
-            any(trace_name)            AS trace_name,
-            max(status = 'ERROR')      AS has_error,
-            min(start_time)            AS first_start
+            root_io.1 AS input,
+            root_io.2 AS output,
+            trace_name,
+            has_error,
+            first_start,
+            root_io.3 AS input_item_hashes,
+            root_io.4 AS output_item_hashes,
+            root_io.5 AS tool_def_hashes,
+            root_io.6 AS item_scope_id,
+            root_io.7 AS payload_encoding,
+            root_io.8 AS payload_envelope
         FROM (
-            SELECT trace_id, input, output, trace_name, status, start_time, id
-            FROM spans
-            WHERE project_id = %(pid)s AND is_deleted = 0
-              AND toString(trace_session_id) = %(sid)s
-            LIMIT 1 BY id
+            SELECT
+                trace_id,
+                argMin(
+                    tuple(input, output, input_item_hashes, output_item_hashes,
+                          tool_def_hashes, item_scope_id, payload_encoding,
+                          payload_envelope),
+                    tuple(start_time, id)
+                )                      AS root_io,
+                any(trace_name)        AS trace_name,
+                max(status = 'ERROR')  AS has_error,
+                min(start_time)        AS first_start
+            FROM (
+                SELECT trace_id, input, output, trace_name, status, start_time, id,
+                       input_item_hashes, output_item_hashes, tool_def_hashes,
+                       item_scope_id, payload_encoding, payload_envelope
+                FROM spans
+                WHERE project_id = %(pid)s AND is_deleted = 0
+                  AND toString(trace_session_id) = %(sid)s
+                LIMIT 1 BY id
+            )
+            GROUP BY trace_id
         )
-        GROUP BY trace_id
         ORDER BY first_start
     """
     rows = _execute_read(query, {"pid": str(project_id), "sid": str(session_id)})
-    out: dict[str, dict[str, Any]] = {}
+    dicts: list[dict[str, Any]] = []
     for r in rows:
-        out[str(r[0])] = {
-            "input": r[1],
-            "output": r[2],
-            "trace_name": r[3],
-            "has_error": bool(r[4]),
-            "first_start": str(r[5]) if r[5] else None,
-        }
+        dicts.append(
+            {
+                "trace_id": str(r[0]),
+                "input": r[1],
+                "output": r[2],
+                "trace_name": r[3],
+                "has_error": bool(r[4]),
+                "first_start": str(r[5]) if r[5] else None,
+                "input_item_hashes": r[6],
+                "output_item_hashes": r[7],
+                "tool_def_hashes": r[8],
+                "item_scope_id": r[9],
+                "payload_encoding": r[10],
+                "payload_envelope": r[11],
+            }
+        )
+    _hydrate_rca_rows(project_id, dicts)
+    out: dict[str, dict[str, Any]] = {}
+    for d in dicts:
+        tid = d.pop("trace_id")
+        out[tid] = d
     return out
 
 
