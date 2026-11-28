@@ -1,6 +1,6 @@
 """Run Simulation's Debug failures starts no analysis of a run too small to read,
-or one where nothing failed. An analysis the run already has is still returned, and
-the run's KPIs say it has one."""
+one where nothing failed, or one whose calls have not all finished. An analysis the
+run already has is still returned, and the run's KPIs say it has one."""
 
 from unittest.mock import patch
 
@@ -28,6 +28,10 @@ FAILED = CallExecution.CallStatus.FAILED
 
 TOO_FEW = "You need at least 15 connected calls to debug failures."
 NOTHING_FAILED = "Nothing failed in this run, so there’s nothing to debug."
+RUN_IN_PROGRESS = "Diagnosis is available once every call in this run finishes."
+CALLS_UNFINISHED = (
+    "Some calls in this run didn’t finish, so Debug failures can’t read it."
+)
 
 # 14 connected, one of them failing; the voice call that never ran is not connected.
 FOURTEEN_CONNECTED = [
@@ -173,6 +177,134 @@ def test_returns_the_analysis_a_blocked_run_already_has(
     _refused(refresh, "investigation_nothing_failed", NOTHING_FAILED)
     assert _runs(execution) == 1
     dispatch.assert_not_called()
+
+
+def _ask(client, execution, route):
+    if route == "read":
+        return client.get(_analysis_url(execution))
+    return client.post(f"{_analysis_url(execution)}refresh/", {}, format="json")
+
+
+@pytest.mark.parametrize(
+    "status",
+    [TestExecution.ExecutionStatus.CANCELLED, TestExecution.ExecutionStatus.FAILED],
+)
+@pytest.mark.parametrize("route", ["read", "refresh"])
+def test_starts_an_analysis_of_a_stopped_run(
+    auth_client, organization, workspace, dispatch, status, route
+):
+    execution = _run(organization, workspace, ELIGIBLE, status=status)
+
+    response = _ask(auth_client, execution, route)
+
+    assert response.status_code == 200
+    assert response.json()["result"]["status"] == "pending"
+    assert _runs(execution) == 1
+    dispatch.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        TestExecution.ExecutionStatus.PENDING,
+        TestExecution.ExecutionStatus.RUNNING,
+        TestExecution.ExecutionStatus.EVALUATING,
+        TestExecution.ExecutionStatus.CANCELLING,
+    ],
+)
+@pytest.mark.parametrize("route", ["read", "refresh"])
+def test_refuses_to_start_an_analysis_of_a_run_still_in_progress(
+    auth_client, organization, workspace, dispatch, status, route
+):
+    execution = _run(organization, workspace, ELIGIBLE, status=status)
+
+    response = _ask(auth_client, execution, route)
+
+    _refused(response, "execution_not_completed", RUN_IN_PROGRESS)
+    assert _runs(execution) == 0
+    dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        TestExecution.ExecutionStatus.COMPLETED,
+        TestExecution.ExecutionStatus.CANCELLED,
+        TestExecution.ExecutionStatus.FAILED,
+    ],
+)
+@pytest.mark.parametrize("route", ["read", "refresh"])
+def test_refuses_to_start_an_analysis_of_a_finished_run_with_an_open_call(
+    auth_client, organization, workspace, dispatch, status, route
+):
+    open_call = (CallExecution.CallStatus.ONGOING, 0)
+    execution = _run(organization, workspace, [*ELIGIBLE, open_call], status=status)
+
+    response = _ask(auth_client, execution, route)
+
+    _refused(response, "execution_calls_unfinished", CALLS_UNFINISHED)
+    assert _runs(execution) == 0
+    dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [TestExecution.ExecutionStatus.RUNNING, TestExecution.ExecutionStatus.CANCELLED],
+)
+def test_returns_the_analysis_a_run_already_has_whatever_its_status(
+    auth_client, organization, workspace, dispatch, status
+):
+    execution = _run(organization, workspace, ELIGIBLE, status=status)
+    _analysed(execution)
+
+    read = auth_client.get(_analysis_url(execution))
+
+    assert read.status_code == 200
+    assert read.json()["result"]["response"] == {"insights": "Earlier analysis"}
+    assert _runs(execution) == 1
+    dispatch.assert_not_called()
+
+
+def test_a_cancelled_runs_finished_calls_are_analysed(
+    auth_client, organization, workspace
+):
+    execution = _run(
+        organization,
+        workspace,
+        [*ELIGIBLE, (CallExecution.CallStatus.CANCELLED, 0)],
+        status=TestExecution.ExecutionStatus.CANCELLED,
+    )
+    # Its eval explanations are summarised already, so no summary is computed.
+    execution.eval_explanation_summary = {}
+    execution.save(update_fields=["eval_explanation_summary"])
+    analysis = {"agent_level": {}, "system_level": {}}
+
+    # The task's body runs inline, without the activity wrapper's connection
+    # handling; only the analysis agent's model call is stubbed.
+    with (
+        patch.object(
+            execute_optimiser_run,
+            "delay",
+            side_effect=execute_optimiser_run._original_func,
+        ),
+        patch("simulate.utils.agent_optimiser.SimulationAnalysisAgent") as agent,
+    ):
+        agent.return_value.analyze.return_value = analysis
+        response = auth_client.get(_analysis_url(execution))
+
+    assert response.status_code == 200
+    run = AgentOptimiserRun.objects.get(agent_optimiser__test_executions=execution)
+    assert run.status == AgentOptimiserRun.OptimiserStatus.COMPLETED
+    assert run.result == analysis
+    scenarios = agent.return_value.analyze.call_args.kwargs["simulation_data"][
+        "scenarios"
+    ]
+    assert {scenario["call_execution_id"] for scenario in scenarios} == {
+        str(call_id)
+        for call_id in execution.calls.filter(status=COMPLETED).values_list(
+            "id", flat=True
+        )
+    }
 
 
 def test_kpis_count_the_failing_calls_of_a_finished_run(
