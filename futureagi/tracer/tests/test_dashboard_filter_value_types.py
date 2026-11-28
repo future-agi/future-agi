@@ -20,7 +20,6 @@ from tracer.services.clickhouse.query_builders.dashboard import (
     DashboardQueryBuilder,
     InvalidMetricCombinationError,
 )
-from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
 from tracer.views.dashboard import (
     DashboardExactReadError,
     DashboardViewSet,
@@ -126,11 +125,9 @@ def eval_output_type(monkeypatch):
             lambda self, payload, fallback: fallback,
         )
         monkeypatch.setattr(
-            dashboard_builder,
-            "resolve_eval_filter_metadata",
-            lambda eval_id, project_ids: EvalFilterMetadata(
-                config_ids=(eval_id,), output_type=output_type
-            ),
+            DashboardQueryBuilder,
+            "_configured_eval_output_type",
+            lambda self, template_id: output_type,
             raising=False,
         )
 
@@ -338,8 +335,8 @@ def test_a_bare_legacy_annotation_leaf_keeps_the_numeric_default(monkeypatch):
 @pytest.mark.unit
 def test_a_bare_legacy_eval_leaf_keeps_the_score_default(monkeypatch):
     monkeypatch.setattr(
-        dashboard_builder,
-        "resolve_eval_filter_metadata",
+        DashboardQueryBuilder,
+        "_configured_eval_output_type",
         _refuse_database,
         raising=False,
     )
