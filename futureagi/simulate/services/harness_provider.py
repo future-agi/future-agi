@@ -1804,8 +1804,15 @@ class HostedHarnessProvider:
             if replayed is None and connected_build:
                 from simulate.services.harness_agent_versions import values_gate
 
-                # Before anything is spent; a replay answers with its job.
-                values_gate(connected_runtime, extra_names=secret_values)
+                # Before anything is spent; a replay answers with its job. The job
+                # also takes the source's own values, under the names given.
+                values_gate(
+                    connected_runtime,
+                    extra_names={
+                        *secret_values,
+                        *(payload["source"].get("environment_values") or {}),
+                    },
+                )
             if replayed is None and versioning_enabled() and not connected_build:
                 from simulate.services.harness_agent_changes import (
                     validate_github_source,

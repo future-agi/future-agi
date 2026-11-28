@@ -14,7 +14,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Final, Literal, TypedDict
+from typing import Any, Final, Literal, NotRequired, TypedDict
 
 import structlog
 from django.conf import settings
@@ -233,6 +233,9 @@ class AgentMove(TypedDict):
     # A landing's default environment version before it landed, put back if the
     # move fails.
     from_environment_version_id: str | None
+    # A follower's move to production: it waits on production staying this version.
+    # Missing on moves stored before it was kept.
+    production: NotRequired[bool]
 
 
 class ValidationView(TypedDict):
@@ -427,6 +430,7 @@ def agent_move(
     nudge: HarnessNudge | None = None,
     explicit: bool = False,
     from_environment_version_id: Any = None,
+    production: bool = False,
 ) -> AgentMove:
     """The move to make once the pairing of ``version`` with the defaults validates."""
     return {
@@ -443,6 +447,7 @@ def agent_move(
         "from_environment_version_id": (
             str(from_environment_version_id) if from_environment_version_id else None
         ),
+        "production": production,
     }
 
 
@@ -1244,10 +1249,13 @@ def complete_move(
     outcome.
     """
     from simulate.services.harness_agent_versions import (
+        POLICY_FOLLOW,
         _busy,
         _side_row,
         _turned_down,
+        environment_policy,
         hand_move,
+        lock_agent_production,
     )
     from simulate.services.harness_versioning.versions import (
         lock_environment,
@@ -1271,6 +1279,18 @@ def complete_move(
         current = str(locked.agent_version_id) if locked.agent_version_id else None
         if current != move["from_agent_version_id"]:
             return "superseded"
+        if move.get("production"):
+            # As at the activation: still following, and the version still
+            # production.
+            if environment_policy(locked) != POLICY_FOLLOW:
+                return "pinned"
+            lock_agent_production(version.agent_definition_id)
+            if not AgentVersion._base_manager.filter(
+                id=version.id,
+                status=AgentVersion.StatusChoices.ACTIVE,
+                deleted=False,
+            ).exists():
+                return "superseded"
         if move["caller"] == "activation" and not move["explicit"]:
             runtime = _side_row(version.id)
             reason = (

@@ -2153,7 +2153,12 @@ def _activate_on(
             # Moved by rebuild.retry_deferred_activations once it finishes.
             return "environment_busy"
         pending = gate_agent_move(
-            "activation", locked, version, user=user, explicit=explicit
+            "activation",
+            locked,
+            version,
+            user=user,
+            explicit=explicit,
+            production=production,
         )
         if pending is not None:
             # Moved by the validation once the pairing passes.
@@ -2326,8 +2331,10 @@ def activate_agent_version(
         str(environment_id)
         for environment_id in payload.get("requested_by_environments") or []
     ]
+    # A values change that brought this version back decides production again, even
+    # though its followers' earlier moves to it are still recorded as requests.
     if (
-        not requested
+        (not requested or values_from is not None)
         and not payload.get("created_for_environment")
         and payload.get("definition_owner") == CONNECTED_OWNER
     ):

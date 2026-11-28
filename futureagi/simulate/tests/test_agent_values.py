@@ -419,6 +419,88 @@ def test_two_values_changes_in_a_row_keep_the_first(auth_client, agent, producti
     assert _names(second["version"]["id"]) == ["A", "B"]
 
 
+def _values_production(client, agent, value):
+    body = _set(client, agent, secret_values={"DB_URL": value})
+    version_id = body["version"]["id"]
+    _store_reading(AgentVersion.objects.get(id=version_id))
+    _passed(version_id)
+    return body
+
+
+def _restore_earlier_value(client, agent, production, *, with_follower):
+    _store_reading(production)
+    following = (
+        _following(_completed(_environment(agent, 1), production))
+        if with_follower
+        else None
+    )
+    earlier = _values_production(client, agent, "pg://b")
+    _values_production(client, agent, "pg://c")
+
+    with patch(NUDGE):
+        restored = _set(client, agent, secret_values={"DB_URL": "pg://b"})
+
+    assert restored["version"]["id"] == earlier["version"]["id"]
+    return AgentVersion.objects.get(id=earlier["version"]["id"]), following
+
+
+def test_restoring_an_earlier_value_makes_that_version_production_again(
+    auth_client, agent, production
+):
+    version, _ = _restore_earlier_value(
+        auth_client, agent, production, with_follower=False
+    )
+
+    assert version.status == "active"
+
+
+def test_restoring_an_earlier_value_moves_the_followers_back_too(
+    auth_client, agent, production
+):
+    version, following = _restore_earlier_value(
+        auth_client, agent, production, with_follower=True
+    )
+
+    following.refresh_from_db()
+    assert version.status == "active"
+    assert following.agent_version_id == version.id
+
+
+def test_a_follower_still_validating_stays_when_production_rolls_back(
+    auth_client, agent, production
+):
+    from simulate.services.harness_agent_versions import promote_to_production
+    from simulate.services.harness_versioning import validation
+
+    _store_reading(production)
+    following = _following(_completed(_environment(agent, 1), production))
+    waiting = []
+
+    def validating(caller, locked, version, **move):
+        waiting.append(validation.agent_move(caller, locked, version, **move))
+        return object()
+
+    with patch.object(validation, "gate_agent_move", side_effect=validating):
+        body = _values_production(auth_client, agent, "pg://b")
+    following.refresh_from_db()
+    assert following.agent_version_id == production.id
+    assert len(waiting) == 1
+    # Production goes back by hand while the follower's move still validates.
+    with patch(NUDGE):
+        promote_to_production(AgentVersion.objects.get(id=production.id))
+
+    outcome = validation.complete_move(
+        following,
+        waiting[0],
+        pair=(following.environment_version_id, following.suite_version_id),
+    )
+
+    following.refresh_from_db()
+    assert outcome == "superseded"
+    assert following.agent_version_id == production.id
+    assert AgentVersion.objects.get(id=body["version"]["id"]).status == "archived"
+
+
 def test_a_code_change_still_waits_to_be_made_production(
     auth_client, agent, production
 ):
@@ -488,6 +570,46 @@ def test_a_build_with_a_value_the_environment_makes_is_refused_before_any_job(
     assert HostedHarnessJob.no_workspace_objects.count() == before
     start.assert_not_called()
     usage.assert_not_called()
+
+
+def _build_with(auth_client, agent, workspace, key, **source):
+    from simulate.tests.test_harness_provider import _v1_payload
+
+    payload = _v1_payload()
+    payload["metadata"] = {"agent_definition_id": str(agent.id)}
+    payload["source"] = {**payload["source"], **source}
+    with (
+        patch(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+        ) as start,
+        patch("simulate.services.harness_usage.require_harness_run_usage") as usage,
+    ):
+        response = auth_client.post(
+            "/simulate/api/harness-jobs/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=key,
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+    return response, start, usage
+
+
+def test_a_build_counts_a_required_value_the_source_brings(
+    auth_client, agent, production, workspace
+):
+    _runtime(production, credential_names=["DB_URL"], required_variable_names=["KEY"])
+
+    refused, start, _ = _build_with(auth_client, agent, workspace, "values-none")
+    assert refused.status_code == 422, refused.content
+    assert refused.json()["error"] == "required_values_missing"
+    start.assert_not_called()
+
+    response, _, usage = _build_with(
+        auth_client, agent, workspace, "values-source", environment_values={"KEY": "k"}
+    )
+
+    assert response.json().get("error") != "required_values_missing", response.content
+    usage.assert_called_once()
 
 
 def test_a_run_with_a_value_the_environment_makes_is_refused_and_reads_once(
