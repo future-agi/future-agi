@@ -290,6 +290,14 @@ describe("AgentEnvironmentsTab", () => {
           agentVersion: { id: "v1", number: 1 },
           policy: "pinned",
         },
+        // Behind too, but still building: the server refuses to move it until it is done.
+        {
+          ...UNTESTED,
+          id: "e6666666",
+          status: "building",
+          agentVersion: { id: "v1", number: 1 },
+          policy: "pinned",
+        },
       ],
     };
     renderTab();

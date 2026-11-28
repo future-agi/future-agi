@@ -9,13 +9,19 @@ const pinned = (status) => ({
 });
 
 describe("canFollow", () => {
-  it("offers to follow production on a pinned row that can still move", () => {
+  it("offers to follow production on a ready pinned row", () => {
+    expect(canFollow(pinned(ENV_STATUS.READY))).toBe(true);
+  });
+
+  it("offers nothing on a row whose build is unfinished", () => {
     for (const status of [
-      ENV_STATUS.READY,
-      ENV_STATUS.RUNNING,
+      ENV_STATUS.AWAITING_APPROVAL,
       ENV_STATUS.BUILDING,
+      ENV_STATUS.RUNNING,
+      ENV_STATUS.FINALIZING,
+      ENV_STATUS.CANCELLING,
     ]) {
-      expect(canFollow(pinned(status))).toBe(true);
+      expect(canFollow(pinned(status))).toBe(false);
     }
   });
 
