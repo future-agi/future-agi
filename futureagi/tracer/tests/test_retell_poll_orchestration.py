@@ -159,8 +159,9 @@ class _FakeQuerySet:
             rows = [r for r in rows if _q_matches(r, cond)]
         return _FakeQuerySet(rows)
 
-    def values_list(self, field_name, flat=True):
-        return _FakeValuesList(getattr(r, field_name) for r in self.rows)
+    def values_list(self, field_name, flat=False):
+        values = (getattr(r, field_name) for r in self.rows)
+        return _FakeValuesList(values if flat else ((v,) for v in values))
 
     def update(self, **kwargs):
         for r in self.rows:
@@ -191,6 +192,10 @@ class _FakeManager:
     def __init__(self, table: dict, *, soft_delete_filter: bool):
         self._table = table
         self._soft_delete_filter = soft_delete_filter
+
+    def using(self, alias):
+        assert alias == "default"
+        return _FakeQuerySet(self._rows())
 
     def _rows(self):
         rows = list(self._table.values())
