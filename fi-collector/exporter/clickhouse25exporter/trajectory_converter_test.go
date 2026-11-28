@@ -64,7 +64,8 @@ func TestDormantCompactEnvDoesNotStripInputValue(t *testing.T) {
 		{Trajectory: trajectory.Config{CompactSpanAttrs: true, Mode: trajectory.ModeOff}, Gate: trajectory.FixedGate(true)},
 	} {
 		td := buildConversationTrace(pid, oid, "sess-p0", 0xaa, 0x01, inPayload, outPayload, false)
-		dev := buildConversationTrace(pid, oid, "sess-p0", 0xaa, 0x01, inPayload, outPayload, false)
+		dev := ptrace.NewTraces()
+		td.CopyTo(dev) // same timestamps: only _version may differ
 		res, err := ConvertWithOptions(context.Background(), td, nil, opts)
 		if err != nil {
 			t.Fatalf("ConvertWithOptions: %v", err)
@@ -256,7 +257,8 @@ func TestConvertDedupProjectGateClosedRowsByteIdenticalToDev(t *testing.T) {
 	for name, gate := range map[string]trajectory.DedupGate{"closed": trajectory.FixedGate(false), "absent": nil} {
 		t.Run(name, func(t *testing.T) {
 			td := buildConversationTrace(pid, oid, "sess", 0x31, 0x01, in, out, true)
-			dev := buildConversationTrace(pid, oid, "sess", 0x31, 0x01, in, out, true)
+			dev := ptrace.NewTraces()
+			td.CopyTo(dev) // same timestamps: only _version may differ
 			res, err := ConvertWithOptions(context.Background(), td, nil, ConvertOptions{Trajectory: cfg, Seen: trajectory.NewSeenStore(nil, 100, time.Hour, time.Hour), Gate: gate})
 			if err != nil {
 				t.Fatal(err)

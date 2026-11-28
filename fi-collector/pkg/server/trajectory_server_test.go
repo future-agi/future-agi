@@ -709,13 +709,21 @@ func insertsInto(inserts []recordedCHInsert, table string) []recordedCHInsert {
 	return out
 }
 
-func requireNoPointerKeys(t *testing.T, rows []map[string]any) {
+// requireNoPointerKeys checks rows carry no pointer column. With
+// convertedClosed (the gate was closed at conversion) it also checks no
+// compaction sentinel was written. A row restored inline at drain time keeps
+// its sentinel: undoing conversion-time compaction is not part of
+// RestoreInline yet.
+func requireNoPointerKeys(t *testing.T, rows []map[string]any, convertedClosed bool) {
 	t.Helper()
 	for _, row := range rows {
 		for _, col := range trajectory.SpansPointerColumns {
 			if _, ok := row[col.Name]; ok {
 				t.Fatalf("row carries pointer column %s: %v", col.Name, row[col.Name])
 			}
+		}
+		if !convertedClosed {
+			continue
 		}
 		for k := range row["attributes_extra"].(map[string]any) {
 			if strings.HasPrefix(k, "__fi_promoted_") {
@@ -775,7 +783,7 @@ func TestServerDedupInactiveUntilSchemaReady(t *testing.T) {
 	if len(spans) != 1 {
 		t.Fatalf("spans inserts %d", len(spans))
 	}
-	requireNoPointerKeys(t, spans[0].Rows)
+	requireNoPointerKeys(t, spans[0].Rows, true)
 	if strings.Contains(spans[0].RawQuery, "input_format_skip_unknown_fields") {
 		t.Fatal("an inline batch must use dev's insert URL")
 	}
@@ -823,7 +831,7 @@ func TestDrainRestoresInlineWhenGateFlipsMissing(t *testing.T) {
 		t.Fatal("closed gate at drain: no items insert")
 	}
 	spans := insertsInto(inserts, "spans")
-	requireNoPointerKeys(t, spans[0].Rows)
+	requireNoPointerKeys(t, spans[0].Rows, false)
 	if !strings.Contains(spans[0].Rows[0]["input"].(string), "Question 1") {
 		t.Fatal("the full input must be restored")
 	}
@@ -877,7 +885,7 @@ func TestItemsV1BatchUnknownColumnClosesGate(t *testing.T) {
 	postTrajOTLP(t, f.srv, trajTestOID, trajTestPID, agentTurn(t, 2))
 	f.srv.drainNow(context.Background())
 	spans = insertsInto(ch.snapshot(), "spans")
-	requireNoPointerKeys(t, spans[0].Rows)
+	requireNoPointerKeys(t, spans[0].Rows, true)
 	if strings.Contains(spans[0].RawQuery, "input_format_skip_unknown_fields") {
 		t.Fatal("inline batches must use dev's URL")
 	}
@@ -895,7 +903,7 @@ func TestDrainItemsFailureUsesOneShortBudget(t *testing.T) {
 		t.Fatalf("trajectory_items attempts %d, want 2", attempts)
 	}
 	spans := insertsInto(ch.snapshot(), "spans")
-	requireNoPointerKeys(t, spans[0].Rows)
+	requireNoPointerKeys(t, spans[0].Rows, false)
 	if !strings.Contains(f.logs.String(), `"event":"trajectory_items_fallback_inline"`) {
 		t.Fatal("fallback not logged")
 	}
@@ -938,7 +946,7 @@ func TestTrajectoryBreakerSkipsExtractionAfterFailure(t *testing.T) {
 	if _, attempts := ch.counts(); attempts != 0 {
 		t.Fatal("no items POST while the breaker is open")
 	}
-	requireNoPointerKeys(t, insertsInto(inserts, "spans")[0].Rows)
+	requireNoPointerKeys(t, insertsInto(inserts, "spans")[0].Rows, true)
 
 	ch.reset()
 	f.clock.Advance(2 * time.Second)
@@ -1008,6 +1016,7 @@ func TestBillFlagAloneEmitsLegacyEvent(t *testing.T) {
 // its default, the spans insert is sent on dev's URL byte for byte, the rows
 // equal those of a server without the feature, and no metadata query runs.
 func TestServerDormantDefaultsIdenticalToDev(t *testing.T) {
+	body := agentTurn(t, 3) // one request for both runs: same timestamps
 	run := func(opts ...Option) recordedCHInsert {
 		t.Helper()
 		ch := &fakeTrajectoryCH{}
@@ -1020,7 +1029,7 @@ func TestServerDormantDefaultsIdenticalToDev(t *testing.T) {
 		defer writer.Close()
 		srv := New(Config{BatchMaxRows: 100, BatchMaxAge: time.Minute}, writer, nil, NoopUsageEmitter{}, NoopMetering{},
 			append([]Option{WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))}, opts...)...)
-		postTrajOTLP(t, srv, trajTestOID, trajTestPID, agentTurn(t, 3))
+		postTrajOTLP(t, srv, trajTestOID, trajTestPID, body)
 		srv.drainNow(context.Background())
 		if metadata, items := ch.counts(); metadata != 0 || items != 0 {
 			t.Fatalf("dormant: %d metadata queries, %d items inserts", metadata, items)

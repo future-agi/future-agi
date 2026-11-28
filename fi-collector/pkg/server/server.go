@@ -294,6 +294,12 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		}
 	}
 
+	if !trajCfg.Normalized() {
+		// Without WithTrajectory: normalize the zero config once here, not
+		// on every request.
+		trajCfg = trajCfg.Normalize()
+	}
+
 	s := &Server{
 		traceNotifier:   traceNotifier,
 		cfg:             cfg,
