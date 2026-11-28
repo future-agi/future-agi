@@ -66,6 +66,18 @@ beforeAll(() => {
     "views/Other.jsx",
     `import Dialog from "@mui/material/Dialog";\n${legacy}`,
   );
+  write(
+    "views/Preferences.tsx",
+    [
+      'import type { Dialog as BarrelDialog } from "@mui/material";',
+      'import type { default as Dialog, DialogProps } from "@mui/material/Dialog";',
+      'import { dialogClasses } from "@mui/material/Dialog";',
+      'import { ClosableDialog } from "src/components/custom-dialog";',
+      "export type DialogComponent = typeof Dialog | typeof BarrelDialog;",
+      "export const Preferences = (props: DialogProps) =>",
+      "  <ClosableDialog {...props} className={dialogClasses.root} />;",
+    ].join("\n"),
+  );
   const optout = [
     "// eslint-disable-next-line",
     "no-restricted-syntax -- ds: brand",
@@ -100,6 +112,7 @@ it("includes typed source files in the full design-system lint", () => {
   expect(stdout).toContain("colors.ts");
   expect(stdout).not.toContain("Parsing error");
   expect(stdout).not.toContain("Wrapper.tsx");
+  expect(stdout).not.toContain("Preferences.tsx");
 });
 
 it("counts TS and TSX opt-outs against the same budget", () => {

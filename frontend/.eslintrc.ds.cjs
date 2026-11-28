@@ -57,9 +57,15 @@ module.exports = {
           {
             name: "@mui/material",
             importNames: ["Dialog"],
+            allowTypeImports: true,
             message: DIALOG_MESSAGE,
           },
-          { name: "@mui/material/Dialog", message: DIALOG_MESSAGE },
+          {
+            name: "@mui/material/Dialog",
+            importNames: ["default"],
+            allowTypeImports: true,
+            message: DIALOG_MESSAGE,
+          },
         ],
       },
     ],
