@@ -94,8 +94,13 @@ class HostedHarnessJob(BaseModel):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
     cancel_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # db_default too: a build from before this column submits jobs without it.
     cancel_confirmed_by = models.CharField(
-        max_length=32, choices=CancelConfirmation.choices, blank=True, default=""
+        max_length=32,
+        choices=CancelConfirmation.choices,
+        blank=True,
+        default="",
+        db_default="",
     )
     terminal_at = models.DateTimeField(null=True, blank=True)
     content_updated_at = models.DateTimeField(null=True, blank=True)

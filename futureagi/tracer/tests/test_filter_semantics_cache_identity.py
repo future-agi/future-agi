@@ -66,7 +66,7 @@ def test_old_results_are_unreachable_without_resetting_scope_admission(monkeypat
     identity = {"project_id": "p", "metric_id": "latency"}
     current_key = snapshots.snapshot_cache_key("observe-system-graph", identity)
     admission_key = snapshots._scope_admission_key(identity)
-    assert current_key.startswith("exact-aggregation:v5:")
+    assert current_key.startswith("exact-aggregation:v6:")
     with monkeypatch.context() as old:
         old.setattr(snapshots, "_CACHE_VERSION", 4)
         legacy_key = snapshots.snapshot_cache_key("observe-system-graph", identity)

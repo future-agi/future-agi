@@ -120,6 +120,15 @@ def compile_metric(config, mode):
     return compact(sql), params
 
 
+def membership_token(family, membership="IN"):
+    """The outer membership test: eval filters compare (project, trace) pairs,
+    so a trace UUID held by two selected projects matches each project on its
+    own result (TH-10545); annotation filters compare traces."""
+    if family == "eval_metric":
+        return f"(project_id, trace_id) {membership} ("
+    return f"trace_id {membership} ("
+
+
 def numeric_expression(alias):
     # Keep this expected nullable rating/value contract independent of the
     # production expression helper: a default-zero extraction would hide absence.
@@ -269,8 +278,11 @@ def assert_eval_scope(sql, params, workspace=True, prefix="s_", index=0):
         WORKSPACE if workspace else ORGANIZATION
     )
     assert params[f"{prefix}eval_id_{index}"] == TEMPLATE
-    assert f"{scan}.created_at >= %(start_date)s" in sql
-    assert f"{scan}.created_at < %(end_date)s" in sql
+    # TH-10545: membership follows each trace's latest recorded result, so
+    # the window bounds subjects, not candidate execution times.
+    assert f"{scan}.created_at >=" not in sql
+    assert f"{scan}.id IN ( SELECT {scan}_candidate.id" in sql
+    assert f"{scan}.created_at <" not in sql
     boundary = f"ORDER BY {scan}._peerdb_version DESC LIMIT 1 BY {scan}.id"
     assert boundary in sql
     replay, live = sql.split(boundary, 1)
@@ -283,7 +295,11 @@ def assert_eval_scope(sql, params, workspace=True, prefix="s_", index=0):
     assert f"{scan}.eval_output_str" in projected
     assert f"{scan}.*" not in projected
     assert f"JSONExtractString({latest}.config), 'output', 'output'" in live
-    assert f"JSONType(JSONExtractString({scan}.config)" not in replay
+    # The election computes its stamp, target type and the score/verdict
+    # presence flags once per row version beside each other (TH-10545); the
+    # filter's own typed presence predicate stays after the collapse.
+    assert "AS eval_has_numeric_score" in replay
+    assert "AS eval_has_verdict" in replay
     for predicate in ("_peerdb_is_deleted = 0", "deleted = 0", "status = 'success'"):
         assert f"{scan}.{predicate}" not in replay
         assert f"{latest}.{predicate}" in live
@@ -314,7 +330,7 @@ def test_presence_compiles_typed_scoped_membership(
     config = config_for(membership_filter(family, kind, operator), placement)
     sql, params = compile_metric(config, mode)
     membership = "NOT IN" if operator == "is_not_set" else "IN"
-    assert f"trace_id {membership} (" in sql
+    assert membership_token(family, membership) in sql
     assert "project_id IN %(project_ids)s" in sql
     assert "start_time >= %(start_date)s" in sql
     assert "start_time < %(end_date)s" in sql
@@ -344,11 +360,14 @@ def test_not_set_is_complement_of_present_trace_membership(mode, family, kind):
     absent, absent_params = compile_metric(
         config_for(membership_filter(family, kind, "is_not_set")), mode
     )
-    assert "trace_id IN (" in present
-    assert "trace_id NOT IN (" in absent
+    # Eval membership compares (project, trace) pairs (TH-10545).
+    token = "trace_id) IN (" if family == "eval_metric" else "trace_id IN ("
+    negated = token.replace(" IN (", " NOT IN (")
+    assert token in present
+    assert negated in absent
     # The complete scoped latest-live present-value relation is identical.
     # A row-level IS NULL cannot admit traces with no Score/eval row at all.
-    assert absent == present.replace("trace_id IN (", "trace_id NOT IN (", 1)
+    assert absent == present.replace(token, negated, 1)
     assert absent_params == present_params
 
 
@@ -378,7 +397,12 @@ def test_global_and_metric_presence_conjoin_without_alias_or_parameter_collision
         ]
     sql, params = compile_metric(config, mode)
     outer = "s.trace_id" if grouped else "trace_id"
-    assert f"{outer} IN ( SELECT usage_s_eval_filter_latest_0.eval_trace_id" in sql
+    outer_project = "s.project_id" if grouped else "project_id"
+    latest = "usage_s_eval_filter_latest_0"
+    assert (
+        f"({outer_project}, {outer}) IN ( "
+        f"SELECT {latest}.eval_project_id, {latest}.eval_trace_id" in sql
+    )
     assert f"{outer} NOT IN ( WITH annotation_s_candidates_1 AS" in sql
     assert_eval_presence(sql, "PASS_FAIL")
     assert_eval_scope(sql, params)
@@ -450,7 +474,7 @@ def test_numeric_range_binds_both_finite_endpoints_without_dropping_filter(
         membership_filter(family, kind, operator, value=["0", "5"]), placement
     )
     sql, params = compile_metric(config, mode)
-    assert "trace_id IN (" in sql
+    assert membership_token(family) in sql
     lower = [key for key, value in params.items() if value == 0]
     upper = [key for key, value in params.items() if value == 5]
     assert lower and upper, "both range endpoints must be separate bound values"
@@ -580,19 +604,26 @@ def test_membership_helper_ignores_unrelated_filters_and_preserves_all_inputs(mo
             unrelated, params, "probe_"
         )
         clauses, extra = builder._build_subquery_filters(
-            filters, params, "probe_", trace_id_expr="subject.trace_id"
+            filters,
+            params,
+            "probe_",
+            trace_id_expr="subject.trace_id",
+            project_id_expr="subject.project_id",
         )
     finally:
         assert (config, filters, params) == before
     assert (ignored, ignored_params) == ([], {})
     assert len(clauses) == 2
     assert clauses[0].startswith("subject.trace_id IN (")
-    assert clauses[1].startswith("subject.trace_id NOT IN (")
+    assert clauses[1].startswith("(subject.project_id, subject.trace_id) NOT IN (")
     assert extra == {
         "probe_label_id_0": LABEL,
         "probe_ann_org_id_0": ORGANIZATION,
         "probe_eval_id_1": TEMPLATE,
         "probe_scope_id_1": WORKSPACE,
+        # The eval scan is also scoped by organization, the usage sort-key
+        # prefix, ahead of the workspace (TH-10545).
+        "probe_org_scope_id_1": ORGANIZATION,
     }
 
 
@@ -620,7 +651,7 @@ def test_output_type_aliases_preserve_presence_sql_and_bindings(
     canonical_sql, canonical_params = compile_metric(
         config_for(membership_filter(family, canonical, "is_not_set")), mode
     )
-    assert "trace_id NOT IN (" in alias_sql
+    assert "NOT IN (" in alias_sql
     assert alias_sql == canonical_sql
     assert alias_params == canonical_params
 
@@ -639,7 +670,7 @@ def test_null_operator_aliases_match_canonical_presence_without_binding_values(
         config_for(membership_filter(family, kind, canonical)), mode
     )
     membership = "NOT IN" if canonical == "is_not_set" else "IN"
-    assert f"trace_id {membership} (" in alias_sql
+    assert membership_token(family, membership) in alias_sql
     assert alias_sql == canonical_sql
     assert alias_params == canonical_params
     assert not any(key.endswith("_val") for key in alias_params)
@@ -665,7 +696,10 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     sql, params = compile_metric(config, mode)
     scan = "usage_s_eval_filter_scan_0"
     latest = "usage_s_eval_filter_latest_0"
-    assert f"trace_id IN ( SELECT {latest}.eval_trace_id" in sql
+    assert (
+        "(project_id, trace_id) IN ( "
+        f"SELECT {latest}.eval_project_id, {latest}.eval_trace_id" in sql
+    )
     projection = sql.split(f"FROM usage_apicalllog AS {scan}", 1)[0].rsplit(
         "SELECT ", 1
     )[1]
@@ -673,15 +707,26 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     assert {f"{scan}.eval_score", f"{scan}.eval_output_str"} <= projected
     assert f"{scan}.config" not in projected
     assert "*" not in projection  # A wildcard would silently read config too.
-    assert re.search(r"\bconfig\b", sql, flags=re.IGNORECASE) is None
+    # The latest-recorded election (TH-10545) reads only the project stamp,
+    # the target type and the score/verdict presence flags out of config; the
+    # raw column is never projected.
+    config_reads = re.findall(r"[^\s(]*\bconfig\b[^\s,]*", sql, flags=re.IGNORECASE)
+    assert config_reads and set(config_reads) == {f"{scan}.config)"}, config_reads
+    # The stamp, the target type and the verdict flag's text test.
+    assert sql.count(f"JSONExtractString(JSONExtractString({scan}.config), ") == 3
+    assert f"JSONExtractString({scan}.config), 'project_id')" in sql
+    assert f"JSONExtractString({scan}.config), 'target_type')" in sql
     assert params["s_0_val"] == value
     assert "s_0_val_low" not in params and "s_0_val_high" not in params
     assert params["s_eval_id_0"] == TEMPLATE
     assert params["s_scope_id_0"] == WORKSPACE
     assert f"{scan}.source_id = %(s_eval_id_0)s" in sql
     assert f"{scan}.workspace_id = toUUID(%(s_scope_id_0)s)" in sql
-    assert f"{scan}.created_at >= %(start_date)s" in sql
-    assert f"{scan}.created_at < %(end_date)s" in sql
+    # TH-10545: membership follows each trace's latest recorded result, so
+    # the window bounds subjects, not candidate execution times.
+    assert f"{scan}.created_at >=" not in sql
+    assert f"{scan}.id IN ( SELECT {scan}_candidate.id" in sql
+    assert f"{scan}.created_at <" not in sql
     boundary = f"ORDER BY {scan}._peerdb_version DESC LIMIT 1 BY {scan}.id"
     replay, live = sql.split(boundary, 1)
     for predicate in ("_peerdb_is_deleted = 0", "deleted = 0", "status = 'success'"):
@@ -695,6 +740,9 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     else:
         column = "eval_score" if kind == "SCORE" else "eval_output_str"
         expression = f"{latest}.{column}"
+        if kind == "SCORE":
+            # A missing score is stored as 0: it is no value (TH-10545).
+            expression = f"{latest}.eval_has_numeric_score AND {expression}"
     assert (
         f"AND {latest}.eval_trace_id != '' AND {expression} {comparison} %(s_0_val)s"
     ) in live
