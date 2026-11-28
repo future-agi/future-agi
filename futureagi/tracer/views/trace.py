@@ -5466,26 +5466,47 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         if bounded_export and content_rows:
             from tracer.services.clickhouse.v2.trajectory_hydration import (
+                TrajectoryHydrationUnavailable,
                 hydrate_span_dicts,
-                is_trajectory_store_read_enabled,
+                mark_csv_unavailable_previews,
+                trajectory_read_state,
             )
 
-            if is_trajectory_store_read_enabled():
-                hydrate_span_dicts(
-                    content_rows,
-                    lambda traj_sql, traj_params: list(
-                        analytics.execute_ch_query(
-                            traj_sql,
-                            traj_params,
-                            timeout_ms=read_deadline.remaining_ms(
-                                TRACE_LIST_ENRICHMENT_TIMEOUT_MS
-                            ),
-                            settings=page_read_settings,
-                        ).data
-                        or []
-                    ),
-                    project_id_fallback=None if org_scope else str(project_id),
-                    attr_key="attributes_extra",
+            try:
+                # READY latches, so a state read here is never older than the
+                # one the content SQL was built under.
+                read_state = trajectory_read_state()
+                if read_state.projects_pointers:
+                    hydrate_span_dicts(
+                        content_rows,
+                        lambda traj_sql, traj_params: list(
+                            analytics.execute_ch_query(
+                                traj_sql,
+                                traj_params,
+                                timeout_ms=read_deadline.remaining_ms(
+                                    TRACE_LIST_ENRICHMENT_TIMEOUT_MS
+                                ),
+                                settings=page_read_settings,
+                            ).data
+                            or []
+                        ),
+                        project_id_fallback=None if org_scope else str(project_id),
+                        attr_key="attributes_extra",
+                        state=read_state,
+                        surface="trace_csv",
+                    )
+                    # The CSV keeps a missing side's preview, marked as such.
+                    mark_csv_unavailable_previews(content_rows)
+            except TrajectoryHydrationUnavailable as exc:
+                logger.warning(
+                    "trace_list_trajectory_hydration_unavailable",
+                    error_code=exc.code,
+                    project_id=str(project_id) if project_id else None,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Trace data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
                 )
         content_map = merge_content_rows(
             result.data,

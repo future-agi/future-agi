@@ -59,6 +59,23 @@ class EvalTelemetryReadError(RuntimeError):
     """A transient failure to read authoritative eval telemetry from CH."""
 
 
+class SpanContentUnavailable(RuntimeError):
+    """The span's full input or output is not in the trajectory store (a
+    missing item, a checksum mismatch or the hydration kill switch). Only a
+    preview is left, and an eval never scores a preview: the eval records an
+    error. Not retried; a fresh span whose items are not yet visible is
+    ``TrajectoryHydrationUnavailable`` instead, which is
+    ``EvalTelemetryReadError`` (retried)."""
+
+    def __init__(self, span_id: str, sides: list[str]):
+        self.span_id = span_id
+        self.sides = sides
+        super().__init__(
+            f"Span {span_id} full {'/'.join(sides)} content is unavailable; "
+            "the stored preview is not evaluated."
+        )
+
+
 # Per-execution override of the read source. The new eval engine sets this to
 # "clickhouse" for the duration of one entry's run (see run_entry); the legacy
 # cron path never sets it, so it stays on the settings/env default ("postgres")
@@ -281,11 +298,28 @@ def filter_observation_spans_by_trace(
 
 
 def _construct_from_chspan(ch_row) -> ObservationSpan:
-    """Shared body of the hybrid-construct logic."""
+    """Shared body of the hybrid-construct logic.
+
+    Raises ``SpanContentUnavailable`` for a span whose full content could not
+    be read: its input/output (and any promoted attribute) would be a preview.
+    """
     import json as _j
 
     from tracer.models.observation_span import ObservationSpan
     from tracer.services.clickhouse.v2.span_reader import _ch_span_attributes
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        content_unavailable_sides,
+    )
+
+    unavailable = content_unavailable_sides(ch_row)
+    if unavailable:
+        logger.warning(
+            "eval_span_content_unavailable",
+            span_id=str(ch_row.id),
+            project_id=str(ch_row.project_id),
+            sides=unavailable,
+        )
+        raise SpanContentUnavailable(str(ch_row.id), unavailable)
 
     obj = ObservationSpan(
         id=ch_row.id,

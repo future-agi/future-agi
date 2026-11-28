@@ -66,8 +66,12 @@ from tracer.services.clickhouse.read_budget import (
 from tracer.services.clickhouse.v2.trace_detail_reads import PhysicalSpanIdentity
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_ITEMS_V1,
+    TrajectoryHydrationUnavailable,
+    TrajectoryReadState,
+    content_unavailable_sides,
     hydrate_span_dicts,
-    is_trajectory_store_read_enabled,
+    pinned_read_state,
+    trajectory_read_state,
 )
 
 SCHEMA = "insights-evidence/v1"
@@ -2063,12 +2067,8 @@ class EvidenceQueryBuilder:
         as_of = self._as_of(params, keyword="  AND")
         inner = derived = outer = ""
         if heavy:
-            include_traj = is_trajectory_store_read_enabled()
-            inner = (
-                _CONTENT_HEAVY_INNER + _CONTENT_HEAVY_TRAJ_INNER
-                if include_traj
-                else _CONTENT_HEAVY_INNER
-            )
+            include_traj = trajectory_read_state().projects_pointers
+            inner = _CONTENT_HEAVY_TRAJ_INNER if include_traj else _CONTENT_HEAVY_INNER
             derived = _CONTENT_HEAVY_DERIVED
             outer = (
                 _CONTENT_HEAVY_OUTER_WITH_TRAJ if include_traj else _CONTENT_HEAVY_OUTER
@@ -2171,13 +2171,42 @@ _CONTENT_HEAVY_INNER = """
                         argMax(attrs_number, _version) AS latest_attrs_number,
                         argMax(attrs_bool, _version) AS latest_attrs_bool,"""
 
+# With pointers, the content columns and the pointers come from ONE argMax
+# over a tuple (as in trace detail): two physical rows with an equal
+# _version (an items_v1 row and its inline copy) can never mix into a
+# preview labelled inline. Replaces _CONTENT_HEAVY_INNER in that case.
 _CONTENT_HEAVY_TRAJ_INNER = """
-                        argMax(input_item_hashes, _version) AS latest_input_item_hashes,
-                        argMax(output_item_hashes, _version) AS latest_output_item_hashes,
-                        argMax(tool_def_hashes, _version) AS latest_tool_def_hashes,
-                        argMax(item_scope_id, _version) AS latest_item_scope_id,
-                        argMax(payload_encoding, _version) AS latest_payload_encoding,
-                        argMax(payload_envelope, _version) AS latest_payload_envelope,"""
+                        argMax(
+                            tuple(
+                                input, output, span_events, attributes_extra,
+                                metadata, attrs_string, attrs_number, attrs_bool,
+                                input_item_hashes, output_item_hashes,
+                                tool_def_hashes, item_scope_id,
+                                payload_encoding, payload_envelope, created_at
+                            ),
+                            _version
+                        ) AS latest_content_tuple,
+                        tupleElement(latest_content_tuple, 1) AS latest_input,
+                        tupleElement(latest_content_tuple, 2) AS latest_output,
+                        tupleElement(latest_content_tuple, 3) AS latest_span_events,
+                        tupleElement(latest_content_tuple, 4)
+                            AS latest_attributes_extra,
+                        tupleElement(latest_content_tuple, 5) AS latest_metadata,
+                        tupleElement(latest_content_tuple, 6) AS latest_attrs_string,
+                        tupleElement(latest_content_tuple, 7) AS latest_attrs_number,
+                        tupleElement(latest_content_tuple, 8) AS latest_attrs_bool,
+                        tupleElement(latest_content_tuple, 9)
+                            AS latest_input_item_hashes,
+                        tupleElement(latest_content_tuple, 10)
+                            AS latest_output_item_hashes,
+                        tupleElement(latest_content_tuple, 11)
+                            AS latest_tool_def_hashes,
+                        tupleElement(latest_content_tuple, 12) AS latest_item_scope_id,
+                        tupleElement(latest_content_tuple, 13)
+                            AS latest_payload_encoding,
+                        tupleElement(latest_content_tuple, 14)
+                            AS latest_payload_envelope,
+                        tupleElement(latest_content_tuple, 15) AS latest_created_at,"""
 
 _CONTENT_HEAVY_DERIVED = f""",
                     {_extra_value_sql("latest_attributes_extra", "input.value")}
@@ -2214,7 +2243,8 @@ _CONTENT_HEAVY_TRAJ_OUTER = """
                 latest_tool_def_hashes AS tool_def_hashes,
                 latest_item_scope_id AS item_scope_id,
                 latest_payload_encoding AS payload_encoding,
-                latest_payload_envelope AS payload_envelope,"""
+                latest_payload_envelope AS payload_envelope,
+                latest_created_at AS created_at,"""
 
 _CONTENT_HEAVY_OUTER = """
                 substringUTF8(latest_input, 1, %(evidence_heavy_chars)s) AS input,
@@ -2773,7 +2803,33 @@ def _read_content(
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Content rows in batches bounded by span count and by the chars each
     tier's read charges: full reads, status-only reads, scalar-only reads,
-    and a span read in part alone at its own cap."""
+    and a span read in part alone at its own cap.
+
+    One read-state snapshot covers every batch, so the SQL and its hydration
+    agree. Evidence fails closed: a hydration failure is
+    ``EvidenceUnavailable('trajectory_hydration_unavailable')`` and a span
+    whose full content is gone is ``EvidenceUnavailable(
+    'trajectory_items_missing')``; a preview is never evidence."""
+    try:
+        read_state = trajectory_read_state()
+    except TrajectoryHydrationUnavailable as exc:
+        raise EvidenceUnavailable("trajectory_hydration_unavailable") from exc
+    with pinned_read_state(read_state):
+        return _read_content_batches(
+            reader, builder, kept, full, status_only, partial, limits, read_state
+        )
+
+
+def _read_content_batches(
+    reader: _Reader,
+    builder: EvidenceQueryBuilder,
+    kept: list[_Node],
+    full: set[int],
+    status_only: set[int],
+    partial: Mapping[int, int],
+    limits: EvidenceLimits,
+    read_state: TrajectoryReadState,
+) -> dict[tuple[str, str], dict[str, Any]]:
     tiers: list[tuple[list[_Node], int, int, Callable[[_Node], int]]] = [
         ([], limits.max_raw_field_chars, _STATUS_MESSAGE_CHARS, lambda n: n.raw_chars),
         ([], 0, _STATUS_MESSAGE_CHARS, lambda n: _STATUS_READ_CHARS + n.status_chars),
@@ -2821,15 +2877,24 @@ def _read_content(
         )
         if (
             heavy > 0
-            and is_trajectory_store_read_enabled()
+            and read_state.projects_pointers
             and any(row.get("payload_encoding") == ENCODING_ITEMS_V1 for row in result)
         ):
             pre_vals = [(row.get("input"), row.get("output")) for row in result]
-            hydrate_span_dicts(
-                result,
-                lambda q, p: reader.rows((q, p), max_rows=50_000),
-                project_id_fallback=builder.project_id,
-            )
+            try:
+                hydrate_span_dicts(
+                    result,
+                    lambda q, p: reader.rows(
+                        (q, p), max_rows=len(set(p.get("traj_pairs") or ())) + 1
+                    ),
+                    project_id_fallback=builder.project_id,
+                    state=read_state,
+                    surface="insights_evidence",
+                )
+            except TrajectoryHydrationUnavailable as exc:
+                raise EvidenceUnavailable("trajectory_hydration_unavailable") from exc
+            if any(content_unavailable_sides(row) for row in result):
+                raise EvidenceUnavailable("trajectory_items_missing")
             for row, (pre_in, pre_out) in zip(result, pre_vals, strict=True):
                 if row.get("payload_encoding") == ENCODING_ITEMS_V1:
                     raw_env = row.get("payload_envelope")

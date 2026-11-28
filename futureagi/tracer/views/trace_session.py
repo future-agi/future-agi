@@ -149,6 +149,9 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    TrajectoryHydrationUnavailable,
+)
 from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
@@ -1233,6 +1236,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 },
                 status=drf_status.HTTP_504_GATEWAY_TIMEOUT,
             )
+        except TrajectoryHydrationUnavailable as e:
+            logger.warning(
+                "trace_session_trajectory_hydration_unavailable",
+                session_id=str(self.kwargs.get("pk")),
+                error_code=e.code,
+            )
+            return self._gm.custom_error_response(
+                drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Session details are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         except Exception as e:
             logger.exception(
                 "trace_session_retrieve_failed",
@@ -1343,10 +1357,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         if traces_data:
             from tracer.services.clickhouse.v2.trajectory_hydration import (
                 hydrate_span_dicts,
-                is_trajectory_store_read_enabled,
+                trajectory_read_state,
             )
 
-            if is_trajectory_store_read_enabled():
+            # READY latches, so this is never older than the state the
+            # traces query above was built under. A probe or items failure
+            # raises TrajectoryHydrationUnavailable (503 in retrieve()).
+            read_state = trajectory_read_state()
+            if read_state.projects_pointers:
                 hydrate_span_dicts(
                     traces_data,
                     lambda traj_sql, traj_params: list(
@@ -1360,7 +1378,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         or []
                     ),
                     project_id_fallback=project_id,
+                    state=read_state,
+                    surface="session_detail",
                 )
+                for row in traces_data:
+                    # Projected only so hydration can tell replica lag from a
+                    # lost item; not part of the response.
+                    row.pop("created_at", None)
 
         if not traces_data:
             next_session_id, previous_session_id = get_session_navigation(
@@ -1438,6 +1462,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     if marker is not None:
                         eval_map[key] = {"type": "status", **marker}
 
+        from tracer.services.clickhouse.v2.trajectory_hydration import (
+            CONTENT_UNAVAILABLE_KEY,
+            content_unavailable_sides,
+        )
+
         response = []
         for trace_row in traces_data:
             trace_id_str = trace_row["trace_id"]
@@ -1445,6 +1474,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "trace_id": trace_id_str,
                 "input": trace_row.get("input"),
                 "output": trace_row.get("output"),
+                **(
+                    {CONTENT_UNAVAILABLE_KEY: unavailable}
+                    if (unavailable := content_unavailable_sides(trace_row))
+                    else {}
+                ),
                 "system_metrics": {
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
                     "user_id": user_id_label,

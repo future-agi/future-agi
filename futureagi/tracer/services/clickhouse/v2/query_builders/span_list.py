@@ -797,10 +797,10 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             and (column in _PHYSICAL_SPAN_FLOOR_COLUMNS or column in referenced)
         )
         from tracer.services.clickhouse.v2.trajectory_hydration import (
-            is_trajectory_store_read_enabled,
+            trajectory_read_state,
         )
 
-        if not is_trajectory_store_read_enabled():
+        if not trajectory_read_state().projects_pointers:
             return packed
         pointers = set(_TRAJECTORY_POINTER_REFERENCE_RE.findall(rewritten))
         return packed + tuple(
@@ -1006,13 +1006,13 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         )
         if include_trajectory:
             from tracer.services.clickhouse.v2.trajectory_hydration import (
-                TRAJECTORY_SPAN_COLUMNS,
-                is_trajectory_store_read_enabled,
+                TRAJECTORY_HYDRATION_COLUMNS,
+                trajectory_read_state,
             )
 
-            if is_trajectory_store_read_enabled():
+            if trajectory_read_state().projects_pointers:
                 content_columns_sql = (
-                    f"{content_columns_sql}, {', '.join(TRAJECTORY_SPAN_COLUMNS)}"
+                    f"{content_columns_sql}, {', '.join(TRAJECTORY_HYDRATION_COLUMNS)}"
                 )
         source = self._filter_match_source_sql(
             scope, consumer_sql=f"{content_columns_sql} {project_version}"

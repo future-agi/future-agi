@@ -15,6 +15,7 @@ import {
 } from "./DrawerRightRenderer/getSpanData";
 import PropTypes from "prop-types";
 import StatusChip from "../custom-status-chip/CustomStatusChip";
+import ContentUnavailableChip from "./ContentUnavailableChip";
 
 const DrawerRightSkeleton = () => {
   const theme = useTheme();
@@ -265,6 +266,9 @@ const DrawerRight = ({
         }}
       >
         <StatusChip status={observationSpan?.observation_span?.status} />
+        <ContentUnavailableChip
+          sides={observationSpan?.observation_span?.content_unavailable}
+        />
         {/* Total Cost */}
 
         {(selectedNode?.trace !== null || selectedNode?.trace_id !== null) && (

@@ -27,6 +27,10 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    CONTENT_UNAVAILABLE_KEY,
+    content_unavailable_sides,
+)
 from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
@@ -300,6 +304,11 @@ def retrieve_trace_detail_ch(
             "eval_status": None,
             "prompt_version": None,
         }
+        unavailable = content_unavailable_sides(row)
+        if unavailable:
+            # The stored preview is shown; the UI marks it as not the full
+            # content.
+            span_data[CONTENT_UNAVAILABLE_KEY] = unavailable
 
         span_map[span_id] = {
             "observation_span": span_data,

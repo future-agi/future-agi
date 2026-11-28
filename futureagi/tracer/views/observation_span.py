@@ -986,6 +986,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             TraceDetailNotFound,
             TraceDetailReadUnavailable,
         )
+        from tracer.services.clickhouse.v2.trajectory_hydration import (
+            TrajectoryHydrationUnavailable,
+        )
 
         query = getattr(request, "validated_query_data", {}) or {}
         # The run parameters are not part of the selector: they only replace the
@@ -1081,7 +1084,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(error_status, message, code=exc.code)
         except TraceDetailNotFound:
             return self._gm.bad_request(get_error_message("OBSERVATION_SPAN_NOT_FOUND"))
-        except TraceDetailReadUnavailable as exc:
+        except (TraceDetailReadUnavailable, TrajectoryHydrationUnavailable) as exc:
             logger.warning(
                 "span_detail_bounded_read_incomplete",
                 span_id=str(kwargs.get("pk") or ""),
@@ -1260,6 +1263,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             "eval_status": None,
             "prompt_version": None,
         }
+        from tracer.services.clickhouse.v2.trajectory_hydration import (
+            CONTENT_UNAVAILABLE_KEY,
+            content_unavailable_sides,
+        )
+
+        unavailable = content_unavailable_sides(row)
+        if unavailable:
+            # The stored preview is shown and marked as not the full content.
+            observation_span[CONTENT_UNAVAILABLE_KEY] = unavailable
 
         if physical_reference is not None:
             from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
@@ -2749,34 +2761,42 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Programming defects still propagate; only typed CH/read-budget
         # failures become a sanitized unavailable response below.
         def _fetch_content():
+            from tracer.services.clickhouse.v2.trajectory_hydration import (
+                hydrate_span_dicts,
+                mark_csv_unavailable_previews,
+                read_state_snapshot,
+            )
+
             if not span_identities:
                 return _stats([], [], False)
             is_bounded_export = bool(bounded_export)
-            if is_bounded_export:
-                content_query, content_params = builder.build_content_query(
-                    span_ids,
-                    span_identities=span_identities,
-                    include_trajectory=True,
+            # One read-state snapshot: the content SQL and its hydration agree.
+            with read_state_snapshot() as read_state:
+                if is_bounded_export:
+                    content_query, content_params = builder.build_content_query(
+                        span_ids,
+                        span_identities=span_identities,
+                        include_trajectory=True,
+                    )
+                else:
+                    content_query, content_params = builder.build_content_query(
+                        span_ids, span_identities=span_identities
+                    )
+                if not content_query:
+                    return _stats([], [], False)
+                content_result = analytics.execute_ch_query(
+                    content_query,
+                    content_params,
+                    timeout_ms=read_deadline.remaining_ms(
+                        SPAN_LIST_ENRICHMENT_TIMEOUT_MS
+                    ),
+                    settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
                 )
-            else:
-                content_query, content_params = builder.build_content_query(
-                    span_ids, span_identities=span_identities
-                )
-            if not content_query:
-                return _stats([], [], False)
-            content_result = analytics.execute_ch_query(
-                content_query,
-                content_params,
-                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
-                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
-            )
-            if is_bounded_export and content_result.data:
-                from tracer.services.clickhouse.v2.trajectory_hydration import (
-                    hydrate_span_dicts,
-                    is_trajectory_store_read_enabled,
-                )
-
-                if is_trajectory_store_read_enabled():
+                if (
+                    is_bounded_export
+                    and content_result.data
+                    and read_state.projects_pointers
+                ):
                     hydrate_span_dicts(
                         content_result.data,
                         lambda traj_sql, traj_params: list(
@@ -2792,7 +2812,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         ),
                         project_id_fallback=None if org_scope else str(project_id),
                         attr_key="attributes_extra",
+                        state=read_state,
+                        surface="span_csv",
                     )
+                    # The CSV keeps a missing side's preview, marked as such.
+                    mark_csv_unavailable_previews(content_result.data)
             return _stats(content_result.data, content_result.data, True)
 
         def _fetch_count():
@@ -2939,6 +2963,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
         except Exception as exc:
+            from tracer.services.clickhouse.v2.trajectory_hydration import (
+                TrajectoryHydrationUnavailable,
+            )
+
             logger.warning(
                 "span_list_enrichment_failed",
                 error_type=type(exc).__name__,
@@ -2946,7 +2974,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 page_number=page_number,
                 exc_info=True,
             )
-            if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+            if not (
+                is_read_budget_error(exc)
+                or is_clickhouse_query_error(exc)
+                or isinstance(exc, TrajectoryHydrationUnavailable)
+            ):
                 raise
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
