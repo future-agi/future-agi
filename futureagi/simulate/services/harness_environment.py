@@ -131,8 +131,11 @@ def annotate_for_list(
     so an environment can never be visible on one surface and absent from the
     other.
     """
+    from simulate.services.harness_designs import annotate_design_phase
+
     return (
-        queryset.annotate(
+        annotate_design_phase(queryset)
+        .annotate(
             # An annotation walks the relation directly, so the soft-delete
             # filter the model's manager would apply has to be restated here.
             registered_scenarios=Count(
@@ -504,7 +507,8 @@ def status_for(job: HostedHarnessJob) -> str:
 
     Everything before the calls start is "building", because from the outside
     acquiring a source and seeding a world are the same activity: the
-    environment is not ready yet.
+    environment is not ready yet. An unfinished design says instead whether it is
+    still being drafted or waiting on the person (`design_phase`).
     """
     if job.state == HostedHarnessJob.State.COMPLETED:
         return STATUS_COMPLETED
@@ -512,7 +516,9 @@ def status_for(job: HostedHarnessJob) -> str:
         return STATUS_FAILED
     if job.state in _RUN_STATES:
         return STATUS_RUNNING
-    return STATUS_BUILDING
+    from simulate.services.harness_designs import design_phase
+
+    return design_phase(job) or STATUS_BUILDING
 
 
 def agent_type(job: HostedHarnessJob, contract: dict[str, Any] | None = None) -> str:

@@ -516,6 +516,7 @@ def serialize_job(
     turn_totals: dict[uuid.UUID, float] | None = None,
 ) -> dict[str, Any]:
     from simulate.services.harness_cancel import cancel_status
+    from simulate.services.harness_designs import design_phase
     from simulate.services.harness_usage import harness_consumption
     from simulate.services.harness_versioning.read import versioning_flags
 
@@ -714,7 +715,7 @@ def serialize_job(
         },
         "status": {
             "state": job.state,
-            "stage": job.current_stage,
+            "stage": design_phase(job) or job.current_stage,
             "updated_at": job.updated_at.isoformat(),
             "attempt": attempt.attempt_number if attempt else 0,
             "completed_scenarios": job.completed_count,

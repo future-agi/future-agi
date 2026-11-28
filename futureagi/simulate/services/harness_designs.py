@@ -29,13 +29,19 @@ from typing import Any, cast
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Exists, OuterRef, QuerySet
 from django.utils import timezone
 
+from simulate.constants.harness_environment import (
+    STATUS_AWAITING_APPROVAL,
+    STATUS_DESIGNING,
+)
 from simulate.models import (
     HarnessDesignDocument,
     HarnessEnvironmentRelease,
     HarnessSuiteRelease,
     HostedHarnessConversation,
+    HostedHarnessConversationMessage,
     HostedHarnessJob,
 )
 from simulate.services.harness_releases import (
@@ -343,6 +349,76 @@ def _documents(
 def design_of(job: HostedHarnessJob) -> dict[str, Any] | None:
     value = ((job.payload or {}).get("metadata") or {}).get("design")
     return value if isinstance(value, dict) else None
+
+
+# ALK's approve option, as `chosen_option` matches it: its id, label, or flattened card text.
+_APPROVALS = (
+    "approve",
+    "Build this",
+    "Build this: Approve the design and start building",
+)
+_ENDED = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+
+
+def _proposal_open(job_ref) -> Exists:
+    return Exists(
+        HostedHarnessConversation.no_workspace_objects.filter(
+            job=job_ref, blocking_input__has_key="design_proposal"
+        )
+    )
+
+
+def _approved(job_ref) -> Exists:
+    return Exists(
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation__job=job_ref,
+            role=HostedHarnessConversationMessage.Role.USER,
+            reply_to__isnull=False,
+            content__in=_APPROVALS,
+        )
+    )
+
+
+def annotate_design_phase(
+    queryset: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """What `design_phase` reads, for a page of jobs in the same query."""
+    return queryset.annotate(
+        design_proposal_open=_proposal_open(OuterRef("pk")),
+        design_approved=_approved(OuterRef("pk")),
+    )
+
+
+def design_phase(job: HostedHarnessJob) -> str | None:
+    """Whether an unfinished design is waiting on the person or still being drafted, else None.
+
+    Waiting: its sources are in review, or its design proposal is open. Drafting: the person has
+    not yet chosen "Build this", so nothing is built. After that it is building like any job.
+    shortcut: an approval ALK refuses (the proposal still has open dependencies) reads as
+    building until the builder proposes again; ALK records no approval the platform can read.
+    """
+    if job.state in _ENDED or design_of(job) is None:
+        return None
+    if job.current_stage == AWAITING_REVIEW:
+        return STATUS_AWAITING_APPROVAL
+    proposal_open = getattr(job, "design_proposal_open", None)
+    approved = getattr(job, "design_approved", None)
+    if proposal_open is None or approved is None:
+        row = annotate_design_phase(
+            HostedHarnessJob.no_workspace_objects.filter(pk=job.pk)
+        )
+        proposal_open, approved = row.values_list(
+            "design_proposal_open", "design_approved"
+        ).get()
+    if proposal_open:
+        return STATUS_AWAITING_APPROVAL
+    return None if approved else STATUS_DESIGNING
 
 
 def design_slug(name: str) -> str:

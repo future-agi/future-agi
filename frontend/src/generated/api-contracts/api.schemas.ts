@@ -21055,6 +21055,8 @@ export type HarnessEnvironmentApiStatus =
 
 export const HarnessEnvironmentApiStatus = {
   building: "building",
+  designing: "designing",
+  awaiting_approval: "awaiting_approval",
   running: "running",
   completed: "completed",
   failed: "failed",
@@ -21144,6 +21146,8 @@ export type HarnessEnvironmentOverviewApiStatus =
 
 export const HarnessEnvironmentOverviewApiStatus = {
   building: "building",
+  designing: "designing",
+  awaiting_approval: "awaiting_approval",
   running: "running",
   completed: "completed",
   failed: "failed",

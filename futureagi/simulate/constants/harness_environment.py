@@ -9,6 +9,9 @@ STATUS_BUILDING = "building"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
+# An unfinished design before anything is built: drafting, or waiting on the person.
+STATUS_DESIGNING = "designing"
+STATUS_AWAITING_APPROVAL = "awaiting_approval"
 
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPE_CHAT = "chat"

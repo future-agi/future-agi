@@ -151401,6 +151401,8 @@
                     "type": "string",
                     "enum": [
                         "building",
+                        "designing",
+                        "awaiting_approval",
                         "running",
                         "completed",
                         "failed"
@@ -151672,6 +151674,8 @@
                     "type": "string",
                     "enum": [
                         "building",
+                        "designing",
+                        "awaiting_approval",
                         "running",
                         "completed",
                         "failed"
