@@ -30,7 +30,11 @@ const CHAT = 'Chat';
 interface Refusal { error: string; message: string; positions: number[] }
 interface ListPage { count: number; results: { id: string; name: string; agent_type: string }[] }
 
-test('SIM-E2E-045: a wrong browser site is refused by its position at preflight, before anything is built', {
+// Agent reading runs on worker-reading and mock-daytona, which only the distributed E2E stack starts.
+// Skipped when the suite is listed, not while it runs, so the standalone shards and their listing agree.
+const distributedOnly = process.env.E2E_STACK === 'standalone' ? test.skip : test;
+
+distributedOnly('SIM-E2E-045: a wrong browser site is refused by its position at preflight, before anything is built', {
   tag: ['@flow'],
   annotation: flowAnnotation({
     id: 'SIM-E2E-045', area: 'simulate',
@@ -45,7 +49,6 @@ test('SIM-E2E-045: a wrong browser site is refused by its position at preflight,
     browserChecks: ['the preflight row reads "Preflight couldn\'t run" and the refusal naming site 2'],
   }),
 }, async ({ page, actor }, testInfo) => {
-  test.skip(process.env.E2E_STACK === 'standalone', 'agent reading runs on worker-reading and mock-daytona in the distributed E2E stack');
   // Every wait: the upload (UI_READY) + the found agent (UI_READY + POLL.ASYNC_JOB, the scan) + Browser sites,
   // the preflight request and the preflight row (UI_READY each) = 60 + 120 + 3 x 60 = 360 s, + 60 s headroom.
   test.setTimeout(420_000);
