@@ -12,7 +12,7 @@ Strategy:
 
 Supports three eval output types:
 - **float (SCORE):** ``avg(output_float) * 100`` per time bucket.
-- **bool (PASS_FAIL):** ``avg(CASE WHEN output_bool = 1 THEN 100 ELSE 0 END)``
+- **bool (PASS_FAIL):** ``avgIf(if(output_bool = 1, 100, 0), output_bool IS NOT NULL)``
   per time bucket (pass rate as a percentage).
 - **str_list (CHOICES):** For each choice, counts how often the choice
   appears in ``output_str_list``, expressed as a percentage of total evals.
@@ -304,9 +304,12 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         query = f"""
         SELECT
             {bucket_fn}(created_at) AS time_bucket,
-            ifNotFinite(avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
+            ifNotFinite(
+                avgIf(if(output_bool = 1, 100.0, 0.0), output_bool IS NOT NULL),
+                NULL
+            )
                 AS value,
-            count() AS primary_traffic
+            countIf(output_bool IS NOT NULL) AS primary_traffic
         FROM {raw_table} AS raw_eval_logger FINAL
         WHERE {live_predicate}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
