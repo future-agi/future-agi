@@ -82,6 +82,14 @@ beforeAll(() => {
     `import Dialog from "@mui/material/Dialog";\n${legacy}`,
   );
   write(
+    "views/MixedType.ts",
+    'import { Button, type Dialog } from "@mui/material";',
+  );
+  write(
+    "views/MixedValue.ts",
+    'import { Button, Dialog } from "@mui/material";',
+  );
+  write(
     "views/Preferences.tsx",
     [
       'import type { Dialog as BarrelDialog } from "@mui/material";',
@@ -119,17 +127,38 @@ it("reports new restricted imports but not ones already linted before a rename",
   expect(stdout).toMatch(/Preview\.tsx:.*error.*bare MUI Dialog/);
   expect(stdout).toMatch(/colors\.ts:.*error.*\[DS\] Hex colour/);
   expect(stdout).toMatch(/Other\.jsx:.*warning.*EmptyLayout/);
-  expect(stdout).toContain("4 design-system error(s) and 1 warning(s)");
+  expect(stdout).not.toContain("MixedType.ts:");
+  expect(stdout).toMatch(/MixedValue\.ts:.*error.*bare MUI Dialog/);
+  expect(stdout).toContain("5 design-system error(s) and 1 warning(s)");
 });
 
 it("includes typed source files in the full design-system lint", () => {
-  const { status, stdout, stderr } = run("npm", "run", "--silent", "lint:ds");
+  const { status, stdout, stderr } = run(
+    "npm",
+    "run",
+    "--silent",
+    "lint:ds",
+    "--",
+    "--format=json",
+  );
   expect(status, stderr).toBe(1);
-  expect(stdout).toContain("Page.tsx");
-  expect(stdout).toContain("colors.ts");
+  const reports: { filePath: string; messages: { message: string }[] }[] =
+    JSON.parse(stdout);
+  const messages = (file: string) =>
+    reports.find((r) => r.filePath.endsWith(join("src", file)))?.messages;
+  const bareDialog = expect.objectContaining({
+    severity: 2,
+    message: expect.stringContaining("bare MUI Dialog"),
+  });
   expect(stdout).not.toContain("Parsing error");
-  expect(stdout).not.toContain("Wrapper.tsx");
-  expect(stdout).not.toContain("Preferences.tsx");
+  expect(messages("views/Page.tsx")).toContainEqual(bareDialog);
+  expect(messages("views/colors.ts")).toContainEqual(
+    expect.objectContaining({ message: expect.stringContaining("Hex colour") }),
+  );
+  expect(messages("components/custom-dialog/Wrapper.tsx")).toEqual([]);
+  expect(messages("views/Preferences.tsx")).toEqual([]);
+  expect(messages("views/MixedType.ts")).toEqual([]);
+  expect(messages("views/MixedValue.ts")).toEqual([bareDialog]);
 });
 
 it("counts TS and TSX opt-outs against the same budget", () => {

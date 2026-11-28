@@ -107,9 +107,9 @@ const results = files.length ? await eslint.lintFiles(files) : [];
 
 // An import rule fires on the whole import line, so reformatting or extending an
 // existing import would look new. Count it only if the base file didn't have it.
-const isImportMessage = ({ ruleId }) =>
+const isImportMessage = ({ ruleId, nodeType }) =>
   ruleId === "no-restricted-imports" ||
-  ruleId === "@typescript-eslint/no-restricted-imports";
+  (ruleId === "no-restricted-syntax" && /^(Import|Export)/.test(nodeType));
 
 const baseImportMessages = async (basePath) => {
   if (!basePath) return new Set();
