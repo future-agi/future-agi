@@ -32,10 +32,6 @@ on:
         description: Frozen shard dependency/service setup for a paired timing run
         default: baseline
         options: [baseline, overlap, tuned]
-      backend_cold_fanout:
-        type: boolean
-        description: On an exact cold miss, try one validated producer before scheduling shards
-        default: false
 
 permissions:
   contents: read
@@ -59,12 +55,16 @@ env:
   # suite on the same candidates and full controls. The Metrics suite was
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
-  # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
-  # so 24 legs carry about 8 minutes of tests each, on top of about 5.5
-  # minutes that every leg pays (dependency install, and pytest collecting
-  # the whole suite before it deselects).
-  SPLITS: "24"
-  METRICS_SPLITS: "16"
+  # Every leg also pays about 11 minutes before its first test (dependency
+  # install, the database migrate) and about 2.5 more while pytest collects
+  # the whole suite before it deselects. Three queue runs (27 Nov 2026) put
+  # the main suite at about 310 shard-minutes and Metrics at about 345: at
+  # 24 and 16 legs, Metrics legs ran up to 41 minutes and main legs up to 29.
+  # Metrics has one test with a 20.5-minute floor (test_duration_floors.json),
+  # so more than 20 Metrics legs cannot shorten its slowest leg. 20 and 20
+  # keep the job count and bring the slowest leg near that floor.
+  SPLITS: "20"
+  METRICS_SPLITS: "20"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
   PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
@@ -289,15 +289,14 @@ jobs:
     if: needs.changes.outputs.backend == 'true'
     permissions:
       contents: read
-      actions: read # read the dev timing artifact if the cache is not visible
+      actions: read # read the dev timing and database dump artifacts
     runs-on: ubuntu-24.04
     # 12, not 5: room for the bounded Temporal (180 s) and lock wheel (4 min
     # step cap) fetches on a cold cache when GitHub is failing.
-    timeout-minutes: ${{ inputs.backend_cold_fanout && 45 || 12 }}
+    timeout-minutes: 12
     outputs:
-      cold_control: ${{ steps.cold.outcome }}
-      db_artifact: ${{ steps.cold.outputs.artifact }}
-      db_recipe: ${{ steps.cold.outputs.recipe }}
+      db_artifact: ${{ steps.saved-db.outputs.artifact }}
+      db_recipe: ${{ steps.saved-db.outputs.recipe }}
     env: &backend_database_env
       LITELLM_MODE: PRODUCTION
       CH25_DATABASE: test_tfc
@@ -326,6 +325,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: One latest migration per app
+        # Django refuses to migrate an app that has two latest migrations, so
+        # every shard would set itself up and then fail at its migrate step
+        # (8 to 16 minutes on 48 runners, four queue runs on 27 Nov 2026).
+        # Every heavy job needs this job, so a "no" here starts none of them.
+        # It reads the migration files as text: no Django, about a second.
+        # "Models must have migrations" (update-safety) stays the authority.
+        run: python3 -I futureagi/.ci/migration_leaves.py futureagi
       - name: Restore newest timing cache over the committed floor
         id: timing-cache
         uses: actions/cache/restore@v4
@@ -386,7 +393,6 @@ jobs:
         # The script stops retrying after 180 s; this caps a stalled transfer.
         timeout-minutes: 4
         run: python3 -I futureagi/.ci/lock_wheels.py fetch futureagi/uv.lock "$RUNNER_TEMP/lock-wheels-cache" "$RUNNER_TEMP/lock-wheels"
-      # Before the cold trial: its environment action downloads this artifact.
       - name: Distribute verified lock wheels to backend jobs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -394,41 +400,32 @@ jobs:
           path: ${{ runner.temp }}/lock-wheels/*.whl
           if-no-files-found: error
           compression-level: 0
-      # The opt-in cold trial reuses this prerequisite runner. The normal and
-      # warm paths never depend on the independent fresh-migration control.
-      - name: Checkout EE package (internal runs only)
-        if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'
-        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
-        with: &ee_checkout
-          token: ${{ secrets.EE_REPO_READ_TOKEN }}
-          branch: ${{ env.EE_REPO_BRANCH }}
-          base-ref: ${{ env.EE_BASE_REF }}
-
-      - name: Probe the exact recipe for the cold trial
-        if: inputs.backend_cold_fanout
-        id: probe
-        working-directory: futureagi
+      # One read of the saved dump per run, not one per shard: the GITHUB_TOKEN
+      # API quota is per repository. Queue and fork runs read it with no
+      # secret; a miss or any error leaves the shards migrating from zero.
+      - name: Fetch the newest dev-push dump for these migrate inputs
+        id: saved-db
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          bash "$GITHUB_WORKSPACE/.github/scripts/registry-retry.sh" "Service image pull" docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet
-          key=$(bash ../.github/actions/backend-test-packages/database/key.sh probe)
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-      - id: present
-        if: inputs.backend_cold_fanout
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+          record="$RUNNER_TEMP/migrated-db"
+          if python3 -I futureagi/.ci/fetch_migrated_db.py "$record"; then
+            recipe=$(cat "$record/recipe")
+            if bash .github/actions/backend-test-packages/database/verify-record.sh "$record" "$recipe"; then
+              echo "artifact=backend-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+              echo "recipe=$recipe" >> "$GITHUB_OUTPUT"
+            else
+              echo '::warning title=Database dump::The saved dump is not a complete record; shards migrate from zero'
+            fi
+          fi
+      - name: Hand the saved dump to this run's jobs
+        if: steps.saved-db.outputs.artifact != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          path: ${{ runner.temp }}/migrated-db
-          key: ${{ steps.probe.outputs.key }}
-          lookup-only: true
-      - id: cold
-        if: inputs.backend_cold_fanout && steps.present.outputs.cache-hit != 'true'
-        uses: ./.github/actions/backend-test-packages/database
-        with:
-          profile: ${{ inputs.backend_setup }}
-          handoff: "true"
-      - name: Dump producer service logs on failure
-        if: failure() && steps.cold.outcome == 'failure'
-        working-directory: futureagi
-        run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
+          name: ${{ steps.saved-db.outputs.artifact }}
+          path: ${{ runner.temp }}/migrated-db/
+          if-no-files-found: error
+          compression-level: 0
 
       - name: Distribute pinned Temporal archive to shards
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -467,7 +464,10 @@ jobs:
       - name: Checkout EE package (internal runs only)
         if: env.IS_INTERNAL_RUN == 'true'
         uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
-        with: *ee_checkout
+        with: &ee_checkout
+          token: ${{ secrets.EE_REPO_READ_TOKEN }}
+          branch: ${{ env.EE_REPO_BRANCH }}
+          base-ref: ${{ env.EE_BASE_REF }}
 
       - name: Prefetch service images in the background
         # Pull-only on purpose: compose has no cross-invocation locking, so a
@@ -509,33 +509,19 @@ jobs:
         run: |
           key=$(bash ../.github/actions/backend-test-packages/database/key.sh)
           echo "key=$key" >> "$GITHUB_OUTPUT"
-      - name: Fetch the same-run dump only for the identical recipe
+      - name: Fetch the saved dump only for the identical recipe
+        id: saved-db
         if: needs.plan.outputs.db_artifact != '' && needs.plan.outputs.db_recipe == steps.db-key.outputs.key
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ needs.plan.outputs.db_artifact }}
           path: ${{ runner.temp }}/migrated-db
-      - name: Look for a dump of the migrated database
-        id: cached-db
-        if: needs.plan.outputs.db_artifact == '' || needs.plan.outputs.db_recipe != steps.db-key.outputs.key
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/migrated-db
-          key: ${{ steps.db-key.outputs.key }}
-      - name: Validate the selected recipe
-        id: db-dump
-        working-directory: ${{ runner.temp }}
+      - name: Restore the migrated database (exact key hit only)
+        if: steps.saved-db.outcome == 'success'
         env:
           RECIPE: ${{ steps.db-key.outputs.key }}
-          FOUND: ${{ steps.cached-db.outputs.cache-hit == 'true' || (needs.plan.outputs.db_artifact != '' && needs.plan.outputs.db_recipe == steps.db-key.outputs.key) }}
         run: |
-          if [[ $FOUND == true ]]; then
-            hit=$(bash "$GITHUB_WORKSPACE/.github/actions/backend-test-packages/database/verify-record.sh" migrated-db "$RECIPE")
-            echo "cache-hit=$hit" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Restore the migrated database (exact key hit only)
-        if: steps.db-dump.outputs.cache-hit == 'true'
-        run: |
+          bash ../.github/actions/backend-test-packages/database/verify-record.sh "$RUNNER_TEMP/migrated-db" "$RECIPE"
           db=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
           "${db[@]}" createdb -U test_user test_tfc_test
           python3 -I .ci/db_dump.py restore "$RUNNER_TEMP/migrated-db/dump.sql.gz" test_user test_tfc_test "${db[@]}"
@@ -545,7 +531,7 @@ jobs:
           cmp "$RUNNER_TEMP/replayed" "$RUNNER_TEMP/migrated-db/preseed"
 
       - name: Migrate the test database from zero (no dump for this key)
-        if: steps.db-dump.outputs.cache-hit != 'true'
+        if: steps.saved-db.outcome != 'success'
         run: uv run pytest .ci/migrated_db.py --create-db -q
 
       - name: Apply pinned sharding plan
@@ -737,8 +723,10 @@ jobs:
           pkill -KILL -f 'granian --interface asgi' || true
 
   migrated-database:
-    # Exactly one fresh control: plan owns it on an opt-in cold miss. On a
-    # warm hit this job and all shards start independently after plan.
+    # The control for every shard that restored the saved dump: it migrates
+    # this checkout from zero and fails the run if the dump differs. It runs
+    # beside the shards, never before them. On dev pushes it saves the next
+    # public dump (.github/actions/backend-test-packages/database).
     name: Fresh migrate and database dump
     needs: [changes, plan]
     if: needs.changes.outputs.backend == 'true'
@@ -747,18 +735,19 @@ jobs:
     env: *backend_database_env
     steps:
       - uses: actions/checkout@v4
-        if: needs.plan.outputs.cold_control != 'success'
       - name: Checkout EE package (internal runs only)
-        if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'
+        if: env.IS_INTERNAL_RUN == 'true'
         uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
         with: *ee_checkout
 
       - uses: ./.github/actions/backend-test-packages/database
-        if: needs.plan.outputs.cold_control != 'success'
         with:
           profile: ${{ inputs.backend_setup || 'baseline' }}
+          artifact: ${{ needs.plan.outputs.db_artifact }}
+          recipe: ${{ needs.plan.outputs.db_recipe }}
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
       - name: Upload the files the fresh migrate touched (observation only)
-        if: ${{ !cancelled() && needs.plan.outputs.cold_control != 'success' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: migrate-inputs

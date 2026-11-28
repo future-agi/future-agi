@@ -150,7 +150,7 @@ class RegistryRetry(unittest.TestCase):
                     self.assertIn("registry-retry.sh", line, line)
         self.assertEqual(
             backend.count('bash "$GITHUB_WORKSPACE/.github/scripts/registry-retry.sh"'),
-            4,
+            3,
         )
         for up in ("Start test services", "Start test dependencies"):
             step = backend.split(f"      - name: {up}\n", 1)[1].split("\n      - ", 1)[

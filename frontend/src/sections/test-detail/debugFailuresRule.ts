@@ -1,5 +1,5 @@
 /**
- * When Debug failures can read a finished run. The server refuses the same two
+ * When Debug failures can read a finished run. The server refuses the same
  * cases (tracer/services/simulation_investigation.py) with the same words.
  */
 export const MIN_CONNECTED_CALLS = 15;
@@ -13,6 +13,28 @@ export const DEBUG_FAILURES_REFUSALS: Readonly<Record<string, string>> = {
   investigation_too_few_calls: TOO_FEW_CALLS_REASON,
   investigation_nothing_failed: NOTHING_FAILED_REASON,
 };
+
+export const RUN_IN_PROGRESS_REASON =
+  "Diagnosis is available once every call in this run finishes.";
+export const CALLS_UNFINISHED_REASON =
+  "Some calls in this run didn’t finish, so Debug failures can’t read it.";
+
+// The server's refusals of a run whose calls have not all finished. Unlike the
+// two above, they can change while the page is open. The environments drawer
+// offers Try again for them. Run Simulation's drawer offers no retry for any
+// refusal: its button opens it only once the run is finished.
+const UNFINISHED_RUN_REFUSALS: Readonly<Record<string, string>> = {
+  execution_not_completed: RUN_IN_PROGRESS_REASON,
+  execution_calls_unfinished: CALLS_UNFINISHED_REASON,
+};
+
+/** The words for any refusal of a Debug failures request, or null for another error. */
+export function debugFailuresRefusalReason(
+  code?: string | null,
+): string | null {
+  if (!code) return null;
+  return DEBUG_FAILURES_REFUSALS[code] ?? UNFINISHED_RUN_REFUSALS[code] ?? null;
+}
 
 export interface DebugFailuresCounts {
   connectedCalls?: number | null;
