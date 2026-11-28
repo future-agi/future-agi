@@ -11,11 +11,13 @@ import chevron
 import litellm
 import structlog
 import yaml
+from chevron.tokenizer import ChevronError
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
+from jinja2.exceptions import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -27,6 +29,10 @@ from model_hub.serializers.decision_models import (
     DecisionModelGroupSerializer,
     ModelListQuerySerializer,
     ModelListResponseSerializer,
+)
+from model_hub.utils.run_prompt_errors import (
+    RunPromptValidationError,
+    get_run_prompt_error_message,
 )
 
 logger = structlog.get_logger(__name__)
@@ -707,7 +713,7 @@ def process_list_content(
             # Handle other media types
             try:
                 processed_content.append(handle_media(item, model_name))
-            except MediaToolUnavailable:
+            except (RunPromptValidationError, MediaToolUnavailable):
                 # The original audio_url item is not a provider input format.
                 raise
             except Exception as e:
@@ -853,12 +859,10 @@ def process_text_with_media(
             processed_text = render_template(
                 text, context, template_format=effective_format
             )
-        except Exception as render_error:
-            logger.exception(
-                f"Template rendering failed: {render_error}. Template: {text[:200]}..."
-            )
-            # Re-raise to see full error - template syntax issue
-            raise
+        except (KeyError, ValueError, TemplateError, ChevronError) as render_error:
+            # This phase only renders user input; media downloads and provider
+            # calls are outside it and must never acquire this validation marker.
+            raise RunPromptValidationError(str(render_error)) from render_error
         uuid_pattern = r"\{\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\}\}"
         if re.search(uuid_pattern, processed_text, re.IGNORECASE):
             logger.warning(
@@ -952,7 +956,9 @@ def process_media_markers(text, image_markers, model_name):
         # Add media content
         if info["type"] == "image":
             if not litellm.utils.supports_vision(model=model_name):
-                raise ValueError(f"Model {model_name} does not support image input.")
+                raise RunPromptValidationError(
+                    f"Model {model_name} does not support image input."
+                )
             segments.append(
                 {
                     "type": "text",
@@ -981,7 +987,9 @@ def process_media_markers(text, image_markers, model_name):
                 "stt",
                 "tts",
             ) and not litellm.utils.supports_audio_input(model=model_name):
-                raise ValueError(f"Model {model_name} does not support audio input.")
+                raise RunPromptValidationError(
+                    f"Model {model_name} does not support audio input."
+                )
             segments.append(
                 {
                     "type": "text",
@@ -1031,7 +1039,9 @@ class LitellmAPIView(CreateAPIView):
     def process_row(self, row, validated_data, dataset, column, request):
         # Call litellm with the validated data
         status = CellStatus.PASS.value
+        error_phase = None
         try:
+            error_phase = "local_validation"
             messages = populate_placeholders(
                 validated_data.get("messages"),
                 dataset_id=dataset.id,
@@ -1039,6 +1049,7 @@ class LitellmAPIView(CreateAPIView):
                 col_id=column.id,
                 model_name=validated_data.get("model"),
             )
+            error_phase = None
             messages = remove_empty_text_from_messages(messages)
 
             run_prompt = RunPrompt(
@@ -1064,7 +1075,7 @@ class LitellmAPIView(CreateAPIView):
 
         except Exception as e:
             logger.exception(f"Error in processing the row: {str(e)}")
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e, phase=error_phase)
             response = error_message
             value_info = {"reason": error_message}
             status = CellStatus.ERROR.value
@@ -1371,6 +1382,7 @@ class RunPrompts:
                 self.is_editing = True
             status = CellStatus.PASS.value
             is_llm_error = False
+            error_phase = None
             # api_call_log_row = None
             try:
                 logger.info(
@@ -1465,6 +1477,7 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                error_phase = "local_validation"
                 messages = populate_placeholders(
                     self.run_prompt_model.messages,
                     dataset_id=self.run_prompt_model.dataset.id,
@@ -1475,6 +1488,7 @@ class RunPrompts:
                         "template_format"
                     ),
                 )
+                error_phase = None
                 messages = remove_empty_text_from_messages(messages)
                 logger.info(
                     "RunPrompts_process_row_placeholders_populated",
@@ -1534,14 +1548,14 @@ class RunPrompts:
                     error=str(e),
                     is_llm_error=is_llm_error,
                 )
-                error_message = get_specific_error_message(e, is_llm_error)
+                error_message = get_run_prompt_error_message(e, phase=error_phase)
                 logger.error(
                     "RunPrompts_process_row_error_message",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                     error_message=error_message,
                 )
-                response = str(e)
+                response = error_message
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
 
@@ -1974,8 +1988,10 @@ class PreviewRunPromptColumnView(APIView):
             responses = []
             value_infos: dict[str, Any] = {"metadata": {"usage": {}, "cost": {}}}
             for row in rows:
+                error_phase = None
                 try:
                     output_format = config.get("output_format", "string")
+                    error_phase = "local_validation"
                     messages = populate_placeholders(
                         config.get("messages", []),
                         dataset_id=dataset_id,
@@ -1983,6 +1999,7 @@ class PreviewRunPromptColumnView(APIView):
                         col_id=None,
                         model_name=config.get("model", ""),
                     )
+                    error_phase = None
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
 
@@ -2036,7 +2053,12 @@ class PreviewRunPromptColumnView(APIView):
                     )
                     break
                 except Exception as e:
-                    responses.append(str(e))
+                    logger.exception(
+                        "run_prompt_preview_row_failed",
+                        row_id=str(row.id),
+                        error=str(e),
+                    )
+                    responses.append(get_run_prompt_error_message(e, phase=error_phase))
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
             return self._gm.success_response(
                 {
@@ -2052,8 +2074,8 @@ class PreviewRunPromptColumnView(APIView):
             )
             return self._gm.bad_request(str(exc))
         except Exception as e:
-            error_message = get_specific_error_message(e)
-            logger.exception(f"Error in preview run prompt column: {error_message}")
+            error_message = get_run_prompt_error_message(e)
+            logger.exception("Error in preview run prompt column", error=str(e))
             return self._gm.internal_server_error_response(error_message)
 
 

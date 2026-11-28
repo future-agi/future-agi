@@ -10,6 +10,7 @@ from uuid import UUID
 import litellm
 import structlog
 
+from model_hub.utils.run_prompt_errors import RunPromptValidationError
 from tfc.ee_stub import _ee_stub
 from tfc.utils.ssrf_guard import safe_fetch
 
@@ -225,7 +226,9 @@ def handle_media(item: dict, model_name: str):
     """
     if item["type"] == "image_url":
         if not litellm.utils.supports_vision(model=model_name):
-            raise ValueError(f"Model {model_name} does not support image input.")
+            raise RunPromptValidationError(
+                f"Model {model_name} does not support image input."
+            )
         if "url" in item["image_url"]:
             if item["image_url"]["url"].startswith("http://") or item["image_url"][
                 "url"
@@ -246,7 +249,9 @@ def handle_media(item: dict, model_name: str):
             "stt",
             "tts",
         ) and not litellm.utils.supports_audio_input(model=model_name):
-            raise ValueError(f"Model {model_name} does not support audio input.")
+            raise RunPromptValidationError(
+                f"Model {model_name} does not support audio input."
+            )
         try:
             url = item.get("audio_url", {}).get("url")
             if not url:
@@ -286,7 +291,9 @@ def handle_media(item: dict, model_name: str):
 
     elif item["type"] == "pdf_url":
         if not litellm.utils.supports_pdf_input(model=model_name):
-            raise ValueError(f"Model {model_name} does not support PDF input.")
+            raise RunPromptValidationError(
+                f"Model {model_name} does not support PDF input."
+            )
         doc_url = item.get("pdf_url", {}).get("url")
         file_data, content_type = download_document_from_url(doc_url)
         file_name = item.get("pdf_url", {}).get("file_name")

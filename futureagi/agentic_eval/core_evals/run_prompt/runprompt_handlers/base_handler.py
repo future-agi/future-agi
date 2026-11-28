@@ -198,6 +198,9 @@ class HandlerResponse:
     # When set, this is used in value_info["data"]["response"] instead of self.response
     data_response: Any = None
 
+    # Internal provenance only; not part of the serialized value_info.
+    literal_tts_failure: bool = False
+
     @property
     def runtime(self) -> float:
         """Runtime in milliseconds."""
@@ -335,6 +338,8 @@ class BaseModelHandler(ABC):
         start_time: float,
         metadata: Optional[Dict[str, Any]] = None,
         failure: Optional[str] = None,
+        *,
+        literal_tts_failure: bool = False,
     ) -> HandlerResponse:
         """
         Build a standardized HandlerResponse.
@@ -357,6 +362,7 @@ class BaseModelHandler(ABC):
             model=self.context.model,
             metadata=metadata or {},
             failure=failure,
+            literal_tts_failure=literal_tts_failure,
         )
 
     def _validate_response_not_empty(

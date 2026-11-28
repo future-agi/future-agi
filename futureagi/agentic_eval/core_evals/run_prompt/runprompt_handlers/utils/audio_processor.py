@@ -16,6 +16,7 @@ import wave
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import structlog
+from model_hub.utils.run_prompt_errors import LiteralTTSError
 from tfc.utils.lazy_extras import av
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
@@ -149,7 +150,7 @@ class AudioProcessor:
         input_text = " ".join(text_parts)
 
         if not input_text.strip():
-            raise ValueError("Enter text to synthesize speech.")
+            raise LiteralTTSError("Enter text to synthesize speech.")
 
         if len(input_text) > MAX_TTS_TEXT_LENGTH:
             raise ValueError(
@@ -248,7 +249,10 @@ class AudioProcessor:
         duration_seconds = AudioProcessor.estimate_audio_duration(audio_data)
 
         # Upload to S3
-        s3_url = upload_audio_to_s3(audio_data)
+        try:
+            s3_url = upload_audio_to_s3(audio_data)
+        except Exception as exc:
+            raise LiteralTTSError(str(exc)) from exc
 
         end_time = time.time()
         completion_time = (end_time - start_time) * 1000

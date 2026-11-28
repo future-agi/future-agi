@@ -28,6 +28,7 @@ import requests
 import base64
 import copy
 import io
+from model_hub.utils.run_prompt_errors import LiteralTTSError
 from tfc.utils.media_tools import MediaToolUnavailable
 
 import structlog
@@ -3164,6 +3165,7 @@ class RunPrompt:
 
         Enable via environment variable: USE_NEW_RUNPROMPT_HANDLERS=true
         """
+        literal_tts_failure = False
         try:
             # Resolve voice_id if present in config (keep voice as display name)
             if self.run_prompt_config and "voice_id" in self.run_prompt_config:
@@ -3220,6 +3222,7 @@ class RunPrompt:
 
             # Raise if handler returned a failure so it propagates to frontend
             if handler_response.failure:
+                literal_tts_failure = handler_response.literal_tts_failure
                 raise Exception(handler_response.failure)
 
             # Convert to legacy format (response, value_info)
@@ -3241,6 +3244,8 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
+            if literal_tts_failure:
+                raise LiteralTTSError(concise_error) from e
             raise Exception(concise_error) from e
 
     async def _litellm_response_async_new(
@@ -3260,6 +3265,7 @@ class RunPrompt:
 
         NOTE: Uses 'type' parameter (NOT 'run_type') - must preserve this for backward compatibility.
         """
+        literal_tts_failure = False
         try:
             # Resolve voice_id if present in config (keep voice as display name)
             if self.run_prompt_config and "voice_id" in self.run_prompt_config:
@@ -3319,6 +3325,7 @@ class RunPrompt:
 
             # Raise if handler returned a failure so it propagates to frontend
             if handler_response.failure:
+                literal_tts_failure = handler_response.literal_tts_failure
                 raise Exception(handler_response.failure)
 
             # Convert to legacy format (response, value_info)
@@ -3340,6 +3347,8 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
+            if literal_tts_failure:
+                raise LiteralTTSError(concise_error) from e
             raise Exception(concise_error) from e
 
     # =========================================================================
