@@ -785,6 +785,78 @@
         "reviewer": "NVJKKartik",
         "large_volume_rehearsal": true
       }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/040_trajectory_items.sql",
+      "before_sha256": null,
+      "after_sha256": "fbedc1ca703f09eb14519d61afd6b5eb997a9cd2be3b5d89e9bbb8345833b08d",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:trajectory_items",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Additive and not applied automatically anywhere (FI_SKIP_CH25_MIGRATION=1; OSS bootstrap does not create it). CREATE TABLE IF NOT EXISTS trajectory_items (empty, project-bucket partitions, no TTL) and six ADD COLUMN IF NOT EXISTS on spans with constant defaults, no MATERIALIZED. Large-volume rehearsal r040 on 10M spans: single node 0.58 s apply, every active part unchanged by name/rows/bytes/mtime, 040 adds no mutation, content fingerprint unchanged, defaults read on all 10M rows, span-list p95 1685->1654 ms; 2-replica prod_cluster 0.93 s apply under 12,500 live inserts all present on both replicas, no pre-existing part rewritten, no mutation; reruns nothing_to_apply. Rollback: keep the additive objects; readers ignore them while FI_TRAJECTORY_STORE_READ_ENABLED is off. evidence r040-results.tgz sha256 d3f80bd66518708897f59d7adc161c126d21516462e190a4957a4d1a0f98f329 (28 Nov, CH 25.3.14.14, head d37735fc9b).",
+        "review": "https://github.com/future-agi/future-agi/pull/4347#discussion_r4726103539",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/oss_cdc_bootstrap.py",
+      "before_sha256": "bf3746d9f5094d5149002f5bfc3f683b579465d17f14b039e15ae5a70bdeadca",
+      "after_sha256": "876b82bef037fd992beeaad8e4b7b67024422e92d8f27ad7d99e47af3cb3488c",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:schema_versions",
+          "clickhouse:tables",
+          "clickhouse:columns",
+          "clickhouse:data_skipping_indices",
+          "clickhouse:tracer_trace",
+          "clickhouse:tracer_eval_logger",
+          "clickhouse:trace_annotation",
+          "clickhouse:model_hub_score",
+          "clickhouse:trace_session",
+          "clickhouse:model_hub_dataset",
+          "clickhouse:model_hub_column",
+          "clickhouse:model_hub_row",
+          "clickhouse:model_hub_cell",
+          "clickhouse:simulate_test_execution",
+          "clickhouse:simulate_call_execution",
+          "clickhouse:usage_apicalllog",
+          "clickhouse:simulate_scenarios",
+          "clickhouse:simulate_agent_definition",
+          "clickhouse:simulate_agent_version",
+          "clickhouse:simulate_run_test",
+          "clickhouse:model_hub_promptversion",
+          "clickhouse:model_hub_prompttemplate",
+          "clickhouse:model_hub_promptlabel",
+          "clickhouse:tracer_enduser",
+          "clickhouse:prompt_dict",
+          "clickhouse:prompt_label_dict",
+          "clickhouse:column_dict",
+          "clickhouse:dataset_dict",
+          "clickhouse:dataset_cells",
+          "clickhouse:simulate_scenario_dict",
+          "clickhouse:simulate_agent_dict",
+          "clickhouse:simulate_version_dict",
+          "clickhouse:simulate_run_test_dict",
+          "clickhouse:simulate_test_execution_dict",
+          "clickhouse:simulate_calls"
+        ],
+        "mitigation": "Inspection-only change: no statement is added, removed or edited. The spans contract now accepts either none of the six 040 pointer columns or all six exactly as 040 declares them, and refuses any partial set; everything else is checked as before. Large-volume rehearsal r040 on a 10M-span OSS native layout: oss_cdc_install --phase native accepted pre-040 and a hand-applied complete 040 (apply 0.06 s, parts and content unchanged, no mutation), re-apply rc 0 with no writes, and a 5-of-6 partial layout was refused (control passed first). Rollback: the previous inspector refuses the six columns, so roll back only installs where 040 was never applied. evidence r040-results.tgz sha256 d3f80bd66518708897f59d7adc161c126d21516462e190a4957a4d1a0f98f329 (28 Nov, CH 25.3.14.14, head d37735fc9b).",
+        "review": "https://github.com/future-agi/future-agi/pull/4347#discussion_r4726103598",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
     }
   ]
 }

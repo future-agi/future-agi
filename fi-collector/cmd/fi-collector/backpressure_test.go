@@ -32,3 +32,29 @@ func TestObsoleteYAMLRowBudgetIsRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestTrajectoryEnvIsRefusedWhileDormant(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"FI_TRAJECTORY_DEDUP_MODE", "on"},
+		{"FI_TRAJECTORY_DEDUP_MODE", "canary"},
+		{"FI_TRAJECTORY_DEDUP_PROJECTS", "11111111-1111-1111-1111-111111111111"},
+		{"FI_COMPACT_SPAN_ATTRS", "true"},
+		{"FI_BILL_DEDUPED_BYTES", "true"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			t.Setenv(tc.key, tc.value)
+			err := applyEnvOverrides(slog.New(slog.NewTextHandler(io.Discard, nil)), &rootConfig{})
+			if err == nil || !strings.Contains(err.Error(), "disabled in this release") {
+				t.Fatalf("expected dormant refusal for %s=%s, got %v", tc.key, tc.value, err)
+			}
+		})
+	}
+	t.Run("defaults start", func(t *testing.T) {
+		t.Setenv("FI_TRAJECTORY_DEDUP_MODE", "off")
+		t.Setenv("FI_COMPACT_SPAN_ATTRS", "false")
+		t.Setenv("FI_BILL_DEDUPED_BYTES", "false")
+		if err := applyEnvOverrides(slog.New(slog.NewTextHandler(io.Discard, nil)), &rootConfig{}); err != nil && strings.Contains(err.Error(), "disabled in this release") {
+			t.Fatalf("explicit off values must be accepted: %v", err)
+		}
+	})
+}

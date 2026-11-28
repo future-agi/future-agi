@@ -121,6 +121,20 @@ func (c Config) Normalize() Config {
 	return c
 }
 
+// RequireDormant refuses every trajectory setting that turns the store on.
+// The store ships disabled in this release: its enable path (attribute
+// handling, billing, retention, reader coverage) is not yet safe, so a stray
+// env var or config block must stop the collector at startup instead of
+// silently writing pointer rows or compacted attributes.
+func (c Config) RequireDormant() error {
+	if (c.Mode != "" && c.Mode != ModeOff) || c.CompactSpanAttrs || c.BillDedupedBytes ||
+		len(c.CanaryProjectList) > 0 || len(c.CanaryProjects) > 0 {
+		return fmt.Errorf("trajectory store is disabled in this release: unset FI_TRAJECTORY_DEDUP_MODE, " +
+			"FI_TRAJECTORY_DEDUP_PROJECTS, FI_COMPACT_SPAN_ATTRS, FI_BILL_DEDUPED_BYTES and the trajectory config block")
+	}
+	return nil
+}
+
 // Validate checks that Mode is one of off/canary/on.
 func (c Config) Validate() error {
 	switch c.Mode {
