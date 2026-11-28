@@ -344,10 +344,12 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 		if err != nil {
 			return err
 		}
+		unavailableBefore := cfg.source.contentUnavailable
 		rows, err := cfg.source.payloadPage(ctx, cfg.project, progress.Hour, keys)
 		if err != nil {
 			return err
 		}
+		contentUnavailable := cfg.source.contentUnavailable - unavailableBefore
 		batch, report, err := buildPage(rows, scope, cfg.since, cfg.until, cfg.limits)
 		if err != nil {
 			return err
@@ -386,6 +388,11 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 			}
 		}
 		receipt := map[string]any{"preview": !cfg.apply, "source_rows": len(rows), "keys": len(batch.Keys), "values": len(batch.Values), "scan_complete": progress.Complete, "pages_read": progress.Pages, "consumer_visibility_verified": false, "policy_exclusion_spans": report.PolicyExclusions, "quarantined_spans": len(report.Quarantined)}
+		if contentUnavailable > 0 {
+			// Trajectory spans whose items are gone: catalogued without the
+			// promoted attribute rather than with its preview.
+			receipt["trajectory_content_unavailable_spans"] = contentUnavailable
+		}
 		if cfg.apply {
 			receipt["recorded_policy_exclusion_spans"] = progress.PolicyExclusionSpans
 			receipt["recorded_quarantined_spans"] = progress.QuarantinedSpans
