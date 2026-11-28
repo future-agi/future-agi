@@ -324,6 +324,9 @@ func NewSeenStoreFor(cfg Config, rdb *redis.Client) *SeenStore {
 // FI_TRAJECTORY_DEDUP_PROJECTS replaces the YAML canary list.
 func ConfigFromEnv(base Config, getenv func(string) string) (Config, error) {
 	cfg := base
+	// The env may change any field, so the result is raw even when base was
+	// normalized: Normalize must rebuild it (CanaryProjects included).
+	cfg.normalized = false
 	if v := strings.TrimSpace(getenv("FI_COMPACT_SPAN_ATTRS")); v != "" {
 		b, err := parseBool(v)
 		if err != nil {

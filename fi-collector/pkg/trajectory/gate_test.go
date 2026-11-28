@@ -370,6 +370,36 @@ func TestSchemaGateRejectsDistributed(t *testing.T) {
 	}
 }
 
+// TestGateClosedWhileAReplicaIsInactive: with a trajectory_items replica down
+// (or a dead one never dropped from Keeper) the every-replica quorum makes
+// each items insert fail, so the gate stays closed until all are active.
+func TestGateClosedWhileAReplicaIsInactive(t *testing.T) {
+	f := newGateFixture(t, true)
+	f.prober.set(func(p *fakeProber) {
+		p.topo[ItemsTable] = TableTopology{Exists: true, Engine: "ReplicatedReplacingMergeTree", TotalReplicas: 3, ActiveReplicas: 2}
+	})
+	f.check(t)
+	if f.gate.Open() {
+		t.Fatal("an inactive trajectory_items replica must keep the gate closed")
+	}
+	if state, reason := f.gate.State(); state != GateClosed || reason != "replicas_inactive:"+ItemsTable {
+		t.Fatalf("state %v reason %q", state, reason)
+	}
+	if !strings.Contains(f.logs.String(), `"event":"trajectory_replicas_inactive"`) {
+		t.Fatal("inactive replicas not logged")
+	}
+	f.prober.set(func(p *fakeProber) {
+		p.topo[ItemsTable] = TableTopology{Exists: true, Engine: "ReplicatedReplacingMergeTree", TotalReplicas: 3, ActiveReplicas: 3}
+	})
+	f.check(t)
+	if !f.gate.Open() {
+		t.Fatal("reopens once every replica is active")
+	}
+	if got := f.gate.ItemsInsertSettings().Get("insert_quorum"); got != "3" {
+		t.Fatalf("insert_quorum %q, want 3", got)
+	}
+}
+
 func TestGateBreakerAndSchemaErrorHold(t *testing.T) {
 	f := newGateFixture(t, true)
 	f.check(t)
@@ -408,8 +438,9 @@ func TestInsertQuorumByTopology(t *testing.T) {
 		{TableTopology{Exists: true, Engine: "ReplacingMergeTree"}, "auto", true},
 		{TableTopology{Exists: true, Engine: "ReplicatedReplacingMergeTree", TotalReplicas: 1, ActiveReplicas: 1}, "1", true},
 		{TableTopology{Exists: true, Engine: "ReplicatedReplacingMergeTree", TotalReplicas: 2, ActiveReplicas: 2}, "2", true},
-		// A replica that is down still counts: the insert then fails and the
-		// drain writes inline, instead of acknowledging a single copy.
+		// A replica that is down still counts toward the quorum (a single
+		// copy is never acknowledged); the gate itself stays closed while
+		// one is inactive (TestGateClosedWhileAReplicaIsInactive).
 		{TableTopology{Exists: true, Engine: "ReplicatedReplacingMergeTree", TotalReplicas: 3, ActiveReplicas: 2}, "3", true},
 		{TableTopology{Exists: true, Engine: "ReplicatedReplacingMergeTree"}, "", false},
 		{TableTopology{Exists: true, Engine: "Distributed"}, "", false},

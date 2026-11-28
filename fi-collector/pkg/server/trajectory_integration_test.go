@@ -322,7 +322,9 @@ func TestLiveTrajectoryStopButton(t *testing.T) {
 // complete schema, but the spans insert reaches a table without the pointer
 // columns (as a replica that has not applied 040's columns would be). Real
 // ClickHouse must refuse the strict batch, the collector must recognize the
-// refusal and close the gate, and no preview may be stored as a payload.
+// refusal and close the gate, no preview may be stored as a payload, and the
+// refused span must be stored inline (resent on dev's URL), not left in the
+// dead-letter file.
 func TestLiveTrajectorySkipUnknownFieldsZeroOnItemsV1Batch(t *testing.T) {
 	e := requireLiveTrajectoryEnv(t)
 	liveSettingLog(t, e)
@@ -339,8 +341,11 @@ func TestLiveTrajectorySkipUnknownFieldsZeroOnItemsV1Batch(t *testing.T) {
 	body, input := liveTurn(t, pid, 2)
 	postTrajOTLP(t, srv, trajTestOID, pid, body)
 	srv.drainNow(context.Background())
-	if got := observedLocalSQL(t, e.origin, lagging, "SELECT count() FROM spans WHERE project_id = '"+pid+"'"); got != "0" {
-		t.Fatalf("a pointer row was stored without its columns (%s rows): the preview would be the whole payload", got)
+	if got := observedLocalSQL(t, e.origin, lagging, "SELECT count(), countIf(input = "+sqlString(input)+") FROM spans WHERE project_id = '"+pid+"'"); got != "1\t1" {
+		t.Fatalf("the refused span must be stored once with its full input (count, full) = %q", got)
+	}
+	if s := w.Snapshot(); s.RowsDeadLettered != 0 {
+		t.Fatalf("the refused span was dead-lettered instead of resent inline: %+v", s)
 	}
 	if gate.Open() {
 		t.Fatal("ClickHouse's refusal must be recognized as a schema mismatch and close the gate")
@@ -355,8 +360,43 @@ func TestLiveTrajectorySkipUnknownFieldsZeroOnItemsV1Batch(t *testing.T) {
 	body, input = liveTurn(t, pid, 3)
 	postTrajOTLP(t, srv, trajTestOID, pid, body)
 	srv.drainNow(context.Background())
-	if got := observedLocalSQL(t, e.origin, lagging, "SELECT input = "+sqlString(input)+" FROM spans WHERE project_id = '"+pid+"'"); got != "1" {
+	if got := observedLocalSQL(t, e.origin, lagging, "SELECT count(), countIf(input = "+sqlString(input)+") FROM spans WHERE project_id = '"+pid+"'"); got != "2\t1" {
 		t.Fatalf("the request after the refusal must be stored inline: %q", got)
+	}
+}
+
+// TestClickHouseTrajectoryHalfApplied040NoDuplicateMVRows: the spans insert
+// reaches a table without 040's pointer columns and a materialized view reads
+// spans. ClickHouse 25.3 must refuse the strict batch before any block is
+// written, so the inline resend is the only insert the view sees: one view row
+// per span, and the span stored with its full input.
+func TestClickHouseTrajectoryHalfApplied040NoDuplicateMVRows(t *testing.T) {
+	e := requireLiveTrajectoryEnv(t)
+	full := e.database(t, "mv_probe_full", true, true)
+	lagging := e.database(t, "mv_lagging", true, false)
+	observedLocalSQL(t, e.origin, lagging, "CREATE TABLE span_rows (id String, project_id UUID) ENGINE = MergeTree ORDER BY id")
+	observedLocalSQL(t, e.origin, lagging, "CREATE MATERIALIZED VIEW span_rows_mv TO span_rows AS SELECT id, project_id FROM spans")
+	gate, _ := e.gate(t, e.writer(t, full, "", ""), true)
+	if !gate.Open() {
+		t.Fatal("the probed database is complete: open")
+	}
+	w := e.writer(t, lagging, "", "")
+	pid := e.project(t)
+	srv := liveDedupServer(t, w, e.rdb, gate, nil)
+	body, input := liveTurn(t, pid, 4)
+	postTrajOTLP(t, srv, trajTestOID, pid, body)
+	srv.drainNow(context.Background())
+	if gate.Open() {
+		t.Fatal("the refusal must close the gate")
+	}
+	if got := observedLocalSQL(t, e.origin, lagging, "SELECT count() FROM span_rows WHERE project_id = '"+pid+"'"); got != "1" {
+		t.Fatalf("materialized view rows %s, want 1: the refused insert must not write a block", got)
+	}
+	if got := observedLocalSQL(t, e.origin, lagging, "SELECT count(), countIf(input = "+sqlString(input)+") FROM spans WHERE project_id = '"+pid+"'"); got != "1\t1" {
+		t.Fatalf("spans (count, full input) = %q, want 1/1", got)
+	}
+	if s := w.Snapshot(); s.RowsDeadLettered != 0 {
+		t.Fatalf("rows dead-lettered: %+v", s)
 	}
 }
 
@@ -389,6 +429,10 @@ func TestClickHouseTrajectorySchemaProbeWithInsertOnlyUser(t *testing.T) {
 			t.Logf("insert-only user sees trajectory_items columns: %v (err %v); gate open: %v", visible, err, gate.Open())
 			if tc.name == "spans_only" && gate.Open() {
 				t.Fatal("trajectory_items is not visible to the ingest user: the gate must fail closed")
+			}
+			if tc.name == "both_tables" && (!visible || !gate.Open()) {
+				state, reason := gate.State()
+				t.Fatalf("INSERT on both tables: the ingest user must see every column and the gate must open (visible %v, err %v, state %s, reason %q)", visible, err, state, reason)
 			}
 			if gate.Open() && !visible {
 				t.Fatal("the gate opened without seeing the items columns")

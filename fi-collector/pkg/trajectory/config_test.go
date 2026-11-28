@@ -219,3 +219,22 @@ func TestRequireDormantAcceptsDefaultsAndKillSwitch(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigFromEnvOnNormalizedBase: env overrides on an already normalized
+// base still take effect after Normalize (FI_TRAJECTORY_DEDUP_PROJECTS was
+// dropped when Normalize returned the base's stale canary set).
+func TestConfigFromEnvOnNormalizedBase(t *testing.T) {
+	base := Config{Mode: ModeCanary, CanaryProjectList: []string{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}}.Normalize()
+	env := map[string]string{"FI_TRAJECTORY_DEDUP_PROJECTS": "BBBBBBBB-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
+	cfg, err := ConfigFromEnv(base, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = cfg.Normalize()
+	if !cfg.EnabledForProject("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") {
+		t.Fatal("the env canary project must be enabled")
+	}
+	if cfg.EnabledForProject("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") {
+		t.Fatal("the env list replaces the base list")
+	}
+}

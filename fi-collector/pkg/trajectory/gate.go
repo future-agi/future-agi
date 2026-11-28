@@ -23,6 +23,8 @@ import (
 //     with exactly the 040 types;
 //   - spans and trajectory_items stored in local MergeTree-family tables
 //     (a Distributed facade keeps the gate closed);
+//   - for a Replicated trajectory_items, every replica active (the insert
+//     quorum counts them all);
 //
 // and it closes again for BreakerHold after a trajectory_items insert fails
 // and for SchemaErrorHold after a spans insert reports a schema mismatch. A
@@ -348,6 +350,14 @@ func (g *Gate) probe(ctx context.Context) (open bool, reason string, settings ur
 	quorum, ok := items.InsertQuorum()
 	if !ok {
 		return false, "unsupported_topology:" + ItemsTable + ":" + items.Engine, nil, nil
+	}
+	if items.Replicated() && items.ActiveReplicas < items.TotalReplicas {
+		// The quorum counts every replica, so with one inactive (down, or
+		// never dropped from Keeper) every items insert would fail: stay
+		// closed instead of cycling breaker, inline drain and reopen.
+		g.cfg.Log.Warn("trajectory_items has inactive replicas; dedup stays off",
+			"event", "trajectory_replicas_inactive", "total_replicas", items.TotalReplicas, "active_replicas", items.ActiveReplicas)
+		return false, "replicas_inactive:" + ItemsTable, nil, nil
 	}
 	return true, "", ItemsInsertSettingsFor(quorum, g.cfg.ItemsInsertTimeout), nil
 }

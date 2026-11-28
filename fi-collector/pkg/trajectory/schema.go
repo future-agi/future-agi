@@ -93,8 +93,9 @@ func (t TableTopology) MergeTreeFamily() bool { return strings.HasSuffix(t.Engin
 //     on a one-replica table);
 //   - Replicated with more replicas: every replica (TotalReplicas). An item
 //     is acknowledged only once each replica has it, so a reader on any
-//     replica never sees a span before the items it points at, and a replica
-//     that is down makes the insert fail and the drain write inline.
+//     replica never sees a span before the items it points at. The gate
+//     stays closed while any replica is inactive (such an insert would only
+//     fail), so a single copy is never acknowledged.
 //
 // ok is false for a topology the gate does not support.
 func (t TableTopology) InsertQuorum() (quorum string, ok bool) {

@@ -1181,13 +1181,15 @@ func (s *Server) drainNow(ctx context.Context) {
 	// so neither dangling pointers nor billing under-counts can occur.
 	trajFallback, pointerRows := s.commitTrajectory(ctx, traj, stamp)
 
-	confirmed, err := s.writer.InsertConfirmedWith(ctx, batch, chwriter.InsertOptions{StrictColumns: pointerRows})
-	if pointerRows && chwriter.IsSchemaMismatch(err) {
-		// ClickHouse refused a pointer column (strict columns): the rows were
-		// dead-lettered, not stored as previews. Close the gate so later
-		// requests are written inline, and bill these requests raw.
+	confirmed, held, err := s.writer.InsertConfirmedWith(ctx, batch, chwriter.InsertOptions{StrictColumns: pointerRows, HoldSchemaRefusals: pointerRows})
+	if pointerRows && (anyHeld(held) || chwriter.IsSchemaMismatch(err)) {
+		// ClickHouse refused a pointer column (strict columns), so nothing
+		// was stored as a preview. Close the gate so later requests are
+		// written inline, bill these requests raw, and send the refused rows
+		// once more inline on dev's URL instead of dead-lettering them.
 		s.trajGate.ReportSpansSchemaError(err)
 		trajFallback = true
+		s.resendHeldInline(ctx, traj, batch, confirmed, held)
 	}
 	for _, u := range usages {
 		s.emitPendingUsage(u, trajFallback)
@@ -1271,6 +1273,49 @@ func (s *Server) commitTrajectory(ctx context.Context, traj *trajectory.Batch, s
 		s.trajSeen.MarkCommitted(ctx, traj.Items())
 	}
 	return false, true
+}
+
+// resendHeldInline restores the held rows of a refused pointer batch to
+// inline and inserts them once on dev's URL; rows from projects without
+// dedup are sent as they are. The writer dead-letters what this insert does
+// not store, now as inline rows. confirmed is updated in place.
+func (s *Server) resendHeldInline(ctx context.Context, traj *trajectory.Batch, batch []map[string]any, confirmed, held []bool) {
+	var rows []map[string]any
+	var at []int
+	for i, h := range held {
+		if h && i < len(batch) {
+			rows = append(rows, batch[i])
+			at = append(at, i)
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if traj != nil {
+		traj.RestoreInlineRows(rows)
+	}
+	again, err := s.writer.InsertConfirmed(ctx, rows)
+	for j, ok := range again {
+		if ok && j < len(at) {
+			confirmed[at[j]] = true
+		}
+	}
+	if err != nil {
+		s.log.Warn("trajectory pointer batch refused; inline resend failed and was dead-lettered",
+			"event", "trajectory_spans_inline_resend_failed", "rows", len(rows), "err", err)
+		return
+	}
+	s.log.Warn("trajectory pointer batch refused by the spans columns; resent inline",
+		"event", "trajectory_spans_inline_resend", "rows", len(rows))
+}
+
+func anyHeld(held []bool) bool {
+	for _, h := range held {
+		if h {
+			return true
+		}
+	}
+	return false
 }
 
 // confirmedSidecars filters in place, preserving enqueue order and exact row

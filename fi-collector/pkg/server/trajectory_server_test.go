@@ -53,6 +53,9 @@ type fakeTrajectoryCH struct {
 	// strictSpansError, when set, answers a spans insert that carries
 	// input_format_skip_unknown_fields=0 with HTTP 400 and this body.
 	strictSpansError string
+	// failInlineSpans answers every spans insert without
+	// input_format_skip_unknown_fields=0 with HTTP 500.
+	failInlineSpans bool
 }
 
 func (f *fakeTrajectoryCH) handler() http.Handler {
@@ -85,10 +88,12 @@ func (f *fakeTrajectoryCH) handler() http.Handler {
 		strictErr := ""
 		if table == "spans" && r.URL.Query().Get("input_format_skip_unknown_fields") == "0" {
 			strictErr = f.strictSpansError
+		} else if table == "spans" && f.failInlineSpans {
+			fail = true
 		}
 		f.mu.Unlock()
 		if fail {
-			http.Error(w, "simulated trajectory_items failure", http.StatusInternalServerError)
+			http.Error(w, "simulated "+table+" failure", http.StatusInternalServerError)
 			return
 		}
 
@@ -846,32 +851,61 @@ func TestDrainRestoresInlineWhenGateFlipsMissing(t *testing.T) {
 // TestItemsV1BatchUnknownColumnClosesGate: a pointer batch is sent with
 // input_format_skip_unknown_fields=0, so a ClickHouse replica without the 040
 // columns refuses it instead of storing previews as whole payloads. The refusal
-// closes the gate, the rows stay in the dead-letter file (no second insert of
-// the same rows), the request is billed raw, and the next request is inline
-// on dev's URL.
+// closes the gate and the request is billed raw. The refused rows are not
+// dead-lettered: the drain restores them inline and sends them once more on
+// dev's URL, together with the rows of a project without dedup that shared the
+// batch, so every span is stored. The next request is inline on dev's URL.
 func TestItemsV1BatchUnknownColumnClosesGate(t *testing.T) {
+	const otherPID = "22222222-2222-4222-8222-222222222222"
 	ch := &fakeTrajectoryCH{strictSpansError: "Code: 117. DB::Exception: Unknown field found while parsing JSONEachRow format: payload_envelope: (at row 1)"}
-	f := newTrajFixture(t, trajectory.Config{Mode: trajectory.ModeOn}, ch, true)
+	f := newTrajFixture(t, trajectory.Config{Mode: trajectory.ModeCanary, CanaryProjectList: []string{trajTestPID}}, ch, true)
 	usage := &recordingTrajUsage{}
 	f.srv.usage = usage
 
 	postTrajOTLP(t, f.srv, trajTestOID, trajTestPID, agentTurn(t, 1))
+	otherMsgs := []map[string]any{{"role": "user", "content": "Other project question " + strings.Repeat("o", 300)}}
+	postTrajOTLP(t, f.srv, trajTestOID, otherPID, makeAgentHTTPReq(t, otherPID, trajTestOID, "sess-other", 0x41, 1, otherMsgs, "Other reply"))
 	f.srv.drainNow(context.Background())
-	inserts := ch.snapshot()
-	spans := insertsInto(inserts, "spans")
-	if len(spans) != 1 {
-		t.Fatalf("the refused batch must be sent once (no retry, no re-insert), got %d spans inserts", len(spans))
+	spans := insertsInto(ch.snapshot(), "spans")
+	if len(spans) != 2 {
+		t.Fatalf("want the refused strict insert and one inline resend, got %d spans inserts", len(spans))
 	}
 	q, _ := url.ParseQuery(spans[0].RawQuery)
 	if q.Get("input_format_skip_unknown_fields") != "0" {
 		t.Fatalf("a pointer batch must disable skip_unknown_fields: %s", spans[0].RawQuery)
 	}
+	if spans[1].RawQuery != strings.SplitN(spans[0].RawQuery, "&input_format_skip_unknown_fields=0", 2)[0] {
+		t.Fatalf("the resend must use dev's URL: %s", spans[1].RawQuery)
+	}
+	resent := spans[1].Rows
+	if len(resent) != 2 {
+		t.Fatalf("both projects' rows must be resent, got %d", len(resent))
+	}
+	requireNoPointerKeys(t, resent, false)
+	var gotDedup, gotOther bool
+	for _, row := range resent {
+		in, _ := row["input"].(string)
+		switch row["project_id"] {
+		case trajTestPID:
+			gotDedup = strings.Contains(in, "Question 1 "+strings.Repeat("q", 300))
+		case otherPID:
+			gotOther = strings.Contains(in, "Other project question")
+		}
+	}
+	if !gotDedup || !gotOther {
+		t.Fatalf("resent rows must carry their full inputs (dedup project %v, other project %v)", gotDedup, gotOther)
+	}
 	if f.gate.Open() {
 		t.Fatal("a refused pointer column must close the gate")
 	}
-	dead, err := os.ReadFile(f.dlq)
-	if err != nil || !bytes.Contains(dead, []byte(trajectory.EncodingItemsV1)) {
-		t.Fatalf("the refused rows must be kept in the dead-letter file: %v", err)
+	if dead, err := os.ReadFile(f.dlq); err == nil && len(dead) != 0 {
+		t.Fatalf("resent rows must not be dead-lettered: %d bytes", len(dead))
+	}
+	if s := f.writer.Snapshot(); s.RowsDeadLettered != 0 {
+		t.Fatalf("rows dead-lettered: %+v", s)
+	}
+	if !strings.Contains(f.logs.String(), `"event":"trajectory_spans_inline_resend"`) {
+		t.Fatal("the inline resend must be logged")
 	}
 	usage.mu.Lock()
 	if len(usage.dedup) != 1 || usage.stored[0] != usage.raw[0] {
@@ -888,6 +922,42 @@ func TestItemsV1BatchUnknownColumnClosesGate(t *testing.T) {
 	requireNoPointerKeys(t, spans[0].Rows, true)
 	if strings.Contains(spans[0].RawQuery, "input_format_skip_unknown_fields") {
 		t.Fatal("inline batches must use dev's URL")
+	}
+}
+
+// TestItemsV1BatchRefusedResendFailureDeadLettersInline: when the inline
+// resend of a refused pointer batch also fails, the writer dead-letters the
+// rows as they were resent: inline, with no pointer column, so a replay into
+// spans stores the full payloads.
+func TestItemsV1BatchRefusedResendFailureDeadLettersInline(t *testing.T) {
+	ch := &fakeTrajectoryCH{
+		strictSpansError: "Code: 117. DB::Exception: Unknown field found while parsing JSONEachRow format: payload_envelope: (at row 1)",
+		failInlineSpans:  true,
+	}
+	f := newTrajFixture(t, trajectory.Config{Mode: trajectory.ModeOn}, ch, true)
+	postTrajOTLP(t, f.srv, trajTestOID, trajTestPID, agentTurn(t, 1))
+	f.srv.drainNow(context.Background())
+	dead, err := os.ReadFile(f.dlq)
+	if err != nil || len(dead) == 0 {
+		t.Fatalf("the failed resend must be dead-lettered: %v", err)
+	}
+	var rows []map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(dead), []byte("\n")) {
+		var m map[string]any
+		if err := json.Unmarshal(line, &m); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, m)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("dead-lettered rows %d, want the span once (not the refused pointer row too)", len(rows))
+	}
+	requireNoPointerKeys(t, rows, false)
+	if in, _ := rows[0]["input"].(string); !strings.Contains(in, "Question 1 "+strings.Repeat("q", 300)) {
+		t.Fatal("the dead-lettered row must carry the full input")
+	}
+	if !strings.Contains(f.logs.String(), `"event":"trajectory_spans_inline_resend_failed"`) {
+		t.Fatal("the failed resend must be logged")
 	}
 }
 

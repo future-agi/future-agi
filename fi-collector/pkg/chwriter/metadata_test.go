@@ -1,6 +1,7 @@
 package chwriter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/trajectory"
+	"golang.org/x/sync/semaphore"
 )
 
 // topologyCH answers the metadata queries from fixed engines/replica counts
@@ -207,10 +209,10 @@ func TestInsertConfirmedWithStrictColumns(t *testing.T) {
 	if _, err := w.InsertConfirmed(context.Background(), rows); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.InsertConfirmedWith(context.Background(), rows, InsertOptions{}); err != nil {
+	if _, _, err := w.InsertConfirmedWith(context.Background(), rows, InsertOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.InsertConfirmedWith(context.Background(), rows, InsertOptions{StrictColumns: true}); err != nil {
+	if _, _, err := w.InsertConfirmedWith(context.Background(), rows, InsertOptions{StrictColumns: true}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -220,6 +222,81 @@ func TestInsertConfirmedWithStrictColumns(t *testing.T) {
 	}
 	if raw[3] != raw[0]+"&input_format_skip_unknown_fields=0" {
 		t.Fatalf("strict URL %q", raw[3])
+	}
+}
+
+// TestInsertHoldSchemaRefusals: with HoldSchemaRefusals, an insert the table
+// refuses because of its columns is not dead-lettered; its rows and the
+// batch's rows not sent yet are held for the caller, rows stored before stay
+// confirmed, and no further insert of the batch is sent. Any other 4xx is
+// still dead-lettered. Without the option nothing is held (dev's behaviour).
+func TestInsertHoldSchemaRefusals(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("concurrent=%v", concurrent), func(t *testing.T) {
+			var mu sync.Mutex
+			var sent []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				sent = append(sent, string(body))
+				mu.Unlock()
+				switch {
+				case bytes.Contains(body, []byte(`"pointer"`)):
+					w.Header().Set("X-ClickHouse-Exception-Code", "117")
+					http.Error(w, "Code: 117. DB::Exception: Unknown field found while parsing JSONEachRow format: payload_envelope: (at row 1)", http.StatusBadRequest)
+				case bytes.Contains(body, []byte(`"bad"`)):
+					http.Error(w, "Code: 27. DB::Exception: Cannot parse input", http.StatusBadRequest)
+				}
+			}))
+			defer srv.Close()
+			cfg := mkConfig(t, srv.URL)
+			w, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Close()
+			w.SetMaxInsertBytes(1) // one row per insert
+			if concurrent {
+				// The concurrent path with one slot: inserts still go one
+				// at a time, in order.
+				w.inserts = semaphore.NewWeighted(1)
+			}
+			rows := []map[string]any{{"span_id": "a"}, {"span_id": "b", "pointer": true}, {"span_id": "c"}, {"span_id": "d"}}
+			confirmed, held, err := w.InsertConfirmedWith(context.Background(), rows, InsertOptions{StrictColumns: true, HoldSchemaRefusals: true})
+			if !IsSchemaMismatch(err) {
+				t.Fatalf("the refusal must be returned: %v", err)
+			}
+			if fmt.Sprint(confirmed) != "[true false false false]" || fmt.Sprint(held) != "[false true true true]" {
+				t.Fatalf("confirmed %v held %v", confirmed, held)
+			}
+			mu.Lock()
+			n := len(sent)
+			mu.Unlock()
+			if n != 2 {
+				t.Fatalf("%d inserts sent; after a column refusal the rest of the batch must not be sent", n)
+			}
+			if dead, _ := os.ReadFile(cfg.DeadLetterFile); len(dead) != 0 {
+				t.Fatalf("held rows must not be dead-lettered: %s", dead)
+			}
+			if s := w.Snapshot(); s.RowsDeadLettered != 0 || s.BatchesFailed != 0 {
+				t.Fatalf("stats %+v", s)
+			}
+
+			// Another 4xx is dead-lettered as before.
+			_, held, err = w.InsertConfirmedWith(context.Background(), []map[string]any{{"span_id": "e", "bad": true}}, InsertOptions{StrictColumns: true, HoldSchemaRefusals: true})
+			if err == nil || held[0] {
+				t.Fatalf("a non-schema refusal is not held: held %v err %v", held, err)
+			}
+			// Without the option a column refusal is dead-lettered (dev).
+			_, held, err = w.InsertConfirmedWith(context.Background(), []map[string]any{{"span_id": "f", "pointer": true}}, InsertOptions{StrictColumns: true})
+			if err == nil || held != nil {
+				t.Fatalf("without HoldSchemaRefusals nothing is held: held %v err %v", held, err)
+			}
+			dead, _ := os.ReadFile(cfg.DeadLetterFile)
+			if !bytes.Contains(dead, []byte(`"e"`)) || !bytes.Contains(dead, []byte(`"f"`)) || bytes.Contains(dead, []byte(`"b"`)) {
+				t.Fatalf("dead-letter file: %s", dead)
+			}
+		})
 	}
 }
 
@@ -244,7 +321,7 @@ func TestIsSchemaMismatch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = w.InsertConfirmedWith(context.Background(), []map[string]any{{"a": 1}}, InsertOptions{StrictColumns: true})
+		_, _, err = w.InsertConfirmedWith(context.Background(), []map[string]any{{"a": 1}}, InsertOptions{StrictColumns: true})
 		if got := IsSchemaMismatch(err); got != tc.want {
 			t.Fatalf("%q: IsSchemaMismatch=%v, want %v (err %v)", tc.body, got, tc.want, err)
 		}
