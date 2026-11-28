@@ -191,11 +191,13 @@ class VoiceServiceBlueprint(ABC):
 
             except Exception as e:
                 if attempt == max_retries - 1:
-                    logger.error(f"Error in API request: {str(e)}")
+                    logger.error("voice_request_failed", error_type=type(e).__name__)
                     raise
                 else:
                     logger.warning(
-                        f"Attempt {attempt + 1} failed: {str(e)}. Retrying..."
+                        "voice_request_retry",
+                        attempt=attempt + 1,
+                        error_type=type(e).__name__,
                     )
                     time.sleep(retry_delay)
 

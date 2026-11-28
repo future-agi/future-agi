@@ -138,23 +138,26 @@ class VapiService(VoiceServiceBlueprint):
         response: requests.Response,
         action: str,
         use_provider_message: bool = False,
+        *,
+        log_response: bool = True,
     ) -> None:
         """
         Centralized error handler for VAPI API responses.
 
-        Logs the full response body for debugging, then raises VapiApiError.
+        Optionally logs the response body for debugging, then raises VapiApiError.
         When *use_provider_message* is True (outbound calls), extracts the
         provider's own error message from the JSON body so it is baked into
         str(e) — custom exception attributes like response_body can be lost
         when the exception crosses sync_to_async / thread-pool boundaries.
         """
         response_text = response.text
-        logger.error(
-            "vapi_api_error",
-            action=action,
-            status_code=response.status_code,
-            response_body=response_text,
-        )
+        if log_response:
+            logger.error(
+                "vapi_api_error",
+                action=action,
+                status_code=response.status_code,
+                response_body=response_text,
+            )
         provider_message = None
         if use_provider_message:
             try:
@@ -991,10 +994,12 @@ class VapiService(VoiceServiceBlueprint):
             if response.status_code == 200:
                 return response.json()
             else:
-                self._handle_error_response(response, "get assistant")
+                self._handle_error_response(
+                    response, "get assistant", log_response=False
+                )
 
         except Exception as e:
-            logger.error(f"Error getting assistant: {str(e)}")
+            logger.error("get_assistant_failed", error_type=type(e).__name__)
             raise
 
     def update_assistant(self, assistant_id: str, **kwargs) -> dict[str, Any]:

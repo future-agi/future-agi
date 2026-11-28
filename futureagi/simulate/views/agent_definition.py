@@ -654,7 +654,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                     or request.user.organization,
                     workspace=getattr(request, "workspace", None),
                     agent_id=validated.get("agent_id"),
-                    assistant_id=assistant_id,
+                    provider=provider,
                     masked_value=api_key,
                 )
                 if not api_key:
@@ -754,8 +754,10 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         except FeatureUnavailable:
             raise
-        except Exception:
-            logger.exception("fetch_assistant_from_provider failed")
+        except Exception as e:
+            logger.error(
+                "fetch_assistant_from_provider_failed", error_type=type(e).__name__
+            )
             return self._gm.bad_request("Please recheck your API key and assistant ID")
 
 
