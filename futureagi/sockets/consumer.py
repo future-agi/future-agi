@@ -1,14 +1,17 @@
 import asyncio
 import json
 import time
+from uuid import UUID
 
 import structlog
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.db import DatabaseError
 
 from sockets.membership import MembershipSocketGuard, user_socket_group
 from sockets.org_scope import resolve_socket_organization
 from sockets.saml_guard import SamlSocketGuard
-from sockets.targets import normalize_socket_target
+from sockets.targets import relay_group
+from sockets.template_scope import template_workspace_access
 
 logger = structlog.get_logger(__name__)
 
@@ -260,6 +263,9 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": str(e)})
 
     async def handle_subscribe(self, content):
+        if self.user is None:
+            await self.close(code=4001)
+            return
         uuid = content.get("uuid")
         if not uuid:
             logger.error(
@@ -270,6 +276,33 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 {"type": "error", "message": "UUID is required for subscription"}
             )
             return
+
+        # Job and legacy string targets are not template IDs. Bare UUIDs
+        # may identify a template; authorize before changing group membership.
+        try:
+            template_id = UUID(str(uuid))
+        except ValueError:
+            template_id = None
+        if template_id is not None:
+            try:
+                access = await template_workspace_access(
+                    self.user.id, self.organization_id, template_id
+                )
+            except DatabaseError as exc:
+                logger.warning(
+                    "socket_template_check_failed", error_type=type(exc).__name__
+                )
+                await self.send_json(
+                    {"type": "error", "message": "Subscription unavailable"}
+                )
+                return
+            if access is False:
+                await self.send_json(
+                    {"type": "error", "message": "Subscription unavailable"}
+                )
+                return
+            if access is None:
+                template_id = None
 
         # Automatically unsubscribe from previous subscription
         if self.current_subscription:
@@ -293,6 +326,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if self._socket_closed():
             return
         self.current_subscription = channel_name
+        self._membership.template_id = template_id
 
         await self.send_json(
             {
@@ -318,6 +352,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if channel_name == self.current_subscription:
             await self.channel_layer.group_discard(channel_name, self.channel_name)
             self.current_subscription = None
+            self._membership.template_id = None
 
             await self.send_json(
                 {
@@ -372,7 +407,6 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         Send data to the WebSocket, checking if we're subscribed to the channel
         """
         data = event.get("data", {})
-        uuid = data.get("uuid")
 
         if not await self._guard.ensure_live(inbound=False):
             return
@@ -381,9 +415,20 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             if not await self._membership.ensure_member():
                 return
             await self._answer_pending_subscription_frames()
-        if uuid and self._uuid_group_name(uuid) != self.current_subscription:
-            return
         if not await self._membership.ensure_member():
+            return
+        # Group membership can change while an event sits in the queue.
+        # Only the publisher's resolved destination has routing significance.
+        target = event.get("target")
+        if not isinstance(target, dict) or not isinstance(target.get("id"), str):
+            return
+        if target.get("kind") == "organization":
+            if target["id"] != self.organization_id:
+                return
+        elif target.get("kind") == "subscription":
+            if self._uuid_group_name(target["id"]) != self.current_subscription:
+                return
+        else:
             return
         try:
             await self.send_json(data)
@@ -408,20 +453,11 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self._answer_pending_subscription_frames()
 
     def _uuid_group_name(self, uuid):
-        try:
-            uuid = normalize_socket_target(uuid)
-        except ValueError:
-            # Preserve non-UUID subscriptions used by older socket clients.
-            pass
-        auth_scope = self.scope.get("auth_scope")
-        if auth_scope is not None:
-            return f"uuid_org_{auth_scope.org_id}_{uuid}"
-        # Non-SAML sessions use the same resolved tenant as their broadcast room.
-        return f"uuid_{self.room_group_name}_{uuid}"
+        return relay_group(self.organization_id, uuid)
 
     async def get_room_group_name(self):
         org_id = await resolve_socket_organization(self.scope, self.user)
         if org_id is None:
             return None
         self.organization_id = str(org_id)
-        return f"org_{org_id}"
+        return relay_group(org_id)

@@ -245,7 +245,7 @@ def test_broadcast_accepts_missing_and_legacy_null_uuid(extra):
     async def run():
         layer = get_channel_layer()
         channel = await layer.new_channel()
-        await layer.group_add(f"org_{ORG}", channel)
+        await layer.group_add(f"ws2.{ORG}", channel)
         message = {
             "alert_title": "Limit reached",
             "nested": {"items": [1, None, False]},
@@ -255,13 +255,37 @@ def test_broadcast_accepts_missing_and_legacy_null_uuid(extra):
         )
         assert response.status_code == 200, response.data
         event = await asyncio.wait_for(layer.receive(channel), timeout=1)
-        assert event == {"type": "send_data", "data": message}
+        assert event == {
+            "type": "send_data",
+            "target": {"kind": "organization", "id": ORG},
+            "data": message,
+        }
 
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("message", [None, [], [1], "text", 1, True])
-def test_non_object_messages_are_rejected(message):
+def test_structured_alert_title_is_normalized_before_delivery():
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        send = layer.return_value.group_send = AsyncMock()
+        response = post_relay({"message": {"alert_title": {"label": "Synthetic"}}})
+    assert response.status_code == 200
+    send.assert_awaited_once()
+    assert send.await_args is not None
+    assert send.await_args.args[1]["data"] == {"alert_title": "Notification"}
+
+
+def test_legacy_text_is_enqueued_as_a_notification():
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        send = layer.return_value.group_send = AsyncMock()
+        response = post_relay({"message": "Synthetic notice"})
+    assert response.status_code == 200
+    send.assert_awaited_once()
+    assert send.await_args is not None
+    assert send.await_args.args[1]["data"] == {"message": "Synthetic notice"}
+
+
+@pytest.mark.parametrize("message", [None, [], [1], 1, True])
+def test_non_object_non_string_messages_are_rejected(message):
     with patch("tfc.views.socket.get_channel_layer") as layer:
         response = post_relay({"message": message})
     assert response.status_code == 400
@@ -276,6 +300,121 @@ def test_targeted_delivery_requires_uuid(extra):
         response = post_relay({"message": {}, "send_to_uuid": True, **extra})
     assert response.status_code == 400
     layer.assert_not_called()
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["room", "subscription"])
+def test_new_relay_publishes_only_to_versioned_groups(targeted):
+    group = f"ws2.{ORG}.{TARGET}" if targeted else f"ws2.{ORG}"
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        publish = layer.return_value.group_send = AsyncMock()
+        response = post_relay(
+            {
+                "send_to_uuid": targeted,
+                "uuid": TARGET,
+                "message": {"session_uuid": TARGET},
+            }
+        )
+    assert response.status_code == 200
+    publish.assert_awaited_once_with(group, ANY)
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["room", "subscription"])
+def test_relay_records_resolved_target_independently_of_message(targeted):
+    message = {"uuid": OTHER_ORG}
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        publish = layer.return_value.group_send = AsyncMock()
+        response = post_relay(
+            {"send_to_uuid": targeted, "uuid": TARGET, "message": message}
+        )
+    assert response.status_code == 200
+    target = (
+        {"kind": "subscription", "id": TARGET}
+        if targeted
+        else {"kind": "organization", "id": ORG}
+    )
+    publish.assert_awaited_once_with(
+        ANY, {"type": "send_data", "data": message, "target": target}
+    )
+
+
+def test_broadcast_uuid_is_application_data_not_a_subscription():
+    consumer = synthetic_listener()
+    message = {"uuid": TARGET}
+    asyncio.run(
+        consumer.send_data(
+            {"target": {"kind": "organization", "id": ORG}, "data": message}
+        )
+    )
+    consumer.send_json.assert_awaited_once_with(message)
+
+
+def synthetic_listener():
+    consumer = DataConsumer()
+    consumer.organization_id = ORG
+    consumer._guard = AsyncMock()
+    consumer._membership = AsyncMock()
+    consumer._pending_subscription_frames = []
+    consumer.send_json = AsyncMock()
+    return consumer
+
+
+@pytest.mark.parametrize(
+    "following", [OTHER_ORG, None], ids=["switched", "unsubscribed"]
+)
+def test_queued_chunk_only_reaches_current_subscription(following):
+    consumer = synthetic_listener()
+    event = {
+        "target": {"kind": "subscription", "id": TARGET},
+        "data": {"session_uuid": TARGET},
+    }
+    consumer.current_subscription = consumer._uuid_group_name(TARGET)
+    asyncio.run(consumer.send_data(event))
+    consumer.send_json.assert_awaited_once_with(event["data"])
+    consumer.send_json.reset_mock()
+    consumer.current_subscription = (
+        consumer._uuid_group_name(following) if following else None
+    )
+    asyncio.run(consumer.send_data(event))
+    consumer.send_json.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        None,
+        {},
+        {"kind": "unknown", "id": TARGET},
+        {"kind": "organization", "id": OTHER_ORG},
+    ],
+)
+def test_unknown_or_unfollowed_target_is_not_a_broadcast(target):
+    consumer = synthetic_listener()
+    asyncio.run(consumer.send_data({"target": target, "data": {}}))
+    consumer.send_json.assert_not_awaited()
+
+
+@pytest.mark.parametrize("targeted", [False, True], ids=["room", "subscription"])
+def test_in_process_publishers_use_the_same_routing_envelope(targeted):
+    from model_hub.utils.utils import (
+        send_message_to_channel_async,
+        send_message_to_uuid_async,
+    )
+
+    message = {"marker": "synthetic"}
+    with patch("model_hub.utils.utils.get_channel_layer") as layer:
+        publish = layer.return_value.group_send = AsyncMock()
+        if targeted:
+            asyncio.run(send_message_to_uuid_async(TARGET, message, ORG))
+            group, target = (
+                f"ws2.{ORG}.{TARGET}",
+                {"kind": "subscription", "id": TARGET},
+            )
+        else:
+            asyncio.run(send_message_to_channel_async(ORG, message))
+            group, target = f"ws2.{ORG}", {"kind": "organization", "id": ORG}
+    publish.assert_awaited_once_with(
+        group, {"type": "send_data", "data": message, "target": target}
+    )
 
 
 def test_relay_requires_authentication():

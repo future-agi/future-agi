@@ -194,6 +194,8 @@ export const WebSocketProvider = ({ children }) => {
         canRetry = await refreshRejectedSocketToken(
           rejectedToken,
           accessToken.current,
+          () => socketIdRef.current === socketId,
+          reconnectTimeoutRef,
         );
       } finally {
         if (refreshingRef.current === socketId) refreshingRef.current = null;
@@ -360,12 +362,7 @@ export const WebSocketProvider = ({ children }) => {
         authenticationUnavailableRef.current = false;
       }
 
-      if (event.code === 1006) {
-        logger.debug("WebSocket closed with 1006 - skipping reconnect");
-        return;
-      }
-
-      logger.debug("WebSocket closed:", event);
+      logger.debug("WebSocket closed:", event.code);
 
       if (event.code === AUTH_REJECTED_CLOSE_CODE) {
         authFailuresRef.current += 1;

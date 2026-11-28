@@ -55,7 +55,11 @@ for (const [name, accepts] of [
       expect(accepts({ message, send_to_uuid: true, ...extra })).toBe(false),
     );
 
-    it.each([null, [], [1], "text", 42, true])(
+    it("accepts a legacy text notification", () => {
+      expect(accepts({ message: "Synthetic notice" })).toBe(true);
+    });
+
+    it.each([null, [], [1], 42, true])(
       "rejects a non-object message (%j)",
       (value) => expect(accepts({ message: value })).toBe(false),
     );

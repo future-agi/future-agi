@@ -161,6 +161,57 @@ describe("useFalconSocket token handling", () => {
     expect(lastSocket().token).toBe("token-2");
   });
 
+  it("backs off on transient refresh failures without reopening the rejected socket", async () => {
+    signIn("token-1");
+    mocks.get
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockRejectedValueOnce({ statusCode: 503 })
+      .mockRejectedValueOnce({ response: { status: 502 } })
+      .mockImplementationOnce(async () =>
+        localStorage.setItem("accessToken", "token-2"),
+      );
+    renderHook(() => useFalconSocket());
+    await act(async () => lastSocket().acceptThenReject());
+    for (const [attempt, delay] of [1000, 2000, 4000].entries()) {
+      await act(async () => vi.advanceTimersByTimeAsync(delay - 1));
+      expect(mocks.get).toHaveBeenCalledTimes(attempt + 1);
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(mocks.get).toHaveBeenCalledTimes(attempt + 2);
+      expect(sockets()).toHaveLength(1);
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(60000));
+    expect(sockets()).toHaveLength(2);
+    expect(lastSocket().token).toBe("token-2");
+  });
+
+  it("stops when refresh definitively refuses the credential", async () => {
+    signIn("token-1");
+    mocks.get.mockRejectedValue({ statusCode: 401 });
+    renderHook(() => useFalconSocket());
+    await act(async () => lastSocket().acceptThenReject());
+    await act(async () => vi.advanceTimersByTimeAsync(120000));
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    expect(sockets()).toHaveLength(1);
+  });
+
+  it("backs off across immediate post-open server closes until a server frame arrives", async () => {
+    signIn("token-1");
+    renderHook(() => useFalconSocket());
+    for (const [i, delay] of [1000, 2000, 4000].entries()) {
+      lastSocket().open();
+      lastSocket().closeWith(1011);
+      await act(async () => vi.advanceTimersByTimeAsync(delay - 1));
+      expect(sockets()).toHaveLength(i + 1);
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(sockets()).toHaveLength(i + 2);
+    }
+    lastSocket().open();
+    lastSocket().onmessage({ data: JSON.stringify({ type: "pong" }) });
+    lastSocket().closeWith(1011);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(sockets()).toHaveLength(5);
+  });
+
   it("backs off between repeated 4003 rejections and then stops reconnecting", async () => {
     signIn("token-1");
     localStorage.setItem("accessToken", "token-1");

@@ -26,15 +26,12 @@ class JWTAuthMiddleware:
         self.inner = inner
 
     async def close_connection(self, send, code, reason):
-        """Properly close a WebSocket connection with custom code."""
-        # First, send a proper WebSocket accept to establish the connection
-        await send(
-            {
-                "type": "websocket.accept",
-            }
-        )
+        # A browser can only see our application-specific token rejection code
+        # after acceptance. An unavailable auth check must not open a socket;
+        # browsers surface that handshake failure as an ordinary network drop.
+        if code == INVALID_TOKEN_CLOSE_CODE:
+            await send({"type": "websocket.accept"})
 
-        # Then, send a proper close frame with the custom code
         await send(
             {
                 "type": "websocket.close",

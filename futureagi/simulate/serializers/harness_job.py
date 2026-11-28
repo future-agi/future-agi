@@ -28,7 +28,9 @@ _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
 
 # A folder inside the repository, relative to its root: no leading slash, no "." or
 # ".." segment, no empty segment, no trailing slash. Empty means the root.
-SUBFOLDER_PATTERN = r"^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+_RELATIVE_PATH = r"(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*"
+SUBFOLDER_PATTERN = rf"^{_RELATIVE_PATH}$"
+BLANK_OR_SUBFOLDER_PATTERN = rf"^(?:{_RELATIVE_PATH})?$"
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -133,7 +135,7 @@ class HarnessSourceSerializer(serializers.Serializer):
         max_length=255, required=False, allow_null=True
     )
     subfolder = serializers.RegexField(
-        SUBFOLDER_PATTERN,
+        BLANK_OR_SUBFOLDER_PATTERN,
         max_length=512,
         required=False,
         allow_null=True,

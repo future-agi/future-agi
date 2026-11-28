@@ -2,7 +2,7 @@
 
 A refused credential closes with 4003, which the browser does not retry with
 the same token. When the database or cache cannot be reached the credential
-was never checked, so the socket closes with 1011 and the browser reconnects.
+was never checked, so the handshake is refused before a socket is opened.
 """
 
 import asyncio
@@ -62,7 +62,7 @@ def handshake(query_string):
 def test_unavailable_authentication_closes_with_a_retryable_code(failure):
     with patch("tfc.middleware.jwt_auth.decode_token", side_effect=failure):
         events = handshake(b"token=synthetic-token")
-    assert events == [("websocket.accept", None), ("websocket.close", RETRYABLE)]
+    assert events == [("websocket.close", RETRYABLE)]
 
 
 def test_unreachable_database_closes_with_a_retryable_code():
@@ -74,7 +74,7 @@ def test_unreachable_database_closes_with_a_retryable_code():
     ):
         events = handshake(b"token=synthetic-token")
     decode.assert_not_called()
-    assert events == [("websocket.accept", None), ("websocket.close", RETRYABLE)]
+    assert events == [("websocket.close", RETRYABLE)]
 
 
 @pytest.mark.parametrize(

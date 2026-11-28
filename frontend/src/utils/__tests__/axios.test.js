@@ -4,12 +4,49 @@ vi.mock("../Mixpanel", () => ({
   resetUser: vi.fn(),
 }));
 
-import axiosInstance from "../axios";
+import axiosInstance, { endpoints } from "../axios";
+
+vi.mock("../recaptchaService", () => ({ getRecaptchaToken: vi.fn() }));
 
 describe("axios response shape", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it.each([new Error("network unavailable"), { response: { status: 503 } }])(
+    "preserves the session when a token refresh cannot complete",
+    async (failure) => {
+      localStorage.setItem("rememberMe", "true");
+      localStorage.setItem("refreshToken", "synthetic-refresh");
+      vi.spyOn(axiosInstance, "post").mockRejectedValue(failure);
+      const config = { url: "/accounts/user-info/", method: "get" };
+      const rejected = axiosInstance.interceptors.response.handlers[0].rejected;
+      try {
+        await expect(
+          rejected({ config, response: { status: 401, config } }),
+        ).rejects.toBe(failure);
+        expect(localStorage.getItem("refreshToken")).toBe("synthetic-refresh");
+      } finally {
+        localStorage.clear();
+      }
+    },
+  );
+
+  it("propagates a refused refresh instead of trying to refresh itself", async () => {
+    localStorage.setItem("rememberMe", "true");
+    localStorage.setItem("refreshToken", "synthetic-refresh");
+    const post = vi.spyOn(axiosInstance, "post").mockRejectedValue(new Error());
+    const config = { url: endpoints.auth.refreshToken, method: "post" };
+    const rejected = axiosInstance.interceptors.response.handlers[0].rejected;
+    try {
+      await expect(
+        rejected({ config, response: { status: 401, config } }),
+      ).rejects.toMatchObject({ statusCode: 401 });
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      localStorage.clear();
+    }
   });
 
   it("keeps request bodies immutable and lets contract validation catch drift", () => {

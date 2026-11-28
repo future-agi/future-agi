@@ -50,9 +50,11 @@ def membership_organization(user):
         return None
     from accounts.models.organization_membership import OrganizationMembership
 
-    memberships = OrganizationMembership.no_workspace_objects.filter(user=user)
+    memberships = OrganizationMembership._base_manager.filter(user=user)
     membership = (
-        memberships.filter(is_active=True).select_related("organization").first()
+        memberships.filter(is_active=True, deleted=False)
+        .select_related("organization")
+        .first()
     )
     if membership is not None:
         return membership.organization
@@ -82,8 +84,10 @@ def organization_membership_is_active(user_id, organization_id):
     )
     if user is None:
         return False
-    memberships = OrganizationMembership.no_workspace_objects.filter(user_id=user_id)
-    if memberships.filter(organization_id=organization_id, is_active=True).exists():
+    memberships = OrganizationMembership._base_manager.filter(user_id=user_id)
+    if memberships.filter(
+        organization_id=organization_id, is_active=True, deleted=False
+    ).exists():
         return True
     return (
         user["organization_id"] is not None

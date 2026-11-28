@@ -135,7 +135,9 @@ const UploadLimitNotification = () => {
                     color: "text.primary",
                   }}
                 >
-                  {alertData?.alert_title}
+                  {typeof alertData?.alert_title === "string"
+                    ? alertData.alert_title
+                    : "Notification"}
                 </Typography>
                 <IconButton
                   size="small"

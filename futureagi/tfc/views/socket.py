@@ -2,9 +2,11 @@ import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.http.request import RawPostDataException
+from drf_yasg import openapi
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.views import APIView
 
+from sockets.targets import relay_delivery
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     CallWebsocketErrorResponseSerializer,
@@ -60,6 +62,24 @@ class CallWebsocketView(APIView):
     # Sending message to websocket
     @validated_request(
         request_serializer=CallWebsocketRequestSerializer,
+        operation_description="Internal relay. Requires the organization's system API key pair and a signed request.",
+        security=[{"X-Api-Key": [], "X-Secret-Key": []}],
+        manual_parameters=[
+            openapi.Parameter(
+                RELAY_SIGNATURE_HEADER,
+                openapi.IN_HEADER,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="Internal relay signature for the request.",
+            ),
+            openapi.Parameter(
+                RELAY_TIMESTAMP_HEADER,
+                openapi.IN_HEADER,
+                type=openapi.TYPE_STRING,
+                required=True,
+                description="Unix timestamp in seconds for the signed request.",
+            ),
+        ],
         responses={
             200: CallWebsocketResponseSerializer,
             400: CallWebsocketErrorResponseSerializer,
@@ -77,17 +97,11 @@ class CallWebsocketView(APIView):
         try:
             data = request.validated_data
             message = data["message"]
-            org_id = organization.id
-            # Never publish the authenticated relay to the legacy unscoped group.
-            group = (
-                f"uuid_org_{org_id}_{data['uuid']}"
-                if data.get("send_to_uuid")
-                else f"org_{org_id}"
-            )
+            subscription = data["uuid"] if data.get("send_to_uuid") else None
             # Let enqueue failures reach the caller, rather than using the
             # best-effort helpers that swallow channel-layer exceptions.
             async_to_sync(get_channel_layer().group_send)(
-                group, {"type": "send_data", "data": message}
+                *relay_delivery(organization.id, message, subscription)
             )
             return self._gm.success_response("Message sent to websocket")
         except Exception as exc:  # noqa: BLE001 - relay boundary; logs a sanitized traceback

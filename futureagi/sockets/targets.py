@@ -18,3 +18,30 @@ def normalize_socket_target(value: str | UUID) -> str:
             prefix, value = candidate, value[len(candidate) :]
             break
     return prefix + str(UUID(value))
+
+
+def relay_group(organization_id, subscription=None) -> str:
+    """Isolate the relay protocol from groups joined by pre-v2 workers."""
+    room = f"ws2.{organization_id}"
+    if subscription is None:
+        return room
+    try:
+        subscription = normalize_socket_target(subscription)
+    except ValueError:
+        # Keep opaque identifiers used by older subscription clients.
+        pass
+    return f"{room}.{subscription}"
+
+
+def relay_delivery(organization_id, message, subscription=None):
+    """Bind the channel-layer destination and its routing metadata together."""
+    target = (
+        {"kind": "organization", "id": str(organization_id)}
+        if subscription is None
+        else {"kind": "subscription", "id": str(subscription)}
+    )
+    return relay_group(organization_id, subscription), {
+        "type": "send_data",
+        "target": target,
+        "data": message,
+    }

@@ -280,9 +280,24 @@ class LangfuseTracesResponseSerializer(serializers.Serializer):
     meta = LangfuseTracesMetaSerializer()
 
 
+class RelayMessageField(serializers.DictField):
+    """Normalize legacy text without interpreting its contents as structured data."""
+
+    class Meta:
+        swagger_schema_fields = {"x-string-or-object": True}
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            return {"message": data}
+        message = super().to_internal_value(data)
+        if "alert_title" in message and not isinstance(message["alert_title"], str):
+            message["alert_title"] = "Notification"
+        return message
+
+
 class CallWebsocketRequestSerializer(serializers.Serializer):
     # Notification and streaming producers have different, open message shapes.
-    message = serializers.DictField(child=JsonValueField(allow_null=True))
+    message = RelayMessageField(child=JsonValueField(allow_null=True))
     send_to_uuid = serializers.BooleanField(required=False, default=False)
     uuid = serializers.RegexField(
         TARGET_PATTERN,
