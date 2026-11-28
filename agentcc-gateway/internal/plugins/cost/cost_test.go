@@ -413,17 +413,25 @@ func TestCostPlugin_Decision(t *testing.T) {
 	}
 }
 
-// gpt-6-luna's decision price does not change what a chat call costs.
 func TestCostPlugin_DecisionPriceDoesNotLeakIntoChat(t *testing.T) {
-	db := modeldb.New(modeldb.BundledModels, nil)
-	if _, ok := db.Get("gpt-6-luna"); ok {
-		t.Skip("the bundled chat prices list gpt-6-luna; this test assumes they do not")
+	const model = "fixture-decider"
+	db := modeldb.New(map[string]*modeldb.ModelInfo{
+		modeldb.DecisionKeyPrefix + model: {
+			Mode:    modeldb.ModeDecision,
+			Pricing: modeldb.PricingInfo{InputPerToken: 1.0 / 1_000_000},
+		},
+	}, nil)
+	if cost, ok := db.CalculateDecisionCost(model, 1_000_000, 0); !ok || cost != 1 {
+		t.Fatalf("fixture decision cost = %g, %v; want 1, true", cost, ok)
+	}
+	if _, ok := db.Get(model); ok {
+		t.Fatal("decision-only fixture has a chat entry")
 	}
 	p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
-	rc := newRC("gpt-6-luna", 1_000_000, 0)
+	rc := newRC(model, 1_000_000, 0)
 	p.ProcessResponse(context.Background(), rc)
 	if got, ok := rc.Metadata["cost"]; ok {
-		t.Fatalf("chat gpt-6-luna priced at the decision price: %q", got)
+		t.Fatalf("chat call priced at the decision price: %q", got)
 	}
 }
 
