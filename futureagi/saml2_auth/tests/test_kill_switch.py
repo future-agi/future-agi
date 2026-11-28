@@ -7,6 +7,8 @@ every step without issuing a credential.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from django.test import override_settings
 
@@ -29,9 +31,16 @@ def test_tenant_login_completes_while_the_switch_is_on(
 ):
     attempt, payload = _signed_login(api_client, saml_tenants, signed_a_response)
 
-    response = complete(api_client, post_acs(api_client, attempt.relay, payload))
+    with patch("analytics.posthog_util.posthog_tracker.client") as tracker_client:
+        response = complete(api_client, post_acs(api_client, attempt.relay, payload))
 
     assert "sso_token=" in response["Location"]
+    tracker_client.alias.assert_called_once_with(
+        previous_id=saml_tenants.a1.email, distinct_id=str(saml_tenants.a1.id)
+    )
+    tracker_client.set.assert_called_once()
+    properties = tracker_client.set.call_args.kwargs["properties"]
+    assert properties["organization_id"] == str(saml_tenants.org_a.id)
 
 
 @override_settings(SAML_LOGIN_ENABLED=False)

@@ -1,10 +1,12 @@
 import os
 
 import structlog
+from django.core.cache import cache
 from posthog import Posthog
 
 logger = structlog.get_logger(__name__)
 
+IDENTITY_CACHE_TIMEOUT = 400 * 24 * 60 * 60
 _token_warning_logged = False
 
 
@@ -34,11 +36,12 @@ class PostHogTracker:
 
     # ---- User Identification (v7: use set/set_once instead of identify) ----
 
-    def identify_user(self, user, org=None, workspace_id=None):
-        """Set person properties for a user."""
-        if not self.is_enabled:
-            return
+    def identify_user(self, user, org=None, workspace_id=None) -> bool:
+        """Link the legacy email and report whether the profile update was queued."""
+        if self.client is None:
+            return False
         try:
+            distinct_id = str(user.id)
             properties = {
                 "email": user.email,
                 "name": getattr(user, "name", ""),
@@ -51,9 +54,23 @@ class PostHogTracker:
             if workspace_id:
                 properties["workspace_id"] = str(workspace_id)
 
-            self.client.set(user.email, properties)
-        except Exception as e:
-            logger.exception("PostHog identify error", error=str(e))
+            try:
+                alias_key = f"posthog:email-alias:{distinct_id}"
+                if user.email and cache.add(alias_key, True, IDENTITY_CACHE_TIMEOUT):
+                    try:
+                        self.client.alias(
+                            previous_id=user.email, distinct_id=distinct_id
+                        )
+                    except Exception:
+                        cache.delete(alias_key)
+                        raise
+            finally:
+                # A cache or alias failure must not suppress the profile update.
+                self.client.set(distinct_id=distinct_id, properties=properties)
+            return True
+        except Exception:
+            logger.warning("posthog_identify_failed", exc_info=True)
+            return False
 
     # ---- Group Analytics ----
 
@@ -90,12 +107,10 @@ class PostHogTracker:
         if not self.is_enabled:
             return
         try:
-            self.client.capture(
-                event_name,
-                distinct_id=str(user_id),
-                properties=properties or {},
-                groups=groups or {},
-            )
+            kwargs = {"properties": properties or {}, "groups": groups or {}}
+            if user_id is not None:
+                kwargs["distinct_id"] = str(user_id)
+            self.client.capture(event_name, **kwargs)
         except Exception as e:
             logger.exception("PostHog capture error", error=str(e))
 

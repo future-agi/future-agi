@@ -42,6 +42,7 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UserOnboardingSerializer
 from accounts.services.simulate_access import restrict_simulate_to_environments
+from accounts.services.token_service import issue_tokens
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.utils import record_hubspot_login
@@ -254,41 +255,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 .first()
             )
 
-            # Deactivate all previous refresh tokens for this user
-            AuthToken.objects.filter(
-                user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True
-            ).update(is_active=False)
-
-            # Create new refresh token
-            refresh_token = AuthToken.objects.create(
-                user=user,
-                auth_type=AuthTokenType.REFRESH.value,
-                last_used_at=timezone.now(),
-                is_active=True,
-            )
-            refresh_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user.id), "id": str(refresh_token.id)}
-            )
-            cache.set(
-                f"refresh_token_{str(refresh_token.id)}",
-                {"token": refresh_token_encrypted, "user": user},
-                timeout=7 * 24 * 60 * 60,  # 7 days in seconds
-            )
-
-            # Create new access token
-            access_token = AuthToken.objects.create(
-                user=user,
-                auth_type=AuthTokenType.ACCESS.value,
-                last_used_at=timezone.now(),
-                is_active=True,
-            )
-            access_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user.id), "id": str(access_token.id)}
-            )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+            tokens = issue_tokens(
+                user, org=getattr(_first_active_membership, "organization", None)
             )
 
             # If user has no active org membership, signal frontend for org setup
@@ -297,8 +265,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 cache.delete(attempts_key)
                 return Response(
                     {
-                        "access": access_token_encrypted,
-                        "refresh": refresh_token_encrypted,
+                        **tokens,
                         "requires_org_setup": True,
                         "message": "You are not part of any organization.",
                     },
@@ -323,13 +290,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 status=InviteStatus.PENDING,
             ).update(status=InviteStatus.ACCEPTED)
 
-            response = Response(
-                {
-                    "access": access_token_encrypted,
-                    "refresh": refresh_token_encrypted,
-                },
-                status=status.HTTP_200_OK,
-            )
+            response = Response(tokens, status=status.HTTP_200_OK)
 
             try:
                 new_org = _login_org.is_new

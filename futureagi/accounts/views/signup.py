@@ -829,40 +829,7 @@ def accept_invitation_mail(request, uidb64, token):
             currentOrganizationId=str(org.id),
         )
 
-        # Generate JWT tokens (same pattern as CustomTokenObtainPairView).
-        AuthToken.objects.filter(
-            user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True
-        ).update(is_active=False)
-
-        refresh_obj = AuthToken.objects.create(
-            user=user,
-            auth_type=AuthTokenType.REFRESH.value,
-            last_used_at=timezone.now(),
-            is_active=True,
-        )
-        refresh_encrypted = generate_encrypted_message(
-            {"user_id": str(user.id), "id": str(refresh_obj.id)}
-        )
-        cache.set(
-            f"refresh_token_{refresh_obj.id}",
-            {"token": refresh_encrypted, "user": user},
-            timeout=7 * 24 * 60 * 60,  # 7 days in seconds
-        )
-
-        access_obj = AuthToken.objects.create(
-            user=user,
-            auth_type=AuthTokenType.ACCESS.value,
-            last_used_at=timezone.now(),
-            is_active=True,
-        )
-        access_encrypted = generate_encrypted_message(
-            {"user_id": str(user.id), "id": str(access_obj.id)}
-        )
-        cache.set(
-            f"access_token_{access_obj.id}",
-            {"token": access_encrypted, "user": user},
-            timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-        )
+        tokens = issue_tokens(user, org=org)
 
         # Determine if user has completed onboarding (role questionnaire).
         # Invited users who haven't set a role yet should be shown the
@@ -871,8 +838,7 @@ def accept_invitation_mail(request, uidb64, token):
 
         return Response(
             {
-                "access": access_encrypted,
-                "refresh": refresh_encrypted,
+                **tokens,
                 "org_name": org_name,
                 "message": f"Welcome to {org_name}!",
                 "is_first_login": not onboarding_completed,

@@ -8,7 +8,6 @@ from urllib.parse import urlencode
 import requests
 import structlog
 from django.conf import settings
-from django.core.cache import cache
 from django.db import transaction
 from django.http import HttpResponse, HttpResponseRedirect
 from django.utils import timezone
@@ -21,15 +20,14 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
-from accounts.authentication import generate_encrypted_message
 from accounts.gcp_marketplace_utils import encode_oauth_state, read_oauth_state
 from accounts.gcp_marketplace_utils import process_signup as marketplace_signup
-from accounts.models.auth_token import (
-    AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
-    AuthToken,
-    AuthTokenType,
-)
+from accounts.models.auth_token import AuthToken
 from accounts.models.user import User
+from accounts.services.token_service import (
+    identify_login_user,
+    issue_login_access_token,
+)
 from accounts.utils import WorkEmailRequired, first_signup, get_request_organization
 from analytics.utils import (
     MixpanelEvents,
@@ -307,6 +305,7 @@ class CompleteView(APIView):
             response = HttpResponseRedirect(
                 f"{default_next_url}?{urlencode({'sso_token': token, 'next': attempt.next_path, 'auth': 'saml'})}"
             )
+            identify_login_user(user, org=idp.organization)
         except SamlDenied as exc:
             if claimed_attempt_id:
                 record_failure(claimed_attempt_id, exc.reason)
@@ -897,21 +896,7 @@ class Auth0CallbackView(APIView):
                     MixpanelModes.GOOGLE.value,
                 )
 
-                access_token = AuthToken.objects.create(
-                    user=user_model,
-                    auth_type=AuthTokenType.ACCESS.value,
-                    last_used_at=timezone.now(),
-                    is_active=True,
-                )
-
-                access_token_encrypted = generate_encrypted_message(
-                    {"user_id": str(user_model.id), "id": str(access_token.id)}
-                )
-                cache.set(
-                    f"access_token_{str(access_token.id)}",
-                    {"token": access_token_encrypted, "user": user_model},
-                    timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-                )
+                access_token_encrypted = issue_login_access_token(user_model)
 
                 next_url += (
                     f"?sso_token={str(access_token_encrypted)}&is_new_user={new_org}"
@@ -1038,21 +1023,7 @@ class GithubCallbackView(APIView):
                 MixpanelModes.GITHUB.value,
             )
 
-            access_token = AuthToken.objects.create(
-                user=user_model,
-                auth_type=AuthTokenType.ACCESS.value,
-                last_used_at=timezone.now(),
-                is_active=True,
-            )
-
-            access_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user_model.id), "id": str(access_token.id)}
-            )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user_model},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
+            access_token_encrypted = issue_login_access_token(user_model)
 
             next_url += (
                 f"?sso_token={str(access_token_encrypted)}&is_new_user={new_org}"
@@ -1180,21 +1151,7 @@ class MicrosoftCallbackView(APIView):
                 user_model = first_signup(data, mode=MixpanelModes.MICROSOFT.value)
                 next_url = get_started_url
 
-            access_token = AuthToken.objects.create(
-                user=user_model,
-                auth_type=AuthTokenType.ACCESS.value,
-                last_used_at=timezone.now(),
-                is_active=True,
-            )
-
-            access_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user_model.id), "id": str(access_token.id)}
-            )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user_model},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
+            access_token_encrypted = issue_login_access_token(user_model)
 
             next_url += (
                 f"?sso_token={str(access_token_encrypted)}&is_new_user={new_org}"
