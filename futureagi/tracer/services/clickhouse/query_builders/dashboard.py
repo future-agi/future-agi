@@ -3653,7 +3653,12 @@ class DashboardQueryBuilder:
                     )
                     val_expr = f"if({not_set}, '(not set)', {label_expr})"
                 elif output_type in ("CHOICE", "CHOICES"):
-                    val_expr = f"if({not_set}, '(not set)', {alias}.eval_output_str)"
+                    # An empty choice is "(not set)" here too, as in the
+                    # eval-metric breakdowns (TH-10545).
+                    val_expr = (
+                        f"if({not_set} OR {alias}.eval_output_str = '', "
+                        f"'(not set)', {alias}.eval_output_str)"
+                    )
                 else:
                     # SCORE: show as percentage
                     val_expr = (
