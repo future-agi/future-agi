@@ -83,7 +83,7 @@ from analytics.utils import (
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
-from tfc.constants.roles import RoleMapping, RolePermissions
+from tfc.constants.roles import RoleMapping
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.permissions.utils import can_invite_at_level
 from tfc.settings import settings
@@ -1706,15 +1706,12 @@ class SwitchWorkspaceAPIView(APIView):
                 workspace_role = membership.role
                 access_type = "workspace_member"
             except WorkspaceMembership.DoesNotExist:
-                # Check if user has global access (Owner/Admin only)
-                org_role = resolve_org_role(user, organization)
-                if org_role and org_role in RolePermissions.GLOBAL_ACCESS_ROLES:
-                    workspace_role = RoleMapping.get_workspace_role(org_role)
-                    access_type = "global_access"
-                else:
+                if not user.has_global_workspace_access(organization):
                     return self._gm.forbidden_response(
                         "You don't have access to this workspace"
                     )
+                workspace_role = OrganizationRoles.WORKSPACE_ADMIN
+                access_type = "global_access"
 
             # Update user's config with current workspace (default too, for
             # backward compatibility), and orgWorkspaceMap so an org switch
