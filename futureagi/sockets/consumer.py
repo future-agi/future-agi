@@ -38,6 +38,8 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         # Kept frames are answered from receive(), send_data() and the SAML
         # window check; one at a time, so they are answered in order.
         self._answer_lock = asyncio.Lock()
+        # Recovery can change groups concurrently with normal channel events.
+        self._subscription_lock = asyncio.Lock()
         # The kept frame being answered now; it is no longer in the queue.
         self._answering_frame: dict | None = None
 
@@ -262,7 +264,40 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
 
             await self.send_json({"type": "error", "message": str(e)})
 
+    async def _deny_subscription(
+        self, template_id, *, version, reason="workspace_access_denied", reopen=None
+    ) -> bool:
+        """Revoke only the subscription checked by this authorization lookup."""
+        async with self._subscription_lock:
+            if self._socket_closed() or self._membership.check_version != version:
+                return False
+            group = self.current_subscription
+            self.current_subscription = None
+            self._membership.set_template(None)
+            cleared_version = self._membership.check_version
+            if group is not None:
+                await self._leave_group(group)
+            if self._socket_closed():
+                return False
+            denial = {
+                "type": "subscription_denied",
+                "uuid": str(template_id),
+                "reason": reason,
+                "message": "Subscription unavailable",
+            }
+            if reopen is not None:
+                denial["reopen"] = reopen
+            await self.send_json(denial)
+            return (
+                not self._socket_closed()
+                and self._membership.check_version == cleared_version
+            )
+
     async def handle_subscribe(self, content):
+        async with self._subscription_lock:
+            await self._subscribe(content)
+
+    async def _subscribe(self, content):
         if self.user is None:
             await self.close(code=4001)
             return
@@ -326,7 +361,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if self._socket_closed():
             return
         self.current_subscription = channel_name
-        self._membership.template_id = template_id
+        self._membership.set_template(template_id)
 
         await self.send_json(
             {
@@ -337,6 +372,10 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         )
 
     async def handle_unsubscribe(self, content):
+        async with self._subscription_lock:
+            await self._unsubscribe(content)
+
+    async def _unsubscribe(self, content):
         uuid = content.get("uuid")
         if not uuid:
             logger.error(
@@ -352,7 +391,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         if channel_name == self.current_subscription:
             await self.channel_layer.group_discard(channel_name, self.channel_name)
             self.current_subscription = None
-            self._membership.template_id = None
+            self._membership.set_template(None)
 
             await self.send_json(
                 {
