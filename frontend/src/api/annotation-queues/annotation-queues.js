@@ -222,6 +222,7 @@ export const annotationQueueKeys = {
   all: ["annotation-queues"],
   list: (filters) => ["annotation-queues", "list", filters],
   detail: (id) => ["annotation-queues", "detail", id],
+  editableLabels: (id) => ["annotation-queues", "detail", id, "labels"],
   exportFields: (id) => ["annotation-queues", "export-fields", id],
   progress: (queueId) => ["annotation-queues", "progress", queueId],
   analytics: (queueId) => ["annotation-queues", "analytics", queueId],
@@ -1902,6 +1903,23 @@ export const useQueueItemsForSource = (
 // Default queue hooks
 // ---------------------------------------------------------------------------
 
+// Seeded by get-or-create; subsequent refreshes only read the existing queue.
+export const useEditableQueueLabels = (id) =>
+  useQuery({
+    queryKey: annotationQueueKeys.editableLabels(id),
+    queryFn: async () => {
+      const response = await axios.get(annotationQueueEndpoints.detail(id));
+      return extractData(response).labels.map(({ label_id, name }) => ({
+        id: label_id,
+        name,
+      }));
+    },
+    enabled: !!id,
+    staleTime: Infinity,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: "always",
+  });
+
 export const useGetOrCreateDefaultQueue = ({ notifyOnError = true } = {}) => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -1949,12 +1967,8 @@ export const useAddLabelToQueue = () => {
       axios.post(annotationQueueEndpoints.addLabel(queueId), {
         label_id: labelId,
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
-      queryClient.invalidateQueries({
-        queryKey: ["annotation-queues", "for-source"],
-      });
-    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all }),
     onError: (error) => {
       const msg = getSafeActionErrorMessage(
         error,
@@ -1975,12 +1989,8 @@ export const useRemoveLabelFromQueue = () => {
       axios.post(annotationQueueEndpoints.removeLabel(queueId), {
         label_id: labelId,
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
-      queryClient.invalidateQueries({
-        queryKey: ["annotation-queues", "for-source"],
-      });
-    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all }),
     onError: (error) => {
       const msg = getSafeActionErrorMessage(
         error,

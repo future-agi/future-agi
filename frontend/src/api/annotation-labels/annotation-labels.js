@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
+import { annotationQueueKeys } from "../annotation-queues/annotation-queues";
 import { apiPath } from "src/api/contracts/api-surface";
 import {
   modelHubAnnotationsLabelsCreate,
@@ -150,6 +151,7 @@ export const useDeleteAnnotationLabel = () => {
     mutationFn: (id) => modelHubAnnotationsLabelsDelete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
       enqueueSnackbar("Failed to archive label", { variant: "error" });
@@ -164,6 +166,7 @@ export const useRestoreAnnotationLabel = () => {
     onSuccess: () => {
       enqueueSnackbar("Label restored", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });
+      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: () => {
       enqueueSnackbar("Failed to restore label", { variant: "error" });

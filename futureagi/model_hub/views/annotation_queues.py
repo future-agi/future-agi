@@ -3089,15 +3089,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         else:
             queryset = super().get_queryset()
 
+        queue_labels = AnnotationQueueLabel.objects.select_related("label")
+        if getattr(self, "action", None) == "retrieve":
+            queue_labels = queue_labels.filter(label__deleted=False)
         queryset = queryset.select_related(
             "created_by", "organization", "workspace"
         ).prefetch_related(
-            Prefetch(
-                "queue_labels",
-                queryset=AnnotationQueueLabel.objects.filter(
-                    deleted=False
-                ).select_related("label"),
-            ),
+            Prefetch("queue_labels", queryset=queue_labels),
             Prefetch(
                 "queue_annotators",
                 queryset=AnnotationQueueAnnotator.objects.filter(
@@ -4138,7 +4136,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         _ensure_default_queue_member_can_manage(queue, request.user)
 
         queue_labels = (
-            queue.queue_labels.filter(deleted=False)
+            queue.queue_labels.filter(deleted=False, label__deleted=False)
             .select_related("label")
             .order_by("order")
         )
@@ -4403,7 +4401,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             span_notes_source_id=None,
         ):
             queue_labels = (
-                queue.queue_labels.filter(deleted=False)
+                queue.queue_labels.filter(deleted=False, label__deleted=False)
                 .select_related("label")
                 .order_by("order")
             )
