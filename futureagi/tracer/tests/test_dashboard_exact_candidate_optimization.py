@@ -141,11 +141,19 @@ def _assert_scalar_replay(
     assert "is_deleted" not in replay_prewhere
     assert "custom_metric_source.project_id IN %(project_ids)s" in replay_prewhere
     assert "GROUP BY" not in replay
+    # A sub-second custom bound is rendered at microsecond precision; a
+    # whole-second one keeps its plain parameter (TH-10545).
+    start, end = (
+        f"fromUnixTimestamp64Micro(%({name}_exact_us)s, 'UTC')"
+        if f"{name}_exact_us" in params
+        else f"%({name})s"
+        for name in ("start_date", "end_date")
+    )
     assert "toStartOfHour(custom_metric_source.start_time) >=" in compact
     assert "toStartOfHour(custom_metric_source.start_time) <" in compact
-    assert ">= toStartOfHour(toDateTime64( %(start_date)s, 6, 'UTC' ))" in compact
+    assert f">= toStartOfHour(toDateTime64( {start}, 6, 'UTC' ))" in compact
     assert (
-        "< toStartOfHour(toDateTime64( %(end_date)s, 6, 'UTC' )) + INTERVAL 1 HOUR"
+        f"< toStartOfHour(toDateTime64( {end}, 6, 'UTC' )) + INTERVAL 1 HOUR"
         in compact
     )
     assert "tupleElement(latest_metric_state, 1) = 0" in live
@@ -156,8 +164,8 @@ def _assert_scalar_replay(
         in sql
     )
     assert "tupleElement(latest_metric_state, 3) = 1" in live
-    assert "tupleElement(latest_metric_state, 2) >= %(start_date)s" in live
-    assert "tupleElement(latest_metric_state, 2) < %(end_date)s" in live
+    assert f"tupleElement(latest_metric_state, 2) >= {start}" in live
+    assert f"tupleElement(latest_metric_state, 2) < {end}" in live
     assert "tupleElement(latest_metric_state, 4) AS metric_value" in live
     assert params["custom_metric_attr_key"] == metric_key
     if breakdown_key is not None:
@@ -513,6 +521,12 @@ def test_scalar_latest_state_rechecks_exact_partial_hour_window_after_replay():
     )
     assert params["start_date"] == start
     assert params["end_date"] == end
+    # Both bounds carry a fraction, so both are bound exactly (TH-10545).
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    for name, bound in (("start_date", start), ("end_date", end)):
+        assert params[f"{name}_exact_us"] == (bound - epoch) // timedelta(
+            microseconds=1
+        )
     # Timestamp, tombstone, both presence bits and values belong to one winner.
     # They must not be independent argMaxIf aggregates that skip removed keys.
     _, state = sql.split("WITH latest_custom_metric_spans AS (", 1)
