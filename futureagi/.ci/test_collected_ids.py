@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -1769,7 +1770,7 @@ class WorkflowTest(unittest.TestCase):
             "agentic-eval",
             "slim-smoke",
         )
-        for selected in (True, False):
+        for selected, internal in itertools.product((True, False), repeat=2):
             value = str(selected).lower()
             wanted = "success" if selected else "skipped"
             needs = {job: {"result": wanted} for job in jobs}
@@ -1780,11 +1781,13 @@ class WorkflowTest(unittest.TestCase):
                         "outputs": {
                             "backend": value,
                             "metrics": value,
+                            "internal": str(internal).lower(),
                             "executor_base": "false",
                             "update_safety": "true",
                         },
                     },
                     "policy-self-test": {"result": "success"},
+                    "extended-overlay": {"result": wanted if internal else "skipped"},
                     "update-safety": {"result": "success"},
                     "code-executor-base-pin": {"result": "skipped"},
                 }

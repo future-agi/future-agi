@@ -736,7 +736,7 @@ class CandidateScope(unittest.TestCase):
             for s in steps
             if "secrets.EE_REPO_READ_TOKEN" in s or "with: *ee_checkout" in s
         ]
-        self.assertEqual(len(token_steps), 2)  # shards, independent control
+        self.assertEqual(len(token_steps), 3)  # shards, independent control, cloud suite
         guards = [
             next(
                 line.strip()
@@ -745,13 +745,7 @@ class CandidateScope(unittest.TestCase):
             )
             for s in token_steps
         ]
-        self.assertCountEqual(
-            guards,
-            [
-                "if: env.IS_INTERNAL_RUN == 'true'",
-                "if: env.IS_INTERNAL_RUN == 'true'",
-            ],
-        )
+        self.assertEqual(guards, ["if: env.IS_INTERNAL_RUN == 'true'"] * 3)
         for step in token_steps:
             self.assertRegex(
                 step,
@@ -760,7 +754,7 @@ class CandidateScope(unittest.TestCase):
         self.assertIn(
             "IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", workflow
         )
-        self.assertEqual(workflow.count("env: *backend_database_env"), 2)
+        self.assertEqual(workflow.count("env: *backend_database_env"), 3)
 
     def test_loader_uses_base_policy_and_bootstraps_conservatively(self):
         driver = bootstrap("backend-ci.yml")
