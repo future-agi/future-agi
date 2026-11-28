@@ -329,7 +329,8 @@ def summary(directory, stack, total):
 
     `directory` holds one folder per leg and attempt, as download-artifact
     writes them (db-reuse-<stack>-<shard>-attempt-<n>/e2e-db-result). The
-    last attempt of each shard counts.
+    last attempt of each shard counts. The file's first line is the restore
+    step's result; a later `suite: <job status>` line, the leg's outcome.
     """
     last = {}
     for folder in sorted(Path(directory).iterdir()) if Path(directory).is_dir() else []:
@@ -343,14 +344,17 @@ def summary(directory, stack, total):
                 if (folder / RESULT_FILE).is_file()
                 else ""
             )
-            last[shard] = (
-                attempt,
-                text.strip().splitlines()[0] if text.strip() else "",
+            lines_ = text.strip().splitlines()
+            outcome = next(
+                (x.split(":", 1)[1].strip() for x in lines_ if x.startswith("suite:")),
+                "",
             )
+            last[shard] = (attempt, lines_[0] if lines_ else "", outcome)
     counts = {"restored": [], "fell back": [], "miss": [], "zero": [], "no result": []}
     reasons = []
+    failed = []
     for shard in range(1, total + 1):
-        result = last.get(shard, (0, ""))[1]
+        _attempt, result, outcome = last.get(shard, (0, "", ""))
         kind = next(
             (
                 k
@@ -362,6 +366,8 @@ def summary(directory, stack, total):
         counts[kind].append(shard)
         if kind in ("fell back", "miss"):
             reasons.append(f"- shard {shard}: {result}")
+        if outcome == "failure":
+            failed.append((shard, kind))
     lines = [
         f"### Saved database, {stack}",
         "",
@@ -373,7 +379,36 @@ def summary(directory, stack, total):
             lines.append(
                 f"| {kind} | {len(shards)} | {', '.join(map(str, shards)) or '-'} |"
             )
-    return "\n".join(lines + ([""] + reasons if reasons else []))
+    lines += [""] + reasons if reasons else []
+    if failed:
+        lines += ["", "Failed legs:"]
+        lines += [f"- shard {shard}: {ROLES[kind](shard)}" for shard, kind in failed]
+    if any(kind == "restored" for _shard, kind in failed):
+        lines += ["", RESTORED_FAILED]
+    return "\n".join(lines)
+
+
+ROLES = {
+    "restored": lambda shard: (
+        "restored the saved dump"
+        + (", and compared it with a fresh migrate" if shard == CONTROL_SHARD else "")
+    ),
+    "zero": lambda shard: "migrated from zero, by design",
+    "fell back": lambda shard: "migrated from zero after its restore fell back",
+    "miss": lambda shard: "migrated from zero: the dump was not for its Postgres",
+    "no result": lambda shard: (
+        "no database result (it stopped before or during the restore)"
+    ),
+}
+# Not "likely": most legs restore, so an ordinary failure looks the same.
+RESTORED_FAILED = (
+    "A leg that restored the saved dump failed. A restored database that lacks "
+    "something the stack needs is possible: the dump holds only Postgres, and "
+    "the boot's migrate applies nothing on it. To tell: take this stack out of "
+    "the E2E_DB_REUSE repository variable (or clear it), then re-run all jobs "
+    "of this run. Every leg then migrates from zero. If the same tests pass, "
+    "the saved database is the cause; if they fail the same way, it is not."
+)
 
 
 def main(argv=None):

@@ -981,6 +981,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           overwrite: true
+      - name: Note this leg's outcome for the database count
+        # The count names each failed leg's role (restored, from zero, ...).
+        if: ${{ always() && steps.db-restore.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          echo "suite: $OUTCOME" >> "$RUNNER_TEMP/e2e-db-result"
       - name: Upload this leg's database result
         # For the report job's count of restored, fell-back, missed and
         # zero legs.
@@ -998,7 +1006,7 @@ jobs:
         # for this; a dev push shows it.
         if: ${{ always() && steps.db-restore.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
         run: |
-          result=$(cat "$RUNNER_TEMP/e2e-db-result")
+          result=$(head -n 1 "$RUNNER_TEMP/e2e-db-result")
           if [[ $result == "fell back:"* ]]; then
             echo "::error title=E2E database reuse::This leg could not restore the saved dump ($result). Its suite ran on a database migrated from zero."
             exit 1

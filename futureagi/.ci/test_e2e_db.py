@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -43,7 +44,12 @@ if args[:2] == ["compose", "run"] and args[-1] == "register_eval_task_search_att
     tries = state / "register-tries"
     count = int(tries.read_text()) + 1 if tries.exists() else 1
     tries.write_text(str(count))
-    sys.exit(1 if count <= int(os.environ.get("FAKE_REGISTER_FAILS", "0")) else 0)
+    if count <= int(os.environ.get("FAKE_REGISTER_FAILS", "0")):
+        print(f"try {count}: Temporal is not serving yet")
+        print("RuntimeError: 100% not ready")
+        sys.exit(1)
+    print("Registered search attributes: EvalTaskOrgId")
+    sys.exit(0)
 if args[:2] == ["compose", "run"]:
     name = next(a for a in args if a.startswith("PG_DB=")).split("=", 1)[1]
     # The stack's migrate, stopped before post_migrate: the wrapper's text.
@@ -493,9 +499,10 @@ class OutsideTest(unittest.TestCase):
             "A migration that reaches Temporal, ClickHouse, Redis or another "
             "store outside Postgres was added or removed. The saved E2E dump "
             "holds it only as applied, so a leg that restores the dump never "
-            "runs it. Make its effect another way (e2e-db-restore.sh, or the "
-            "stack's bootstrap), or show it does nothing on a new stack, then "
-            "update KNOWN in futureagi/.ci/test_e2e_db.py.",
+            "runs it. First choice: make each stack's start-up do the same "
+            "work on every start. Only if that cannot be done, replay it in "
+            "futureagi/.ci/e2e-db-restore.sh. Or show it does nothing on a new "
+            "stack. Then update KNOWN in futureagi/.ci/test_e2e_db.py.",
         )
 
     def test_the_search_finds_each_way_of_reaching_out(self):
@@ -538,6 +545,67 @@ class OutsideTest(unittest.TestCase):
                 / "futureagi/tfc/management/commands/register_eval_task_search_attributes.py"
             ).exists()
         )
+
+
+class PinPlaceTest(unittest.TestCase):
+    """The pins above run on a pull request that only adds a migration or a
+    receiver: Backend CI's plan job runs every futureagi/.ci/test_*.py."""
+
+    def test_backend_ci_runs_these_tests_on_every_code_change(self):
+        text = (ROOT / ".github/workflows/backend-ci.yml").read_text()
+        on = text.split("\non:\n", 1)[1].split("\njobs:\n", 1)[0]
+        pr = on.split("  pull_request:\n", 1)[1].split("\n  push:\n", 1)[0]
+        # No path filter: every pull request starts the workflow.
+        self.assertNotIn("paths", pr)
+        jobs = text.split("\njobs:\n", 1)[1]
+        plan = jobs[jobs.index("\n  plan:\n") : jobs.index("\n  test:\n")]
+        self.assertIn("    if: needs.changes.outputs.backend == 'true'\n", plan)
+        step = plan.split(
+            "      - name: Test CI asset verification and failure paths\n", 1
+        )[1].split("\n      - ", 1)[0]
+        self.assertNotIn("if:", step)
+        self.assertIn(
+            "run: python3 -I -m unittest discover -s futureagi/.ci -p 'test_*.py' -v",
+            step,
+        )
+
+    def test_a_migration_or_a_receiver_alone_runs_the_backend_suite(self):
+        scope = runpy.run_path(str(ROOT / ".github/scripts/ci_scope.py"))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        work = pathlib.Path(tmp.name)
+
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", str(work), *args], text=True
+            ).strip()
+
+        git("init", "-q", "-b", "dev")
+        git("config", "user.name", "fixture")
+        git("config", "user.email", "fixture@example.invalid")
+        (work / "README.md").write_text("x\n")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        base = git("rev-parse", "HEAD")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(work)
+        for path, text in (
+            (
+                "futureagi/tracer/migrations/0200_reach_out.py",
+                "from tfc.temporal import x\n",
+            ),
+            ("futureagi/model_hub/apps.py", "post_migrate.connect(seed)\n"),
+        ):
+            with self.subTest(path=path):
+                git("checkout", "-q", "-B", "candidate", base)
+                (work / path).parent.mkdir(parents=True, exist_ok=True)
+                (work / path).write_text(text)
+                git("add", "-A")
+                git("commit", "-qm", "candidate")
+                head = git("rev-parse", "HEAD")
+                # A queue entry under the narrowing mode: the narrowest case.
+                result = scope["plan"]("merge_group", head, base, head, "qualified")
+                self.assertTrue(result["flags"]["backend"], result)
 
 
 class SwitchTest(Workspace):
@@ -643,10 +711,59 @@ class SwitchTest(Workspace):
 class SummaryTest(Workspace):
     """The run summary counts what each leg of a restoring run did."""
 
-    def leg(self, shard, result, attempt=1, stack="distributed"):
+    def leg(self, shard, result, attempt=1, stack="distributed", suite=None):
         folder = self.dir / f"db-reuse-{stack}-{shard}-attempt-{attempt}"
         folder.mkdir()
-        (folder / "e2e-db-result").write_text(result + "\n")
+        tail = f"suite: {suite}\n" if suite else ""
+        (folder / "e2e-db-result").write_text(result + "\n" + tail)
+
+    def test_each_failed_leg_is_named_with_its_role(self):
+        self.leg(1, "restored", suite="success")
+        self.leg(2, "zero", suite="failure")
+        self.leg(3, "restored", suite="failure")
+        self.leg(4, "fell back: the restore failed", suite="failure")
+        self.leg(5, "restored", suite="failure")
+        table = e2e_db.summary(self.dir, "distributed", 6)
+        failed = table.split("Failed legs:\n", 1)[1].split("\n\n")[0]
+        self.assertEqual(
+            failed.splitlines(),
+            [
+                "- shard 2: migrated from zero, by design",
+                "- shard 3: restored the saved dump, and compared it with a fresh migrate",
+                "- shard 4: migrated from zero after its restore fell back",
+                "- shard 5: restored the saved dump",
+            ],
+        )
+        self.assertTrue(table.endswith("\n\n" + e2e_db.RESTORED_FAILED))
+        # Said plainly: a cause that is possible, and how to tell.
+        self.assertEqual(
+            e2e_db.RESTORED_FAILED,
+            "A leg that restored the saved dump failed. A restored database that "
+            "lacks something the stack needs is possible: the dump holds only "
+            "Postgres, and the boot's migrate applies nothing on it. To tell: take "
+            "this stack out of the E2E_DB_REUSE repository variable (or clear it), "
+            "then re-run all jobs of this run. Every leg then migrates from zero. "
+            "If the same tests pass, the saved database is the cause; if they fail "
+            "the same way, it is not.",
+        )
+        self.assertNotIn("likely", table)
+
+    def test_a_failure_only_on_legs_from_zero_says_nothing_of_the_dump(self):
+        self.leg(1, "restored", suite="success")
+        self.leg(2, "zero", suite="failure")
+        table = e2e_db.summary(self.dir, "distributed", 3)
+        self.assertIn("- shard 2: migrated from zero, by design", table)
+        self.assertNotIn(e2e_db.RESTORED_FAILED, table)
+
+    def test_a_run_with_no_failed_leg_lists_none(self):
+        self.leg(1, "restored", suite="success")
+        self.leg(2, "zero")
+        self.assertNotIn("Failed legs", e2e_db.summary(self.dir, "distributed", 3))
+
+    def test_the_last_attempt_decides_whether_a_leg_failed(self):
+        self.leg(3, "restored", suite="failure")
+        self.leg(3, "restored", attempt=2, suite="success")
+        self.assertNotIn("Failed legs", e2e_db.summary(self.dir, "distributed", 3))
 
     def test_each_kind_is_counted_with_its_shards_and_reasons(self):
         self.leg(1, "restored")
@@ -875,8 +992,11 @@ class RestoreTest(Workspace):
 
     def test_temporal_gets_time_to_add_its_namespace(self):
         self.save()
-        result, _out = self.restore(FAKE_REGISTER_FAILS="3")
+        result, out = self.restore(FAKE_REGISTER_FAILS="3")
         self.assertEqual(result, "restored")
+        self.assertRegex(
+            out, r"Registered the Temporal search attributes in \d+ s \(try 4 of 12\)\."
+        )
         calls = self.calls()
         self.assertEqual(calls.count(self.REGISTER), 4)
         self.assertEqual(calls.count("sleep 10"), 3)
@@ -892,8 +1012,16 @@ class RestoreTest(Workspace):
         # No wait after the last try.
         self.assertEqual(calls.count("sleep 10"), 11)
         self.assertEqual(calls[-1], "compose down -v")
-        self.assertIn("::warning title=E2E database reuse::", out)
         self.assertIsNone(self.database())
+        # The last try's output, in the log and in the one-line warning.
+        self.assertIn("try 12: Temporal is not serving yet\n", out)
+        warning = next(x for x in out.splitlines() if x.startswith("::warning"))
+        self.assertIn(
+            " Its last try printed:%0Atry 12: Temporal is not serving yet%0A"
+            "RuntimeError: 100%25 not ready%0A",
+            warning,
+        )
+        self.assertNotIn("try 11:", out)
 
     def test_a_leg_with_no_stack_falls_back(self):
         self.save()
@@ -1351,7 +1479,7 @@ class WorkflowTest(unittest.TestCase):
             with self.subTest(result=result):
                 work = pathlib.Path(tempfile.mkdtemp())
                 self.addCleanup(shutil.rmtree, work, ignore_errors=True)
-                (work / "e2e-db-result").write_text(result + "\n")
+                (work / "e2e-db-result").write_text(result + "\nsuite: failure\n")
                 run = subprocess.run(
                     ["bash", "-e", "-c", self.run_block(late)],
                     env={**os.environ, "RUNNER_TEMP": str(work)},
@@ -1359,6 +1487,26 @@ class WorkflowTest(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(run.returncode != 0, fails, run.stdout)
+                # The error names the restore's result, not the suite line.
+                self.assertNotIn("suite:", run.stdout)
+        note = self.step(e2e, "Note this leg's outcome for the database count")
+        self.assertLess(e2e.index("      - name: Run E2E suite\n"), e2e.index(note))
+        self.assertLess(e2e.index(note), e2e.index(upload))
+        self.assertIn(
+            "if: ${{ always() && steps.db-restore.outcome == 'success' }}\n", note
+        )
+        self.assertIn("OUTCOME: ${{ job.status }}\n", note)
+        work = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work, ignore_errors=True)
+        (work / "e2e-db-result").write_text("restored\n")
+        subprocess.run(
+            ["bash", "-e", "-c", self.run_block(note)],
+            env={**os.environ, "RUNNER_TEMP": str(work), "OUTCOME": "failure"},
+            check=True,
+        )
+        self.assertEqual(
+            (work / "e2e-db-result").read_text(), "restored\nsuite: failure\n"
+        )
 
     def test_the_dev_push_producer_still_saves_by_key(self):
         e2e = self.job("e2e")
