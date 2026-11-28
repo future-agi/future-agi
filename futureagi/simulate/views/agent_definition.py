@@ -494,7 +494,9 @@ class AgentDefinitionDetailView(APIView):
                     "agent_kind": agent_kind,
                     "source": source,
                     "environment_count": agent._environment_count,
-                    "tested_by_environment": agent._tested_by_environment,
+                    "tested_by_environment": getattr(
+                        agent, "_tested_by_environment", False
+                    ),
                     "observability_enabled": observability_on(agent),
                     "observe_project": observe_project(agent, agent_kind),
                     "connected": connected_agent(agent.id),
