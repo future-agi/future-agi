@@ -140777,6 +140777,11 @@
                     "type": "integer",
                     "readOnly": true
                 },
+                "tested_by_environment": {
+                    "title": "Tested by environment",
+                    "type": "boolean",
+                    "readOnly": true
+                },
                 "environments": {
                     "type": "array",
                     "items": {
@@ -141664,6 +141669,11 @@
                 "environment_count": {
                     "title": "Environment count",
                     "type": "integer",
+                    "readOnly": true
+                },
+                "tested_by_environment": {
+                    "title": "Tested by environment",
+                    "type": "boolean",
                     "readOnly": true
                 },
                 "observability_enabled": {

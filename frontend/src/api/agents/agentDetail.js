@@ -95,6 +95,8 @@ export const mapAgentDetail = (raw) => ({
   agentKind: raw.agent_kind ?? null,
   source: raw.source ?? null,
   environmentCount: raw.environment_count,
+  // Whether anything still tests it, listed here or not: the server keeps it if so.
+  testedByEnvironment: !!raw.tested_by_environment,
   observabilityEnabled: raw.observability_enabled,
   observeProject: raw.observe_project
     ? { id: raw.observe_project.id, name: raw.observe_project.name }

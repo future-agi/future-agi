@@ -210,6 +210,9 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
     environment_count = serializers.IntegerField(
         source="_environment_count", read_only=True
     )
+    tested_by_environment = serializers.BooleanField(
+        source="_tested_by_environment", read_only=True
+    )
     environments = serializers.SerializerMethodField()
     websocket_url = WebsocketUrlField(
         read_only=True,
@@ -252,6 +255,7 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "source",
             "version_count",
             "environment_count",
+            "tested_by_environment",
             "environments",
             "observe_project",
         ]
@@ -298,6 +302,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     agent_kind = serializers.CharField(read_only=True, allow_null=True)
     source = serializers.CharField(read_only=True, allow_null=True)
     environment_count = serializers.IntegerField(read_only=True)
+    tested_by_environment = serializers.BooleanField(read_only=True)
     observability_enabled = serializers.BooleanField(read_only=True)
     observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
     connected = serializers.BooleanField(read_only=True)
@@ -318,6 +323,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "agent_kind",
             "source",
             "environment_count",
+            "tested_by_environment",
             "observability_enabled",
             "observe_project",
             "connected",

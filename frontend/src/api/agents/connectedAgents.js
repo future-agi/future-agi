@@ -48,6 +48,8 @@ export const mapConnectedAgent = (raw) => ({
   versionCount: raw.version_count,
   environments: raw.environments,
   environmentCount: raw.environment_count,
+  // Whether anything still tests it, listed here or not: the server keeps it if so.
+  testedByEnvironment: !!raw.tested_by_environment,
   createdAt: raw.created_at ?? null,
   updatedAt: raw.updated_at ?? null,
 });

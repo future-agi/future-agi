@@ -16689,6 +16689,7 @@ export interface AgentDefinitionListResponseApi {
   readonly source?: string;
   readonly version_count?: number;
   readonly environment_count?: number;
+  readonly tested_by_environment?: boolean;
   readonly environments?: readonly RunEnvironmentRefApi[];
   observe_project?: ObserveProjectRefApi;
 }
@@ -17181,6 +17182,7 @@ export interface AgentDefinitionDetailResponseApi {
   /** @minLength 1 */
   readonly source?: string;
   readonly environment_count?: number;
+  readonly tested_by_environment?: boolean;
   readonly observability_enabled?: boolean;
   observe_project?: ObserveProjectRefApi;
   readonly connected?: boolean;

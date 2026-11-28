@@ -34,6 +34,7 @@ from simulate.selectors.agent_environments import (
     environment_jobs,
     in_scope,
     listed_environment_jobs,
+    owned_by,
 )
 from simulate.selectors.runs import user_executions
 from simulate.services.harness_environment import environment_name, run_summaries
@@ -128,6 +129,11 @@ def annotate_agent_rows(
             0,
         ),
         _in_environment=Exists(environments),
+        # Whatever still tests the agent, listed here or not, as the delete guard reads
+        # it: the page offers Delete only when the server would delete.
+        _tested_by_environment=Exists(
+            environment_jobs().filter(owned_by(OuterRef("pk")))
+        ),
     ).annotate(
         _source=Case(
             When(_agent_kind="source", then=F("_build_source_kind")),
