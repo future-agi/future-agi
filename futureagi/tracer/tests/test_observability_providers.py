@@ -25,6 +25,7 @@ from tracer.services.observability_providers import (
     ObservabilityService,
     RetellConfigurationError,
     RetellCursorRejected,
+    VapiConfigurationError,
     _retell_page_digest,
     _retell_retry_after_seconds,
 )
@@ -225,19 +226,17 @@ class TestFetchVapiLogs:
         ).ObservabilityService,
         "_get_agent_definition",
     )
-    def test_returns_empty_list_when_no_api_key(
-        self, mock_get_agent, mock_requests_get
-    ):
-        """Returns empty list when agent has no API key (graceful handling)."""
+    def test_raises_when_no_agent(self, mock_get_agent, mock_requests_get):
+        """Missing configuration must not be mistaken for a successful empty poll."""
         from tracer.services.observability_providers import ObservabilityService
 
         mock_get_agent.return_value = None
         mock_provider = Mock()
         mock_provider.id = "vapi-provider-123"
 
-        result = ObservabilityService._fetch_vapi_logs(mock_provider)
+        with pytest.raises(VapiConfigurationError, match="linked agent"):
+            ObservabilityService._fetch_vapi_logs(mock_provider)
 
-        assert result == []
         # Should not make HTTP request when validation fails
         mock_requests_get.assert_not_called()
 
@@ -252,7 +251,7 @@ class TestFetchVapiLogs:
         """Makes HTTP request when API key is valid."""
         from tracer.services.observability_providers import ObservabilityService
 
-        mock_agent = Mock()
+        mock_agent = Mock(active_version=None, latest_version=None)
         mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
@@ -286,7 +285,7 @@ class TestFetchVapiLogs:
             ObservabilityService,
         )
 
-        mock_agent = Mock()
+        mock_agent = Mock(active_version=None, latest_version=None)
         mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
@@ -339,7 +338,7 @@ class TestFetchVapiLogs:
             ObservabilityService,
         )
 
-        mock_agent = Mock()
+        mock_agent = Mock(active_version=None, latest_version=None)
         mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
@@ -379,7 +378,7 @@ class TestFetchVapiLogs:
         """Makes only one request when results are under VAPI_PAGE_LIMIT."""
         from tracer.services.observability_providers import ObservabilityService
 
-        mock_agent = Mock()
+        mock_agent = Mock(active_version=None, latest_version=None)
         mock_agent.api_key = "valid-vapi-key"
         mock_agent.assistant_id = "assistant-123"
         mock_get_agent.return_value = mock_agent
@@ -2455,15 +2454,14 @@ class TestObservabilityServiceIntegration:
         assert api_key == "test-vapi-api-key-12345"
 
     @patch("tracer.services.observability_providers.requests.get")
-    def test_fetch_vapi_logs_returns_empty_when_no_agent(
+    def test_fetch_vapi_logs_raises_when_no_agent(
         self, mock_get, vapi_provider_without_agent
     ):
-        """Verify _fetch_vapi_logs returns empty list when no agent (graceful handling)."""
+        """A missing reverse relation fails the poll without making an HTTP request."""
         from tracer.services.observability_providers import ObservabilityService
 
-        result = ObservabilityService._fetch_vapi_logs(vapi_provider_without_agent)
-
-        assert result == []
+        with pytest.raises(VapiConfigurationError, match="linked agent"):
+            ObservabilityService._fetch_vapi_logs(vapi_provider_without_agent)
         # Should not make HTTP request when validation fails
         mock_get.assert_not_called()
 
