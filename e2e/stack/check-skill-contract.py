@@ -88,19 +88,20 @@ def effective_operation(doc, method, path):
 
 
 def schema_parts(doc, schema, visiting=()):
-    """A schema as the list of objects that together define it: $ref aliases followed and every
-    allOf branch composed, at any depth. Returns (parts, refs visited)."""
+    """A schema as the objects that together define it, $ref aliases followed and every allOf
+    branch composed at any depth: a list of (part, path), where path holds the definitions
+    entered on the way to that part. A $ref already on its own path is a cycle; the same
+    definition reached along another path (an allOf branch and a property, say) is not."""
     schema = schema if isinstance(schema, dict) else {}
     ref = schema.get('$ref')
     if ref:
         if ref in visiting:
-            return [], visiting
+            return []
         return schema_parts(doc, inline_reusable(doc, referenced(doc, ref)), (*visiting, ref))
-    parts = [schema]
+    parts = [(schema, visiting)]
     for branch in schema.get('allOf') or ():
-        more, visiting = schema_parts(doc, inline_reusable(doc, branch), visiting)
-        parts += more
-    return parts, visiting
+        parts += schema_parts(doc, inline_reusable(doc, branch), visiting)
+    return parts
 
 
 def extra_keys(value):
@@ -119,27 +120,26 @@ def schema_inputs(doc, schema, prefix, required, inputs, visiting=()):
     (required, type, format, enum, nullable, additionalProperties kind).
     Walks definitions, allOf, object properties, array items and map values; readOnly fields
     (declared inline or on the referenced definition) are not inputs."""
-    parts, visiting = schema_parts(doc, schema, visiting)
-    first = lambda key: next((part[key] for part in parts if key in part), None)
-    enum = first('enum')
-    extra = first('additionalProperties')
-    inputs[prefix] = (required, first('type'), first('format'),
+    parts = schema_parts(doc, schema, visiting)
+    first = lambda key: next(((part[key], path) for part, path in parts if key in part), (None, visiting))
+    enum, extra = first('enum')[0], first('additionalProperties')
+    inputs[prefix] = (required, first('type')[0], first('format')[0],
                       None if enum is None else tuple(sorted(map(json.dumps, enum))),
-                      bool(first('x-nullable')), extra_keys(extra))
-    needed = {field for part in parts for field in part.get('required') or ()}
-    fields = {}
-    for part in parts:
-        fields.update(part.get('properties') or {})
+                      bool(first('x-nullable')[0]), extra_keys(extra[0]))
+    needed = {field for part, _ in parts for field in part.get('required') or ()}
+    fields = {}  # field -> (schema, the path of the part that declares it)
+    for part, path in parts:
+        fields.update({field: (child, path) for field, child in (part.get('properties') or {}).items()})
     for field in sorted({*fields, *needed}):
-        child = fields.get(field) or {}
-        if any(part.get('readOnly') for part in schema_parts(doc, child, visiting)[0]):
+        child, path = fields.get(field, ({}, visiting))
+        if any(part.get('readOnly') for part, _ in schema_parts(doc, child, path)):
             continue
-        schema_inputs(doc, child, (*prefix, field), field in needed, inputs, visiting)
+        schema_inputs(doc, child, (*prefix, field), field in needed, inputs, path)
     items = first('items')
-    if isinstance(items, dict):
-        schema_inputs(doc, items, (*prefix, '[]'), False, inputs, visiting)
-    if isinstance(extra, dict) and extra:
-        schema_inputs(doc, extra, (*prefix, '{}'), False, inputs, visiting)
+    if isinstance(items[0], dict):
+        schema_inputs(doc, items[0], (*prefix, '[]'), False, inputs, items[1])
+    if isinstance(extra[0], dict) and extra[0]:
+        schema_inputs(doc, extra[0], (*prefix, '{}'), False, inputs, extra[1])
 
 
 def skills_inputs(doc, method, path):
@@ -208,9 +208,16 @@ def breaking_skills_changes(shipped, product, exposed=None):
     return problems
 
 
+def sdk_surface(entry):
+    """Whether a catalog entry is an SDK operation: an `sdk` surface that is present and not false.
+    An MCP-only entry has no `sdk` key."""
+    surfaces = entry.get('surfaces') or {}
+    return 'sdk' in surfaces and surfaces['sdk'] is not False
+
+
 def sdk_exposed(sdk_catalog):
     return {(entry['operation']['method'].lower(), entry['operation']['path'])
-            for entry in sdk_catalog.get('operations', []) if entry.get('surfaces', {}).get('sdk') is not False}
+            for entry in sdk_catalog.get('operations', []) if sdk_surface(entry)}
 
 
 def reached_models(doc, operation):
@@ -271,7 +278,7 @@ def check_slice(api, swagger, catalog, sdk_catalog):
             continue
         endpoint = (op['method'].upper(), op['path'])
         surfaces = entry['surfaces']
-        if 'sdk' in surfaces and surfaces['sdk'] is not False:
+        if sdk_surface(entry):
             shipped.add(endpoint)
         if 'mcp' in surfaces and surfaces['mcp'] is not False:
             declared = surfaces['mcp']

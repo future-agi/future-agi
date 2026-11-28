@@ -455,6 +455,23 @@ class ContractTests(unittest.TestCase):
              or d['definitions'].update(Owner={'type': 'string', 'readOnly': True})
              or d['definitions']['Push']['required'].append('owner'), []),
         ]
+        # The same definition reached along two paths (an allOf branch and a property) is not a
+        # cycle: replacing an inline copy with an equivalent $ref is compatible.
+        base = {'type': 'object', 'required': ['value'], 'properties': {'value': {'type': 'string'}}}
+        composed = copy.deepcopy(shipped)
+        composed['definitions'].update(Base=base, Push={'allOf': [{'$ref': '#/definitions/Base'}, {
+            'type': 'object', 'properties': {'nested': copy.deepcopy(base)}}]})
+        refactored = copy.deepcopy(composed)
+        refactored['definitions']['Push']['allOf'][1]['properties']['nested'] = {'$ref': '#/definitions/Base'}
+        self.assertEqual(breaking(composed, refactored), [])
+        self.assertEqual(breaking(refactored, composed), [])
+        inputs = checker['skills_inputs'](refactored, 'post', publish)
+        self.assertEqual(inputs[('body', 'nested', 'value')][0], True)
+        # A real cycle still terminates: a definition that contains itself.
+        looped = copy.deepcopy(composed)
+        looped['definitions']['Base']['properties']['child'] = {'$ref': '#/definitions/Base'}
+        self.assertIn(('body', 'child'), checker['skills_inputs'](looped, 'post', publish))
+        self.assertEqual(breaking(looped, looped), [])
         # Only operations the SDK exposes are guarded.
         product = copy.deepcopy(shipped)
         product['paths'].pop(publish)
@@ -465,6 +482,13 @@ class ContractTests(unittest.TestCase):
             change(product)
             with self.subTest(case=index, expected=expected[:1]):
                 self.assertEqual(breaking(shipped, product), expected)
+
+    def test_one_sdk_exposure_rule(self):
+        op = lambda path, surfaces: {'id': path, 'operation': {'method': 'GET', 'path': path}, 'surfaces': surfaces}
+        catalog = {'operations': [op('/a/', {'sdk': {}}), op('/b/', {'sdk': {}, 'mcp': {'name': 'b'}}),
+                                  op('/c/', {'mcp': {'name': 'c'}}), op('/d/', {'sdk': False, 'mcp': {'name': 'd'}})]}
+        self.assertEqual(checker['sdk_exposed'](catalog), {('get', '/a/'), ('get', '/b/')})
+        self.assertEqual([checker['sdk_surface'](e) for e in catalog['operations']], [True, True, False, False])
 
     def test_sql_tool_name_alone_does_not_prove_its_product_binding(self):
         endpoint = {'method': 'POST', 'path': '/tracer/sql-query/{id}/cancel/'}
