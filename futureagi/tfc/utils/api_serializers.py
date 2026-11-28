@@ -290,8 +290,12 @@ class RelayMessageField(serializers.DictField):
         if isinstance(data, str):
             return {"message": data}
         message = super().to_internal_value(data)
-        if "alert_title" in message and not isinstance(message["alert_title"], str):
-            message["alert_title"] = "Notification"
+        for field, fallback in (
+            ("alert_title", "Notification"),
+            ("alert_description", ""),
+        ):
+            if field in message and not isinstance(message[field], str):
+                message[field] = fallback
         return message
 
 

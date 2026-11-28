@@ -110,7 +110,7 @@ describe("UploadLimitNotification", () => {
     });
   });
 
-  it("renders a fallback title for an older worker's structured title", async () => {
+  it("renders a notification safely for an older worker's structured title and description", async () => {
     const qc = new QueryClient();
     render(
       <QueryClientProvider client={qc}>
@@ -121,7 +121,10 @@ describe("UploadLimitNotification", () => {
     act(() => {
       mocks.socket.dispatchEvent(
         new MessageEvent("message", {
-          data: JSON.stringify({ alert_title: { label: "Synthetic" } }),
+          data: JSON.stringify({
+            alert_title: { label: "Synthetic" },
+            alert_description: { detail: "Structured description" },
+          }),
         }),
       );
     });

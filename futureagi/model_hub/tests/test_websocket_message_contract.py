@@ -264,14 +264,24 @@ def test_broadcast_accepts_missing_and_legacy_null_uuid(extra):
     asyncio.run(run())
 
 
-def test_structured_alert_title_is_normalized_before_delivery():
+def test_structured_alert_text_is_normalized_before_delivery():
     with patch("tfc.views.socket.get_channel_layer") as layer:
         send = layer.return_value.group_send = AsyncMock()
-        response = post_relay({"message": {"alert_title": {"label": "Synthetic"}}})
+        response = post_relay(
+            {
+                "message": {
+                    "alert_title": {"label": "Synthetic"},
+                    "alert_description": {"detail": "Synthetic"},
+                }
+            }
+        )
     assert response.status_code == 200
     send.assert_awaited_once()
     assert send.await_args is not None
-    assert send.await_args.args[1]["data"] == {"alert_title": "Notification"}
+    assert send.await_args.args[1]["data"] == {
+        "alert_title": "Notification",
+        "alert_description": "",
+    }
 
 
 def test_legacy_text_is_enqueued_as_a_notification():
