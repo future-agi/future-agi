@@ -18,6 +18,7 @@ import test_db_dump as samples
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONTROL = ROOT / "futureagi/.ci/e2e-db-control.sh"
+RESTORE = ROOT / "futureagi/.ci/e2e-db-restore.sh"
 BOUNDARY = ROOT / "futureagi/.ci/e2e_db_migrate.py"
 KEY = "e2e-migrated-db-v1-distributed-" + "1" * 40
 
@@ -46,6 +47,17 @@ if args[:2] == ["compose", "run"]:
     if not source.exists():
         source = state / "migrate-1.sql"
     db(name).write_text(source.read_text())
+    sys.exit(0)
+if args == ["compose", "up", "-d", "--wait", "postgres"]:
+    if os.environ.get("FAKE_UP_FAILS"):
+        sys.exit(1)
+    # A new volume: Postgres creates the stack's database, empty.
+    if not db("futureagi").exists():
+        db("futureagi").write_text("")
+    sys.exit(0)
+if args == ["compose", "down", "-v"]:
+    for path in state.glob("db-*"):
+        path.unlink()
     sys.exit(0)
 assert args[:4] == ["compose", "exec", "-T", "postgres"], args
 program, rest = args[4], args[5:]
@@ -543,6 +555,123 @@ class BoundaryTest(Workspace):
         self.assertNotRegex(control, r"(?m)^[^#]*manage\.py migrate")
         for stack in e2e_db.STACKS:
             self.assertTrue(e2e_db.key_input("futureagi/.ci/e2e_db_migrate.py", stack))
+
+
+class RestoreTest(Workspace):
+    """futureagi/.ci/e2e-db-restore.sh against the stand-in for `bin/e2e`."""
+
+    def setUp(self):
+        super().setUp()
+        self.work = self.dir / "checkout"
+        (self.work / "bin").mkdir(parents=True)
+        fake = self.work / "bin/e2e"
+        fake.write_text(FAKE_E2E)
+        fake.chmod(0o755)
+        self.state = self.dir / "pg"
+        self.state.mkdir()
+        self.record = self.dir / "record"
+        self.result = self.dir / "result"
+        self.dump = samples.sql()
+        self.env = dict(
+            os.environ,
+            FAKE_PG=str(self.state),
+            KEY=KEY,
+            RESTORE="true",
+            ROLE="restore",
+            RECORD=str(self.record),
+            RESULT=str(self.result),
+        )
+
+    def save(self, recipe=KEY + "-pg160004", rows=None):
+        self.record.mkdir()
+        dump = self.gz("saved.sql.gz", self.dump)
+        digest = rows or e2e_db.db_dump.fingerprint_rows(self.dump.encode())
+        e2e_db.write_record(self.record, dump, digest, recipe)
+
+    def restore(self, **env):
+        run = subprocess.run(
+            ["bash", str(RESTORE)],
+            cwd=self.work,
+            env={**self.env, **env},
+            capture_output=True,
+            text=True,
+        )
+        # Whatever happens, the leg goes on: the script never fails it.
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        return self.result.read_text().strip(), run.stdout
+
+    def calls(self):
+        path = self.state / "calls"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def database(self):
+        path = self.state / "db-futureagi"
+        return path.read_text() if path.exists() else None
+
+    def test_a_good_dump_is_restored_into_the_stacks_own_database(self):
+        self.save()
+        result, out = self.restore()
+        self.assertEqual(result, "restored")
+        self.assertIn("Database for this leg: restored", out)
+        self.assertEqual(self.database(), self.dump)
+        self.assertIn("compose up -d --wait postgres", self.calls())
+        self.assertNotIn("compose down -v", self.calls())
+        # Only the stack's database; no scratch database on a restoring leg.
+        self.assertEqual(
+            sorted(p.name for p in self.state.glob("db-*")), ["db-futureagi"]
+        )
+
+    def test_a_run_that_restores_nothing_and_the_zero_leg_touch_nothing(self):
+        self.save()
+        self.assertEqual(self.restore(RESTORE="false")[0], "off")
+        self.assertEqual(self.restore(ROLE="zero")[0], "zero")
+        self.assertEqual(self.calls(), [])
+
+    def test_a_dump_from_another_postgres_is_a_miss_and_writes_nothing(self):
+        self.save()
+        result, _out = self.restore(FAKE_PG_VERSION="160020")
+        self.assertEqual(result, "miss: Postgres version")
+        self.assertEqual(self.database(), "")
+        self.assertNotIn("compose down -v", self.calls())
+
+    def test_every_failure_falls_back_to_a_clean_stack_and_says_why(self):
+        cases = {
+            "the downloaded dump does not verify": (
+                {},
+                lambda: (self.record / "recipe").write_text("odd\n"),
+            ),
+            "Postgres did not start": ({"FAKE_UP_FAILS": "1"}, None),
+            "the restore failed": ({"FAKE_LOAD_FAILS": "1"}, None),
+        }
+        for reason, (env, spoil) in cases.items():
+            with self.subTest(reason):
+                shutil.rmtree(self.record, ignore_errors=True)
+                for path in self.state.iterdir():
+                    path.unlink()
+                self.save()
+                if spoil:
+                    spoil()
+                result, out = self.restore(**env)
+                self.assertEqual(result, f"fell back: {reason}")
+                self.assertIn("::warning title=E2E database reuse::", out)
+                # Never a half-restored database: no volume is left.
+                self.assertIn("compose down -v", self.calls())
+                self.assertIsNone(self.database())
+
+    def test_rows_other_than_the_dumps_own_fall_back(self):
+        self.save(rows="0" * 64)
+        result, _out = self.restore()
+        self.assertEqual(
+            result,
+            "fell back: the restored rows are not the ones the dump was made from",
+        )
+        self.assertIsNone(self.database())
+
+    def test_a_leg_with_no_key_falls_back(self):
+        self.save()
+        self.assertEqual(
+            self.restore(KEY="")[0], "fell back: no key was handed to this leg"
+        )
 
 
 class ControlTest(Workspace):
