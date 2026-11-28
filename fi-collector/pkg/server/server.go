@@ -406,6 +406,11 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
 	}
 	s.logLimits()
+	if s.trajSeen != nil {
+		// Startup Redis check and the traj:contract:v2 keeper. trajSeen is
+		// set only while the trajectory store is active (cmd/fi-collector).
+		go s.trajSeen.Run(ctx)
+	}
 
 	// One error channel sized for both listeners — first error wins, the
 	// other listener is shut down by the select-case below.

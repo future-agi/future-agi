@@ -191,7 +191,8 @@ jobs:
               TestRoutingColumnCheckSeesBothColumns \
               TestRoutingColumnStateIsSharedThroughNew \
               TestEnsureSimulationProject \
-              TestClickHouseTrajectoryByteExactRoundTrip
+              TestClickHouseTrajectoryByteExactRoundTrip \
+              TestClickHouseTrajectoryRefreshWritesFreshCopy
       - name: Collect isolated fixture logs
         if: always()
         timeout-minutes: 1

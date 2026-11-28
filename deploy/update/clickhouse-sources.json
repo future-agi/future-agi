@@ -373,6 +373,11 @@
       "sha256": "674edfe923e198209e909f1579bde79d0af4028dc98c9d38a594b1f4d6e69afd"
     },
     {
+      "pattern": "fi-collector/pkg/server/trajectory_refresh_integration_test.go",
+      "reason": "Inspected testing.T disposable ClickHouse fixture: CREATE/DROP DATABASE of a per-run scratch database, the 040 trajectory_items CREATE TABLE inside it (the ALTER TABLE spans part is cut off, never run) and SYSTEM STOP MERGES on that scratch table; not a shipping entrypoint.",
+      "sha256": "001cd56bb4595dc74151b169c58ffcd7990d02639b69e6b15264816fca97f97b"
+    },
+    {
       "pattern": "fi-collector/pkg/server/observed_direct_integration_test.go",
       "reason": "Inspected testing.T disposable ClickHouse authentication fixtures, not a shipping entrypoint.",
       "sha256": "738a20917592a930e1eb122fd4a6ec1641f0fe36f45d13cb92dd5c8ad328a70d"
