@@ -354,20 +354,24 @@ def select_split(
     pins: ResolvedPins | None,
     split: str,
     scenario_keys: list[str] | None,
+    *,
+    locked_version: HarnessLockedVersion | None = None,
 ) -> SplitSelection:
     """What a run of ``pins`` and ``split`` runs: ``scenario_keys``, each of which must
     be in the split, or else every scenario of the split in suite order. Only a pair
     of versions that is locked now has splits to run. The split holds the lock's
     roster members of it, less the ones the run can't play now: which tools reach
     production follows the run's bundle, which the lock doesn't freeze. A split with
-    none left to play is refused."""
+    none left to play is refused. A repeated request passes the ``locked_version`` its
+    run recorded, which counts even once unlocked or relocked."""
     environment_version = pins.environment_version if pins is not None else None
     suite_version = pins.suite_version if pins is not None else None
-    locked_version = (
-        _locked_version(environment_version.id, suite_version.id)
-        if environment_version is not None and suite_version is not None
-        else None
-    )
+    if (
+        locked_version is None
+        and environment_version is not None
+        and suite_version is not None
+    ):
+        locked_version = _locked_version(environment_version.id, suite_version.id)
     if locked_version is None:
         from simulate.services.harness_versioning.read import _label, _message_label
 
