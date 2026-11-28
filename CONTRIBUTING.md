@@ -155,6 +155,14 @@ Run the affected tests with their normal CI prerequisites as well; a clean prefl
 - **Enqueue once.** Serialize by repository and PR, and deduplicate by PR and head OID. Re-read the live PR before enqueue: it must be open, non-draft, target `dev`, and still have the explicitly authorized head, required approvals and successful required checks. Hold on any missing or stale signal. If already queued for that head, do nothing; otherwise use `enqueuePullRequest` with `expectedHeadOid` set to that exact OID and `jump: false`. Reconcile an uncertain API result with the live queue before resubmitting. A removed entry needs a new decision, not an automatic re-enqueue. The merge group still needs its own required checks.
 - **Keep failures visible.** Quarantine only specific test IDs under the existing [backend](futureagi/.test_quarantine.json) and [E2E](e2e/.quarantine.json) policies, with an owner, issue, reason and expiry. Independent full controls must execute those IDs and report their outcomes. Track first-attempt green rate, actual runner time spent before cancellation, remaining time avoided against comparable completed runs, and off-Actions preflight cost separately.
 
+### Landing on `dev`: the merge queue
+
+`dev` uses a GitHub merge queue (repository ruleset `dev-merge-queue`). A pull request lands only after `Backend Tests Pass`, `E2E Tests Pass` and `Python Lint Pass` are green on the queue's merge group, which is the exact tree that will land. There is no bypass.
+
+- **Enqueue:** `gh pr merge <number> --merge --auto --match-head-commit <sha>`. With `--auto`, the PR joins the queue once its own checks are green and it is approved.
+- **Approval:** a pull request needs one approval. When the author and the person pushing are both repository admins, [admin-pr-approval.yml](.github/workflows/admin-pr-approval.yml) approves each new head automatically.
+- **Settings and rollback:** see [.github/merge-queue/README.md](.github/merge-queue/README.md).
+
 ### 🧪 Adding a new evaluator
 
 Most evaluators live under `futureagi/agentic_eval/core_evals/fi_evals/`. Each evaluator needs:
