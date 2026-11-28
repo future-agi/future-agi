@@ -1413,7 +1413,7 @@ export type ${jsonAlias} = JsonValueApi;`,
       "export interface CallWebsocketRequestApi {",
       /export interface CallWebsocketRequestApi \{[\s\S]*?\n\}/,
       `export type CallWebsocketRequestApi = {
-  message: CallWebsocketRequestApiMessage;
+  message: string | CallWebsocketRequestApiMessage;
 } & (
   | { send_to_uuid: true; uuid: string }
   | { send_to_uuid?: false; uuid?: string | null }
@@ -1466,9 +1466,9 @@ export type ${jsonAlias} = JsonValueApi;`,
     zod = assertReplaceRegexInNamedBlock(
       zod,
       "export const CallWebsocketCreateBody =",
-      /zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)/g,
-      "jsonValueSchema",
-      "CallWebsocketCreateBody.message JSON values",
+      /zod\.record\(zod\.string\(\), zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)\)/,
+      "zod.union([zod.string(), zod.record(zod.string(), jsonValueSchema)])",
+      "CallWebsocketCreateBody legacy text or object message",
     );
     zod = assertReplaceRegexInNamedBlock(
       zod,

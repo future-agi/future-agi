@@ -264,8 +264,17 @@ def test_broadcast_accepts_missing_and_legacy_null_uuid(extra):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("message", [None, [], [1], "text", 1, True])
-def test_non_object_messages_are_rejected(message):
+def test_legacy_text_is_enqueued_as_a_notification():
+    with patch("tfc.views.socket.get_channel_layer") as layer:
+        send = layer.return_value.group_send = AsyncMock()
+        response = post_relay({"message": "Synthetic notice"})
+    assert response.status_code == 200
+    send.assert_awaited_once()
+    assert send.await_args.args[1]["data"] == {"message": "Synthetic notice"}
+
+
+@pytest.mark.parametrize("message", [None, [], [1], 1, True])
+def test_non_object_non_string_messages_are_rejected(message):
     with patch("tfc.views.socket.get_channel_layer") as layer:
         response = post_relay({"message": message})
     assert response.status_code == 400
