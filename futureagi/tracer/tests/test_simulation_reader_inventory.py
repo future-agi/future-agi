@@ -1120,6 +1120,10 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.clickhouse.graph_dispatch": {
+        "_fetch_direct_raw_system_metric_graph": filed(
+            PROJECT_SET,
+            why="trace traffic counts live roots for the requested project and time window",
+        ),
         "_finite_eval_rows": filed(
             NO_SPAN_TABLE,
             why="dead code: reached only from _finite_eval_graph, which nothing calls",
