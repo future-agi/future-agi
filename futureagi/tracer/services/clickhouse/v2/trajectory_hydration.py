@@ -573,11 +573,12 @@ def _fallback_facts(probe: ReadStateProbe) -> SchemaFacts | None:
     """The second-chance probe's facts, or None when it fails too."""
     try:
         return probe_trajectory_schema_fallback(probe)
-    except Exception as exc:
-        logger.warning(
-            "trajectory_read_state_probe_fallback_failed endpoint=%s error=%s",
+    except Exception:
+        # A boundary into the executor: the caller then raises (or, with a
+        # true flag, reads as READY); the failure is logged here.
+        logger.exception(
+            "trajectory_read_state_probe_fallback_failed endpoint=%s",
             probe.endpoint,
-            type(exc).__name__,
         )
         return None
 

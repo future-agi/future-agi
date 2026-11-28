@@ -73,6 +73,18 @@ def _metric_schema_installed(monkeypatch):
     monkeypatch.setattr(schema_install._cache, "installed", True)
 
 
+@pytest.fixture(autouse=True)
+def _reset_trajectory_read_state():
+    """The trajectory read state latches READY for the process: forget it
+    after every test, so no test inherits a state another test's database
+    or settings produced (the dormant, golden-contract and tenancy modules
+    rely on test_tfc's state, not on a latch left behind)."""
+    yield
+    from tracer.services.clickhouse.v2 import trajectory_hydration
+
+    trajectory_hydration.reset_read_state_cache()
+
+
 @pytest.fixture
 def _debug_failures_readable(monkeypatch):
     """Lets a one- or two-call run past Debug failures' minimum-calls-and-a-failure

@@ -27,7 +27,6 @@ const ContentUnavailableChip = ({ sides }) => {
         icon={<Iconify icon="solar:danger-triangle-linear" width={14} />}
         label="Full content unavailable — preview shown"
         data-testid="content-unavailable-chip"
-        sx={{ height: "22px" }}
       />
     </Tooltip>
   );
