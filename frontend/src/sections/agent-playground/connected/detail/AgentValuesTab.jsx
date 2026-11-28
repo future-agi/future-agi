@@ -238,6 +238,12 @@ AddValue.propTypes = {
  * becomes production and the environments following production move to it.
  */
 export default function AgentValuesTab() {
+  const { agentId } = useAgentRoute();
+  // Nothing typed for one agent is kept when the page shows another.
+  return <AgentValues key={agentId ?? ""} />;
+}
+
+function AgentValues() {
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const { agentId, agent } = useAgentRoute();

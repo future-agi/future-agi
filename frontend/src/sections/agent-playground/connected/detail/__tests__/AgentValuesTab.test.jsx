@@ -41,6 +41,7 @@ const loaded = (names, extra = {}) => ({
 
 beforeEach(() => {
   auth.role = "Owner";
+  route.agentId = "agent-1";
   route.agent = {
     id: "agent-1",
     activeVersionId: "v2",
@@ -126,6 +127,35 @@ describe("AgentValuesTab", () => {
       kind: "credentials",
       secret_values: { DB_URL: "pg://new" },
     });
+  });
+
+  it("keeps nothing typed for one agent once another is shown", () => {
+    const { rerender } = render(<AgentValuesTab />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Change" })[0]);
+    fireEvent.change(screen.getByLabelText("New value for DB_URL"), {
+      target: { value: "pg://first" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(screen.getByText("Changes DB_URL")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.change(screen.getByLabelText("New value for DB_URL"), {
+      target: { value: "pg://typed" },
+    });
+
+    route.agentId = "agent-2";
+    route.agent = {
+      id: "agent-2",
+      activeVersionId: "v9",
+      activeVersionNumber: 9,
+    };
+    rerender(<AgentValuesTab />);
+
+    expect(screen.queryByText("Changes DB_URL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Save values")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("New value for DB_URL"),
+    ).not.toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it("marks an added name as new and a changed one as changed", () => {
