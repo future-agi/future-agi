@@ -248,7 +248,7 @@ class ContractTests(unittest.TestCase):
             head = commit(sdk, {path: encode({'x-contract-sources': recorded}),
                                 'sdkgen/catalog/operations.yaml': encode({'operations': sdk_ops})})
             # Product pairing owns Skills only: sql, epoch and other stay as the SDK commit ships them.
-            expected = {**recorded, 'skills': {'backend_commit': revision, 'openapi_sha256': sha(api_bytes),
+            expected = {**copy.deepcopy(recorded), 'skills': {'backend_commit': revision, 'openapi_sha256': sha(api_bytes),
                                                'mcp_sha256': sha(mcp_bytes), 'tools_yaml_sha256': sha(yaml_bytes),
                                                'tools': tools['skills']}}
             output = {'x-contract-sources': expected, **self.swagger}

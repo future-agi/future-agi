@@ -66,7 +66,8 @@ test("cohort-only and ordinary-only steps stay where they belong", () => {
   assert.match(hcl, /^variable "VITE_SKILL_TRACES" \{\n {2}default = ""\n\}$/m);
   const frontend = hcl.match(/^target "frontend" \{([\s\S]*?)^\}/m)[1];
   assert.match(frontend, /VITE_SKILL_TRACES = VITE_SKILL_TRACES != "" \? VITE_SKILL_TRACES : null/);
-  assert.ok(!cohort.some((name) => /^Build .* image/.test(name)), "cohorts build only through the shared bake");
+  assert.ok(!cohort.some((name) => /^Build .* image/.test(name) && !SHARED.includes(name)),
+    "cohorts build only through the shared bake");
   for (const name of ["Install the local SAML IdP's dependencies", "Start Redis diagnostics", "Upload blob report",
     "Resolve the futureagi-sdk ref", "Record the once-per-stack steps", "Dump stack state on failure"]) {
     assert.ok(!cohort.includes(name), name);
