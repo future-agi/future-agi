@@ -31,8 +31,17 @@ say() {
   echo "Database for this leg: $1"
 }
 
+# fall_back REASON [LOG]: LOG's last lines go into the warning too.
 fall_back() {
-  echo "::warning title=E2E database reuse::The saved dump was not restored ($1). This leg migrates from zero."
+  local detail=""
+  if [[ -n ${2:-} && -s $2 ]]; then
+    echo "Its last try printed (last 20 lines):"
+    tail -n 20 "$2"
+    # A workflow command is one line: %, CR and LF are escaped.
+    detail=$(tail -n 5 "$2" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{printf "%s%%0A", $0}')
+    detail=" Its last try printed:%0A$detail"
+  fi
+  echo "::warning title=E2E database reuse::The saved dump was not restored ($1). This leg migrates from zero.$detail"
   bin/e2e compose down -v > /dev/null 2>&1 || true
   say "fell back: $1"
   exit 0
@@ -71,16 +80,18 @@ case $STACK in
     # Without them every eval-task workflow hangs. The stack's own command;
     # `compose run` starts Temporal (and Redis) on the restored Postgres, as
     # the boot does. Temporal adds its namespace a little after it starts.
-    registered=false
+    registered=false start=$SECONDS
+    try_log=$(mktemp)
     for try in {1..12}; do
       if bin/e2e compose run --rm -T --entrypoint python postgres-schema-bootstrap \
-        manage.py register_eval_task_search_attributes > /dev/null 2>&1; then
+        manage.py register_eval_task_search_attributes > "$try_log" 2>&1; then
         registered=true
         break
       fi
       [[ $try == 12 ]] || sleep 10
     done
-    $registered || fall_back "the Temporal search attributes were not registered"
+    $registered || fall_back "the Temporal search attributes were not registered" "$try_log"
+    echo "Registered the Temporal search attributes in $((SECONDS - start)) s (try $try of 12)."
     ;;
   standalone) ;; # its bootstrap registers them on every start
   *) fall_back "no stack was named" ;;
