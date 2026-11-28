@@ -58,6 +58,8 @@ export default function ProposalItem({
   const pickable = isPickable(item);
   const kind = PROPOSAL_KINDS[item.kind];
   const rule = item.kind === "rule";
+  // An unticked rule isn't dropped: it goes in as reference, just not graded.
+  const notGraded = rule && pickable && !hideCheckbox && !checked;
   const ruleText = edit ?? item.rule ?? item.title.replace(/^Rule:\s*/, "");
   // A rule's wording, or one field of what else it adds (an approval scope).
   const editable = Boolean(onEdit) && (rule || Boolean(item.editable));
@@ -118,7 +120,14 @@ export default function ProposalItem({
           )}
           {/* The group heading names the kind, so a rule reads as the rule. */}
           <Typography
-            sx={{ typography: "s1", fontWeight: 500, flex: 1, minWidth: 0 }}
+            sx={{
+              typography: "s1",
+              fontWeight: 500,
+              flex: 1,
+              minWidth: 0,
+              color: notGraded ? "text.secondary" : "text.primary",
+              transition: timeout === 0 ? "none" : "color .15s ease",
+            }}
           >
             {rule ? ruleText : item.title}
           </Typography>
@@ -162,6 +171,13 @@ export default function ProposalItem({
             </Typography>
           )}
         </Stack>
+        <Collapse in={notGraded} timeout={timeout} unmountOnExit>
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+          >
+            {COPY.notGraded}
+          </Typography>
+        </Collapse>
         {item.detail &&
           (item.blocking ||
             ["missing", "conflict", "unreadable"].includes(item.kind)) && (

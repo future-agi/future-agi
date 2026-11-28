@@ -24,7 +24,7 @@ const GROUPS = [
   { group: "Tools", kinds: ["tool"] },
   { group: "Actors", kinds: ["actor"] },
   { group: "Scenarios", kinds: ["scenario"] },
-  { group: "Background for the agent", kinds: ["reference"] },
+  { group: "Reference for the agent", kinds: ["reference"] },
   { group: "Personal data, your choice", kinds: ["personal"] },
   {
     group: "Kept from the agent, and problems",
@@ -223,6 +223,7 @@ export const PROPOSALS_COPY = {
   inferred: "· inferred",
   from: (ref) => `From ${ref}`,
   editRule: "Edit rule",
+  notGraded: "Not graded. Kept as reference.",
   edit: "Edit",
   editHint: "Changes the rule we'll add. The file stays as it is.",
   editOtherHint: "Changes what we'll add. The file stays as it is.",
@@ -241,21 +242,23 @@ export const PROPOSALS_COPY = {
   reference: {
     file: "File",
     usedAs: "Used as",
-    // Plain "Background" when the tested-agent switch isn't known (outside a ready review).
+    // Plain "Reference" when the tested-agent switch isn't known (outside a ready review).
     usedAsValue: (testedAgent) => {
-      if (testedAgent == null) return "Background";
+      if (testedAgent == null) return "Reference";
       return testedAgent
-        ? "Background, the agent can look things up in it"
-        : "Background, kept from the tested agent";
+        ? "Reference, the agent can look things up in it"
+        : "Reference, kept from the tested agent";
     },
     rules: "Rules",
     // Withheld policy text has no titles yet, so its count would be false.
-    rulesValue: ({ role, rules: checkable = 0, withheld }) => {
+    // `graded` is how many of the checkable rules are ticked, when the ticks can change.
+    rulesValue: ({ role, rules: checkable = 0, withheld, graded }) => {
       if (role !== "policy") return "None stated, so nothing is graded from it";
       if (withheld) return null;
-      return checkable
+      if (!checkable) return "None checkable, so nothing is graded from it";
+      return graded == null
         ? `${plural(checkable, "checkable rule")}, listed under Rules`
-        : "None checkable, so nothing is graded from it";
+        : `${graded} of ${plural(checkable, "checkable rule")} graded, listed under Rules`;
     },
     read: "Read",
     // The API reads by page; withheld text (Knowledge base, personal data) has pages only.

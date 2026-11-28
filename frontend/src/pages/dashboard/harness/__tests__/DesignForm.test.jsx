@@ -100,7 +100,7 @@ describe("DesignForm", () => {
       target: { files: [new File(["policy"], "returns.pdf")] },
     });
     const policy = await screen.findByLabelText("Use returns.pdf as policy");
-    expect(screen.getByText(/· Background/)).toBeInTheDocument();
+    expect(screen.getByText(/· Reference/)).toBeInTheDocument();
     fireEvent.click(policy);
     expect(screen.getByText(/· Policy/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Channel")).not.toBeInTheDocument();

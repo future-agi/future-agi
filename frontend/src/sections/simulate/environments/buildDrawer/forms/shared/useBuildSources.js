@@ -34,7 +34,7 @@ export default function useBuildSources() {
           ? POLICY_LABEL
           : ["csv", "tsv", "json", "jsonl", "xlsx"].includes(extOf(file.name))
             ? "Records"
-            : "Background",
+            : "Reference",
       })),
     },
     knowledge,

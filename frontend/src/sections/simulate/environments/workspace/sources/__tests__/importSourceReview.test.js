@@ -74,7 +74,7 @@ const privacyText = {
 };
 
 describe("reviewItems", () => {
-  it("turns titled supported rules into ticked rules and keeps the rest as background", () => {
+  it("turns titled supported rules into ticked rules and keeps the rest as reference", () => {
     const items = reviewItems(policyCheckable, { testedAgent: true });
     const rules = items.filter((item) => item.kind === "rule");
     expect(rules.map((item) => [item.title, item.cite.ref])).toEqual([
@@ -94,7 +94,7 @@ describe("reviewItems", () => {
       "Refunds are paid back to the original payment method within 5 business days.",
     ]);
     expect(reference.rules).toBe(3);
-    // Read counts the whole file, not only the passages left as background.
+    // Read counts the whole file, not only the passages left as reference.
     expect(reference.read).toMatchObject({ sections: 1, words: 36 });
     expect(checkableRuleIds(policyCheckable)).toEqual(rules.map((r) => r.id));
   });

@@ -183,7 +183,7 @@ function TextRead({ source, at, reduce }) {
           <Typography sx={{ typography: "s1", color: "text.tertiary" }}>
             {source.role === "policy"
               ? "No sentence in it states a rule, so nothing is graded from it."
-              : "Nothing is graded from it. The agent reads it as background."}
+              : "Nothing is graded from it. The agent reads it as reference."}
           </Typography>
         )}
       </Box>

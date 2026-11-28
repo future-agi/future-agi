@@ -64,5 +64,5 @@ export function readAsOf(name, accept = BUILD_FILES_ACCEPT) {
       lower,
     ) ||
     (["md", "txt"].includes(ext) && !policyish);
-  return reference ? "Background" : "Rules";
+  return reference ? "Reference" : "Rules";
 }

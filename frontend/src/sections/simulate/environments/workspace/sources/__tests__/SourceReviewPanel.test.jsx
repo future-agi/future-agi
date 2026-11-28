@@ -275,7 +275,16 @@ describe("Prebuild source review", () => {
     expect(screen.getAllByText("From refund-rules.pdf, page 1")).toHaveLength(
       2,
     );
+    expect(
+      screen.getByText("2 of 2 checkable rules graded, listed under Rules"),
+    ).toBeInTheDocument();
     fireEvent.click(drop);
+    expect(
+      await screen.findByText("Not graded. Kept as reference."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("1 of 2 checkable rules graded, listed under Rules"),
+    ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Approve sources and start build" }),
     );

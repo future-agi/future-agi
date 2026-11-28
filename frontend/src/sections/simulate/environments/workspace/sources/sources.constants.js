@@ -33,8 +33,8 @@ export const ROLES = [
   },
   {
     id: "reference",
-    label: "Background",
-    option: "Background for the agent",
+    label: "Reference",
+    option: "Reference for the agent",
     note: "The agent can look things up in it. Nothing is graded from it.",
   },
   {
@@ -58,7 +58,7 @@ export const VISIBILITY = [
   {
     id: "agent",
     label: "The agent, directly",
-    note: "The agent reads the file itself, like background it can look up.",
+    note: "The agent reads the file itself, like a reference it can look up.",
   },
   {
     id: "tool",
@@ -253,7 +253,7 @@ export const SOURCES_COPY = {
   readFailed: "Couldn't read these files. Try again in a moment.",
   usePolicy: "Use as policy",
   policyHint:
-    "Policy mode proposes supported instructions as rules. Other passages remain background.",
+    "Policy mode proposes supported instructions as rules. Other passages stay as reference.",
   readFiles: "Read files",
   menu: {
     upload: "Upload files",

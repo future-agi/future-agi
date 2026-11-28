@@ -478,10 +478,23 @@ function SourceReviewEditor({
   const renderItem = (item) => {
     if (item.kind === "table") return renderRecords(item.source);
     if (item.kind === "personal") return renderPersonal(item);
+    // A policy file's reference row counts the rules the person still has ticked.
+    const shown =
+      item.kind === "reference" && !rulesHidden
+        ? {
+            ...item,
+            graded: items.filter(
+              (one) =>
+                one.kind === "rule" &&
+                one.cite?.sourceId === item.cite?.sourceId &&
+                ruleIds.includes(one.id),
+            ).length,
+          }
+        : item;
     return (
       <ProposalItem
         key={item.id}
-        item={item}
+        item={shown}
         inset={0}
         foldText={compact}
         hideCheckbox={rulesHidden}
