@@ -866,6 +866,20 @@ describe("EnvironmentWorkspace route shell", () => {
     ).toBeDisabled();
     cleanup();
 
+    // A build tool ran, so it is building even without the approving reply.
+    getHarnessJob.mockResolvedValue(
+      job({
+        events: [{ kind: "tool_result", payload: { tool: "create_schema" } }],
+        messages: [proposal],
+      }),
+    );
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+    expect(
+      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Review the design")).toBeNull();
+    cleanup();
+
     getHarnessJob.mockResolvedValue(
       job({
         events: [],
@@ -893,6 +907,17 @@ describe("EnvironmentWorkspace route shell", () => {
     renderWorkspace("/dashboard/simulate/environments/job-build");
     expect(await screen.findByText("Review the design")).toBeInTheDocument();
     expect(screen.getByText("Designing")).toBeInTheDocument();
+    cleanup();
+
+    // Awaiting approval before the question shows keeps the design page.
+    getHarnessJob.mockResolvedValue({
+      ...job({ events: [], messages: [] }),
+      status: { stage: "awaiting_approval", created_at: NOW },
+    });
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+    expect(await screen.findByText("Review the design")).toBeInTheDocument();
+    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+    expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
   });
 
   it.each(["design", "build_job"])(

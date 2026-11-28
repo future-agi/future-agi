@@ -56,8 +56,10 @@ function ProposedPlan({
         .join(", "),
     };
   });
+  const fileNames = sources.map((source) => source.name).join(", ");
+  // With a review, its file names load after the page; until then name no files.
   const readingNames =
-    sources.map((source) => source.name).join(", ") || "your brief";
+    fileNames || (sourceReviewId ? "the sources" : "your brief");
   const summary = {
     structured: !question || Boolean(proposal),
     brief: {
@@ -82,7 +84,10 @@ function ProposedPlan({
       ? []
       : ["records", "tools", "rules", "people", "scenarios"],
     readingNames,
-    readingLine: `The builder is drafting the design from ${readingNames}. Nothing is built until you approve it.`,
+    readingLine:
+      fileNames || !sourceReviewId
+        ? `The builder is drafting the design from ${readingNames}. Nothing is built until you approve it.`
+        : "The builder is drafting the design. Nothing is built until you approve it.",
     sources,
     unusable: [],
     approveBlocked: Boolean(proposal?.dependencies?.length),

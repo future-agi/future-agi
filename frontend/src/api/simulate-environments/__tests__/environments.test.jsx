@@ -259,6 +259,21 @@ describe("useMyEnvironments", () => {
       unmount();
     });
 
+    it("polls while a design is drafting or awaiting approval", async () => {
+      listHarnessEnvironments.mockResolvedValue({
+        count: 1,
+        results: [envRow("env-d", "designing")],
+      });
+      const { queryClient, query, unmount } = await renderList();
+      expect(query.options.refetchInterval(query)).toBe(3000);
+      queryClient.setQueryData(query.queryKey, {
+        count: 1,
+        results: [envRow("env-d", "awaiting_approval")],
+      });
+      expect(query.options.refetchInterval(query)).toBe(3000);
+      unmount();
+    });
+
     it("polls while one row is running among finished ones", async () => {
       const { query, unmount } = await renderList();
       expect(query.options.refetchInterval(query)).toBe(3000);

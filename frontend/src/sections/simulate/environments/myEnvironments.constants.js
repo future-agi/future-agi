@@ -21,6 +21,7 @@ export const DESIGN_STATE = {
 // completed | failed, from harness_environment.status_for). A cancel in flight
 // stays building/running until it lands as failed, so these two cover it.
 export const LIVE_ENV_STATUSES = new Set([
+  ...Object.values(DESIGN_STATE),
   ENV_STATUS.BUILDING,
   ENV_STATUS.RUNNING,
 ]);
@@ -40,6 +41,8 @@ export const BUILD_STATUS = {
 // pill; StatusBadge turns the role into colours.
 export const STATUS_META = {
   building: { label: "Building", role: "info" },
+  // A design job drafting its proposal; the list still treats it as building.
+  designing: { label: "Designing", role: "info" },
   not_run: { label: "Not run yet", role: "neutral" },
   running: { label: "Running", role: "info" },
   finalizing: { label: "Finalizing", role: "info" },

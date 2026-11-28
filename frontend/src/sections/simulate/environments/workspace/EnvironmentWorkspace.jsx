@@ -31,7 +31,11 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
-import { BUILD_STATUS, DESIGN_STATE } from "../myEnvironments.constants";
+import {
+  BUILD_STATUS,
+  DESIGN_STATE,
+  STATUS_META,
+} from "../myEnvironments.constants";
 import ChatSplitPane from "../components/ChatSplitPane";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
@@ -421,8 +425,9 @@ export default function EnvironmentWorkspace() {
     // built until the person approves it, so this is not a build yet. A resumed
     // design may already be approved in its checkpoint, so it keeps the build view.
     const conversation = designJob?.conversation;
+    // Awaiting approval with no question to show still reads as the design page.
     const drafting = designState
-      ? building && designState === DESIGN_STATE.DESIGNING
+      ? building && (designState === DESIGN_STATE.DESIGNING || !question)
       : Boolean(metadata.design) &&
         !metadata.design.resume_from &&
         building &&
@@ -451,9 +456,8 @@ export default function EnvironmentWorkspace() {
               : drafting
                 ? {
                     ...buildingEnv,
-                    buildingLabel: "Designing",
-                    buildingTooltip:
-                      "The builder is drafting the design. You approve it before anything is built.",
+                    buildingLabel: STATUS_META.designing.label,
+                    buildingTooltip: WORKSPACE_COPY.designingTooltip,
                   }
                 : buildingEnv
           }

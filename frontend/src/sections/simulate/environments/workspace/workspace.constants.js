@@ -74,6 +74,8 @@ export const WORKSPACE_COPY = {
   liveTooltip:
     "Environment is ready to run. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
+  designingTooltip:
+    "The builder is drafting the design. You approve it before anything is built.",
   finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
   cancellingTooltip: "Stopping the build and cleaning up its sandbox.",

@@ -92,6 +92,14 @@ describe("Design approval", () => {
     expect(
       screen.getByRole("button", { name: "Approve and build" }),
     ).toBeDisabled();
+    sourceReview.mockReturnValue({ data: null });
+    rerender(<DesignWorkspace {...props} drafting />);
+    expect(
+      screen.getByText(
+        "The builder is drafting the design. Nothing is built until you approve it.",
+      ),
+    ).toBeVisible();
+    sourceReview.mockReturnValue(accepted);
     rerender(<DesignWorkspace {...props} question={question} />);
     expect(screen.getByText("Orders")).toBeInTheDocument();
     expect(screen.queryByText("Reading Returns.pdf…")).not.toBeInTheDocument();

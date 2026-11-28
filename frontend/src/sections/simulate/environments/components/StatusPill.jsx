@@ -40,7 +40,7 @@ export default function StatusPill({
           status={status}
           label={
             designing && status === ENV_STATUS.BUILDING
-              ? "Designing"
+              ? STATUS_META.designing.label
               : meta.label
           }
           role={ROLE_FALLBACK[status]}
