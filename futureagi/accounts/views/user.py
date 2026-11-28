@@ -6,7 +6,6 @@ from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
-from django.utils.crypto import constant_time_compare
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -33,11 +32,8 @@ from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsAccessTokenResponseSerializer,
     AccountsErrorResponseSerializer,
-    AccountsRedisDeleteResponseSerializer,
-    AccountsRedisSetResponseSerializer,
     AccountsTokenPairResponseSerializer,
     LoginRequestSerializer,
-    RedisKeyRequestSerializer,
     TokenRefreshRequestSerializer,
     UserChecksResponseSerializer,
     UserInfoResponseSerializer,
@@ -68,73 +64,6 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
 logger = structlog.get_logger(__name__)
-
-
-@swagger_auto_schema(
-    method="post",
-    request_body=RedisKeyRequestSerializer,
-    responses={200: AccountsRedisSetResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
-)
-@swagger_auto_schema(
-    method="delete",
-    request_body=RedisKeyRequestSerializer,
-    responses={200: AccountsRedisDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
-)
-@api_view(["POST", "DELETE"])
-@permission_classes([IsAuthenticated])
-@validated_api_request(
-    request_serializer=RedisKeyRequestSerializer,
-    responses={
-        200: AccountsRedisSetResponseSerializer,
-        **ACCOUNTS_ERROR_RESPONSES,
-    },
-    document=False,
-    reject_unknown_fields=True,
-)
-def manage_redis_key(request):
-    gm = GeneralMethods()
-    try:
-        # Verify access token
-        data = request.validated_data
-        access_token_id = data.get("access_token_id")
-        if not constant_time_compare(access_token_id or "", settings.SECRET_KEY):
-            return gm.bad_request("Invalid or expired token")
-
-        key = data.get("key")
-        if not key:
-            return gm.bad_request("Key is required")
-
-        if request.method == "POST":
-            value = data.get("value")
-            if value is None:
-                return gm.bad_request("Value is required")
-
-            # Optional: Set expiration time in seconds
-            expiry = data.get("expiry")
-            if expiry:
-                cache.set(key, value, timeout=int(expiry))
-            else:
-                cache.set(key, value)
-
-            return gm.success_response(
-                {"message": "Key set successfully", "key": key, "value": value}
-            )
-
-        elif request.method == "DELETE":
-            # Check if key exists before deleting
-            if not cache.get(key):
-                return gm.bad_request("Key not found")
-
-            cache.delete(key)
-            return gm.success_response(
-                {"message": "Key deleted successfully", "key": key}
-            )
-
-    except Exception as e:
-        logger.exception(f"Error in manage_redis_key: {str(e)}")
-        return gm.bad_request(
-            {"error": "An error occurred while processing the request."}
-        )
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
