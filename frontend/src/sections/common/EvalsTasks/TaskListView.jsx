@@ -18,6 +18,7 @@ import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
 import { isResumableTaskStatus } from "./task_status";
+import { useResumeEvalTask } from "./useResumeEvalTask";
 import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
@@ -402,10 +403,7 @@ const TaskListView = ({
     onSettled: () => refetch(),
   });
 
-  const { mutate: resumeTask } = useMutation({
-    mutationFn: (taskId) =>
-      axios.post(endpoints.project.resumeEvalTask(taskId), {}),
-    meta: { errorHandled: true },
+  const { mutate: resumeTask } = useResumeEvalTask({
     // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: (taskId) => optimisticRowStatus(taskId, "pending"),
     onError: (_e, _v, ctx) => {

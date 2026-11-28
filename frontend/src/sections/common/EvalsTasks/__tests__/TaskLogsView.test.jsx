@@ -27,6 +27,7 @@ const summary = (overrides = {}) => ({
   error_groups_truncated: false,
   warning_groups_truncated: false,
   status: "completed",
+  failure_reason: null,
   run_type: "historical",
   row_type: "spans",
   start_time: null,
@@ -53,6 +54,62 @@ const statCardText = async (label) =>
 describe("TaskLogsView totals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  const selectionReason =
+    "Evaluation task row selection exceeded its read budget. Narrow the time range and retry.";
+
+  it("shows the selection failure reason for an empty failed run", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        failure_reason: selectionReason,
+        total_count: 0,
+        target_count: 0,
+        success_count: 0,
+      }),
+    );
+    renderView();
+    expect(await screen.findByRole("alert")).toHaveTextContent(selectionReason);
+    expect(screen.getByText("Failed")).toBeVisible();
+    expect(screen.queryByText("No data")).not.toBeInTheDocument();
+    expect(screen.queryByText(/reason is unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("distinguishes a completed empty run from selection failure", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "completed",
+        failure_reason: selectionReason,
+        total_count: 0,
+        target_count: 0,
+        success_count: 0,
+      }),
+    );
+    renderView("failed");
+    expect(
+      await screen.findByText("Completed — no evaluation runs in this log"),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(selectionReason)).not.toBeInTheDocument();
+  });
+
+  it("keeps existing run diagnostics alongside a task failure reason", async () => {
+    const runError = "Unknown entry failure";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        failure_reason: selectionReason,
+        success_count: 1,
+        errors_count: 1,
+        error_groups: [{ sample: runError, normalized: runError, count: 1 }],
+      }),
+    );
+    renderView();
+    expect(await screen.findByText("Error Log")).toBeVisible();
+    expect(await statCardText("Completed runs")).toBe("1Completed runs");
+    expect(screen.getByRole("alert")).toHaveTextContent(selectionReason);
+    expect(screen.getByText("Failed")).toBeVisible();
   });
 
   it.each(["failed", undefined])(
@@ -100,7 +157,7 @@ describe("TaskLogsView totals", () => {
     "round8 bounds failed-empty copy to visible logs (archived prior runs=%s)",
     async (archived) => {
       // fresh_run soft-deletes completed entries. The logs API aggregates only
-      // deleted=false; it exposes neither historical execution nor failure cause.
+      // deleted=false; empty counters alone don't establish history or cause.
       const history = archived ? [{ status: "completed", deleted: true }] : [];
       const visible = history.filter((entry) => !entry.deleted);
       mocks.readEvalTaskLogs.mockResolvedValue(

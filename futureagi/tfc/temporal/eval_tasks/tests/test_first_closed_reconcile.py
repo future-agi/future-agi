@@ -304,13 +304,13 @@ async def test_pending_patch_between_running_update_and_ack_reread(
             assert release.wait(30), "detail PATCH did not release the status reread"
         return result
 
-    def set_status_with_barrier(pk, status, expected_status=None):
+    def set_status_with_barrier(pk, status, expected_status=None, *args, **kwargs):
         if (pk, status, expected_status) == (task_id, "running", "pending"):
             # Only this activity thread's connection is wrapped. Its real SELECT
             # cannot start until the detail request on a separate connection commits.
             with connections["default"].execute_wrapper(after_update):
-                return set_status(pk, status, expected_status)
-        return set_status(pk, status, expected_status)
+                return set_status(pk, status, expected_status, *args, **kwargs)
+        return set_status(pk, status, expected_status, *args, **kwargs)
 
     monkeypatch.setattr(activities, "_set_task_status_sync", set_status_with_barrier)
     queue = f"pending-ack-{uuid.uuid4()}"

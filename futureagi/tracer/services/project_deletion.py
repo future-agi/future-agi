@@ -137,6 +137,13 @@ def _retire_instant_eval_and_insights(projects: QuerySet[Project], now) -> list[
 
     Returns the ids of eval tasks whose workflows should be paused."""
     instant = InstantEvalRun.objects.filter(project__in=projects)
+    # Even a cancelled run can have an answer copier. Take its lock before
+    # touching answers or entries, without freezing the set to clean up.
+    list(
+        instant.order_by("pk")
+        .select_for_update(of=("self",))
+        .values_list("pk", flat=True)
+    )
     active = list(
         instant.filter(
             cancelled_at__isnull=True,

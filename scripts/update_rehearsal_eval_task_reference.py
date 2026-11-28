@@ -1,17 +1,16 @@
 """Source-only EvalTask relation-coverage fixture (not a task backfill).
 
-Reviewed source objects: v1.56.1 6840e44914cf7c85cd0ae65d98761f7728b8afcc,
-v1.58.0 28e729aab169d75a2ca856fb4ed67fd1dda5901a. Task, Project,
-CustomEvalConfig, EvalTemplate and BaseModel declarations are identical there.
-The source inventory deliberately excludes target-only analysis_source_generation.
+The reviewed source releases and their exact field contracts are listed below.
+Select the contract from the authenticated source release, and keep that same
+contract for replay and target preservation reads. Never add target-only fields.
 
 Per 100k actual tasks: 50k completed historical, 20k failed historical, 20k
 paused continuous, 10k soft-deleted/delete-status historical. No entries, run
-loggers or workflows are created. selectors/eval_tasks/stranded.py selects only
-pending/running (optionally failed) tasks WITH undrained EvalLogger entries;
-these tasks have none, even with recover-failed enabled. Temporal's
-_get_task_state_sync treats paused/failed/deleted as inactive. Completed tasks
-are not sweepable; bulk_create bypasses product create/resume dispatch entirely.
+loggers or workflows are created, so the entry-based recovery selector has no
+work even with recover-failed enabled. Only paused tasks have continuous
+cursors, and paused tasks are not sweepable by the stale-cursor selector.
+Temporal treats paused/failed/deleted as inactive; completed tasks are not
+sweepable. bulk_create bypasses product create/resume dispatch entirely.
 
 Three private prototype projects, six configs, two private templates and exact
 one/two-config membership per task provide real, bounded FK context. These
@@ -39,9 +38,16 @@ def eval_task_reference_plan(scale):
         memberships=150000 * scale)
 
 
+SOURCE_REVISIONS = {
+    'v1.56.1': '6840e44914cf7c85cd0ae65d98761f7728b8afcc',
+    'v1.57.0': '814b6c4e745e754dc2eeb43a4d238d318adc4daa',
+    'v1.58.0': '28e729aab169d75a2ca856fb4ed67fd1dda5901a',
+    'v1.59.0': '08de8321155538f1a9295982dfd55dd93a1cfc98',
+}
+
 # Reviewed source-field contracts: type, nullability, max_length, FK label.
 # Kept literal, not derived from the running (possibly drifted) model.
-SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None, None),
+LEGACY_SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None, None),
               'updated_at': ('DateTimeField', False, None, None),
               'deleted': ('BooleanField', False, None, None),
               'deleted_at': ('DateTimeField', True, None, None),
@@ -128,7 +134,18 @@ SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None, None)
                     'evaltask': ('ForeignKey', False, None, 'tracer.EvalTask'),
                     'customevalconfig': ('ForeignKey', False, None, 'tracer.CustomEvalConfig')}}
 
-ROWS = '\nSOURCE_FIELDS = ' + repr(SOURCE_FIELDS) + '\n' + """
+SOURCE_FIELD_OVERRIDES = {
+    'v1.59.0': dict(LEGACY_SOURCE_FIELDS,
+        EvalTask=dict(LEGACY_SOURCE_FIELDS['EvalTask'], sampling_policy=('JSONField', True, None, None)),
+        Project=dict(LEGACY_SOURCE_FIELDS['Project'],
+            analysis_source_generation=('PositiveBigIntegerField', False, None, None),
+            sampling_contact_attribute=('CharField', False, 200, None))),
+}
+
+# Keep the original exact legacy probe for manual journeys on other releases.
+# An unreviewed schema still fails PREPARE before any fixture writes.
+ROWS = (f"\nSOURCE_FIELDS = {SOURCE_FIELD_OVERRIDES!r}.get(a['source_version'], {LEGACY_SOURCE_FIELDS!r})\n"
+        + """
 import uuid
 from datetime import datetime, timedelta
 NAMESPACE=uuid.uuid5(uuid.NAMESPACE_URL,'futureagi-qualification-eval-task-reference:'+a['namespace'])
@@ -149,6 +166,10 @@ def support_payloads(context):
         metadata={'qualification_eval_task_reference':1,'namespace':a['namespace'],'requested_rows':a['rows']},
         config=[],session_config=[],tags=['qualification-task-reference'],simulation_agent_id=None)
         for row_type in ROW_TYPES]
+    if 'analysis_source_generation' in SOURCE_FIELDS['Project']:
+        for index,project in enumerate(projects):
+            project['analysis_source_generation']=index
+            project['sampling_contact_attribute']='contact_id' if index else ''
     templates=[dict(history(when),id=identity('template',index),
         name='qualification-task-'+NAMESPACE.hex[:12]+'-'+str(index),
         description='Qualification task history; never dispatched.',
@@ -194,10 +215,19 @@ def payloads(context,start,stop):
             last_run=created+timedelta(hours=1) if ordinal%4 else None,
             created_at=created,updated_at=created+timedelta(hours=2),deleted=status=='deleted',
             deleted_at=created+timedelta(hours=2) if status=='deleted' else None))
+        if 'sampling_policy' in SOURCE_FIELDS['EvalTask']:
+            # Exercise non-default preservation without making any task runnable.
+            policy=None
+            if status=='completed' and ordinal%100==0:
+                policy=dict(version=1,sampling_unit=row_type[:-1],mode='closed',
+                    window=dict(start=start_time.isoformat(),end=end_time.isoformat()),default=dict(rate=25))
+                # The released sampler requires the policy window to be the sole date range.
+                filters.pop('date_range',None)
+            tasks[-1]['sampling_policy']=policy
         for index in range(1+ordinal%2):
             members.append(dict(evaltask_id=task,customevalconfig_id=identity('config',row_type+str(index))))
     return tasks,members
-"""
+""")
 
 COMMON = """
 from django.apps import apps
@@ -256,7 +286,7 @@ unique={Project:[models.UniqueConstraint(fields=['name','trace_type','organizati
 for model in (Project,Template,Config,Task,Membership):
     specs=SOURCE_FIELDS[model._meta.object_name]
     assert model._meta.managed and model._meta.db_table==expected_tables[model], 'eval_task_reference: table/managed drift'
-    assert {f.name for f in model._meta.concrete_fields}==set(specs), 'eval_task_reference: field inventory drift'
+    assert {f.name for f in model._meta.concrete_fields}==set(specs), 'eval_task_reference: field inventory drift '+model.__name__
     assert model._meta.constraints==unique.get(model,[]), 'eval_task_reference: constraints drift'
     expected_unique={('evaltask','customevalconfig')} if model==Membership else set()
     assert {tuple(fields) for fields in model._meta.unique_together}==expected_unique, 'eval_task_reference: membership uniqueness drift'
@@ -279,7 +309,26 @@ for model in (Project,Template,Config,Task,Membership):
     if model==Project: allowed_unique.add(('simulation_agent_id',))
     if model==Membership: allowed_unique.add(('evaltask_id','customevalconfig_id'))
     assert {tuple(c['columns']) for c in actual.values() if c.get('unique') and not c.get('primary_key')}==allowed_unique, 'eval_task_reference: physical uniqueness drift'
-    assert not any(c.get('check') for c in actual.values()), 'eval_task_reference: unexpected physical check'
+    # Verify the new native column types and Django's nonnegative CHECK.
+    project_check='tracer_project_analysis_source_generation_check'
+    expected_checks={project_check: ['analysis_source_generation']} if (
+        model==Project and 'analysis_source_generation' in specs) else {}
+    assert {name:c['columns'] for name,c in actual.items() if c.get('check')}==expected_checks, 'eval_task_reference: physical check drift'
+    expected_types={
+        Project: {'analysis_source_generation':'bigint','sampling_contact_attribute':'character varying(200)'},
+        Task: {'sampling_policy':'jsonb'},
+    }.get(model,{})
+    expected_types={name:kind for name,kind in expected_types.items() if name in specs}
+    if expected_types:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute '
+                'WHERE attrelid = %s::regclass AND attname::text = ANY(%s) AND NOT attisdropped',
+                (model._meta.db_table,list(expected_types)))
+            assert dict(cursor.fetchall())==expected_types, 'eval_task_reference: physical sampling/generation type drift'
+            if expected_checks:
+                cursor.execute('SELECT convalidated, pg_get_constraintdef(oid) FROM pg_constraint '
+                    "WHERE conrelid = %s::regclass AND conname = %s AND contype = 'c'", (model._meta.db_table,project_check))
+                assert cursor.fetchone()==(True,'CHECK ((analysis_source_generation >= 0))'), 'eval_task_reference: generation check definition drift'
     for constraint in unique.get(model,[]):
         assert actual.get(constraint.name,{}).get('unique'), 'eval_task_reference: named unique missing'
     expected_fk={}
@@ -424,7 +473,7 @@ def seed_eval_task_reference(driver, rows, *, prefix, producer):
     arguments = dict(namespace=source.get('namespace'), email=account.get('email'),
         organization_id=headers.get('X-Organization-Id'), workspace_id=headers.get('X-Workspace-Id'))
     require(all(isinstance(value, str) and bool(value) for value in arguments.values()))
-    arguments['rows'] = rows
+    arguments.update(rows=rows, source_version=driver.row.release.version)
     complete = getattr(driver, '_eval_task_reference', None)
     state = complete or getattr(driver, '_eval_task_reference_pending', None)
     if state is not None:

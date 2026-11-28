@@ -29,10 +29,6 @@ from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.tasks import eval_task_sweeper as sweeper
 
-# The real starter, bound at import: ``tracer/tests/conftest.py`` replaces it
-# with a stub for every test in this package before the test body runs.
-_REAL_STARTER = eval_task_client.start_eval_task_workflow_sync
-
 _UNDRAINED = (EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING)
 
 
@@ -135,11 +131,6 @@ def client_progressing():
     return client.WF_PROGRESSING
 
 
-# How the sweep starts a workflow: coalescing, never terminating, and carrying
-# the answer of the describe it was gated on rather than describing again.
-_SWEEP_RESTART = {"replace_existing": False, "workflow_confirmed_stopped": True}
-
-
 @pytest.fixture
 def temporal(monkeypatch):
     """Stand in for the Temporal client: record describes and starts."""
@@ -154,12 +145,12 @@ def temporal(monkeypatch):
             raise verdict
         return verdict
 
-    def _start(task, **kwargs):
-        calls["started"].append((str(task.id), kwargs))
+    def _start(task):
+        calls["started"].append(str(task.id))
         return "wf"
 
     monkeypatch.setattr(client, "describe_eval_task_workflow_sync", _describe)
-    monkeypatch.setattr(client, "start_eval_task_workflow_sync", _start)
+    monkeypatch.setattr(client, "start_recovery_workflow_sync", _start)
     return calls
 
 
@@ -344,7 +335,7 @@ class TestStaleContinuousCursor:
 
         assert result["candidates"] == 1
         assert result["restarted"] == 1
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     def test_a_frozen_cursor_with_a_live_workflow_is_left_alone(
         self, make_task, temporal
@@ -371,7 +362,7 @@ class TestRecoverTask:
         outcome = sweeper.recover_task(task, stale_running_seconds=7_200)
 
         assert outcome["restarted"] is True
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     def test_a_progressing_workflow_is_never_restarted(
         self, make_task, make_entry, temporal
@@ -459,6 +450,35 @@ class TestRecoverTask:
         assert outcome["restarted"] is True
         assert task.status == EvalTaskStatus.PENDING
 
+    def test_a_restart_whose_run_ended_before_the_handoff_committed_is_swept_again(
+        self, make_task, make_entry, temporal, settings
+    ):
+        """The restart is started inside the handoff transaction. A worker that
+        predates the generation can run it before that commits: its
+        pending -> running write misses the still-FAILED row and it ends at its
+        first state check. The task is then PENDING with undrained work and no
+        live run, which the next tick restarts, opted in to failed tasks or
+        not."""
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = True
+        task = make_task(status=EvalTaskStatus.FAILED)
+        make_entry(task)
+
+        assert sweeper.recover_task(task, stale_running_seconds=7_200)["restarted"]
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.PENDING
+        first = task.workflow_generation
+
+        # That run has ended (``temporal`` still describes it as closed).
+        settings.EVAL_TASK_SWEEP_RECOVER_FAILED = False
+        [again] = sweeper.find_stranded_tasks()
+        assert again.pk == task.pk
+
+        assert sweeper.recover_task(again, stale_running_seconds=7_200)["restarted"]
+        again.refresh_from_db()
+        assert temporal["started"] == [str(task.id)] * 2
+        assert again.status == EvalTaskStatus.PENDING
+        assert again.workflow_generation != first
+
 
 @pytest.mark.django_db
 class TestSweepActivity:
@@ -473,7 +493,7 @@ class TestSweepActivity:
         assert result["candidates"] == 1
         assert result["restarted"] == 1
         assert result["errors"] == 0
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     def test_a_healthy_draining_task_is_a_candidate_and_is_reported_as_one(
         self, make_task, make_entry, temporal
@@ -562,7 +582,7 @@ class TestSweepActivity:
         def _start_refused(_task, **_kwargs):
             raise RuntimeError("temporal refused the start")
 
-        monkeypatch.setattr(client, "start_eval_task_workflow_sync", _start_refused)
+        monkeypatch.setattr(client, "start_recovery_workflow_sync", _start_refused)
 
         result = sweeper.sweep_stranded_eval_tasks._original_func()
 
@@ -571,6 +591,37 @@ class TestSweepActivity:
         assert result["entries_requeued"] == 1
         assert result["errors"] == 1
         assert result["restarted"] == 0
+
+    @pytest.mark.parametrize("conflict", [False, True])
+    def test_last_capped_claim_stays_sweepable_until_start_ack(
+        self, make_task, make_entry, temporal, monkeypatch, conflict
+    ):
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        task = make_task()
+        entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10_000)
+        EvalLogger.all_objects.filter(pk=entry.pk).update(attempts=3)
+
+        def rejected(_task):
+            if conflict:
+                raise WorkflowAlreadyStartedError(str(task.pk), "historical")
+            raise TimeoutError("acknowledgement lost")
+
+        tick = sweeper.sweep_stranded_eval_tasks._original_func
+        with monkeypatch.context() as patch:
+            patch.setattr(eval_task_client, "start_recovery_workflow_sync", rejected)
+            first = tick()
+        assert first["deferred" if conflict else "errors"] == 1
+        assert first["entries_poisoned"] == first["restarted"] == 0
+        second = tick()  # Must be found through the real candidate selector.
+        assert (
+            second["candidates"]
+            == second["entries_poisoned"]
+            == second["restarted"]
+            == 1
+        )
+        entry.refresh_from_db()
+        assert entry.status == EvalEntryStatus.ERRORED
 
     def test_the_sweep_can_be_turned_off_without_a_deploy_of_its_own(
         self, make_task, make_entry, temporal, settings
@@ -613,7 +664,7 @@ class TestSweepActivity:
 
         assert result["errors"] == 1
         assert result["restarted"] == 1
-        assert [started[0] for started in temporal["started"]] == [str(second.id)]
+        assert temporal["started"] == [str(second.id)]
 
 
 @pytest.mark.django_db
@@ -657,7 +708,7 @@ class TestFreshlyAbandonedClaims:
 
         assert not outcome.get("deferred")
         assert outcome["restarted"] is True
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     @pytest.mark.parametrize("age_seconds", [601, 1_000])
     def test_a_claim_the_restarted_workflow_can_reclaim_restarts_at_once(
@@ -770,7 +821,7 @@ class TestSweepFailureDiagnostics:
         def _start_refused(_task, **_kwargs):
             raise failure
 
-        monkeypatch.setattr(client, "start_eval_task_workflow_sync", _start_refused)
+        monkeypatch.setattr(client, "start_recovery_workflow_sync", _start_refused)
 
         with structlog.testing.capture_logs() as records:
             result = sweeper.sweep_stranded_eval_tasks._original_func()
@@ -799,7 +850,6 @@ class TestTheRestartRunsOnTheSweepsOwnDescribe:
             return SimpleNamespace(id=kwargs["workflow_id"])
 
         client = eval_task_client
-        monkeypatch.setattr(client, "start_eval_task_workflow_sync", _REAL_STARTER)
         monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
         monkeypatch.setattr(client, "start_workflow_sync", _start)
         return starts
@@ -823,6 +873,31 @@ class TestTheRestartRunsOnTheSweepsOwnDescribe:
         assert described == [str(task.id)]
         [start] = starts
         assert start["workflow_input"].workflow_confirmed_stopped is True
+
+    def test_a_restart_never_joins_or_replaces_a_live_run(
+        self, make_task, make_entry, monkeypatch
+    ):
+        """The restart is sent inside the transaction that stamps the new
+        generation. Only a brand-new run may take it: a live owner that raced
+        the describe must make the start fail (the sweep then defers), never
+        absorb the new generation or be terminated."""
+        from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+        from tfc.temporal.eval_tasks import client
+
+        starts = self._real_starter(monkeypatch, lambda _task_id: client.WF_CLOSED)
+        task = make_task()
+        make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=1_000)
+
+        assert sweeper.recover_task(task, stale_running_seconds=7_200)["restarted"]
+        [start] = starts
+        assert start["id_conflict_policy"] == WorkflowIDConflictPolicy.FAIL
+        assert start["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        assert start["cancel_existing"] is False
+        task.refresh_from_db()
+        assert start["workflow_input"].workflow_generation == str(
+            task.workflow_generation
+        )
 
     def test_the_run_reaps_at_the_threshold_the_deferral_check_admitted(
         self, make_task, make_entry, monkeypatch

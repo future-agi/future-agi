@@ -141,10 +141,12 @@ def started(monkeypatch):
         "tfc.temporal.eval_tasks.client.signal_pause_eval_task_workflow",
         lambda task_id: True,
     )
-    # Tests run inside one transaction, so nothing ever commits.
-    monkeypatch.setattr(
-        instant_eval_scale.transaction, "on_commit", lambda fn, *a, **k: fn()
-    )
+    # Only emulate a commit in tests wrapped in a rollback-only transaction.
+    # The two-connection tests need callbacks to wait for the real commit.
+    if instant_eval_scale.transaction.get_connection().in_atomic_block:
+        monkeypatch.setattr(
+            instant_eval_scale.transaction, "on_commit", lambda fn, *a, **k: fn()
+        )
     return calls
 
 
@@ -322,6 +324,24 @@ def test_a_sample_reads_the_same_rows_every_time_and_extends_with_the_next(
 
 
 @pytest.mark.django_db
+def test_a_start_stamps_the_first_run_with_a_generation(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    # A restart or recovery rotates the stamp, which fences this run's late
+    # writes: the first run must carry one too.
+    sent = []
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+        lambda task, **kw: sent.append((task.workflow_generation, kw)) or "wf",
+    )
+    response = _start(auth_client, observe_project, [yes_no], sample_size=10)
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    task = EvalTask.objects.get(id=response.json()["result"]["task_id"])
+    assert task.workflow_generation is not None
+    assert sent == [(task.workflow_generation, {"replace_existing": False})]
+
+
+@pytest.mark.django_db
 @override_settings(INSTANT_EVAL_CONFIRM_ROWS=20, INSTANT_EVAL_MAX_ROWS=30)
 def test_big_runs_need_a_confirm_and_runs_over_the_cap_are_refused(
     auth_client, observe_project, yes_no, fake_view, started
@@ -480,6 +500,52 @@ def answered_run(auth_client, observe_project, yes_no, category, fake_view, star
         record_answer(entry.id)
     EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.COMPLETED)
     return task, ids
+
+
+@pytest.mark.django_db(transaction=True)
+def test_retired_entry_cannot_overwrite_its_replacements_answer(answered_run, yes_no):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import connection, connections, transaction
+
+    from tracer.models.instant_eval import InstantEvalAnswer
+    from tracer.services.eval_tasks.entries import soft_delete_eval_results
+
+    task, ids = answered_run
+    old = EvalLogger.objects.get(
+        eval_task_id=str(task.pk), trace_session_id=ids[0], custom_eval_config=yes_no
+    )
+    answer = InstantEvalAnswer.objects.filter(
+        task=task, row__row_id=ids[0], config_id=yes_no.pk
+    )
+    assert answer.get().label == summary_service.ERROR
+
+    def publish_replacement():
+        try:
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '5s'")
+                retired = soft_delete_eval_results(EvalLogger.objects.filter(pk=old.pk))
+                assert retired == 1
+                new = _answer(task, yes_no, ids[0], "Yes", confidence=0.75)
+                EvalLogger.objects.bulk_create([new])
+                assert record_answer(new.pk) == 1
+        finally:
+            connections.close_all()
+
+    def before_run_lock(execute, sql, params, many, context):
+        if "tracer_instant_eval_run" in sql and "FOR UPDATE" in sql:
+            # The recorder has already found the old live entry. Finish the
+            # replacement on another connection before it can acquire the run.
+            pool.submit(publish_replacement).result(timeout=10)
+        return execute(sql, params, many, context)
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        connection.execute_wrapper(before_run_lock),
+    ):
+        copied = record_answer(old.pk)
+    assert answer.values_list("label", "confidence").get() == ("Yes", 0.75)
+    assert copied == 0
 
 
 def _summary(auth_client, project, task, tz="UTC"):
@@ -1032,6 +1098,212 @@ def test_retry_failed_requeues_only_the_failures(
     assert entry.status == EvalEntryStatus.PENDING and entry.error is False
     assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PENDING
     assert started[-1][1] == {"replace_existing": True}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("operation", ["retry", "lost_worker"])
+def test_run_is_locked_before_the_entry(
+    auth_client, observe_project, answered_run, operation
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import OperationalError, connection, connections, transaction
+
+    from tfc.temporal.eval_tasks.activities import _requeue_lost_entry_sync
+    from tracer.models.instant_eval import InstantEvalAnswer
+    from tracer.services.instant_eval_summary import ERROR
+
+    task, _ = answered_run
+    entry = EvalLogger.objects.get(
+        eval_task_id=str(task.pk), status=EvalEntryStatus.ERRORED
+    )
+    answer = InstantEvalAnswer.objects.filter(
+        task=task,
+        row__row_id=entry.trace_session_id,
+        config_id=entry.custom_eval_config_id,
+    )
+    if operation == "lost_worker":
+        EvalLogger.objects.filter(pk=entry.pk).update(
+            status=EvalEntryStatus.RUNNING, attempts=1
+        )
+        answer.delete()
+
+    def probe(rows):
+        try:
+            with transaction.atomic():
+                rows.select_for_update(nowait=True, of=("self",)).get()
+        except OperationalError as exc:
+            return exc.__cause__.sqlstate
+        finally:
+            connections.close_all()
+        return "unlocked"
+
+    seen = []
+
+    def before_entry_write(execute, sql, params, many, context):
+        if (
+            not seen
+            and "tracer_eval_logger" in sql
+            and (sql.startswith("UPDATE") or "FOR UPDATE" in sql)
+        ):
+            # Deletion would take the run and then wait for this entry. Check
+            # from its own connection without creating an actual deadlock.
+            run = InstantEvalRun.objects.filter(eval_task_id=task.pk)
+            seen.append(pool.submit(probe, run).result(timeout=10))
+            if operation == "retry":
+                # This completed run needs a restart. Delete & rerun would
+                # take this task lock before acquiring any live entry lock.
+                rows = EvalTask.all_objects.filter(pk=task.pk)
+                seen.append(pool.submit(probe, rows).result(timeout=10))
+        return execute(sql, params, many, context)
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        connection.execute_wrapper(before_entry_write),
+    ):
+        if operation == "retry":
+            response = _control(auth_client, observe_project, task, "retry_failed")
+            assert response.status_code == 200, response.content
+            assert response.json()["result"]["retried"] == 1
+            assert not answer.exists()
+        else:
+            assert (
+                _requeue_lost_entry_sync(str(entry.pk))["status"]
+                == EvalEntryStatus.ERRORED
+            )
+            assert answer.get().label == ERROR
+    assert seen == (["55P03", "55P03"] if operation == "retry" else ["55P03"])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("first_read_at", ["before_run_lock", "after_run_lookup"])
+def test_lost_worker_copies_answer_after_a_concurrent_first_read(
+    answered_run, first_read_at
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import OperationalError, connection, connections, transaction
+
+    from tfc.temporal.eval_tasks.activities import _requeue_lost_entry_sync
+    from tracer.models.instant_eval import InstantEvalAnswer
+    from tracer.services.instant_eval_answers import is_instant_task
+
+    task, _ = answered_run
+    entry = EvalLogger.objects.get(
+        eval_task_id=str(task.pk), status=EvalEntryStatus.ERRORED
+    )
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        status=EvalEntryStatus.RUNNING, attempts=1
+    )
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
+    # Legacy task: the source rows exist, but no Ask read has prepared the run.
+    InstantEvalRun.objects.filter(eval_task=task).delete()
+    InstantEvalAnswer.objects.filter(task=task).delete()
+    answer = InstantEvalAnswer.objects.filter(
+        task=task,
+        row__row_id=entry.trace_session_id,
+        config_id=entry.custom_eval_config_id,
+    )
+
+    def first_read():
+        try:
+            run = instant_eval_scale._prepared_run(task, {}, rate=0)
+            instant_eval_scale._ensure_answers(run)
+            assert run.answers_synced and not answer.exists()
+        finally:
+            connections.close_all()
+
+    def probe_entry():
+        try:
+            with transaction.atomic():
+                rows = EvalLogger.objects.select_for_update(nowait=True)
+                return rows.get(pk=entry.pk).status
+        except OperationalError as exc:
+            return getattr(exc.__cause__, "sqlstate", None)
+        finally:
+            connections.close_all()
+
+    copy_states = []
+
+    def at_write(execute, sql, params, many, context):
+        if (
+            first_read_at == "after_run_lookup"
+            and "tracer_eval_logger" in sql
+            and "FOR UPDATE" in sql
+        ):
+            # Recovery has missed the run but hasn't yet locked the entry.
+            pool.submit(first_read).result(timeout=10)
+        elif sql.startswith("INSERT INTO tracer_instant_eval_answer "):
+            copy_states.append(pool.submit(probe_entry).result(timeout=10))
+        return execute(sql, params, many, context)
+
+    with ThreadPoolExecutor(max_workers=1) as pool, connection.execute_wrapper(at_write):
+        assert not is_instant_task(task.pk)  # Prime the real negative cache.
+        if first_read_at == "before_run_lock":
+            pool.submit(first_read).result(timeout=10)
+            assert not is_instant_task(task.pk)  # Stale even though the run now exists.
+        result = _requeue_lost_entry_sync(str(entry.pk))
+        assert result["status"] == EvalEntryStatus.ERRORED
+    # A known run is copied under the entry lock. A run discovered later is
+    # copied only once the entry's terminal status is committed and unlocked.
+    assert copy_states == [
+        "55P03" if first_read_at == "before_run_lock" else EvalEntryStatus.ERRORED
+    ]
+    assert answer.get().label == summary_service.ERROR
+
+
+@pytest.mark.django_db(transaction=True)
+def test_lost_worker_error_survives_a_failed_answer_copy(answered_run):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import connection, connections, transaction
+
+    from tfc.temporal.eval_tasks.activities import _requeue_lost_entry_sync
+    from tracer.models.instant_eval import InstantEvalAnswer
+
+    task, _ = answered_run
+    entry = EvalLogger.objects.get(
+        eval_task_id=str(task.pk), status=EvalEntryStatus.ERRORED
+    )
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        status=EvalEntryStatus.RUNNING, attempts=1
+    )
+    answer = InstantEvalAnswer.objects.filter(
+        task=task,
+        row__row_id=entry.trace_session_id,
+        config_id=entry.custom_eval_config_id,
+    )
+    held, release = threading.Event(), threading.Event()
+
+    def hold_answer():
+        # Another session holds the answer row, so the copy's upsert times out.
+        try:
+            with transaction.atomic():
+                answer.select_for_update().get()
+                held.set()
+                release.wait(timeout=30)
+        finally:
+            connections.close_all()
+
+    def short_lock_wait(execute, sql, params, many, context):
+        if sql.startswith("INSERT INTO tracer_instant_eval_answer "):
+            # Inside recovery's transaction, so the copy fails fast on the lock.
+            execute("SET LOCAL lock_timeout = '1s'", None, False, context)
+        return execute(sql, params, many, context)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(hold_answer)
+        assert held.wait(timeout=10)
+        try:
+            with connection.execute_wrapper(short_lock_wait):
+                result = _requeue_lost_entry_sync(str(entry.pk))
+        finally:
+            release.set()
+        holder.result(timeout=10)
+    # The copy failed, but the terminal write committed: never left RUNNING.
+    assert result["status"] == EvalEntryStatus.ERRORED
+    assert EvalLogger.objects.get(pk=entry.pk).status == EvalEntryStatus.ERRORED
 
 
 def _half_answered_run(auth_client, observe_project, yes_no, status_):
@@ -3048,10 +3320,11 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     async def nothing(*args, **kwargs):
         return None
 
-    async def active(task_id):
+    async def active(task_id, generation):
+        assert generation == "accepted-generation"
         return {"active": True, "status": "running", "has_undrained_work": True}
 
-    async def claim(task_id, n):
+    async def claim(task_id, n, generation=None):
         return {"entry_ids": ["e2"]}
 
     given = []
@@ -3065,7 +3338,7 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     def continue_as_new(arg):
         raise Hop(arg)
 
-    async def reconciled(task_id):
+    async def reconciled(task_id, generation=None):
         return True
 
     for name, fn in {
@@ -3082,20 +3355,30 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     monkeypatch.setattr(workflows, "_set_status", lambda status: None)
     monkeypatch.setattr(workflows, "_should_continue_as_new", lambda *a: True)
     monkeypatch.setattr(workflows.workflow, "continue_as_new", continue_as_new)
+    # A new execution: every patch marker is recorded (and so returns True).
+    monkeypatch.setattr(workflows.workflow, "patched", lambda patch_id: True)
     if continuous:
         run = workflows.ContinuousEvalTaskWorkflow()._run(
-            ContinuousDrainState(task_id="t", lost_entry_ids=["e1"])
+            ContinuousDrainState(
+                task_id="t",
+                lost_entry_ids=["e1"],
+                workflow_generation="accepted-generation",
+            )
         )
     else:
         run = workflows.HistoricalEvalTaskWorkflow()._run(
             EvalTaskWorkflowInput(
-                task_id="t", already_reconciled=True, lost_entry_ids=["e1"]
+                task_id="t",
+                already_reconciled=True,
+                lost_entry_ids=["e1"],
+                workflow_generation="accepted-generation",
             )
         )
     with pytest.raises(Hop) as hop:
         asyncio.run(run)
     assert given == [{"e1"}]
     assert hop.value.args[0].lost_entry_ids == ["e1", "e2"]
+    assert hop.value.args[0].workflow_generation == "accepted-generation"
 
 
 def test_the_worker_counts_a_finished_run_without_the_views():

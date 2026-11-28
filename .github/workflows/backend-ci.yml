@@ -944,6 +944,104 @@ jobs:
           print(f"temporal activity registry OK: {activity_count} activities")
           EOF
 
+  eval-task-mixed-workers:
+    # test_mixed_creation_workers.py runs a pinned base checkout's eval-task
+    # worker (one process) next to this change's (pytest's), on one test
+    # database and one local Temporal server, so the shards deselect it with
+    # the `multiworker` marker. This job selects it.
+    name: Eval-task mixed-version workers
+    # plan: this run's verified lock wheels (en-core-web-sm).
+    needs: [changes, plan]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      CH25_DATABASE: test_tfc
+      CH_DATABASE: test_tfc
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - uses: ./.github/actions/backend-test-packages
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras --no-install-package en-core-web-sm
+
+      - uses: ./.github/actions/backend-test-packages/lock-wheels
+
+      - name: Check out the pinned base worker
+        # The commit creation_base_poller.py pins (BASE); it verifies the tree.
+        run: |
+          base=$(sed -n 's/^BASE = "\([0-9a-f]\{40\}\)"$/\1/p' tfc/temporal/eval_tasks/tests/creation_base_poller.py)
+          git fetch --no-tags --depth=1 origin "$base"
+          git worktree add --detach "$RUNNER_TEMP/base-checkout" "$base"
+          echo "HISTORICAL_REPLAY_BASE_CHECKOUT=$RUNNER_TEMP/base-checkout" >> "$GITHUB_ENV"
+          echo "HISTORICAL_REPLAY_CANDIDATE_TREE=$(git write-tree)" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/mixed-histories"
+          echo "HISTORICAL_REPLAY_HISTORY_DIR=$RUNNER_TEMP/mixed-histories" >> "$GITHUB_ENV"
+
+      # The Temporal CLI archive is cached under both its release version and
+      # SHA-256. A cache hit must never turn a missing versioned archive into a
+      # network fetch: the install step verifies the hit and fails instead.
+      - name: Key the pinned Temporal CLI by version and digest
+        id: temporal-cli
+        run: echo "key=$(bash .ci/temporal-cli.sh cache-key)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pinned Temporal CLI archive
+        id: temporal-cli-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/temporal-cli-archive
+          key: ${{ steps.temporal-cli.outputs.key }}
+
+      - name: Fetch the pinned Temporal CLI archive on a cache miss
+        if: steps.temporal-cli-cache.outputs.cache-hit != 'true'
+        run: bash .ci/temporal-cli.sh fetch "$RUNNER_TEMP/temporal-cli-archive"
+
+      - name: Install the pinned Temporal dev server
+        # temporalio 1.36.1's default CLI; install verifies every cache hit and
+        # fails if the cache claimed a hit without the versioned archive.
+        run: |
+          bash .ci/temporal-cli.sh install "$RUNNER_TEMP/temporal-cli-archive" "$RUNNER_TEMP/temporal-cli"
+          echo "TEMPORAL_DEV_SERVER=$RUNNER_TEMP/temporal-cli/temporal" >> "$GITHUB_ENV"
+
+      - name: Save the verified Temporal CLI archive
+        # Right after verification, so a failing test run still seeds it.
+        if: steps.temporal-cli-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/temporal-cli-archive
+          key: ${{ steps.temporal-cli-cache.outputs.cache-primary-key }}
+
+      - name: Start test services
+        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+
+      - name: Run the mixed-version worker tests
+        # no:cacheprovider: the candidate tree check refuses untracked files.
+        run: |
+          uv run pytest tfc/temporal/eval_tasks/tests/test_mixed_creation_workers.py \
+            -m multiworker --create-db -p no:cacheprovider -q -ra
+
+      - name: Upload the recorded mixed-version histories
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: eval-task-mixed-histories
+          path: ${{ runner.temp }}/mixed-histories/
+          if-no-files-found: ignore
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
+
   code-executor-base-pin:
     # futureagi/code-executor/Dockerfile builds FROM the base image tag it
     # pins (ARG CODE_EXECUTOR_BASE), and base tags are immutable: a release
@@ -1145,6 +1243,7 @@ jobs:
         collection,
         terminal-parity,
         saml-multiworker,
+        eval-task-mixed-workers,
         migrated-database,
         agentic-eval,
         slim-smoke,
@@ -1169,6 +1268,6 @@ jobs:
             .changes.result == "success" and .["policy-self-test"].result == "success" and ($m == $b) and
             .["update-safety"].result == (($b or $u)|status) and
             .["code-executor-base-pin"].result == ($x|status) and
-            ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
+            ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["eval-task-mixed-workers"], .["migrated-database"],
               .["agentic-eval"], .["slim-smoke"]] | all(.result == ($b|status)))
           ' <<<"$NEEDS"

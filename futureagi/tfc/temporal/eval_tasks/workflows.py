@@ -48,6 +48,9 @@ from tfc.temporal.eval_tasks.types import (
     ContinuousDrainState,
     EvalTaskWorkflowInput,
     EvalTaskWorkflowOutput,
+    FencedClaimInput,
+    FencedReapInput,
+    FencedReconcileInput,
     FinalizeInput,
     ReapInput,
     ReconcileActivityInput,
@@ -57,6 +60,7 @@ from tfc.temporal.eval_tasks.types import (
     TaskStateInput,
     WorkflowLabelsInput,
 )
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 
 # Control activities are quick PG reads/writes. One exhausted control activity
 # fails the whole workflow, so their retries (~7 min of backoff) outlast a
@@ -209,6 +213,15 @@ _CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
 # the same reason as ``_MAX_IDLE_FINALIZE_WAITS``.
 _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH = "historical-eval-claim-outcome-unknown-v1"
 _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS = 12
+# ``workflow_generation`` (the task's replacement fence) never changes which
+# commands a run issues: it only travels in activity inputs, and the activities
+# enforce it. A v1.59 worker replaying a newer history, or running a newer
+# start, therefore sees exactly the commands it would issue itself (it drops
+# the unknown field), so no patch marker is involved in either direction.
+# The generation adds no limit of its own. v1.59's one limit is the
+# closed-sampling timer in ``HistoricalEvalTaskWorkflow._run``
+# (``historical-first-closed-reconcile-delay-v1``), which it cannot replay
+# with or without a generation.
 # Explicit bound even when no batch can finish and the server has not suggested
 # CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
 _MAX_CONTINUOUS_POLLS = 100
@@ -273,7 +286,12 @@ def _set_status(status: str) -> None:
 
 
 async def _set_db_status(
-    task_id: str, status: str, expected_status: str | None = None
+    task_id: str,
+    status: str,
+    expected_status: str | None = None,
+    *,
+    failure_reason: str | None = None,
+    generation: str | None = None,
 ) -> dict:
     """Persist ``status`` on the task's DB row (the UI's source of truth).
 
@@ -283,7 +301,13 @@ async def _set_db_status(
     """
     ack: dict = await workflow.execute_activity(
         "set_eval_task_status_activity",
-        SetStatusInput(task_id=task_id, status=status, expected_status=expected_status),
+        SetStatusInput(
+            task_id=task_id,
+            status=status,
+            expected_status=expected_status,
+            failure_reason=failure_reason,
+            workflow_generation=generation,
+        ),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
@@ -291,27 +315,53 @@ async def _set_db_status(
     return ack
 
 
-async def _mark_running(task_id: str) -> dict:
+async def _mark_running(task_id: str, generation: str | None = None) -> dict:
     """Flip the task's DB row ``pending`` → ``running`` at drain start, so the UI
     shows the running state (and the pause endpoint, which requires ``running``,
     becomes reachable)."""
-    return await _set_db_status(task_id, STATUS_RUNNING, expected_status=STATUS_PENDING)
-
-
-async def _fail_task(task_id: str) -> None:
-    """Persist FAILED to the DB row (the UI's source of truth) and the Temporal
-    Search Attribute. Forced (unguarded) — the run only reaches here on a genuine
-    error, since paused / deleted exit through the graceful state check."""
-    _set_status(STATUS_FAILED)
-    await _set_db_status(task_id, STATUS_FAILED)
-
-
-async def _reconcile(task_id: str, *, first_closed: bool = False) -> dict:
-    args = (
-        CheckedReconcileInput(task_id=task_id, require_running=True)
-        if first_closed
-        else ReconcileActivityInput(task_id=task_id)
+    return await _set_db_status(
+        task_id, STATUS_RUNNING, expected_status=STATUS_PENDING, generation=generation
     )
+
+
+async def _fail_task(
+    task_id: str, exc: Exception | None = None, generation: str | None = None
+) -> None:
+    """Mark the run failed without publishing arbitrary activity error text."""
+    reason = None
+    if (
+        isinstance(exc, ActivityError)
+        and exc.activity_type == "reconcile_eval_task_activity"
+        and isinstance(exc.cause, ApplicationError)
+        and exc.cause.type
+        in {"EvalTaskSelectionRejected", "EvalTaskReadBudgetExceeded"}
+    ):
+        # Only fixed selector messages may reach task Logs. In particular,
+        # sampling exceptions can interpolate user-defined attribute names.
+        try:
+            reason = SelectionFailure(exc.cause.message).value
+        except ValueError:
+            reason = SelectionFailure.OTHER.value
+    _set_status(STATUS_FAILED)
+    await _set_db_status(
+        task_id, STATUS_FAILED, failure_reason=reason, generation=generation
+    )
+
+
+async def _reconcile(
+    task_id: str, *, first_closed: bool = False, generation: str | None = None
+) -> dict:
+    args: ReconcileActivityInput
+    if generation:
+        args = FencedReconcileInput(
+            task_id=task_id,
+            require_running=first_closed,
+            workflow_generation=generation,
+        )
+    elif first_closed:
+        args = CheckedReconcileInput(task_id=task_id, require_running=True)
+    else:
+        args = ReconcileActivityInput(task_id=task_id)
     reconciled: dict = await workflow.execute_activity(
         "reconcile_eval_task_activity",
         args,
@@ -339,7 +389,7 @@ def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
     )
 
 
-async def _reconcile_continuous(task_id: str) -> bool:
+async def _reconcile_continuous(task_id: str, generation: str | None = None) -> bool:
     """Reconcile once, deferring only exhausted transient CH read failures.
 
     The activity already used the bounded five-attempt reconcile policy.  A
@@ -352,7 +402,7 @@ async def _reconcile_continuous(task_id: str) -> bool:
     """
 
     try:
-        await _reconcile(task_id)
+        await _reconcile(task_id, generation=generation)
     except Exception as exc:
         if not _is_retryable_reconcile_budget_error(exc):
             raise
@@ -371,6 +421,7 @@ async def _reap(
     *,
     workflow_confirmed_stopped: bool = False,
     first_closed: bool = False,
+    generation: str | None = None,
 ) -> dict:
     """Reclaim entries a previous execution abandoned in ``running``.
 
@@ -381,17 +432,24 @@ async def _reap(
     no-ops inside ninety minutes of a crash. See
     ``tracer.services.eval_tasks.reaper.effective_stale_seconds``.
     """
-    args = (
-        CheckedReapInput(
+    args: ReapInput
+    if generation:
+        args = FencedReapInput(
+            task_id=task_id,
+            workflow_confirmed_stopped=workflow_confirmed_stopped,
+            require_running=first_closed,
+            workflow_generation=generation,
+        )
+    elif first_closed:
+        args = CheckedReapInput(
             task_id=task_id,
             workflow_confirmed_stopped=workflow_confirmed_stopped,
             require_running=True,
         )
-        if first_closed
-        else ReapInput(
+    else:
+        args = ReapInput(
             task_id=task_id, workflow_confirmed_stopped=workflow_confirmed_stopped
         )
-    )
     reaped: dict = await workflow.execute_activity(
         "reap_stale_running_activity",
         args,
@@ -402,10 +460,10 @@ async def _reap(
     return reaped
 
 
-async def _task_state(task_id: str) -> dict:
+async def _task_state(task_id: str, generation: str | None = None) -> dict:
     state: dict = await workflow.execute_activity(
         "get_eval_task_state_activity",
-        TaskStateInput(task_id=task_id),
+        TaskStateInput(task_id=task_id, workflow_generation=generation),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
@@ -413,20 +471,25 @@ async def _task_state(task_id: str) -> dict:
     return state
 
 
-async def _claim(task_id: str, n: int) -> dict:
+async def _claim(task_id: str, n: int, generation: str | None = None) -> dict:
+    args: ClaimBatchInput
+    if generation:
+        args = FencedClaimInput(task_id=task_id, n=n, workflow_generation=generation)
+    else:
+        args = ClaimBatchInput(task_id=task_id, n=n)
     claimed: dict = await workflow.execute_activity(
         "claim_eval_batch_activity",
-        ClaimBatchInput(task_id=task_id, n=n),
+        args,
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
     return claimed
 
 
-async def _finalize(task_id: str) -> bool:
+async def _finalize(task_id: str, generation: str | None = None) -> bool:
     result = await workflow.execute_activity(
         "finalize_eval_task_activity",
-        FinalizeInput(task_id=task_id),
+        FinalizeInput(task_id=task_id, workflow_generation=generation),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
@@ -597,11 +660,11 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
     async def run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
         try:
             return await self._run(input)
-        except Exception:
+        except Exception as exc:
             # Persist FAILED so a failed run doesn't stay stuck ``running``,
             # then re-raise. continue_as_new / cancellation are BaseException,
             # not caught here.
-            await _fail_task(input.task_id)
+            await _fail_task(input.task_id, exc, input.workflow_generation)
             raise
 
     def _stopped(
@@ -612,6 +675,9 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         return EvalTaskWorkflowOutput(input.task_id, WF_STATUS_PAUSED, input.processed)
 
     async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
+        # A replaced (stale-generation) run issues the same commands as any
+        # other: its status write, reconcile and reap are no-ops in the
+        # activities, and its first state check reports it inactive.
         self._lost.update(input.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(input.task_id)
@@ -619,7 +685,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         if not input.already_reconciled:
             # First run only: flip the DB row pending → running (re-runs after a
             # continue-as-new are already running).
-            ack = await _mark_running(input.task_id)
+            ack = await _mark_running(input.task_id, input.workflow_generation)
             # A base status activity returns no deadline. Keep its dev command
             # sequence, including on replay; never spend activity retries waiting.
             deadline = ack.get("first_reconcile_at")
@@ -636,7 +702,11 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                     self._phase = PHASE_SLEEPING
                     await workflow.sleep(remaining)
                     self._phase = PHASE_MATERIALIZING
-            result = await _reconcile(input.task_id, first_closed=first_closed)
+            result = await _reconcile(
+                input.task_id,
+                first_closed=first_closed,
+                generation=input.workflow_generation,
+            )
             if first_closed and result.get("inactive_status") is not None:
                 return self._stopped(input, result["inactive_status"])
             # Reclaim entries left RUNNING by a crashed prior execution. Only
@@ -647,6 +717,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 input.task_id,
                 workflow_confirmed_stopped=input.workflow_confirmed_stopped,
                 first_closed=first_closed,
+                generation=input.workflow_generation,
             )
             if first_closed and reaped.get("inactive_status") is not None:
                 return self._stopped(input, reaped["inactive_status"])
@@ -658,7 +729,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
         unknown_claims = 0
         reap_before_claim = False
         while True:
-            state = await _task_state(input.task_id)
+            state = await _task_state(input.task_id, input.workflow_generation)
             if not state["active"]:
                 # Stamp the real terminal status (paused / failed / deleted),
                 # not a blanket "paused" — the fleet is filtered by it.
@@ -677,13 +748,16 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 reaped = await _reap(
                     input.task_id,
                     workflow_confirmed_stopped=input.workflow_confirmed_stopped,
+                    generation=input.workflow_generation,
                 )
                 if reaped.get("requeued") or reaped.get("failed"):
                     idle_waits = 0
 
             claim_lost = False
             try:
-                batch = await _claim(input.task_id, input.batch_size)
+                batch = await _claim(
+                    input.task_id, input.batch_size, input.workflow_generation
+                )
             except ActivityError as exc:
                 # A lost claim reply: handle it as an empty claim, never as a
                 # retry (see _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH). The
@@ -703,7 +777,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 unknown_claims = 0
                 entry_ids = batch["entry_ids"]
             if not entry_ids:
-                if await _finalize(input.task_id):
+                if await _finalize(input.task_id, input.workflow_generation):
                     break
                 # The drain loop only ends on an empty *pending* claim, so a
                 # task that still won't finalize has entries RUNNING. Histories
@@ -755,6 +829,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                     EvalTaskWorkflowInput(
                         task_id=input.task_id,
                         task_queue=input.task_queue,
+                        workflow_generation=input.workflow_generation,
                         batch_size=input.batch_size,
                         max_concurrent=input.max_concurrent,
                         heartbeat_s=input.heartbeat_s,
@@ -797,9 +872,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     self._phase = "waiting_for_database"
                     await self._sleep_or_recheck(max(1, state.poll_interval_seconds))
                     await self._run_with_database_backoff(state)
-        except Exception:
+        except Exception as exc:
             # Same fail-then-reraise as HistoricalEvalTaskWorkflow.run.
-            await _fail_task(state.task_id)
+            await _fail_task(state.task_id, exc, state.workflow_generation)
             raise
 
     async def _run_with_database_backoff(self, state: ContinuousDrainState) -> None:
@@ -820,7 +895,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 if state.pending_requeue_ids:
                     await _requeue(state.task_id, state.pending_requeue_ids)
                     state.pending_requeue_ids = []
-                tstate = await _task_state(state.task_id)
+                tstate = await _task_state(state.task_id, state.workflow_generation)
                 if not tstate["active"]:
                     _set_status(tstate["status"])
                     self._phase = PHASE_DONE
@@ -829,7 +904,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     await _apply_labels(state.task_id)
                     labelled = True
                 if not marked_running:
-                    await _mark_running(state.task_id)
+                    await _mark_running(state.task_id, state.workflow_generation)
                     _set_status(STATUS_RUNNING)
                     marked_running = True
                 if self._paused:
@@ -839,7 +914,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 else:
                     if not reconciled:
                         self._phase = PHASE_MATERIALIZING
-                        reconciled = await _reconcile_continuous(state.task_id)
+                        reconciled = await _reconcile_continuous(
+                            state.task_id, state.workflow_generation
+                        )
                     if not reconciled:
                         wait = True
                     else:
@@ -847,9 +924,12 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                             await _reap(
                                 state.task_id,
                                 workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                                generation=state.workflow_generation,
                             )
                             reaped = True
-                        batch = await _claim(state.task_id, state.batch_size)
+                        batch = await _claim(
+                            state.task_id, state.batch_size, state.workflow_generation
+                        )
                         entry_ids = batch["entry_ids"]
                         if entry_ids:
                             self._phase = PHASE_DRAINING
@@ -898,18 +978,21 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
         _set_status(STATUS_RUNNING)
         # Idempotent: only the first run (pending row) actually transitions;
         # continue-as-new hops find it already running and no-op.
-        await _mark_running(state.task_id)
-        reconciled = await _reconcile_continuous(state.task_id)
+        await _mark_running(state.task_id, state.workflow_generation)
+        reconciled = await _reconcile_continuous(
+            state.task_id, state.workflow_generation
+        )
         reaped = False
         if reconciled:
             await _reap(
                 state.task_id,
                 workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                generation=state.workflow_generation,
             )
             reaped = True
 
         while True:
-            tstate = await _task_state(state.task_id)
+            tstate = await _task_state(state.task_id, state.workflow_generation)
             if not tstate["active"]:
                 # Stamp the real terminal status (paused / failed / deleted),
                 # not a blanket "paused" — the fleet is filtered by it.
@@ -927,12 +1010,14 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 self._phase = PHASE_MATERIALIZING
                 # A pause/edit signal may have woken the deferred retry. Check
                 # the durable task state before issuing another CH proof.
-                tstate = await _task_state(state.task_id)
+                tstate = await _task_state(state.task_id, state.workflow_generation)
                 if not tstate["active"]:
                     _set_status(tstate["status"])
                     self._phase = PHASE_DONE
                     return
-                reconciled = await _reconcile_continuous(state.task_id)
+                reconciled = await _reconcile_continuous(
+                    state.task_id, state.workflow_generation
+                )
                 continue
 
             if not reaped:
@@ -942,10 +1027,13 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 await _reap(
                     state.task_id,
                     workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                    generation=state.workflow_generation,
                 )
                 reaped = True
 
-            batch = await _claim(state.task_id, state.batch_size)
+            batch = await _claim(
+                state.task_id, state.batch_size, state.workflow_generation
+            )
             entry_ids = batch["entry_ids"]
             if entry_ids:
                 self._phase = PHASE_DRAINING
@@ -968,7 +1056,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(state.poll_interval_seconds)
                 self._phase = PHASE_MATERIALIZING
-                reconciled = await _reconcile_continuous(state.task_id)
+                reconciled = await _reconcile_continuous(
+                    state.task_id, state.workflow_generation
+                )
                 # Nothing was claimable, yet work is undrained: it is RUNNING
                 # under claims no pending activity of this run is waiting on
                 # (the drain has returned every activity it launched). Reap
@@ -991,6 +1081,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     ContinuousDrainState(
                         task_id=state.task_id,
                         task_queue=state.task_queue,
+                        workflow_generation=state.workflow_generation,
                         batch_size=state.batch_size,
                         max_concurrent=state.max_concurrent,
                         poll_interval_seconds=state.poll_interval_seconds,

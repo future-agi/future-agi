@@ -20,11 +20,14 @@ routing, transactions, the answers projection and the stored rows are real.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 from django.core.cache import cache
+from django.db import connection, connections
 from rest_framework import status
 
 from accounts.models.organization import Organization
@@ -457,6 +460,64 @@ def test_d26_retry_is_priced_for_a_failure_only_the_primary_has(
     assert credits == [("jev_evaluator", 0.12)]
     assert [_primary(e).status for e in entries] == [EvalEntryStatus.ERRORED] * 2
     assert _answers(task) == 2
+
+
+def test_retry_forgets_a_failure_committed_just_before_its_update(
+    auth_client,
+    observe_project,
+    yes_no,  # noqa: F811
+    fake_view,  # noqa: F811
+    started,  # noqa: F811
+    monkeypatch,
+):
+    _workflow_drains(monkeypatch)
+    task, sessions = _instant_run(auth_client, observe_project, [yes_no], 2)
+    _running(task)
+    first, late = [_claimed(task, yes_no, sid) for sid in sessions]
+    _settle(first, EvalEntryStatus.ERRORED, error=True)
+    _credit_cap(monkeypatch, left=10.0)
+
+    # A previous answer stays in the projection when a config change requeues
+    # the entry. Retry must forget it even if this worker fails late.
+    _settle(late, EvalEntryStatus.COMPLETED)
+    EvalLogger.objects.filter(pk=late.pk).update(status=EvalEntryStatus.RUNNING)
+    late = _primary(late)
+    start = Event()
+    settled = Event()
+
+    def after_settle(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if sql.replace('"', "").startswith("UPDATE tracer_eval_logger SET"):
+            settled.set()
+        return result
+
+    def finish_late():
+        try:
+            assert start.wait(10)
+            with connection.execute_wrapper(after_settle):
+                _settle(late, EvalEntryStatus.ERRORED, error=True)
+        finally:
+            connections.close_all()
+
+    def before_update(execute, sql, params, many, context):
+        # The entry update commits independently; its answer copy must wait
+        # until Retry releases the run. Do not wait for that copy here.
+        if sql.replace('"', "").startswith("UPDATE tracer_eval_logger SET"):
+            start.set()
+            assert settled.wait(10)
+            assert _answers(task) == 2
+        return execute(sql, params, many, context)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        worker = pool.submit(finish_late)
+        with connection.execute_wrapper(before_update):
+            response = _control(auth_client, observe_project, task, "retry_failed")
+        worker.result(timeout=10)
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["result"]["retried"] == 2
+    assert [_primary(e).status for e in (first, late)] == [EvalEntryStatus.PENDING] * 2
+    assert _answers(task) == 0
 
 
 def test_d26_retry_forgets_both_answers_and_resume_prices_both_rows(

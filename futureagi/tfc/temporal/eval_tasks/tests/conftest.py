@@ -5,6 +5,7 @@ this adds the tracer-side objects (project, eval config, task, entries) plus the
 in-memory Temporal server used by the workflow e2e tests.
 """
 
+import os
 import uuid
 from datetime import timedelta
 
@@ -138,9 +139,17 @@ def stale_running_entry(closed_task, make_pending_entries):
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def workflow_environment():
-    """In-memory Temporal server for the whole test session."""
+    """In-memory Temporal server for the whole test session.
+
+    ``TEMPORAL_DEV_SERVER`` names a pinned, already verified Temporal CLI
+    binary (CI installs one); without it the SDK downloads its default.
+    """
     from tfc.temporal.eval_tasks.search_attributes import ALL_KEYS
 
-    env = await WorkflowEnvironment.start_local(search_attributes=ALL_KEYS)
+    pinned = os.environ.get("TEMPORAL_DEV_SERVER")
+    env = await WorkflowEnvironment.start_local(
+        search_attributes=ALL_KEYS,
+        **({"dev_server_existing_path": pinned} if pinned else {}),
+    )
     yield env
     await env.shutdown()

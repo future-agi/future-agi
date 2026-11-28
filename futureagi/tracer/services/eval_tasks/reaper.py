@@ -9,7 +9,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import structlog
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -70,52 +70,139 @@ def effective_stale_seconds(
     return max(int(requested), MIN_STALE_RUNNING_SECONDS)
 
 
+class StaleRunningClaims:
+    """One cutoff for a reap; retryable and terminal writes can commit separately."""
+
+    def __init__(self, task: EvalTask, *, older_than_seconds: int, max_attempts: int):
+        self.task = task
+        self.max_attempts = max_attempts
+        self.now = timezone.now()
+        self.failed = 0
+        self.stale = EvalLogger.objects.filter(
+            eval_task_id=str(task.id),
+            status=EvalEntryStatus.RUNNING,
+            updated_at__lt=self.now - timedelta(seconds=older_than_seconds),
+        )
+
+    def fail_exhausted(self, *, record_answers: bool = True) -> int:
+        """Fail the claims that used up their attempts.
+
+        A caller holding the task row lock passes ``record_answers=False`` and
+        calls ``record_failed_answers`` once that lock is released: recording
+        locks the Instant eval run row, and Instant eval cancel, Resume and
+        retry lock that run row before the task row.
+        """
+        self.failed = self.stale.filter(attempts__gte=self.max_attempts).update(
+            status=EvalEntryStatus.ERRORED,
+            error=True,
+            error_message=_GAVE_UP,
+            updated_at=self.now,
+        )
+        if record_answers:
+            self.record_failed_answers()
+        return self.failed
+
+    def record_failed_answers(self) -> None:
+        """Copy the Instant answers of every given-up entry still missing one.
+
+        Chosen from the entries themselves, not from this reap's count: when a
+        worker exits after the reap commits and before this runs, the retried
+        activity (or the next reap, or the sweep) finds them and copies them.
+        """
+        _record_instant_answers(self.task)
+
+    def requeue_retryable(self) -> int:
+        return self.stale.filter(attempts__lt=self.max_attempts).update(
+            status=EvalEntryStatus.PENDING,
+            attempts=F("attempts") + 1,
+            updated_at=self.now,
+        )
+
+
 def reap_stale_running(
-    task: EvalTask, *, older_than_seconds: int, max_attempts: int
+    task: EvalTask,
+    *,
+    older_than_seconds: int,
+    max_attempts: int,
+    answers_after_lock: list[StaleRunningClaims] | None = None,
 ) -> tuple[int, int]:
-    """Reclaim entries stuck in ``running`` longer than ``older_than_seconds``.
+    """Return (requeued, failed) for a workflow's startup or periodic reap.
 
-    Returns ``(requeued, failed)``: under the cap → back to ``pending``
-    (attempts incremented); at/over the cap → ``errored`` permanently.
+    A caller that holds the task row lock passes ``answers_after_lock`` and
+    calls ``record_failed_answers`` on what it collects after releasing the
+    lock (see ``StaleRunningClaims.fail_exhausted``).
     """
-    now = timezone.now()
-    cutoff = now - timedelta(seconds=older_than_seconds)
-    stale = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        status=EvalEntryStatus.RUNNING,
-        updated_at__lt=cutoff,
+    claims = StaleRunningClaims(
+        task, older_than_seconds=older_than_seconds, max_attempts=max_attempts
     )
-    failed = stale.filter(attempts__gte=max_attempts).update(
-        status=EvalEntryStatus.ERRORED,
-        error=True,
-        error_message=_GAVE_UP,
-        updated_at=now,
-    )
-    if failed:
-        _record_instant_answers(task, now)
-    requeued = stale.filter(attempts__lt=max_attempts).update(
-        status=EvalEntryStatus.PENDING,
-        attempts=F("attempts") + 1,
-        updated_at=now,
-    )
-    return requeued, failed
+    failed = claims.fail_exhausted(record_answers=answers_after_lock is None)
+    if answers_after_lock is not None:
+        answers_after_lock.append(claims)
+    return claims.requeue_retryable(), failed
 
 
-def _record_instant_answers(task: EvalTask, at) -> None:
-    """An Instant eval run shows the entries just given up on as failed (not
-    still pending) while it runs. Never fails the reap."""
-    from tracer.services.instant_eval_answers import record_answers
+def _record_instant_answers(task: EvalTask) -> None:
+    """An Instant eval run shows the entries given up on as failed (not still
+    pending) while it runs. Never fails the reap.
 
-    ids = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        status=EvalEntryStatus.ERRORED,
-        error_message=_GAVE_UP,
-        updated_at=at,
-    ).values_list("id", flat=True)
+    The entries are locked and rechecked in the transaction that copies their
+    answers, and one a Retry is requeueing is skipped
+    (``_lock_unanswered_given_up``): reading them first and copying later
+    could bring back an answer the Retry just dropped."""
+    from tracer.services.instant_eval_answers import is_instant_task, record_answers
+
     try:
-        with transaction.atomic():
-            record_answers(task.id, ids)
+        if not is_instant_task(task.id):
+            return
+        # On the primary (a raw cursor of the default connection): these
+        # rows were failed a moment ago, and a replica may not have them yet.
+        with transaction.atomic(using="default"):
+            ids = _lock_unanswered_given_up(task.id)
+            if ids:
+                record_answers(task.id, ids)
     except Exception:
         logger.warning(
             "instant_eval_reaped_answers_failed", task_id=str(task.id), exc_info=True
         )
+
+
+def _lock_unanswered_given_up(task_id) -> list:
+    """Lock and return this task's given-up entries whose Instant eval row has
+    no answer yet. Call it inside the transaction that copies them, so each
+    one is rechecked under its row lock.
+
+    An entry another session holds is skipped, not waited for: Retry requeues
+    entries under their row locks, and an answer copied for one of those would
+    outlive the Retry that dropped it. One that stays given up and unanswered
+    is selected again by the next reap."""
+    from tracer.services.instant_eval_answers import _ENTRY_RID, _lock_retained_run
+    from tracer.services.instant_eval_summary import CONFIDENCE, LABEL
+
+    # Match the lock order used by project deletion: the run is retained before
+    # any of its entries. Otherwise deletion can hold the run while waiting for
+    # an entry that this copier holds while waiting for the run.
+    if not _lock_retained_run(task_id):
+        return []
+
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "  # noqa: S608 - only shared row-id and answer projection SQL constants are interpolated
+            f"ON r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
+            "WHERE l.eval_task_id = %(task_s)s AND l.deleted = false "
+            "AND l.status = %(status)s AND l.error_message = %(message)s "
+            "AND l.custom_eval_config_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM tracer_instant_eval_answer a "
+            "WHERE a.task_id = %(task)s AND a.row_id = r.id "
+            "AND a.config_id = l.custom_eval_config_id "
+            "AND a.answered_at = l.updated_at "
+            f"AND a.label = {LABEL} "
+            f"AND a.confidence IS NOT DISTINCT FROM {CONFIDENCE}) "
+            "ORDER BY l.id FOR UPDATE OF l SKIP LOCKED",
+            {
+                "task": str(task_id),
+                "task_s": str(task_id),
+                "status": EvalEntryStatus.ERRORED,
+                "message": _GAVE_UP,
+            },
+        )
+        return [row[0] for row in cur.fetchall()]

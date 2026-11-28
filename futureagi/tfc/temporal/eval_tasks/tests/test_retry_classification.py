@@ -72,7 +72,7 @@ async def test_new_history_records_patch_and_defers_retryable_budget(
     )
     patch_ids: list[str] = []
 
-    async def fail_reconcile(_task_id: str) -> None:
+    async def fail_reconcile(_task_id: str, **_kwargs) -> None:
         raise failure
 
     def patched(patch_id: str) -> bool:
@@ -100,7 +100,7 @@ async def test_legacy_history_without_patch_preserves_terminal_failure(
         )
     )
 
-    async def fail_reconcile(_task_id: str) -> None:
+    async def fail_reconcile(_task_id: str, **_kwargs) -> None:
         raise failure
 
     monkeypatch.setattr(workflows, "_reconcile", fail_reconcile)
@@ -123,16 +123,16 @@ async def test_eventual_reconcile_success_reaps_before_first_claim(monkeypatch) 
     async def record_async(name: str):
         events.append(name)
 
-    async def reconcile(_task_id: str) -> bool:
+    async def reconcile(_task_id: str, _generation=None) -> bool:
         result = next(reconcile_results)
         events.append(f"reconcile:{result}")
         return result
 
-    async def task_state(_task_id: str) -> dict:
+    async def task_state(_task_id: str, _generation) -> dict:
         events.append("state")
         return {"active": True, "status": "running"}
 
-    async def claim(_task_id: str, _n: int) -> dict:
+    async def claim(_task_id: str, _n: int, _generation=None) -> dict:
         events.append("claim")
         raise RuntimeError("stop after proving claim order")
 
@@ -146,7 +146,7 @@ async def test_eventual_reconcile_success_reaps_before_first_claim(monkeypatch) 
         workflows, "_set_status", lambda _status: events.append("status")
     )
     monkeypatch.setattr(
-        workflows, "_mark_running", lambda _task_id: record_async("mark")
+        workflows, "_mark_running", lambda _task_id, _generation: record_async("mark")
     )
     monkeypatch.setattr(workflows, "_reconcile_continuous", reconcile)
     monkeypatch.setattr(

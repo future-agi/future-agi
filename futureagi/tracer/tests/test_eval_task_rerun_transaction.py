@@ -4,7 +4,9 @@ import pytest
 from django.db import connection
 from rest_framework import status
 
+from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync as real_start
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 
 _UPDATE = "/tracer/eval-task/update_eval_task/"
 
@@ -157,6 +159,213 @@ def test_running_task_rejects_rerun_without_replacing_workflow(
     assert starts == []
     historical_task.refresh_from_db()
     assert historical_task.status == EvalTaskStatus.RUNNING
+
+
+@pytest.mark.django_db(transaction=True)
+def test_rejected_resume_preserves_zero_entry_diagnostic(
+    auth_client, historical_task, monkeypatch
+):
+    reason = "Evaluation task row selection exceeded its read budget. Narrow the time range and retry."
+    historical_task.failure_reason = reason
+    historical_task.save(update_fields=["failure_reason"])
+
+    def unavailable(task, *, replace_existing):
+        assert replace_existing
+        raise RuntimeError("dispatch unavailable")
+
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync", unavailable
+    )
+    response = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={historical_task.pk}", {}
+    )
+    assert response.status_code == 400
+    logs = auth_client.get(
+        "/tracer/eval-task/get_eval_task_logs/",
+        {"eval_task_id": str(historical_task.pk)},
+    ).json()["result"]
+    assert (logs["status"], logs["failure_reason"], logs["total_count"]) == (
+        "failed",
+        reason,
+        0,
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("accepted", [True, False])
+def test_resume_commits_its_handoff_before_any_worker_can_start(
+    auth_client, historical_task, monkeypatch, accepted
+):
+    """A v1.59 worker reads the row without waiting on its lock, and drops the
+    generation, so Resume must commit PENDING before Temporal sees the start.
+    A failed start then undoes the handoff, generation included."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import connections
+
+    from tfc.temporal.eval_tasks.activities import _get_task_state_sync
+
+    task_id = str(historical_task.pk)
+
+    def worker(generation):
+        # A second PostgreSQL session, as a worker's would be.
+        try:
+            return [_get_task_state_sync(task_id, g) for g in (None, generation)]
+        finally:
+            connections.close_all()
+
+    seen = {}
+
+    def start(task, **kwargs):
+        seen["in_atomic_block"] = connection.in_atomic_block
+        # Never join a worker stuck on an uncommitted handoff's lock: time out,
+        # and let the view's rollback release it.
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            states = pool.submit(worker, str(task.workflow_generation))
+            seen["states"] = states.result(timeout=10)
+        finally:
+            pool.shutdown(wait=False)
+        if not accepted:
+            raise RuntimeError("start acknowledgement lost")
+
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
+    response = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task_id}", {}
+    )
+    assert response.status_code == (200 if accepted else 400)
+    assert seen["in_atomic_block"] is False
+    # Both a worker that dropped the generation and one that kept it see the
+    # committed handoff.
+    assert [(s["status"], s["active"]) for s in seen["states"]] == [
+        ("pending", True),
+        ("pending", True),
+    ]
+    historical_task.refresh_from_db()
+    if accepted:
+        assert historical_task.status == EvalTaskStatus.PENDING
+        assert historical_task.workflow_generation is not None
+    else:
+        assert (historical_task.status, historical_task.workflow_generation) == (
+            EvalTaskStatus.FAILED,
+            None,
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("run_type", [RunType.HISTORICAL, RunType.CONTINUOUS])
+def test_superseded_workflow_cannot_publish_its_status(
+    auth_client, historical_task, monkeypatch, run_type
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from asgiref.sync import async_to_sync
+    from temporalio.testing import ActivityEnvironment
+
+    from tfc.temporal.eval_tasks import activities, client
+    from tfc.temporal.eval_tasks.types import FinalizeInput
+
+    historical_task.run_type = run_type
+    historical_task.save(update_fields=["run_type"])
+    starts = []
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync", real_start
+    )
+    monkeypatch.setattr(activities, "notify_eval_task_failed", AsyncMock())
+    monkeypatch.setattr(client, "_describe_says_nothing_is_draining", lambda _: True)
+
+    def accepted(**kwargs):
+        starts.append(kwargs["workflow_input"])
+        return SimpleNamespace(id=kwargs["workflow_id"])
+
+    monkeypatch.setattr(client, "start_workflow_sync", accepted)
+    url = f"/tracer/eval-task/unpause_eval_task/?eval_task_id={historical_task.pk}"
+    env = ActivityEnvironment()
+    run = async_to_sync(env.run)
+    task_id = str(historical_task.pk)
+    old = None
+    for _ in range(3):
+        assert auth_client.post(url, {}).status_code == 200
+        if old is not None:
+            # The previous run's delayed delivery is ignored after a resume.
+            assert not run(activities.set_eval_task_status_activity, old).changed
+            if run_type == RunType.HISTORICAL:
+                assert not run(
+                    activities.finalize_eval_task_activity,
+                    FinalizeInput(task_id, old.workflow_generation),
+                ).finalized
+        historical_task.refresh_from_db()
+        assert (
+            historical_task.status == "pending"
+            and historical_task.failure_reason is None
+        )
+        # The newly dispatched run can publish. Its writes are the ones the
+        # workflow builds from the start it was given, not ones made here.
+        mark, old = _status_writes_of_a_failing_run(starts[-1])
+        assert old.workflow_generation == str(historical_task.workflow_generation)
+        assert run(activities.set_eval_task_status_activity, mark).changed
+        assert run(activities.set_eval_task_status_activity, old).changed
+        historical_task.refresh_from_db()
+        assert historical_task.status == "failed"
+        assert historical_task.failure_reason == SelectionFailure.ROW_LIMIT.value
+
+
+def _status_writes_of_a_failing_run(start):
+    """The status payloads the dispatched workflow itself sends when its first
+    reconcile is rejected: its mark-running, then its failure."""
+    import asyncio
+
+    from temporalio.exceptions import ActivityError, ApplicationError
+
+    from tfc.temporal.eval_tasks import workflows
+    from tfc.temporal.eval_tasks.types import EvalTaskWorkflowInput
+
+    sent = []
+
+    async def execute(name, arg, **_kwargs):
+        if name == "set_eval_task_status_activity":
+            sent.append(arg)
+            return {"task_id": arg.task_id, "changed": True, "status": arg.status}
+        assert name == "reconcile_eval_task_activity", name
+        error = ActivityError(
+            "reconcile failed",
+            scheduled_event_id=1,
+            started_event_id=2,
+            identity="worker",
+            activity_type=name,
+            activity_id="activity-id",
+            retry_state=None,
+        )
+        error.__cause__ = ApplicationError(
+            SelectionFailure.ROW_LIMIT.value,
+            type="EvalTaskSelectionRejected",
+            non_retryable=True,
+        )
+        raise error
+
+    async def labelled(_task_id):
+        return None
+
+    workflow_class = (
+        workflows.HistoricalEvalTaskWorkflow
+        if isinstance(start, EvalTaskWorkflowInput)
+        else workflows.ContinuousEvalTaskWorkflow
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(workflows.workflow, "execute_activity", execute)
+        patch.setattr(workflows.workflow, "patched", lambda _patch_id: False)
+        patch.setattr(workflows, "_apply_labels", labelled)
+        patch.setattr(workflows, "_set_status", lambda _status: None)
+        with pytest.raises(ActivityError):
+            asyncio.run(workflow_class().run(start))
+    mark, failed = sent
+    assert (mark.status, mark.expected_status, failed.status) == (
+        "running",
+        "pending",
+        "failed",
+    )
+    return mark, failed
 
 
 @pytest.mark.integration

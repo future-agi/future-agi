@@ -24,12 +24,13 @@ import hashlib
 import json
 import math
 import time
+import uuid
 
 import structlog
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import TooManyFieldsSent
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F
 from django.http import StreamingHttpResponse
 from django.utils import timezone
@@ -853,7 +854,7 @@ def _jev_key_missing(gm, project, configs):
     return None
 
 
-def _start_workflow_on_commit(task, *, replace: bool) -> None:
+def _start_workflow_on_commit(task, *, replace: bool, prior_reason=None) -> None:
     from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
 
     def start():
@@ -861,7 +862,11 @@ def _start_workflow_on_commit(task, *, replace: bool) -> None:
             start_eval_task_workflow_sync(task, replace_existing=replace)
         except Exception:
             logger.exception("instant_eval_workflow_start_failed", task_id=str(task.id))
-            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+            EvalTask.objects.filter(
+                id=task.id,
+                workflow_generation=task.workflow_generation,
+                status=EvalTaskStatus.PENDING,
+            ).update(status=EvalTaskStatus.FAILED, failure_reason=prior_reason)
 
     transaction.on_commit(start)
 
@@ -1121,6 +1126,8 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
                 row_type=rows_service.ROW_TYPE[unit],
                 status=EvalTaskStatus.PENDING,
                 last_run=timezone.now(),
+                # A restart or recovery then fences the first run's late writes.
+                workflow_generation=uuid.uuid4(),
             )
             task.evals.set(ordered)
             run = InstantEvalRun.objects.create(
@@ -1599,9 +1606,9 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         return self._ok(task, "Paused. Answers already being read will still land.")
 
     def _restart(self, task):
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
-        task.status = EvalTaskStatus.PENDING
-        _start_workflow_on_commit(task, replace=True)
+        prior_reason = task.failure_reason
+        task.prepare_workflow_replacement()
+        _start_workflow_on_commit(task, replace=True, prior_reason=prior_reason)
 
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:
@@ -1702,14 +1709,42 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         with transaction.atomic():
             if not running and (busy := self._busy_locked(request, task)):
                 return busy
-            ids = list(failed.values_list("id", flat=True))
-            retried = failed.update(
-                status=EvalEntryStatus.PENDING,
-                error=False,
-                error_message=None,
-                skipped_reason=None,
-                attempts=0,
-            )
+            # Project deletion locks the run before its entries. A cancellation
+            # that won this lock also wins over the earlier preflight check.
+            if (
+                run is not None
+                and not InstantEvalRun.objects.select_for_update()
+                .filter(pk=run.pk, cancelled_at__isnull=True)
+                .exists()
+            ):
+                return self._cancelled()
+            if not running:
+                # Delete & rerun holds the task before it retires its entries.
+                # Take that same lock now, not in _restart after the UPDATE.
+                task = (
+                    EvalTask.objects.select_for_update(of=("self",))
+                    .filter(pk=task.pk)
+                    .first()
+                )
+                if task is None:
+                    return self._gm.not_found("Eval task not found")
+            # A worker may fail another entry after the check. Forget exactly
+            # the answers for entries this statement actually requeued.
+            with connection.cursor() as cur:
+                cur.execute(
+                    "UPDATE tracer_eval_logger SET status = %s, error = false, "
+                    "error_message = NULL, skipped_reason = NULL, attempts = 0 "
+                    "WHERE eval_task_id = %s AND deleted = false "
+                    "AND status IN (%s, %s) RETURNING id",
+                    [
+                        EvalEntryStatus.PENDING,
+                        str(task.id),
+                        EvalEntryStatus.ERRORED,
+                        EvalEntryStatus.SKIPPED,
+                    ],
+                )
+                ids = [row[0] for row in cur.fetchall()]
+            retried = len(ids)
             if not retried:
                 return self._gm.bad_request("No rows failed.")
             # Their rows wait for an answer again.
