@@ -128,6 +128,9 @@ type Server struct {
 	smallFrameConns                    atomic.Int64
 	tapRefusalConns                    atomic.Int64 // closed at grpcMaxTapRefusals
 	draining                           atomic.Int32 // drains under way (the work pool's busy)
+	// trajSentinelNameSpans counts dedup spans stored inline because a
+	// producer attribute carries a trajectory sentinel's name.
+	trajSentinelNameSpans atomic.Int64
 	// grpcConns holds the open OTLP/gRPC connections by remote address, for
 	// grpcConnTracker.
 	grpcConns sync.Map
@@ -609,6 +612,7 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), false, err
 	}
+	h.s.noteSentinelNameSpans(res.SentinelNameSpans)
 	if ctx.Err() != nil {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
 	}
@@ -741,6 +745,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, ct, &rejection{reason: "convert", msg: "convert: " + err.Error()})
 		return
 	}
+	s.noteSentinelNameSpans(res.SentinelNameSpans)
 	if ctx.Err() != nil {
 		s.rejectHTTP(w, ct, rejectProjectUnavailable)
 		return
@@ -1398,4 +1403,16 @@ func ingestionHoldResponse(count int64, reason string) ptraceotlp.ExportResponse
 	resp.PartialSuccess().SetRejectedSpans(count)
 	resp.PartialSuccess().SetErrorMessage(reason)
 	return resp
+}
+
+// noteSentinelNameSpans counts and logs dedup spans that were stored inline
+// because a producer attribute carries a trajectory sentinel's name. Only a
+// dedup project can produce one, so dev's behaviour is unchanged.
+func (s *Server) noteSentinelNameSpans(n int) {
+	if n <= 0 {
+		return
+	}
+	total := s.trajSentinelNameSpans.Add(int64(n))
+	s.log.Warn("trajectory dedup skipped spans whose attributes carry a sentinel name; stored inline",
+		"spans", n, "total", total)
 }

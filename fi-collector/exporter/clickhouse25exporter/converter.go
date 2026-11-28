@@ -248,6 +248,9 @@ type ConvertResult struct {
 	Identities *curatedwriter.Batch
 	Trajectory *trajectory.Batch
 	Usage      trajectory.UsageReport
+	// SentinelNameSpans counts dedup spans left unextracted because a
+	// producer attribute carries a compaction sentinel's name.
+	SentinelNameSpans int
 }
 
 func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
@@ -283,6 +286,7 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 	dedupApplied := false
 
 	var report trajectory.UsageReport
+	sentinelNameSpans := 0
 
 	rss := traces.ResourceSpans()
 	for i := 0; i < rss.Len(); i++ {
@@ -320,7 +324,12 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 				// because trace-level evals read traces.input/output directly.
 				collectTraceWithIO(ids, row, projectID, origInput, origOutput)
 
-				if dedupProject {
+				if dedupProject && hasSentinelNamedAttr(row) {
+					// A producer attribute named like a compaction sentinel
+					// would be read as one: the span is not extracted, so
+					// its row is the dedup-off row.
+					sentinelNameSpans++
+				} else if dedupProject {
 					pid, _ := row["project_id"].(string)
 					tid, _ := row["trace_id"].(string)
 					sid, _ := row["trace_session_id"].(string)
@@ -406,10 +415,11 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 	}
 
 	return ConvertResult{
-		Rows:       rows,
-		Identities: ids,
-		Trajectory: trajBatch,
-		Usage:      report,
+		Rows:              rows,
+		Identities:        ids,
+		Trajectory:        trajBatch,
+		Usage:             report,
+		SentinelNameSpans: sentinelNameSpans,
 	}, nil
 }
 
@@ -710,14 +720,11 @@ func newContentSource(attrsStr map[string]string, overflow map[string]any, key s
 // sentinels; readers restore the attribute from the hydrated column. Nothing
 // else is touched: a side that was not extracted, or whose content came from
 // attrs_string, keeps the dedup-off attributes, and attrs_string is never
-// changed. A span that already carries a sentinel-named attribute is left as
-// it is, so a producer attribute is never mistaken for a sentinel.
+// changed. Spans carrying a sentinel-named attribute never get here
+// (hasSentinelNamedAttr).
 func compactExtractedSides(row map[string]any, c spanContent, ext trajectory.ExtractionResult) (in, out *trajectory.PromotedAttr) {
 	extra, ok := row["attributes_extra"].(map[string]any)
 	if !ok {
-		return nil, nil
-	}
-	if attrs, _ := row["attrs_string"].(map[string]string); trajectory.HasSentinelKey(extra) || trajectory.HasSentinelKey(attrs) {
 		return nil, nil
 	}
 	if ext.InputApplied && c.in.overflow {
@@ -727,6 +734,14 @@ func compactExtractedSides(row map[string]any, c spanContent, ext trajectory.Ext
 		out = trajectory.CompactPromoted(extra, c.out.key, c.out.wasJSON, false)
 	}
 	return in, out
+}
+
+// hasSentinelNamedAttr reports whether a producer attribute of row carries
+// the name of a compaction sentinel, in attrs_string or attributes_extra.
+func hasSentinelNamedAttr(row map[string]any) bool {
+	extra, _ := row["attributes_extra"].(map[string]any)
+	attrs, _ := row["attrs_string"].(map[string]string)
+	return trajectory.HasSentinelKey(extra) || trajectory.HasSentinelKey(attrs)
 }
 
 // spanIdentity is the per-span CURATED dimension identity (P3b step2 HALF 2):

@@ -240,21 +240,40 @@ func TestRestoreInlineMapValuedAttrIsDevRow(t *testing.T) {
 	assertDeepEqualIgnoringVersion(t, row, dev)
 }
 
-// TestConvertSkipsCompactionWhenSentinelNameIsAnAttribute: a producer
-// attribute named like a sentinel is never overwritten or deleted.
-func TestConvertSkipsCompactionWhenSentinelNameIsAnAttribute(t *testing.T) {
+// TestConvertSkipsExtractionWhenSentinelNameIsAnAttribute: a span with a
+// producer attribute named like a sentinel is not extracted at all, so its
+// row is the dedup-off row (a pointer row with the producer's attribute
+// would be catalogued and read as if the attribute were a sentinel), and the
+// span is counted. A string value lands in attrs_string, a map value in
+// attributes_extra; both are covered. Before, the span stayed items_v1.
+func TestConvertSkipsExtractionWhenSentinelNameIsAnAttribute(t *testing.T) {
 	in := messagesJSON(t, map[string]any{"role": "system", "content": strings.Repeat("policy ", 120)}, map[string]any{"role": "user", "content": "Question"})
-	attrs := map[string]string{"input.value": in, "output.value": choicesJSON(t, "ok"), trajectory.SentinelPromotedInputKey: "mine"}
-	res, dev := convertOnAndOff(t, attrsTrace(t, attrs, nil))
-	row := res.Rows[0]
-	if row["payload_encoding"] != trajectory.EncodingItemsV1 {
-		t.Fatal("the span is still extracted")
+	for name, td := range map[string]func() ptrace.Traces{
+		"string": func() ptrace.Traces {
+			return attrsTrace(t, map[string]string{"input.value": in, "output.value": choicesJSON(t, "ok"), trajectory.SentinelPromotedInputKey: "mine"}, nil)
+		},
+		"map": func() ptrace.Traces {
+			return attrsTrace(t, map[string]string{"input.value": in, "output.value": choicesJSON(t, "ok")},
+				map[string]map[string]any{trajectory.SentinelPromotedOutputKey: {"mine": "yes"}})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, dev := convertOnAndOff(t, td())
+			row := res.Rows[0]
+			if _, ok := row["payload_encoding"]; ok || res.Trajectory != nil || res.Usage.DedupApplied {
+				t.Fatalf("the span must not be extracted: encoding %v", row["payload_encoding"])
+			}
+			if res.SentinelNameSpans != 1 {
+				t.Fatalf("sentinel-name spans %d, want 1", res.SentinelNameSpans)
+			}
+			assertDeepEqualIgnoringVersion(t, row, dev)
+		})
 	}
-	if !reflect.DeepEqual(row["attributes_extra"], dev["attributes_extra"]) || !reflect.DeepEqual(row["attrs_string"], dev["attrs_string"]) {
-		t.Fatal("attributes must stay the dev maps")
+	// Dedup off never counts.
+	res, err := ConvertWithOptions(context.Background(), attrsTrace(t, map[string]string{trajectory.SentinelPromotedInputKey: "mine"}, nil), nil, ConvertOptions{})
+	if err != nil || res.SentinelNameSpans != 0 {
+		t.Fatalf("dedup off: %d %v", res.SentinelNameSpans, err)
 	}
-	res.Trajectory.RestoreInline()
-	assertDeepEqualIgnoringVersion(t, row, dev)
 }
 
 // TestUsageReportCountsOnlyRemovedBytes is the worked OpenInference turn from
