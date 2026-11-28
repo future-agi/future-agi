@@ -409,18 +409,30 @@ async def test_control_outage_recovers_without_resume(
 
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "stored,final",
+    [
+        (EvalTaskStatus.RUNNING, EvalTaskStatus.FAILED),
+        # A pause or delete the user saved while the worker could not read the
+        # row must survive the failure that follows.
+        (EvalTaskStatus.PAUSED, EvalTaskStatus.PAUSED),
+        (EvalTaskStatus.DELETED, EvalTaskStatus.DELETED),
+    ],
+)
 async def test_non_outage_database_error_fails_after_the_control_window(
-    workflow_environment, eval_task, monkeypatch
+    workflow_environment, eval_task, monkeypatch, stored, final
 ):
     """Bad credentials are not an outage: the control step spends its bounded
-    retries and the task fails; the workflow never waits for the database."""
+    retries and the run fails; the workflow never waits for the database."""
     from temporalio.client import WorkflowFailureError
 
     _fast_control_retries(monkeypatch)
     _patch_noop_reconcile(monkeypatch)
     task_id = str(eval_task.id)
     await sync_to_async(EvalTask.objects.filter(id=task_id).update)(
-        run_type=RunType.CONTINUOUS, continuous_cursor=eval_task.created_at
+        run_type=RunType.CONTINUOUS,
+        continuous_cursor=eval_task.created_at,
+        status=stored,
     )
     attempts = []
 
@@ -450,7 +462,7 @@ async def test_non_outage_database_error_fails_after_the_control_window(
         with pytest.raises(WorkflowFailureError):
             await asyncio.wait_for(handle.result(), timeout=15)
     assert len(attempts) == CONTROL_ATTEMPTS
-    assert await _task_status(task_id) == EvalTaskStatus.FAILED
+    assert await _task_status(task_id) == final
     serialized = (await handle.fetch_history()).to_json()
     assert "EvalTaskDatabaseUnavailable" not in serialized
     assert "EvalTaskClaimOutcomeUnknown" not in serialized

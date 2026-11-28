@@ -7,10 +7,11 @@ restart — live in ``tracer.services.eval_tasks.recovery``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.models import Max, Q, Subquery, TextField
+from django.db.models import Exists, Max, OuterRef, Q, Subquery, TextField
 from django.db.models.functions import Cast
 from django.utils import timezone
 
@@ -22,8 +23,14 @@ _SWEEPABLE = (EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING)
 
 _UNDRAINED = (EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING)
 
-# A live continuous workflow parks its cursor ``CONTINUOUS_CURSOR_OVERLAP``
-# (5 min) behind now on every poll. Six times that means nothing has polled.
+# Every reconcile pass of a live continuous workflow parks its cursor
+# ``CONTINUOUS_CURSOR_OVERLAP`` (5 min) behind now. For a RUNNING task, a cursor
+# newer than six times that proves a workflow polled recently, so the idle
+# check skips it. A PENDING task's cursor may belong to an execution that
+# ended before a Resume or rerun asked for a new one, so it proves nothing. An
+# older or missing cursor proves nothing either way (a live workflow can be
+# parked on read-budget or database deferrals, or draining a long backlog), so
+# Temporal's describe still decides.
 STALE_CONTINUOUS_CURSOR = timedelta(minutes=30)
 
 
@@ -34,106 +41,129 @@ def sweepable_statuses() -> list[str]:
     return statuses
 
 
-def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
-    """Tasks in a sweepable status that still hold undrained entries, plus
-    continuous tasks whose cursor stopped advancing.
+def automatic_recovery_eligibility() -> Q:
+    """Require an existing activation/coverage marker for every recovery path.
 
-    A continuous task only creates entries while its workflow runs, so one
-    whose workflow died between polls holds no undrained entries at all and
-    the entry read alone never finds it. Its frozen ``continuous_cursor`` is
-    the only trace it leaves. Both kinds are ranked by how long they have been
-    still (last-touched entry, or the cursor) and share the one cap.
+    This is not Temporal acknowledgement: conversions and explicit reruns can
+    stamp coverage before dispatch. Conversely, last_run, age, entries, cursor
+    presence and Temporal NOT_FOUND cannot make an unstamped row eligible.
+    Legacy and accepted-but-never-activated rows deliberately need an explicit
+    owner-directed activation; recovery must not invent one for a failed create.
+    Managers still enforce soft-delete exclusion.
+    """
+    return Q(status__in=sweepable_statuses(), start_time__isnull=False)
 
-    Ordered by the oldest last-touched entry first, so a task frozen for days
-    is always served before tasks that are draining normally — otherwise a busy
-    fleet would spend every tick's budget on healthy tasks and never reach the
-    stranded one. A healthy task selected anyway costs one describe and nothing
-    else: ``recover_task`` asks before it writes, so a progressing workflow's
-    entries are neither reaped nor restarted.
 
-    ``candidates`` therefore counts every task in a sweepable status holding
-    undrained entries — which, on a working fleet, is mostly tasks that are
-    draining normally. It is the sweep's *working set*, not a count of stranded
-    tasks: the describe is what tells the two apart, and it happens per
-    candidate in ``recover_task``. ``candidates - progressing`` is what the
-    tick acted on.
+def find_stranded_tasks(
+    *,
+    limit: int | None = None,
+    idle_after: str | None = None,
+    idle_first: bool = False,
+    held_ids: Iterable[str] = (),
+    held_failed_ids: Iterable[str] = (),
+) -> list[EvalTask]:
+    """Bounded liveness checks for backlog and idle continuous tasks.
 
-    It also never counts the rest: a paused, delete-status or failed task
-    holding undrained entries, or an entry whose task row is gone, contributes
-    nothing and produces no event. ``candidates: 0`` means nothing sweepable
-    holds undrained work at all, not that nothing is stranded.
+    Each group gets half the budget, borrowing unused slots from the other.
+    Backlog keeps oldest-entry priority; idle tasks walk a UUID ring, resuming
+    after the previous tick's last check. Old live idle tasks must not occupy
+    every tick forever. With a one-slot cap, the caller alternates groups.
 
-    The per-tick cap is applied **after** the sweepable-status filter, not
-    before it. A task the sweep refuses to act on — paused, delete-status,
-    finished with leftovers, or an entry pointing at a task row that no longer
-    exists — never drains, so its entries' ``updated_at`` never advances and it
-    sorts oldest on every tick for ever. Costing such a task against the cap
-    would hand it a head slot permanently: fill the cap with them and every
-    tick returns nothing, silently, for as long as they exist. The runbook
-    tells operators not to sweep paused tasks, so paused tasks holding
-    undrained entries are the expected steady state, not an edge case.
+    Cursor age only rules a task *out*: an idle continuous task is checked
+    when it is not RUNNING (PENDING after a Resume or rerun, or FAILED
+    when opted in), when its cursor is NULL (no reconcile has parked one yet),
+    or when the cursor is older than ``STALE_CONTINUOUS_CURSOR``. A fresher
+    cursor on a RUNNING task shows that its workflow polled within that window,
+    so describing it would only spend the budget; a workflow that died is
+    checked at most that long after its last poll. A PENDING task is always
+    checked, because its cursor may predate the start it is waiting for. A stale cursor is never taken as proof of death: a healthy idle
+    workflow can legitimately have one, and only Temporal's describe
+    establishes liveness. The idle ring is ordered by id, not by cursor age,
+    so live tasks with old cursors cannot hold the head slots on every tick.
+    Drained historical tasks stay excluded. Both managers exclude soft-deleted
+    rows and ignore ambient workspace scope.
 
-    ``no_workspace_objects``: this is a system-wide job and must not inherit a
-    leaked workspace scope. Both managers exclude soft-deleted rows, so the
-    entries a Delete & rerun wiped cannot read as undrained work, and a
-    soft-deleted task cannot be swept.
+    One rule set for every candidate, whichever group found it: an existing
+    start_time marker is mandatory (including for backlog and opted-in FAILED
+    rows), and each task appears at most once per tick (a task with undrained
+    entries is backlog, never also idle). Its lifecycle is rechecked here and
+    again under a row lock in ``recover_task``. A restart coalesces onto any
+    live execution rather than replacing it.
+
+    ``held_ids`` are tasks Temporal reported live within the hold window, and
+    ``held_failed_ids`` failed tasks the sweep already restarted as often as it
+    may; both are left out before the cap is applied, so a task the describe
+    would skip, or a failure that repeats deterministically, never takes a
+    slot from one that needs recovery. ``held_failed_ids`` applies only while
+    the task is still FAILED.
     """
     limit = limit if limit is not None else int(settings.EVAL_TASK_SWEEP_MAX_TASKS)
-    # ``eval_task_id`` is a CharField holding the task uuid's text form (every
-    # writer stamps ``str(task.id)``), so the sweepable set is cast to text to
-    # join against it. As a subquery rather than a materialized id list: the
-    # candidate read has to be narrowed to sweepable tasks *inside* the query
-    # the cap slices, which is the whole point of the ordering above.
+    if limit <= 0:
+        return []
+    tasks = EvalTask.no_workspace_objects.filter(
+        automatic_recovery_eligibility()
+    ).exclude(id__in=list(held_ids))
+    held_failed_ids = list(held_failed_ids)
+    if held_failed_ids:
+        tasks = tasks.exclude(status=EvalTaskStatus.FAILED, id__in=held_failed_ids)
+    # EvalLogger's task id is text, not a FK. Never cast arbitrary logger ids
+    # to UUID: legacy rows can contain blank or invalid ids.
     sweepable_task_ids = (
-        EvalTask.no_workspace_objects.filter(status__in=sweepable_statuses())
-        .annotate(id_text=Cast("id", output_field=TextField()))
+        tasks.annotate(id_text=Cast("id", output_field=TextField()))
         .values("id_text")
-        # The model's Meta ordering would otherwise ride along inside the
-        # semi-join, sorting a set nothing reads in order.
         .order_by()
     )
-    # ``isnull`` / ``exclude("")`` are redundant beside the semi-join — neither
-    # value can be in a set of rendered uuids — and are kept only to drop those
-    # rows before the join. They are no longer what stops an empty string
-    # reaching a UUID column: nothing compares ``eval_task_id`` to a uuid any
-    # more.
-    entry_rows = (
-        (row["last_touched"], row["eval_task_id"])
-        for row in EvalLogger.no_workspace_objects.filter(
+    backlog_ids = list(
+        EvalLogger.no_workspace_objects.filter(
             status__in=_UNDRAINED,
-            eval_task_id__isnull=False,
             eval_task_id__in=Subquery(sweepable_task_ids),
         )
-        .exclude(eval_task_id="")
         .values("eval_task_id")
         .annotate(last_touched=Max("updated_at"))
-        .order_by("last_touched")[:limit]
+        .order_by("last_touched", "eval_task_id")
+        .values_list("eval_task_id", flat=True)[:limit]
     )
-    cursor_rows = (
-        (cursor, str(task_id))
-        for task_id, cursor in EvalTask.no_workspace_objects.filter(
-            status__in=sweepable_statuses(),
-            run_type=RunType.CONTINUOUS,
-            continuous_cursor__lt=timezone.now() - STALE_CONTINUOUS_CURSOR,
-        )
-        .order_by("continuous_cursor")
-        .values_list("id", "continuous_cursor")[:limit]
+    backlog_budget = limit // 2 if idle_first else (limit + 1) // 2
+    idle_budget = limit - min(len(backlog_ids), backlog_budget)
+    undrained = EvalLogger.no_workspace_objects.filter(
+        eval_task_id=Cast(OuterRef("id"), output_field=TextField()),
+        status__in=_UNDRAINED,
     )
-    # dict.fromkeys dedupes a task found both ways, keeping its stillest rank.
-    stranded_ids = list(
-        dict.fromkeys(task_id for _, task_id in sorted([*entry_rows, *cursor_rows]))
-    )[:limit]
-    if not stranded_ids:
-        return []
-    # Re-read as model instances. The status filter is repeated so a task
-    # paused or deleted between the two reads is dropped rather than swept.
-    by_id = {
-        str(task.id): task
-        for task in EvalTask.no_workspace_objects.filter(
-            id__in=stranded_ids, status__in=sweepable_statuses()
+    idle = (
+        tasks.filter(run_type=RunType.CONTINUOUS)
+        .filter(
+            ~Q(status=EvalTaskStatus.RUNNING)
+            | Q(continuous_cursor__isnull=True)
+            | Q(continuous_cursor__lt=timezone.now() - STALE_CONTINUOUS_CURSOR)
         )
-    }
-    return [by_id[task_id] for task_id in stranded_ids if task_id in by_id]
+        .exclude(id__in=backlog_ids)
+        .filter(~Exists(undrained))
+        .order_by("id")
+    )
+    idle_ids = list(
+        (idle.filter(id__gt=idle_after) if idle_after else idle).values_list(
+            "id", flat=True
+        )[:idle_budget]
+    )
+    if idle_after and len(idle_ids) < idle_budget:
+        idle_ids += list(
+            idle.filter(id__lte=idle_after).values_list("id", flat=True)[
+                : idle_budget - len(idle_ids)
+            ]
+        )
+    chosen = [(str(i), "idle_continuous") for i in idle_ids]
+    chosen += [(i, "backlog") for i in backlog_ids[: limit - len(chosen)]]
+    # Recheck lifecycle after the candidate reads, not just inside the cap.
+    by_id = {str(task.id): task for task in tasks.filter(id__in=[i for i, _ in chosen])}
+    result = []
+    # The two groups are disjoint by construction (idle excludes any task with
+    # undrained entries); popping keeps a task from being swept twice anyway.
+    for task_id, kind in chosen:
+        task = by_id.pop(task_id, None)
+        if task is not None:
+            task.sweep_candidate_kind = kind
+            result.append(task)
+    return result
 
 
 def only_unreclaimable_claims_remain(
@@ -159,8 +189,9 @@ def only_unreclaimable_claims_remain(
 
 
 __all__ = [
-    "find_stranded_tasks",
     "STALE_CONTINUOUS_CURSOR",
+    "automatic_recovery_eligibility",
+    "find_stranded_tasks",
     "only_unreclaimable_claims_remain",
     "sweepable_statuses",
 ]
