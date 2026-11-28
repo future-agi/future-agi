@@ -19,9 +19,12 @@ const row = {
 
 describe("generated task-list contracts", () => {
   it.each([
-    ["project", TracerEvalTaskListEvalTasksResponse],
-    ["cross-project", TracerEvalTaskListEvalTasksWithProjectNameResponse],
-  ])("preserves failure reasons on %s rows", (_, schema) => {
+    { scope: "project", schema: TracerEvalTaskListEvalTasksResponse },
+    {
+      scope: "cross-project",
+      schema: TracerEvalTaskListEvalTasksWithProjectNameResponse,
+    },
+  ])("preserves failure reasons on $scope rows", ({ schema }) => {
     const table = [
       { ...row, status: "failed", failure_reason: "Narrow the time range." },
       { ...row, status: "completed", failure_reason: null },

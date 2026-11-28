@@ -1,9 +1,22 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueryClient,
+  type UseMutationOptions,
+} from "@tanstack/react-query";
+import type { AxiosResponse } from "axios";
 import axios, { endpoints } from "src/utils/axios";
 
-export function useResumeEvalTask({ onSuccess, ...callbacks }) {
+type ResumeCallbacks<TContext> = Pick<
+  UseMutationOptions<AxiosResponse<unknown>, Error, string, TContext>,
+  "onMutate" | "onError" | "onSuccess" | "onSettled"
+>;
+
+export function useResumeEvalTask<TContext>({
+  onSuccess,
+  ...callbacks
+}: ResumeCallbacks<TContext>) {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation<AxiosResponse<unknown>, Error, string, TContext>({
     ...callbacks,
     mutationFn: (taskId) =>
       axios.post(endpoints.project.resumeEvalTask(taskId), {}),
