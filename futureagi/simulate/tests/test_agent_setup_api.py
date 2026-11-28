@@ -56,7 +56,7 @@ def test_get_agent_answers_the_stored_agent_without_its_raw_setup(
     ]
     expected = {
         **source_agent(),
-        "extension": {"framework": None, "source": None},
+        "extension": {"framework": None, "source": None, "model_source": None},
     }
     assert body["agent"] == expected
     assert (body["sdk_version"], body["setup_stale"], body["origin"]) == (

@@ -171,9 +171,45 @@ export const hostedConfigurationRows = (facts) =>
     { label: "Prompt", value: facts.description, multiline: true },
   ]);
 
+/**
+ * The Model row. When the code reads its model from a setting, the customer
+ * sets that setting, so the name in the code is only its default: the row
+ * says which setting sets the model and where the code reads it, and never
+ * shows the default as the model in use. Any other row shows the model as the
+ * reading stored it, under "Model" as before: a reading with no setting may be
+ * one stored before settings were recorded, so it can't be said to name the
+ * model in use.
+ */
+const modelRow = ({ kind, model, extension }) => {
+  const tuning = model
+    ? [
+        model.temperature != null ? `temperature ${model.temperature}` : null,
+        model.max_tokens != null ? `max ${model.max_tokens} tokens` : null,
+      ]
+    : [];
+  const source = kind === "source" ? extension?.model_source : null;
+  if (source?.setting) {
+    const where = source.path
+      ? ` in ${source.path}${source.line != null ? `:${source.line}` : ""}`
+      : "";
+    const setBy = `Set by ${source.setting}${where}`;
+    return {
+      label: "Model",
+      value: join([
+        model?.name ? `${setBy} (default ${model.name})` : setBy,
+        ...tuning,
+      ]),
+    };
+  }
+  return {
+    label: "Model",
+    value: model ? join([model.name, ...tuning]) : null,
+  };
+};
+
 /** What the SDK stored for a code agent version (the stored Agent). A part the code doesn't describe is left out. */
 export const storedAgentRows = ({ agent }) => {
-  const { model, voice, provider_ref: ref } = agent;
+  const { voice, provider_ref: ref } = agent;
   const rows = [
     { label: "Kind", value: humanize(agent.kind) },
     { label: "Type", value: humanize(agent.type) },
@@ -191,18 +227,7 @@ export const storedAgentRows = ({ agent }) => {
     });
   }
   rows.push(
-    {
-      label: "Model",
-      value: model
-        ? join([
-            model.name,
-            model.temperature != null
-              ? `temperature ${model.temperature}`
-              : null,
-            model.max_tokens != null ? `max ${model.max_tokens} tokens` : null,
-          ])
-        : null,
-    },
+    modelRow(agent),
     {
       label: "Voice",
       value: voice

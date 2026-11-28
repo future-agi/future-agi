@@ -386,10 +386,121 @@ describe("storedAgentRows", () => {
       }),
     );
     expect(rows.Model).toBeUndefined();
+    expect(rows["Model named in the code"]).toBeUndefined();
     expect(rows.Voice).toBeUndefined();
     expect(rows.Telephony).toBeUndefined();
     expect(rows.Gaps.value).toBe("None");
     expect(rows["Tracing library"].value).toBe("traceAI");
+  });
+
+  const modelRows = (agent) =>
+    byLabel(
+      storedAgentRows({ ...details, agent: { ...details.agent, ...agent } }),
+    );
+  const fromSetting = (setting, model) =>
+    modelRows({
+      model,
+      extension: {
+        model_source: setting ? { setting, path: "agent.py", line: 19 } : null,
+      },
+    });
+  const named = (name) => ({
+    provider: null,
+    name,
+    temperature: null,
+    max_tokens: null,
+  });
+
+  it("says which setting sets the model, where the code reads it, and the code's default", () => {
+    const rows = fromSetting(
+      "ANTHROPIC_MODEL",
+      named("vertex_ai/gemini-3.7-flash"),
+    );
+    expect(rows.Model.value).toBe(
+      "Set by ANTHROPIC_MODEL in agent.py:19 (default vertex_ai/gemini-3.7-flash)",
+    );
+    expect(rows["Model named in the code"]).toBeUndefined();
+  });
+
+  it("names the setting and where it is read when the code gives no default", () => {
+    const rows = fromSetting("OPENAI_MODEL", null);
+    expect(rows.Model.value).toBe("Set by OPENAI_MODEL in agent.py:19");
+  });
+
+  it("says the same for a TypeScript agent, a voice agent and a compose setting", () => {
+    const at = (setting, path, line) =>
+      modelRows({
+        model: named("gpt-4o"),
+        extension: { model_source: { setting, path, line } },
+      });
+    expect(at("OPENAI_MODEL", "agent.ts", 2).Model.value).toBe(
+      "Set by OPENAI_MODEL in agent.ts:2 (default gpt-4o)",
+    );
+    // The stored agent these rows are built on is a voice agent read from its code.
+    const voice = at("LLM_MODEL", "bot.py", 7);
+    expect(voice.Type.value).toBe("Voice");
+    expect(voice.Model.value).toBe(
+      "Set by LLM_MODEL in bot.py:7 (default gpt-4o)",
+    );
+    expect(at("OPENAI_MODEL", "docker-compose.yml", 12).Model.value).toBe(
+      "Set by OPENAI_MODEL in docker-compose.yml:12 (default gpt-4o)",
+    );
+  });
+
+  it("leaves out where the setting is read when the reading has no path, and the line when it has none", () => {
+    const at = (path, line) =>
+      modelRows({
+        model: named("gpt-4o"),
+        extension: { model_source: { setting: "OPENAI_MODEL", path, line } },
+      }).Model.value;
+    expect(at(null, null)).toBe("Set by OPENAI_MODEL (default gpt-4o)");
+    expect(at(null, 4)).toBe("Set by OPENAI_MODEL (default gpt-4o)");
+    expect(at("config.yaml", null)).toBe(
+      "Set by OPENAI_MODEL in config.yaml (default gpt-4o)",
+    );
+  });
+
+  it("never shows the default as the model in use when a setting is known", () => {
+    const rows = fromSetting("ANTHROPIC_MODEL", {
+      ...named("claude-x"),
+      temperature: 0.2,
+    });
+    expect(rows.Model.value).toBe(
+      "Set by ANTHROPIC_MODEL in agent.py:19 (default claude-x) · temperature 0.2",
+    );
+    expect(Object.values(rows).map((r) => r.value)).not.toContain("claude-x");
+  });
+
+  // A reading with no setting may still hold a setting's default: readings
+  // stored before settings were recorded, and readings whose setting the kit
+  // could not confirm. So the row says only "Model", as it always has.
+  it("labels a model with no setting as Model, as before", () => {
+    const rows = fromSetting(null, named("gpt-4.1"));
+    expect(rows.Model.value).toBe("gpt-4.1");
+    expect(rows["Model named in the code"]).toBeUndefined();
+  });
+
+  it("reads an older stored reading, with no model_source, the same way", () => {
+    const rows = modelRows({ model: named("gpt-4.1"), extension: undefined });
+    expect(rows.Model.value).toBe("gpt-4.1");
+    expect(rows["Model named in the code"]).toBeUndefined();
+  });
+
+  it("has no model row when the code names neither a model nor a setting", () => {
+    const rows = fromSetting(null, null);
+    expect(rows.Model).toBeUndefined();
+    expect(rows["Model named in the code"]).toBeUndefined();
+  });
+
+  it("leaves an imported agent's model row as it was", () => {
+    const rows = modelRows({
+      kind: "hosted",
+      provider_ref: { provider: "vapi", id: "asst_1", version: null },
+      model: { ...named("gpt-4o"), temperature: 0.3 },
+      extension: { model_source: { setting: "ANTHROPIC_MODEL" } },
+    });
+    expect(rows.Model.value).toBe("gpt-4o · temperature 0.3");
+    expect(rows["Model named in the code"]).toBeUndefined();
   });
 
   const withFramework = (framework) =>

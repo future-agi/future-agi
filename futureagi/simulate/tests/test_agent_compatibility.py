@@ -56,6 +56,41 @@ def test_prompt_and_model_changes_alone_are_clean():
     assert result["tools_added"] == []
 
 
+def _read_from(document, setting, default="gpt-4o"):
+    document = copy.deepcopy(document)
+    document["model"] = {"provider": "openai", "name": default}
+    document["extension"] = {
+        **(document.get("extension") or {}),
+        "model_source": {"setting": setting, "path": "agent.py", "line": 2},
+    }
+    return document
+
+
+def test_a_model_read_from_another_setting_is_a_model_change():
+    before = _read_from(source_agent(), "OPENAI_MODEL")
+
+    moved = compare_documents(before, _read_from(source_agent(), "LLM_MODEL"))
+    same = compare_documents(before, _read_from(source_agent(), "OPENAI_MODEL"))
+
+    assert moved["model_changed"] is True
+    assert same["model_changed"] is False
+
+
+def test_a_reading_that_only_gains_the_setting_is_not_a_model_change():
+    # A version read before the setting was recorded stored the same model
+    # with no setting; the next reading of unchanged code records it.
+    after = _read_from(source_agent(), "ANTHROPIC_MODEL")
+    before = copy.deepcopy(after)
+    del before["extension"]["model_source"]
+
+    assert compare_documents(before, after)["model_changed"] is False
+    assert compare_documents(after, before)["model_changed"] is False
+    # The model itself changing still counts, setting recorded or not.
+    other_model = copy.deepcopy(after)
+    other_model["model"] = {"provider": "openai", "name": "gpt-4.1"}
+    assert compare_documents(before, other_model)["model_changed"] is True
+
+
 def test_a_new_tool_or_outside_service_is_new_tool():
     before = source_agent()
 

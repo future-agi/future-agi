@@ -29,6 +29,8 @@ _SETUP_HASH = re.compile(r"sh1:[0-9a-f]{64}")
 _ESCAPED_NUL = re.compile(r"(?<!\\)(?:\\\\)*\\u0000")
 _INT_MAX = 2**31 - 1
 _UNIT_ID = re.compile(r"[a-z0-9][a-z0-9_.:-]{0,127}")
+# The name of an environment setting, as a reading cites the one its model is read from.
+_SETTING_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,254}")
 _TYPES = ("voice", "chat", "coding", "cua", "browser", "crawler")
 _KINDS = ("hosted", "source", "endpoint")
 _SHAPES = ("single_prompt", "state", "flow_node", "external")
@@ -253,7 +255,9 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
     return StoredAgentAnswer(
         agent={
             **_rebuilt_agent(setup, with_raw_setup=False),
-            "extension": _shown_extension(setup.raw_setup),
+            "extension": _shown_extension(
+                setup.raw_setup, from_code=setup.agent_kind == "source"
+            ),
         },
         sdk_version=setup.sdk_version,
         stored_at=setup.created_at,
@@ -262,11 +266,40 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
     )
 
 
-def _shown_extension(raw_setup: Any) -> dict[str, Any]:
+def _shown_extension(raw_setup: Any, *, from_code: bool) -> dict[str, Any]:
+    """The parts of the extension the page shows. Only an agent read from its
+    code has a setting its model is read from, so no other kind shows one."""
     raw = raw_setup if isinstance(raw_setup, dict) else {}
     return {
-        name: raw[name] if isinstance(raw.get(name), dict) else None
-        for name in ("framework", "source")
+        **{
+            name: raw[name] if isinstance(raw.get(name), dict) else None
+            for name in ("framework", "source")
+        },
+        "model_source": (
+            _shown_model_source(raw.get("model_source")) if from_code else None
+        ),
+    }
+
+
+def _shown_model_source(part: Any) -> dict[str, Any] | None:
+    """The setting the code reads its model from, so the page names it rather than
+    showing the code's default as the model in use. Only these three fields, each in
+    its own type; a part without a well-formed setting is not shown."""
+    if not isinstance(part, dict):
+        return None
+    setting = part.get("setting")
+    if not isinstance(setting, str) or not _SETTING_NAME.fullmatch(setting):
+        return None
+    path = part.get("path")
+    line = part.get("line")
+    return {
+        "setting": setting,
+        "path": path if isinstance(path, str) and path else None,
+        "line": (
+            line
+            if isinstance(line, int) and not isinstance(line, bool) and line >= 1
+            else None
+        ),
     }
 
 

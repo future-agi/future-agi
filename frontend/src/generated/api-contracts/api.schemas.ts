@@ -17803,9 +17803,17 @@ export interface StoredSourceEchoApi {
   subfolder?: string;
 }
 
+export type StoredModelSourceApi = {
+  /** @minLength 1 */
+  setting: string;
+  path: string | null;
+  line: number | null;
+} | null;
+
 export interface StoredExtensionApi {
   framework: StoredFrameworkApi;
   source: StoredSourceEchoApi;
+  model_source: StoredModelSourceApi | null;
 }
 
 export interface StoredAgentApi {

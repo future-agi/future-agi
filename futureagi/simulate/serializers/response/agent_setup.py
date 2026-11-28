@@ -57,9 +57,16 @@ class StoredSourceEchoSerializer(serializers.Serializer):
     subfolder = serializers.CharField(required=False, allow_blank=True)
 
 
+class StoredModelSourceSerializer(serializers.Serializer):
+    setting = serializers.CharField()
+    path = serializers.CharField(allow_null=True)
+    line = serializers.IntegerField(allow_null=True)
+
+
 class StoredExtensionSerializer(serializers.Serializer):
     framework = StoredFrameworkSerializer(allow_null=True)
     source = StoredSourceEchoSerializer(allow_null=True)  # type: ignore[assignment]  # the API field is named source, as Field's own
+    model_source = StoredModelSourceSerializer(allow_null=True)
 
 
 class StoredAgentSerializer(serializers.Serializer):
