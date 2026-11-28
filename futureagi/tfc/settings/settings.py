@@ -1829,13 +1829,33 @@ del _runtime_numeric_settings
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
-# Phase 1 Trajectory Store read-side gate (040_trajectory_items.sql).
-# Default False so deploying application code BEFORE an operator applies 040
-# emits zero references to the 6 additive `spans` pointer columns or the
-# `trajectory_items` table. Enable only after 040 is applied in ClickHouse.
-FI_TRAJECTORY_STORE_READ_ENABLED = os.getenv(
-    "FI_TRAJECTORY_STORE_READ_ENABLED", ""
+# Phase 1 Trajectory Store read state (040_trajectory_items.sql). Readers
+# probe the schema (trajectory_hydration.trajectory_read_state): before 040 is
+# applied no pointer column or trajectory_items reference is emitted.
+#   unset / ""  auto: READY once all six 040 spans columns and the table exist;
+#   true        same probe; refused (logged, NOT_READY) while columns are absent;
+#   false       NOT_READY only while trajectory_items is empty; once items
+#               exist it is ignored (logged), so previews are never served.
+FI_TRAJECTORY_STORE_READ_ENABLED = {
+    "1": True,
+    "true": True,
+    "yes": True,
+    "on": True,
+    "0": False,
+    "false": False,
+    "no": False,
+    "off": False,
+}.get(os.getenv("FI_TRAJECTORY_STORE_READ_ENABLED", "").strip().lower())
+# Kill switch: pointers are still projected, nothing is fetched from
+# trajectory_items, and every extracted side is reported content-unavailable.
+FI_TRAJECTORY_HYDRATION_KILL = os.getenv(
+    "FI_TRAJECTORY_HYDRATION_KILL", ""
 ).strip().lower() in ("1", "true", "yes", "on")
+# Optional: the cluster whose every replica must have the 040 columns before
+# the read state latches READY (probed with clusterAllReplicas).
+FI_TRAJECTORY_READ_PROBE_CLUSTER = os.getenv(
+    "FI_TRAJECTORY_READ_PROBE_CLUSTER", ""
+).strip()
 
 # Operational SQL workbench budgets, not edition/pricing entitlements.
 from .sql_workbench import (  # noqa: E402,F401

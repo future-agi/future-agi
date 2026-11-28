@@ -23,6 +23,13 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    TrajectoryHydrationUnavailable,
+    TrajectoryReadState,
+    hydrate_span_dicts,
+    items_query_row_cap,
+    trajectory_read_state,
+)
 
 _MAX_ACCESSIBLE_PROJECTS = 4096
 _MAX_PHYSICAL_SPANS = 1000
@@ -40,6 +47,19 @@ _READ_SETTINGS = {
     "read_overflow_mode": "throw",
     "result_overflow_mode": "throw",
 }
+
+
+# The per-column content projections replaced by the packed tuple when the
+# pointer columns are read (exact text of the flag-off SQL).
+_PACKED_CONTENT_LINES = (
+    """
+                    argMax(input, _version) AS latest_input,""",
+    """
+                    argMax(output, _version) AS latest_output,""",
+    """
+                    argMax(tuple(attributes_extra), _version).1
+                        AS latest_attributes_extra,""",
+)
 
 
 class TraceDetailReadUnavailable(RuntimeError):
@@ -177,8 +197,12 @@ class TraceDetailReadBuilder:
         )
 
     def build_content_query(
-        self, identities: list[PhysicalSpanIdentity]
+        self,
+        identities: list[PhysicalSpanIdentity],
+        *,
+        state: TrajectoryReadState | None = None,
     ) -> tuple[str, dict[str, Any]]:
+        """``state`` is the caller's read-state snapshot (resolved when None)."""
         if not identities:
             return "", {}
         if len(identities) > _CONTENT_BATCH_SIZE:
@@ -205,11 +229,9 @@ class TraceDetailReadBuilder:
             ),
             "detail_content_limit": len(identities) + 1,
         }
-        from tracer.services.clickhouse.v2.trajectory_hydration import (
-            is_trajectory_store_read_enabled,
-        )
-
-        include_traj = is_trajectory_store_read_enabled()
+        if state is None:
+            state = trajectory_read_state()
+        include_traj = state.projects_pointers
         traj_outer = (
             """,
                 latest_input_item_hashes AS input_item_hashes,
@@ -217,28 +239,46 @@ class TraceDetailReadBuilder:
                 latest_tool_def_hashes AS tool_def_hashes,
                 latest_item_scope_id AS item_scope_id,
                 latest_payload_encoding AS payload_encoding,
-                latest_payload_envelope AS payload_envelope"""
+                latest_payload_envelope AS payload_envelope,
+                latest_created_at AS created_at"""
             if include_traj
             else ""
         )
+        # With pointers, the content columns and pointers come from ONE
+        # argMax over a tuple: two physical rows with an equal _version (an
+        # items_v1 row and its inline copy) can never mix into a preview
+        # labelled inline.
         traj_inner = (
             """
-                    argMax(input_item_hashes, _version)
+                    argMax(
+                        tuple(
+                            input, output, attributes_extra,
+                            input_item_hashes, output_item_hashes,
+                            tool_def_hashes, item_scope_id,
+                            payload_encoding, payload_envelope, created_at
+                        ),
+                        _version
+                    ) AS latest_content_tuple,
+                    tupleElement(latest_content_tuple, 1) AS latest_input,
+                    tupleElement(latest_content_tuple, 2) AS latest_output,
+                    tupleElement(latest_content_tuple, 3)
+                        AS latest_attributes_extra,
+                    tupleElement(latest_content_tuple, 4)
                         AS latest_input_item_hashes,
-                    argMax(output_item_hashes, _version)
+                    tupleElement(latest_content_tuple, 5)
                         AS latest_output_item_hashes,
-                    argMax(tool_def_hashes, _version)
+                    tupleElement(latest_content_tuple, 6)
                         AS latest_tool_def_hashes,
-                    argMax(item_scope_id, _version) AS latest_item_scope_id,
-                    argMax(payload_encoding, _version)
+                    tupleElement(latest_content_tuple, 7) AS latest_item_scope_id,
+                    tupleElement(latest_content_tuple, 8)
                         AS latest_payload_encoding,
-                    argMax(payload_envelope, _version)
-                        AS latest_payload_envelope,"""
+                    tupleElement(latest_content_tuple, 9)
+                        AS latest_payload_envelope,
+                    tupleElement(latest_content_tuple, 10) AS latest_created_at,"""
             if include_traj
             else ""
         )
-        return (
-            f"""
+        sql = f"""
             SELECT
                 toString(grouped_project_id) AS project_id,
                 grouped_id AS id,
@@ -321,9 +361,13 @@ class TraceDetailReadBuilder:
             WHERE latest_is_deleted = 0
             ORDER BY grouped_start_time ASC, grouped_id ASC
             LIMIT %(detail_content_limit)s
-            """,
-            params,
-        )
+            """
+        if include_traj:
+            for packed in _PACKED_CONTENT_LINES:
+                if packed not in sql:
+                    raise RuntimeError("trace detail content projection drifted")
+                sql = sql.replace(packed, "")
+        return sql, params
 
     def build_eval_query(
         self,
@@ -472,6 +516,12 @@ def read_trace_detail(
     """Execute the finite identity/content/eval/annotation read plan."""
 
     builder = TraceDetailReadBuilder(project_ids=project_ids, trace_id=trace_id)
+    try:
+        # One snapshot for the whole read: the content SQL and its hydration
+        # agree even if the cached state changes meanwhile.
+        read_state = trajectory_read_state(analytics)
+    except TrajectoryHydrationUnavailable as exc:
+        raise TraceDetailReadUnavailable("trajectory_read_state_unavailable") from exc
     started = monotonic()
     deadline = started + deadline_ms / 1000
     query_count = 0
@@ -559,20 +609,28 @@ def read_trace_detail(
     content_rows: list[dict[str, Any]] = []
     for offset in range(0, len(identities), _CONTENT_BATCH_SIZE):
         batch = identities[offset : offset + _CONTENT_BATCH_SIZE]
-        query, params = builder.build_content_query(batch)
+        query, params = builder.build_content_query(batch, state=read_state)
         rows = execute(query, params, max_result_rows=len(batch) + 1)
         if len(rows) != len(batch):
             raise TraceDetailReadUnavailable("incomplete_content_replay")
         content_rows.extend(rows)
 
-    from tracer.services.clickhouse.v2.trajectory_hydration import hydrate_span_dicts
-
-    hydrate_span_dicts(
-        content_rows,
-        lambda sql, params: execute(sql, params, max_result_rows=10_000),
-        project_id_fallback=project_id,
-        attr_key="span_attributes",
-    )
+    if read_state.projects_pointers:
+        try:
+            hydrate_span_dicts(
+                content_rows,
+                lambda sql, params: execute(
+                    sql, params, max_result_rows=items_query_row_cap(params)
+                ),
+                project_id_fallback=project_id,
+                attr_key="span_attributes",
+                state=read_state,
+                surface="trace_detail",
+            )
+        except TrajectoryHydrationUnavailable as exc:
+            raise TraceDetailReadUnavailable(
+                "trajectory_hydration_unavailable"
+            ) from exc
 
     span_ids = [identity.span_id for identity in identities]
 

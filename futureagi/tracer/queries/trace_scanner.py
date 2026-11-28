@@ -168,6 +168,9 @@ def fetch_trace_data(trace_ids: list[str], project_id: str) -> list[TraceData]:
     # populated before linking — order across parents/children doesn't
     # change the resulting tree).
     from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        content_unavailable_sides,
+    )
 
     if not trace_ids:
         return []
@@ -191,6 +194,16 @@ def fetch_trace_data(trace_ids: list[str], project_id: str) -> list[TraceData]:
     for trace_id in trace_ids:
         ch_spans = by_trace.get(str(trace_id))
         if not ch_spans:
+            continue
+        unavailable = [s.id for s in ch_spans if content_unavailable_sides(s)]
+        if unavailable:
+            # A preview is not the span's content: the trace is not scanned.
+            logger.warning(
+                "trace_scanner_trace_content_unavailable",
+                trace_id=str(trace_id),
+                project_id=str(project_id),
+                span_count=len(unavailable),
+            )
             continue
 
         # Build flat map

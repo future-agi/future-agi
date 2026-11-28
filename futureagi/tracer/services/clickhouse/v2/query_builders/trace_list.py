@@ -740,10 +740,10 @@ class _TraceRootReplayV2:
             if include_trajectory:
                 from tracer.services.clickhouse.v2.trajectory_hydration import (
                     TRAJECTORY_SPAN_COLUMNS,
-                    is_trajectory_store_read_enabled,
+                    trajectory_read_state,
                 )
 
-                if is_trajectory_store_read_enabled():
+                if trajectory_read_state().projects_pointers:
                     fields += [(col, col) for col in TRAJECTORY_SPAN_COLUMNS]
         else:
             fields += [

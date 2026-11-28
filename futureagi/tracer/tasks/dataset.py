@@ -12,6 +12,12 @@ from django.db import close_old_connections, transaction
 
 from tfc.temporal import temporal_activity
 from tracer.services.clickhouse.v2.span_reader import UnscopedSpanReadError
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    TrajectoryContentUnavailable,
+    TrajectoryHydrationUnavailable,
+    content_unavailable_sides,
+    raise_if_content_unavailable,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -210,8 +216,10 @@ def _export_span_rows(
             project_id=str(project_id) if project_id else None,
             org_id=str(org_id) if org_id else None,
         )
-    except UnscopedSpanReadError:
-        raise  # a missing scope fails every half too: never bisect it
+    except (UnscopedSpanReadError, TrajectoryHydrationUnavailable):
+        # A missing scope fails every half too, and a hydration failure is
+        # retried as a whole: never bisect either.
+        raise
     except Exception:
         if len(span_ids) == 1:
             raise
@@ -246,8 +254,8 @@ def _child_tree_spans_by_trace_ids(
             project_id=str(project_id) if project_id else None,
             project_ids=project_ids,
         )
-    except UnscopedSpanReadError:
-        raise  # a missing scope fails every half too: never bisect it
+    except (UnscopedSpanReadError, TrajectoryHydrationUnavailable):
+        raise  # never bisect a missing scope or a retryable hydration failure
     except Exception:
         if len(trace_ids) == 1:
             raise
@@ -358,6 +366,14 @@ def _build_subtree_from_dicts(children_map, parent_id, depth=0) -> list[dict]:
     children = children_map.get(parent_id, [])
     result = []
     for child in children:
+        if content_unavailable_sides(child):
+            # A child span whose full content is gone would land in the
+            # dataset as its preview: the row is refused instead.
+            raise TrajectoryContentUnavailable(
+                "child span content unavailable",
+                span_ids=(str(child.get("id", "")),),
+                surface="dataset_child_spans",
+            )
         child_data = {}
         for field_name in _CHILD_SPAN_FIELDS:
             value = _export_span_field_value(child, field_name)
@@ -436,6 +452,18 @@ def process_spans_chunk_task(
                     )
                 )
         observation_spans = [by_id[str(s)] for s in span_ids if str(s) in by_id]
+        # A span whose full input/output is unavailable would be written as
+        # its preview: refuse the rows instead (never a silent preview).
+        try:
+            raise_if_content_unavailable(observation_spans, surface="dataset")
+        except TrajectoryContentUnavailable as exc:
+            logger.error(
+                "dataset_chunk_span_content_unavailable",
+                dataset_id=str(dataset_id),
+                span_ids=list(exc.span_ids[:10]),
+                count=len(exc.span_ids),
+            )
+            raise
 
         # Codex consolidated review P0 (2026-05-26): silently dropping
         # missing-CH spans is data loss. Caller derived span_ids from a

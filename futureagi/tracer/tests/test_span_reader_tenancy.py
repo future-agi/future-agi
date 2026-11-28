@@ -24,7 +24,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from tracer.services.clickhouse.v2 import span_reader
+from tracer.services.clickhouse.v2 import span_reader, trajectory_hydration
 from tracer.services.clickhouse.v2.span_reader import (
     _FINAL_SKIP_INDEX_SETTINGS,
     CHSpanReader,
@@ -35,6 +35,7 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_ITEMS_V1,
     payload_checksum,
 )
+from tracer.tests.trajectory_read_state_support import install_default_schema_probe
 
 pytestmark = pytest.mark.unit
 
@@ -44,6 +45,16 @@ FOREIGN = "99999999-9999-4999-8999-999999999999"
 SCOPE_ID = "22222222-2222-4222-8222-222222222222"
 TRACE = "33333333-3333-4333-8333-333333333333"
 OWN_MESSAGE = '{"role":"user","content":"own question"}'
+
+
+@pytest.fixture(autouse=True)
+def _scripted_read_state(monkeypatch):
+    """The read state follows FI_TRAJECTORY_STORE_READ_ENABLED as before the
+    schema probe: a scripted complete-040 schema with no items, so true is
+    READY, false NOT_READY, and no probe statement reaches a fake client."""
+    install_default_schema_probe(monkeypatch)
+    yield
+    trajectory_hydration.reset_read_state_cache()
 
 
 def _one_message_envelope(content: str) -> str:
@@ -365,7 +376,7 @@ def test_org_scoped_dict_rows_from_another_org_are_not_hydrated(settings, caplog
     assert json.loads(rows[0]["input"]) == [{"role": "user", "content": "own question"}]
     assert rows[1]["input"] == "preview..."
     item_reads = [p for sql, p, _ in client.calls if "FROM trajectory_items" in sql]
-    assert [list(p["traj_item_hashes"]) for p in item_reads] == [["a" * 32]]
+    assert [set(p["traj_pairs"]) for p in item_reads] == [{(SCOPE_ID, "a" * 32)}]
     assert "span_id=foreign" in caplog.text
 
 

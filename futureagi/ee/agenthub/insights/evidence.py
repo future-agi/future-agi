@@ -66,8 +66,11 @@ from tracer.services.clickhouse.read_budget import (
 from tracer.services.clickhouse.v2.trace_detail_reads import PhysicalSpanIdentity
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_ITEMS_V1,
+    TrajectoryHydrationUnavailable,
+    content_unavailable_sides,
     hydrate_span_dicts,
-    is_trajectory_store_read_enabled,
+    pinned_read_state,
+    trajectory_read_state,
 )
 
 SCHEMA = "insights-evidence/v1"
@@ -2063,7 +2066,7 @@ class EvidenceQueryBuilder:
         as_of = self._as_of(params, keyword="  AND")
         inner = derived = outer = ""
         if heavy:
-            include_traj = is_trajectory_store_read_enabled()
+            include_traj = trajectory_read_state().projects_pointers
             inner = (
                 _CONTENT_HEAVY_INNER + _CONTENT_HEAVY_TRAJ_INNER
                 if include_traj
@@ -2177,7 +2180,8 @@ _CONTENT_HEAVY_TRAJ_INNER = """
                         argMax(tool_def_hashes, _version) AS latest_tool_def_hashes,
                         argMax(item_scope_id, _version) AS latest_item_scope_id,
                         argMax(payload_encoding, _version) AS latest_payload_encoding,
-                        argMax(payload_envelope, _version) AS latest_payload_envelope,"""
+                        argMax(payload_envelope, _version) AS latest_payload_envelope,
+                        argMax(created_at, _version) AS latest_created_at,"""
 
 _CONTENT_HEAVY_DERIVED = f""",
                     {_extra_value_sql("latest_attributes_extra", "input.value")}
@@ -2214,7 +2218,8 @@ _CONTENT_HEAVY_TRAJ_OUTER = """
                 latest_tool_def_hashes AS tool_def_hashes,
                 latest_item_scope_id AS item_scope_id,
                 latest_payload_encoding AS payload_encoding,
-                latest_payload_envelope AS payload_envelope,"""
+                latest_payload_envelope AS payload_envelope,
+                latest_created_at AS created_at,"""
 
 _CONTENT_HEAVY_OUTER = """
                 substringUTF8(latest_input, 1, %(evidence_heavy_chars)s) AS input,
@@ -2773,7 +2778,33 @@ def _read_content(
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """Content rows in batches bounded by span count and by the chars each
     tier's read charges: full reads, status-only reads, scalar-only reads,
-    and a span read in part alone at its own cap."""
+    and a span read in part alone at its own cap.
+
+    One read-state snapshot covers every batch, so the SQL and its hydration
+    agree. Evidence fails closed: a hydration failure is
+    ``EvidenceUnavailable('trajectory_hydration_unavailable')`` and a span
+    whose full content is gone is ``EvidenceUnavailable(
+    'trajectory_items_missing')``; a preview is never evidence."""
+    try:
+        read_state = trajectory_read_state()
+    except TrajectoryHydrationUnavailable as exc:
+        raise EvidenceUnavailable("trajectory_hydration_unavailable") from exc
+    with pinned_read_state(read_state):
+        return _read_content_batches(
+            reader, builder, kept, full, status_only, partial, limits, read_state
+        )
+
+
+def _read_content_batches(
+    reader: _Reader,
+    builder: EvidenceQueryBuilder,
+    kept: list[_Node],
+    full: set[int],
+    status_only: set[int],
+    partial: Mapping[int, int],
+    limits: EvidenceLimits,
+    read_state,
+) -> dict[tuple[str, str], dict[str, Any]]:
     tiers: list[tuple[list[_Node], int, int, Callable[[_Node], int]]] = [
         ([], limits.max_raw_field_chars, _STATUS_MESSAGE_CHARS, lambda n: n.raw_chars),
         ([], 0, _STATUS_MESSAGE_CHARS, lambda n: _STATUS_READ_CHARS + n.status_chars),
@@ -2821,15 +2852,24 @@ def _read_content(
         )
         if (
             heavy > 0
-            and is_trajectory_store_read_enabled()
+            and read_state.projects_pointers
             and any(row.get("payload_encoding") == ENCODING_ITEMS_V1 for row in result)
         ):
             pre_vals = [(row.get("input"), row.get("output")) for row in result]
-            hydrate_span_dicts(
-                result,
-                lambda q, p: reader.rows((q, p), max_rows=50_000),
-                project_id_fallback=builder.project_id,
-            )
+            try:
+                hydrate_span_dicts(
+                    result,
+                    lambda q, p: reader.rows(
+                        (q, p), max_rows=len(set(p.get("traj_pairs") or ())) + 1
+                    ),
+                    project_id_fallback=builder.project_id,
+                    state=read_state,
+                    surface="insights_evidence",
+                )
+            except TrajectoryHydrationUnavailable as exc:
+                raise EvidenceUnavailable("trajectory_hydration_unavailable") from exc
+            if any(content_unavailable_sides(row) for row in result):
+                raise EvidenceUnavailable("trajectory_items_missing")
             for row, (pre_in, pre_out) in zip(result, pre_vals, strict=True):
                 if row.get("payload_encoding") == ENCODING_ITEMS_V1:
                     raw_env = row.get("payload_envelope")

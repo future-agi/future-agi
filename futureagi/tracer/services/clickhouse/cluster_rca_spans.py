@@ -111,15 +111,19 @@ _analytics = AnalyticsQueryService()
 _READ_TIMEOUT_MS = 10000
 
 
-def _execute_read(query: str, params: dict) -> list:
+def _execute_read_raising(query: str, params: dict) -> list:
     # Route through AnalyticsQueryService (pooled clickhouse-driver). It returns
     # column-keyed dicts; re-tuple in driver column order so the positional
     # consumers in this file keep working unchanged. clickhouse-driver binds a
     # list directly for ``IN %(x)s``, so no tuple normalization is needed.
+    result = _analytics.execute_ch_query(query, params, timeout_ms=_READ_TIMEOUT_MS)
+    cols = result.columns or []
+    return [tuple(row[c] for c in cols) for row in result.data]
+
+
+def _execute_read(query: str, params: dict) -> list:
     try:
-        result = _analytics.execute_ch_query(query, params, timeout_ms=_READ_TIMEOUT_MS)
-        cols = result.columns or []
-        return [tuple(row[c] for c in cols) for row in result.data]
+        return _execute_read_raising(query, params)
     except Exception as e:
         logger.warning("cluster_rca_ch_span_read_failed", error=str(e))
         return []
@@ -135,15 +139,24 @@ def spans_for_trace(project_id: str, trace_id: str) -> list[dict[str, Any]]:
         return []
     # Delegate to the canonical CHSpanReader (v2, FINAL-deduped, project-scoped)
     # instead of a parallel raw-SQL read; alias CHSpan → the agent dict shape.
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TrajectoryHydrationUnavailable,
+        raise_if_content_unavailable,
+    )
+
     try:
         reader = get_reader()
         try:
             spans = reader.list_by_trace(str(trace_id), project_id=str(project_id))
         finally:
             reader.close()
+    except TrajectoryHydrationUnavailable:
+        # Content temporarily unreadable: a tool error, never a silent [].
+        raise
     except Exception as e:
         logger.warning("cluster_rca_ch_span_read_failed", error=str(e))
         return []
+    raise_if_content_unavailable(spans, surface="cluster_rca")
     return [_chspan_to_agent_dict(s) for s in spans]
 
 
@@ -152,32 +165,49 @@ def read_span(project_id: str, span_id: str) -> dict[str, Any] | None:
     canonical CHSpanReader (v2, FINAL-deduped, project-scoped)."""
     if not span_id:
         return None
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TrajectoryHydrationUnavailable,
+        raise_if_content_unavailable,
+    )
+
     try:
         reader = get_reader()
         try:
             span = reader.get(str(span_id), project_id=str(project_id))
         finally:
             reader.close()
+    except TrajectoryHydrationUnavailable:
+        raise
     except Exception as e:
         logger.warning("cluster_rca_ch_span_read_failed", error=str(e))
         return None
+    if span:
+        raise_if_content_unavailable([span], surface="cluster_rca")
     return _chspan_to_agent_dict(span) if span else None
 
 
 def _hydrate_rca_rows(
-    project_id: str, rows: list[dict[str, Any]]
+    project_id: str, rows: list[dict[str, Any]], state
 ) -> list[dict[str, Any]]:
-    """Hydrate any items_v1 rows in place and strip trajectory pointer columns."""
+    """Hydrate any items_v1 rows in place and strip trajectory pointer columns.
+
+    The items query runs on a raising executor: a failed query is
+    ``TrajectoryHydrationUnavailable`` and a missing item is
+    ``TrajectoryContentUnavailable``, which the agent's tool dispatch returns
+    as a tool error. The agent never reads a preview as the span's content.
+    """
     from tracer.services.clickhouse.v2.trajectory_hydration import (
+        CONTENT_STATE_KEY,
         ENCODING_ITEMS_V1,
         TRAJECTORY_SPAN_COLUMNS,
         hydrate_span_dicts,
+        raise_if_content_unavailable,
     )
 
     if any(r.get("payload_encoding") == ENCODING_ITEMS_V1 for r in rows):
 
         def _query(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-            res = _execute_read(sql, params)
+            res = _execute_read_raising(sql, params)
             return [
                 {"scope_id": r[0], "item_hash": r[1], "content": r[2]}
                 for r in res
@@ -189,10 +219,14 @@ def _hydrate_rca_rows(
             _query,
             project_id_fallback=str(project_id),
             attr_key="_unused_rca_attr",
+            state=state,
+            surface="cluster_rca",
         )
+        raise_if_content_unavailable(rows, surface="cluster_rca")
     for r in rows:
         for col in TRAJECTORY_SPAN_COLUMNS:
             r.pop(col, None)
+        r.pop(CONTENT_STATE_KEY, None)
     return rows
 
 
@@ -206,13 +240,14 @@ def list_spans_in_traces(
     """Paginated span list across a trace set. Returns (page, total_distinct)."""
     from tracer.services.clickhouse.v2.trajectory_hydration import (
         TRAJECTORY_SPAN_COLUMNS,
-        is_trajectory_store_read_enabled,
+        trajectory_read_state,
     )
 
     ids = _ids_list(trace_ids)
     if not ids:
         return [], 0
-    include_traj = is_trajectory_store_read_enabled()
+    read_state = trajectory_read_state()
+    include_traj = read_state.projects_pointers
     query_cols = _SPAN_COLS + TRAJECTORY_SPAN_COLUMNS if include_traj else _SPAN_COLS
     cols = ", ".join(query_cols)
     base = (
@@ -229,7 +264,7 @@ def list_spans_in_traces(
         query_cols,
     )
     if include_traj:
-        _hydrate_rca_rows(project_id, page)
+        _hydrate_rca_rows(project_id, page, read_state)
     total_rows = _execute_read(f"SELECT uniqExact(id) {base}", params)
     return page, (int(total_rows[0][0]) if total_rows else 0)
 
@@ -245,13 +280,14 @@ def search_spans_in_traces(
     status_message within a trace set."""
     from tracer.services.clickhouse.v2.trajectory_hydration import (
         TRAJECTORY_SPAN_COLUMNS,
-        is_trajectory_store_read_enabled,
+        trajectory_read_state,
     )
 
     ids = _ids_list(trace_ids)
     if not ids or not query_text:
         return []
-    include_traj = is_trajectory_store_read_enabled()
+    read_state = trajectory_read_state()
+    include_traj = read_state.projects_pointers
     query_cols = _SPAN_COLS + TRAJECTORY_SPAN_COLUMNS if include_traj else _SPAN_COLS
     cols = ", ".join(query_cols)
     text_pred = (
@@ -272,7 +308,7 @@ def search_spans_in_traces(
     """
     params = {"pid": str(project_id), "tids": ids, "q": query_text, "limit": limit}
     rows = _rows_to_dicts(_execute_read(query, params), query_cols)
-    return _hydrate_rca_rows(project_id, rows) if include_traj else rows
+    return _hydrate_rca_rows(project_id, rows, read_state) if include_traj else rows
 
 
 # group_by token → (CH column, extra predicate) for span_count aggregation.
@@ -322,13 +358,14 @@ def trace_roots(project_id: str, trace_ids: Iterable[str]) -> dict[str, dict[str
     batched query instead of N per-trace fetches.
     """
     from tracer.services.clickhouse.v2.trajectory_hydration import (
-        is_trajectory_store_read_enabled,
+        trajectory_read_state,
     )
 
     ids = _ids_list(trace_ids)
     if not ids:
         return {}
-    if not is_trajectory_store_read_enabled():
+    read_state = trajectory_read_state()
+    if not read_state.projects_pointers:
         query = """
             SELECT
                 trace_id,
@@ -425,7 +462,7 @@ def trace_roots(project_id: str, trace_ids: Iterable[str]) -> dict[str, dict[str
                 "payload_envelope": r[12],
             }
         )
-    _hydrate_rca_rows(project_id, dicts)
+    _hydrate_rca_rows(project_id, dicts, read_state)
     out: dict[str, dict[str, Any]] = {}
     for d in dicts:
         tid = d.pop("trace_id")
@@ -543,12 +580,13 @@ def traces_in_session(project_id: str, session_id: str) -> dict[str, dict[str, A
     """Per-trace root info for all traces in one session (chronological via
     first_start). Powers read(session). Returns {trace_id: root-info}."""
     from tracer.services.clickhouse.v2.trajectory_hydration import (
-        is_trajectory_store_read_enabled,
+        trajectory_read_state,
     )
 
     if not session_id:
         return {}
-    if not is_trajectory_store_read_enabled():
+    read_state = trajectory_read_state()
+    if not read_state.projects_pointers:
         query = """
             SELECT
                 trace_id,
@@ -637,7 +675,7 @@ def traces_in_session(project_id: str, session_id: str) -> dict[str, dict[str, A
                 "payload_envelope": r[11],
             }
         )
-    _hydrate_rca_rows(project_id, dicts)
+    _hydrate_rca_rows(project_id, dicts, read_state)
     out: dict[str, dict[str, Any]] = {}
     for d in dicts:
         tid = d.pop("trace_id")

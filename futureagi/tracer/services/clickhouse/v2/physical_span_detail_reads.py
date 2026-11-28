@@ -9,6 +9,11 @@ their bare span association cannot attest this physical reference.
 from datetime import UTC, datetime
 
 from tracer.services.clickhouse.application_read_policy import application_read_settings
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    hydrate_span_dicts,
+    items_query_settings,
+    trajectory_read_state,
+)
 
 
 class PhysicalSpanDetailError(RuntimeError):
@@ -28,17 +33,18 @@ def _microseconds(value):
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
-def build_physical_span_detail_query(*, span_id, reference):
-    """The caller has validated this complete selector; no mutable bind exists."""
-    from tracer.services.clickhouse.v2.trajectory_hydration import (
-        is_trajectory_store_read_enabled,
-    )
+def build_physical_span_detail_query(*, span_id, reference, state=None):
+    """The caller has validated this complete selector; no mutable bind exists.
 
+    ``state`` is the caller's read-state snapshot (resolved when None)."""
+    if state is None:
+        state = trajectory_read_state()
     traj_select = (
         """,
             input_item_hashes, output_item_hashes, tool_def_hashes,
-            item_scope_id, payload_encoding, payload_envelope"""
-        if is_trajectory_store_read_enabled()
+            item_scope_id, payload_encoding, payload_envelope,
+            created_at"""
+        if state.projects_pointers
         else ""
     )
     return (
@@ -78,7 +84,12 @@ def read_physical_span_detail(*, analytics, span_id, reference, authorized_proje
     """Return one complete winner or fail explicitly, with no bare-ID fallback."""
     if str(reference["project_id"]) != str(authorized_project_id):
         raise PhysicalSpanDetailError("span_reference_not_found")
-    sql, params = build_physical_span_detail_query(span_id=span_id, reference=reference)
+    # One snapshot: the projection and its hydration agree. A probe failure
+    # is TrajectoryHydrationUnavailable (503), never a preview.
+    state = trajectory_read_state(analytics)
+    sql, params = build_physical_span_detail_query(
+        span_id=span_id, reference=reference, state=state
+    )
     result = analytics.execute_ch_query(
         sql,
         params,
@@ -143,19 +154,21 @@ def read_physical_span_detail(*, analytics, span_id, reference, authorized_proje
         raise PhysicalSpanDetailError("span_reference_changed")
     row.update(start_time=_utc(row["start_time"]), start_hour=actual[3])
 
-    from tracer.services.clickhouse.v2.trajectory_hydration import hydrate_span_dicts
-
-    hydrate_span_dicts(
-        [row],
-        lambda traj_sql, traj_params: list(
-            analytics.execute_ch_query(
-                traj_sql,
-                traj_params,
-                settings=application_read_settings({"max_threads": 1}),
-            ).data
-            or []
-        ),
-        project_id_fallback=str(row["project_id"]),
-        attr_key="span_attributes",
-    )
+    if state.projects_pointers:
+        hydrate_span_dicts(
+            [row],
+            lambda traj_sql, traj_params: list(
+                analytics.execute_ch_query(
+                    traj_sql,
+                    traj_params,
+                    settings=items_query_settings(traj_params),
+                ).data
+                or []
+            ),
+            project_id_fallback=str(row["project_id"]),
+            attr_key="span_attributes",
+            state=state,
+            surface="physical_span_detail",
+        )
+        row.pop("created_at", None)
     return row

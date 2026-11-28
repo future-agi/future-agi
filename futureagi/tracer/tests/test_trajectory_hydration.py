@@ -42,10 +42,21 @@ from tracer.services.clickhouse.v2.trajectory_hydration import (
     reconstruct_payload,
     restore_promoted_in_attributes_extra,
 )
+from tracer.tests.trajectory_read_state_support import install_default_schema_probe
 
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 SESSION_ID = "22222222-2222-4222-8222-222222222222"
 TRACE_ID = "33333333-3333-4333-8333-333333333333"
+
+
+@pytest.fixture(autouse=True)
+def _scripted_read_state(monkeypatch):
+    """The read state follows FI_TRAJECTORY_STORE_READ_ENABLED as before the
+    schema probe: a scripted complete-040 schema with no items, so true is
+    READY, false NOT_READY, and no probe statement reaches a fake client."""
+    install_default_schema_probe(monkeypatch)
+    yield
+    trajectory_hydration.reset_read_state_cache()
 
 
 def _h(tag: str) -> str:
@@ -978,7 +989,7 @@ def test_session_detail_sql_projects_trajectory_pointers_and_list_strips_sentine
 @pytest.mark.unit
 def test_trajectory_query_chunking_three_key_pk_and_prewhere():
     from tracer.services.clickhouse.v2.trajectory_hydration import (
-        _MAX_HASHES_PER_QUERY,
+        _MAX_PAIRS_PER_QUERY,
         fetch_trajectory_items_dict_rows,
     )
 
@@ -987,31 +998,35 @@ def test_trajectory_query_chunking_three_key_pk_and_prewhere():
     ).read_text()
     assert "PRIMARY KEY (project_id, scope_id, item_hash)" in schema_sql
 
-    sql, _params = build_trajectory_items_query(
+    sql, params = build_trajectory_items_query(
         project_id=PROJECT_ID,
-        scope_ids=[PROJECT_SCOPE_ID, SESSION_ID],
-        item_hashes=["a" * 32],
+        pairs=[(PROJECT_SCOPE_ID, "a" * 32), (SESSION_ID, "b" * 32)],
     )
     assert "PREWHERE project_id = %(traj_project_id)s" in sql
-    assert "AND item_hash IN %(traj_item_hashes)s" in sql
+    assert "AND scope_id IN %(traj_scope_ids)s" in sql
+    assert "AND (scope_id, item_hash) IN %(traj_pairs)s" in sql
     assert "WHERE item_hash" not in sql
+    assert params["traj_pairs"] == (
+        (PROJECT_SCOPE_ID, "a" * 32),
+        (SESSION_ID, "b" * 32),
+    )
 
     # 3,200 hashes under a single scope must split into 3 bounded queries.
-    total = _MAX_HASHES_PER_QUERY * 2 + 200
+    total = _MAX_PAIRS_PER_QUERY * 2 + 200
     refs = [(PROJECT_ID, PROJECT_SCOPE_ID, f"{i:032x}") for i in range(total)]
     batch_sizes: list[int] = []
 
     def fake_query(_sql, params):
-        hs = params["traj_item_hashes"]
-        batch_sizes.append(len(hs))
+        pairs = set(params["traj_pairs"])
+        batch_sizes.append(len(pairs))
         return [
-            {"scope_id": PROJECT_SCOPE_ID, "item_hash": h, "content": f"c:{h}"}
-            for h in hs
+            {"scope_id": scope, "item_hash": h, "content": f"c:{h}"}
+            for scope, h in sorted(pairs)
         ]
 
     resolved = fetch_trajectory_items_dict_rows(fake_query, refs)
     assert len(batch_sizes) == 3
-    assert all(n <= _MAX_HASHES_PER_QUERY for n in batch_sizes)
+    assert all(n <= _MAX_PAIRS_PER_QUERY for n in batch_sizes)
     assert len(resolved) == total
 
 
@@ -1174,6 +1189,7 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1(setti
                     "payload_encoding": ENCODING_ITEMS_V1,
                     "payload_envelope": env_json,
                     "project_id_str": PROJECT_ID,
+                    "created_at": datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
                 }
                 res.result_rows = [tuple(lookup[a] for a in aliases)]
             else:

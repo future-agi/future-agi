@@ -146,10 +146,10 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
             "Session detail pagination must be positive limit/nonnegative offset"
         )
     from tracer.services.clickhouse.v2.trajectory_hydration import (
-        is_trajectory_store_read_enabled,
+        trajectory_read_state,
     )
 
-    include_traj = is_trajectory_store_read_enabled()
+    include_traj = trajectory_read_state().projects_pointers
     traj_outer = (
         """,
             trace_messages.3 AS input_item_hashes,

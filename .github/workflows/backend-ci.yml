@@ -317,6 +317,11 @@ jobs:
       FI_CH_TEST_SIDECAR_HTTP_PORT: "18123"
       PYTHONHASHSEED: "0"
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
+      # conftest applies every v2 schema file to test_tfc, 040 included, so
+      # the auto read state would be READY there. The suite keeps dev's
+      # flag-off SQL (false holds while test_tfc.trajectory_items is empty);
+      # the read-state tests pin or probe their own databases.
+      FI_TRAJECTORY_STORE_READ_ENABLED: "false"
       EE_REPO_BRANCH: ${{ needs.changes.outputs.queue_target || github.head_ref || github.ref_name }}
       EE_BASE_REF: ${{ needs.changes.outputs.queue_target || github.base_ref || 'dev' }}
       # Queue events identify a base branch, not the origin of every queued PR.
