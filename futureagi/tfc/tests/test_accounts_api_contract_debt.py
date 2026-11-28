@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _repo_root():
     return Path(__file__).resolve().parents[3]
@@ -90,6 +92,14 @@ def test_accounts_mutations_have_request_contracts():
 
     for (method, path), definition_name in expected.items():
         assert _body_ref(_operation(path, method)) == definition_name
+
+
+@pytest.mark.parametrize(
+    "path", ["/accounts/signup/", "/accounts/password-reset-initiate/"]
+)
+def test_throttle_outage_response_contract(path):
+    response = _operation(path, "POST")["responses"]["503"]
+    assert response["schema"] == {"$ref": "#/definitions/AccountsErrorResponse"}
 
 
 def test_accounts_endpoints_have_response_contracts():

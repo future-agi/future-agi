@@ -986,6 +986,14 @@ def get_client_ip(request):
     return ip, is_routable
 
 
+def login_service_unavailable_result() -> dict[str, str]:
+    return {
+        "error": "Login temporarily unavailable",
+        "error_code": "LOGIN_SERVICE_UNAVAILABLE",
+        "message": get_error_message("LOGIN_SERVICE_UNAVAILABLE"),
+    }
+
+
 class AuthMonitoringMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
@@ -1011,16 +1019,24 @@ class AuthMonitoringMiddleware:
         except _CACHE_UNAVAILABLE_ERRORS as exc:
             if _cache_transport_category(exc) is None:
                 raise
-            # Fail open, like the access-token cache: an unreachable cache must
-            # not turn every login, token, signup and password-reset request
-            # into a 500. Credentials are still checked against the database;
-            # only the per-IP throttle is skipped until the cache is back.
+            # Signup and reset rely on this middleware for their IP limit.
+            limit_required = request.path_info in (
+                "/accounts/signup/",
+                "/accounts/password-reset-initiate/",
+            )
             logger.warning(
                 "auth_rate_limit_cache_unavailable",
                 component="auth_rate_limit",
-                fallback="not_throttled",
+                fallback="service_unavailable" if limit_required else "not_throttled",
                 **_cache_unavailable_metadata(exc),
             )
+            if limit_required:
+                return JsonResponse(
+                    build_error_envelope(
+                        login_service_unavailable_result(), status_code=503
+                    ),
+                    status=503,
+                )
             refused = None
         return refused if refused is not None else self.get_response(request)
 

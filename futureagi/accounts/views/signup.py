@@ -38,6 +38,7 @@ from accounts.serializers.contracts import (
     AcceptInvitationRequestSerializer,
     AccountsBulkUserMutationItemSerializer,
     AccountsDirectMessageResponseSerializer,
+    AccountsErrorResponseSerializer,
     AccountsMessageResponseSerializer,
     AccountsStringResultResponseSerializer,
     AccountsTokenPairResponseSerializer,
@@ -86,6 +87,11 @@ except ImportError:
 
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
+
+_THROTTLED_ERROR_RESPONSES = {
+    **ACCOUNTS_ERROR_RESPONSES,
+    503: AccountsErrorResponseSerializer,
+}
 
 
 def oss_reset_unavailable_message() -> str:
@@ -192,12 +198,12 @@ def _login_payload(user):
 @swagger_auto_schema(
     method="post",
     request_body=SignupRequestSerializer,
-    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **_THROTTLED_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=SignupRequestSerializer,
-    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **_THROTTLED_ERROR_RESPONSES},
     document=False,
 )
 def user_signup(request):
@@ -458,7 +464,7 @@ def activate_account(request, uidb64, token):
     request_body=PasswordResetInitiateRequestSerializer,
     responses={
         200: PasswordResetInitiateResponseSerializer,
-        **ACCOUNTS_ERROR_RESPONSES,
+        **_THROTTLED_ERROR_RESPONSES,
     },
 )
 @api_view(["POST"])
@@ -466,7 +472,7 @@ def activate_account(request, uidb64, token):
     request_serializer=PasswordResetInitiateRequestSerializer,
     responses={
         200: PasswordResetInitiateResponseSerializer,
-        **ACCOUNTS_ERROR_RESPONSES,
+        **_THROTTLED_ERROR_RESPONSES,
     },
     document=False,
     reject_unknown_fields=True,
