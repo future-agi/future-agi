@@ -222,7 +222,7 @@ def relay(server, headers, target):
     """POST a synthetic message; ``headers`` may be built from the raw body."""
 
     message = {"alert_title": "Synthetic notification", "marker": uuid4().hex}
-    body = {"message": message}
+    body: dict[str, object] = {"message": message}
     if target:
         body.update(send_to_uuid=True, uuid=target)
         message["uuid"] = target

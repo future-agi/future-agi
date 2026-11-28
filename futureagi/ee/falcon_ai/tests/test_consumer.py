@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from ee.falcon_ai.consumers import FalconAIConsumer
 
 logger = logging.getLogger("tests.usage_events")
@@ -35,7 +36,9 @@ def _make_consumer(query_string="workspace_id=ws-123", user=None):
     consumer.channel_layer = AsyncMock()
     consumer.channel_name = "synthetic-channel"
     # Membership revalidation has its own tests (test_consumer_membership.py).
-    consumer._membership.ensure_member = AsyncMock(return_value=True)
+    consumer._membership = MagicMock(
+        spec=consumer._membership, ensure_member=AsyncMock(return_value=True)
+    )
     return consumer
 
 

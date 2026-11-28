@@ -149,12 +149,9 @@ class MembershipSocketGuard:
             )
             return False
 
-        if self.closed:
-            return False
-        if generation != self._generation:
-            # The membership changed while this check ran; its answer may
-            # predate the change, so it neither delivers, closes nor clears
-            # the pending revalidation.
+        if self.closed or generation != self._generation:
+            # The socket closed or membership changed while this check ran.
+            # A stale result must not deliver, close or clear revalidation.
             return False
         if not allowed:
             await self._close()

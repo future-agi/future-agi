@@ -40,7 +40,7 @@ def test_cyclic_and_long_exception_chains_are_bounded():
     first = RuntimeError("synthetic-private")
     first.__cause__ = first
     assert len(sanitized_exception_traceback(first)) == 1
-    last = first
+    last: Exception = first
     for _ in range(20):
         error = ValueError("synthetic-private")
         error.__cause__ = last
