@@ -11,6 +11,15 @@
 - **gateway:** Keep a provider out of routing until the cooldown from its latest failure has elapsed, including failures from calls already in flight. Existing readmission and recovery callbacks are unchanged.
 - **observe:** When a cluster analysis produced no root cause at all, its generic last-resort summary no longer replaces an earlier finished analysis or gets posted to the linked Linear issue. A synthesis the model actually wrote - including one a budget ceiling pushed it to write - still saves and notifies as before.
 
+### Epoch result labels during a rolling update
+
+Epoch now labels results with no held-back cases “Proven on the targets only” instead of “Limited validation” ([#4248](https://github.com/future-agi/future-agi/pull/4248)). Until the page and backend both use the new version, you may see one of two differences:
+
+- **Old page, new backend:** The Epoch list shows no strength label, and the ship dialog gives no draft warning. The pull request still opens as a draft on GitHub when the repository supports drafts. Reload the page after the rollout to see the new label.
+- **New page, old backend:** The result card shows both labels. The list and ship dialog say “Proven on the targets only”, but the backend still marks the pull request’s title and body as “Limited validation”.
+
+The update does not rewrite existing pull requests. Those opened by the old backend keep “Limited validation” for results with no held-back cases, or “Verified by Epoch” and the “Verdict: Verified” heading for verified results. The underlying results do not change.
+
 ## [1.59.1](https://github.com/future-agi/future-agi/compare/v1.59.0...v1.59.1) (2026-11-19)
 
 
