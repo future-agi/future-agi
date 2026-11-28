@@ -71,6 +71,8 @@ _TERMINAL_JOB_STATES = frozenset(
         HostedHarnessJob.State.COMPLETED,
         HostedHarnessJob.State.FAILED,
         HostedHarnessJob.State.CANCELED,
+        # A parked copy's chat waits for Continue: nothing runs it until then.
+        HostedHarnessJob.State.PARKED,
     }
 )
 _ACTIVE_CONVERSATION_STATES = (

@@ -261,10 +261,11 @@ def _awaiting_ids() -> QuerySet[HostedHarnessJob, Any]:
 
 
 def _status_q(status: str) -> Q:
-    known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
+    parked = HostedHarnessJob.State.PARKED
+    known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED, parked}
     # By id: a negated JSON lookup is NULL, not true, on a job that has no adaptation.
     if status == STATUS_AWAITING_APPROVAL:
-        return ~Q(state__in=known) & Q(id__in=_awaiting_ids())
+        return Q(state=parked) | (~Q(state__in=known) & Q(id__in=_awaiting_ids()))
     if status == STATUS_COMPLETED:
         return Q(state=HostedHarnessJob.State.COMPLETED)
     if status == STATUS_FAILED:
@@ -552,6 +553,9 @@ def status_for(job: HostedHarnessJob) -> str:
         return STATUS_FAILED
     if job.state in _RUN_STATES:
         return STATUS_RUNNING
+    if job.state == HostedHarnessJob.State.PARKED:
+        # A copy paused on a question: it waits for the person, as an approval does.
+        return STATUS_AWAITING_APPROVAL
     adaptation = ((job.payload or {}).get("metadata") or {}).get("adaptation") or {}
     if (
         adaptation.get("mode") == "review"

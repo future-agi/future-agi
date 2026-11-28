@@ -376,6 +376,37 @@ def _ask_harness_to_build(
     )
 
 
+def _ask_harness_to_customize(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the person's change into the job's conversation; its harness designs the copy from
+    the ready world the design's control process laid out."""
+    from simulate.services.hosted_harness_conversation import enqueue_message
+    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+
+    metadata = (job.payload or {}).get("metadata") or {}
+    if (metadata.get("design") or {}).get("resume_from"):
+        # A continued copy: the design picks up from its checkpoint and asks its open
+        # question again. A new message would be answered before it.
+        from simulate.models import HostedHarnessConversation
+
+        conversation = HostedHarnessConversation.no_workspace_objects.get(job=job)
+        schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+        return
+    customization = metadata.get("customization") or {}
+    source = (customization.get("source") or {}).get("environment_name") or "it"
+    conversation, _message, _created = enqueue_message(
+        job,
+        content=(
+            f"Make a private copy of the ready environment {source}, with this change: "
+            f"{customization.get('change') or ''}\n\nStart from the ready world's records, "
+            "tools and rules, add the change, show me the design, and seal it once I approve."
+        ),
+        client_request_id=f"customize-{attempt.id}",
+    )
+    schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+
+
 def _ask_harness_to_adapt(
     job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
 ) -> None:
@@ -3054,6 +3085,7 @@ class HostedHarnessGateway:
             adaptation_launch_for,
             adaptation_of,
             apply_frozen_simulator,
+            customization_launch_for,
             release_launch_for,
         )
 
@@ -3061,8 +3093,11 @@ class HostedHarnessGateway:
         # an adaptation receives the releases it adapts the agent to and runs nothing else.
         release = release_launch_for(job)
         adaptation = adaptation_launch_for(job)
-        # Releases staged under /work/releases: a job carries a composition or an adaptation.
-        staged = release or adaptation
+        # A copy of a ready environment receives the releases its builder starts from.
+        customization = customization_launch_for(job)
+        # Releases staged under /work/releases: a job carries a composition, an adaptation or
+        # a copy to design.
+        staged = release or adaptation or customization
         payload = dict(job.payload)
         if authoring_archive is not None:
             # Resolve cached authoring created before connector resolution shipped as well as
@@ -3089,6 +3124,7 @@ class HostedHarnessGateway:
         seed_contract = (
             _seed_contract_for(job)
             if authoring_archive is None
+            and customization is None
             and not (payload.get("metadata") or {}).get("simulation_only")
             and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             else None
@@ -3110,7 +3146,10 @@ class HostedHarnessGateway:
         secrets_map = PlatformSecretResolver().resolve(job)
         authoring_target_secrets, _authoring_connector = (
             _provider_import_authoring_material(job, payload)
-            if authoring_archive is None and release is None and adaptation is None
+            if authoring_archive is None
+            and release is None
+            and adaptation is None
+            and customization is None
             else ({}, "")
         )
         from simulate.services.harness_capacity import configured_capacity
@@ -3448,12 +3487,13 @@ class HostedHarnessGateway:
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
             )
             # A fresh build is the conversation's harness's work; this command waits for it.
-            # Release and adaptation jobs author nothing, so they never ask it to build.
+            # Release, adaptation and copy jobs author nothing, so they never ask it to build.
             harness_builds = (
                 authoring_archive is None
                 and not simulation_only
                 and release is None
                 and adaptation is None
+                and customization is None
                 and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             )
             bundle_command = (
@@ -3558,6 +3598,9 @@ class HostedHarnessGateway:
             if adaptation is not None:
                 # An adaptation authors and runs nothing: its own process is the whole command.
                 steps = [SandboxCommandStep(adaptation.command)]
+            elif customization is not None:
+                # A copy is designed by the builder; the design's control process waits for it.
+                steps = [SandboxCommandStep(customization.command)]
             elif release is not None:
                 # A release run composes its bundle from the staged releases, then runs it.
                 steps = [SandboxCommandStep(release.bundle_command), entrypoint]
@@ -3586,6 +3629,8 @@ class HostedHarnessGateway:
             ):
                 # Run mode drafts in the control process; review mode is the builder's.
                 _ask_harness_to_adapt(job, attempt, endpoint_base_url)
+            elif customization is not None:
+                _ask_harness_to_customize(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -5349,11 +5394,16 @@ class HostedHarnessGateway:
             adaptation_of,
             adaptation_settled,
             complete_adaptation,
+            complete_customization,
+            customization_of,
+            customization_settled,
         )
 
         if adaptation_settled(job):
             # A worker died after recording it: only its run and its sandbox's end are left.
             return self._end_adaptation(attempt, complete_adaptation(job, None))
+        if customization_settled(job):
+            return self._end_adaptation(attempt, complete_customization(job, None))
 
         try:
             observation = self.inspect(attempt)
@@ -5447,6 +5497,8 @@ class HostedHarnessGateway:
             return None
         if exit_code in {0, 2} and adaptation_of(job) is not None:
             return self._finish_adaptation(attempt)
+        if exit_code in {0, 2} and customization_of(job) is not None:
+            return self._finish_customization(attempt)
         if certify_only(job):
             self._store_agent_reading(attempt)
 
@@ -5721,12 +5773,74 @@ class HostedHarnessGateway:
             job = complete_adaptation(attempt.job, output, verified)
         return self._end_adaptation(attempt, job)
 
+    def _finish_customization(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
+        """Settle a copy whose design process exited 0 or 2 from the releases it sealed in
+        `design-output`, then clean up through the normal attempt protocol."""
+        from simulate.services.harness_releases import (
+            AUTHORING_WORKSPACE,
+            DESIGN_OUTPUT,
+            complete_customization,
+            design_waiting,
+            park_customization,
+        )
+
+        sandbox = self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+        packed = sandbox.process.exec(
+            f"mkdir -p {DESIGN_OUTPUT} && "
+            f"tar -czf /tmp/design.tar.gz -C {DESIGN_OUTPUT} . && "
+            '{ test "$(stat -c %s /tmp/design.tar.gz)" '
+            f"-le {_ADAPTATION_MAX_BYTES} || (exit {_ADAPTATION_TOO_LARGE_EXIT}); }}",
+            timeout=180,
+        )
+        if packed.exit_code and packed.exit_code != _ADAPTATION_TOO_LARGE_EXIT:
+            raise HostedHarnessError(
+                "design_pack_failed",
+                str(packed.result or "")[-500:],
+                status_code=502,
+                retryable=True,
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            output: Path | None = None
+            if not packed.exit_code:
+                body = sandbox.fs.download_file("/tmp/design.tar.gz", 300)
+                if _extract_adaptation(body, directory):
+                    output = Path(directory)
+            if design_waiting(output):
+                # Paused on an unanswered question: keep the workspace so Continue resumes it.
+                # Its spend file stays behind, so the next attempt doesn't count it again.
+                checkpoint = sandbox.process.exec(
+                    f"cd {AUTHORING_WORKSPACE} && umask 077 && "
+                    "tar -czf /tmp/design-checkpoint.tar.gz --exclude=__pycache__ "
+                    f"--exclude=./cost.json --exclude=./{DESIGN_OUTPUT.rsplit('/', 1)[-1]} . && "
+                    '{ test "$(stat -c %s /tmp/design-checkpoint.tar.gz)" '
+                    f"-le {_ADAPTATION_MAX_BYTES} || (exit {_ADAPTATION_TOO_LARGE_EXIT}); }}",
+                    timeout=180,
+                )
+                if checkpoint.exit_code:
+                    raise HostedHarnessError(
+                        "design_checkpoint_failed",
+                        str(checkpoint.result or "")[-500:],
+                        status_code=502,
+                        retryable=True,
+                    )
+                job = park_customization(
+                    attempt.job,
+                    sandbox.fs.download_file("/tmp/design-checkpoint.tar.gz", 300),
+                )
+            else:
+                job = complete_customization(attempt.job, output)
+        return self._end_adaptation(attempt, job)
+
     def _end_adaptation(
         self, attempt: HostedHarnessAttempt, job: HostedHarnessJob
     ) -> HostedHarnessJob:
-        """End the attempt of a settled adaptation as its job ended, and clean up."""
-        attempt.terminal_stage = job.state
-        attempt.terminal_failure = job.failure
+        """End the attempt of a settled adaptation as its job ended, and clean up. A parked
+        copy's attempt ended cleanly: the job waits for Continue."""
+        parked = job.state == HostedHarnessJob.State.PARKED
+        attempt.terminal_stage = "completed" if parked else job.state
+        attempt.terminal_failure = None if parked else job.failure
         attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
         return self._delete_and_record(attempt)
 

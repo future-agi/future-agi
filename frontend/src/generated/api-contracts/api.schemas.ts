@@ -25759,6 +25759,7 @@ export const HarnessVerifyCreateResponseApiState = {
   finalizing: "finalizing",
   cleaning_up: "cleaning_up",
   retry_wait: "retry_wait",
+  parked: "parked",
   completed: "completed",
   failed: "failed",
   canceled: "canceled",
@@ -25781,6 +25782,7 @@ export const HarnessVerifyResultApiState = {
   finalizing: "finalizing",
   cleaning_up: "cleaning_up",
   retry_wait: "retry_wait",
+  parked: "parked",
   completed: "completed",
   failed: "failed",
   canceled: "canceled",
@@ -26930,6 +26932,18 @@ export interface HarnessReleaseCatalogueApi {
   example_requests: string[];
 }
 
+/**
+ * For a private copy, the ready environment it was customized from.
+ */
+export interface HarnessReleaseSourceApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  title: string;
+}
+
 export interface HarnessReleaseApi {
   id: string;
   /** @minLength 1 */
@@ -26942,10 +26956,31 @@ export interface HarnessReleaseApi {
   policy: HarnessReleasePolicyApi;
   suites: HarnessSuiteSummaryApi[];
   catalogue: HarnessReleaseCatalogueApi;
+  derived_from: HarnessReleaseSourceApi;
 }
 
 export interface HarnessReleaseListResponseApi {
   results: HarnessReleaseApi[];
+}
+
+export interface HarnessReleaseCustomizeRequestApi {
+  suite_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * What should change in the copy, in the person's words.
+   * @minLength 1
+   * @maxLength 4000
+   */
+  change: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
 }
 
 export type HarnessReleaseFitRequestApiPairing = { [key: string]: string };

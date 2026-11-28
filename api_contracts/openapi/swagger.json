@@ -57785,6 +57785,121 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-releases/customize/": {
+            "post": {
+                "operationId": "simulate_api_harness-releases_customize",
+                "description": "Build a private copy of a ready environment with the person's change. The builder\nstarts from the ready world; the copy is sealed as this organization's own release and\nthe original stays as it was. The job is followed like any harness job.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReleaseCustomizeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-releases/customize/{job_id}/continue/": {
+            "post": {
+                "operationId": "simulate_api_harness-releases_customize_continue_customization",
+                "description": "Continue a copy whose design paused on an unanswered question: it starts again from\nthe workspace it paused in and asks that question again.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "job_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-releases/fit/": {
             "post": {
                 "operationId": "simulate_api_harness-releases_fit",
@@ -162362,6 +162477,7 @@
                         "finalizing",
                         "cleaning_up",
                         "retry_wait",
+                        "parked",
                         "completed",
                         "failed",
                         "canceled"
@@ -162393,6 +162509,7 @@
                         "finalizing",
                         "cleaning_up",
                         "retry_wait",
+                        "parked",
                         "completed",
                         "failed",
                         "canceled"
@@ -164959,6 +165076,34 @@
             },
             "x-nullable": true
         },
+        "HarnessReleaseSource": {
+            "description": "For a private copy, the ready environment it was customized from.",
+            "required": [
+                "digest",
+                "name",
+                "title"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessRelease": {
             "required": [
                 "id",
@@ -164969,7 +165114,8 @@
                 "tools",
                 "policy",
                 "suites",
-                "catalogue"
+                "catalogue",
+                "derived_from"
             ],
             "type": "object",
             "properties": {
@@ -165012,6 +165158,9 @@
                 },
                 "catalogue": {
                     "$ref": "#/definitions/HarnessReleaseCatalogue"
+                },
+                "derived_from": {
+                    "$ref": "#/definitions/HarnessReleaseSource"
                 }
             }
         },
@@ -165026,6 +165175,41 @@
                     "items": {
                         "$ref": "#/definitions/HarnessRelease"
                     }
+                }
+            }
+        },
+        "HarnessReleaseCustomizeRequest": {
+            "required": [
+                "suite_id",
+                "name",
+                "change",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "suite_id": {
+                    "title": "Suite id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "change": {
+                    "title": "Change",
+                    "description": "What should change in the copy, in the person's words.",
+                    "type": "string",
+                    "maxLength": 4000,
+                    "minLength": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 }
             }
         },

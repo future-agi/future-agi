@@ -3013,6 +3013,25 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             HostedHarnessJob.State.CANCELED,
         }:
             return locked
+        if locked.state == HostedHarnessJob.State.PARKED:
+            # A parked copy has no sandbox or workflow left to stop: it ends here.
+            now = timezone.now()
+            locked.cancel_requested_at = now
+            locked.cancel_reason = reason
+            locked.state = HostedHarnessJob.State.CANCELED
+            locked.current_stage = HostedHarnessJob.State.CANCELED
+            locked.terminal_at = now
+            locked.save(
+                update_fields=[
+                    "cancel_requested_at",
+                    "cancel_reason",
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "updated_at",
+                ]
+            )
+            return locked
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
         locked.cancel_confirmed_at = None
@@ -3879,7 +3898,10 @@ def record_cleanup(
     retry_pending: bool = False,
     details: dict[str, Any] | None = None,
 ) -> HostedHarnessJob:
-    from simulate.services.harness_releases import adaptation_settled
+    from simulate.services.harness_releases import (
+        adaptation_settled,
+        customization_settled,
+    )
 
     if not verified_absent:
         raise HostedHarnessError(
@@ -3925,7 +3947,8 @@ def record_cleanup(
         )
         if attempt.attempt_number < job.current_attempt_number:
             return job
-        if adaptation_settled(job):
+        # An adaptation or a copy is settled from its own result, not by its sandbox's end.
+        if adaptation_settled(job) or customization_settled(job):
             if hidden := finish_deferred_delete(job):
                 job.save(update_fields=[*hidden, "updated_at"])
             return job
@@ -3980,8 +4003,9 @@ def _settle_job(
         job.environment_id is None
         and job.test_execution_id is None
         and attempt.terminal_stage == "completed"
-        # An adaptation job is completed by complete_adaptation, not by an authoring archive.
+        # An adaptation or a copy is completed from its own result, not by an authoring archive.
         and not (job.payload.get("metadata") or {}).get("adaptation")
+        and not (job.payload.get("metadata") or {}).get("customization")
         and (
             not job.run_test_id
             or not (job.payload.get("metadata") or {}).get("authoring_object_key")

@@ -40,9 +40,15 @@ export function readyEnvironmentFrom(release) {
   const type = catalogue?.channel === "voice" ? "voice" : "chat";
   const records = catalogue?.records || {};
   const apps = catalogue?.apps || [];
+  // A private copy reads as the world it was made from (env-world-customize).
+  const source = release.derived_from || null;
+  const sourceTitle = source ? source.title || titleOf(source.name) : null;
   return {
     id: release.id,
-    name: catalogue?.title || titleOf(release.name),
+    name: sourceTitle
+      ? `${sourceTitle} · copy`
+      : catalogue?.title || titleOf(release.name),
+    copyOf: sourceTitle,
     releaseName: release.name,
     digest: release.digest,
     system: release.system,
@@ -58,7 +64,11 @@ export function readyEnvironmentFrom(release) {
     rules: release.policy?.agent_rules || [],
     parameters: release.policy?.parameters || [],
     records,
-    recordCount: Object.values(records).reduce((n, c) => n + c, 0),
+    // Null when the release was sealed without catalogue metadata (a private copy is): its
+    // rows aren't counted, so none are claimed.
+    recordCount: catalogue?.records
+      ? Object.values(records).reduce((n, c) => n + c, 0)
+      : null,
     apps: apps.map((app) => ({ ...app, label: appLabelOf(app) })),
     exampleRequests: catalogue?.example_requests || [],
     suite,

@@ -55492,6 +55492,7 @@ export const SimulateApiHarnessEnvironmentsVerifyDetailResponse = zod.object({
     "finalizing",
     "cleaning_up",
     "retry_wait",
+    "parked",
     "completed",
     "failed",
     "canceled",
@@ -60343,9 +60344,55 @@ export const SimulateApiHarnessReleasesListResponse = zod.object({
         .describe(
           "Null for a release sealed before catalogue metadata existed.",
         ),
+      derived_from: zod
+        .object({
+          digest: zod.string().min(1),
+          name: zod.string().min(1),
+          title: zod.string().min(1),
+        })
+        .describe(
+          "For a private copy, the ready environment it was customized from.",
+        ),
     }),
   ),
 });
+
+/**
+ * Build a private copy of a ready environment with the person's change. The builder
+starts from the ready world; the copy is sealed as this organization's own release and
+the original stays as it was. The job is followed like any harness job.
+ */
+export const simulateApiHarnessReleasesCustomizeBodyNameMax = 255;
+
+export const simulateApiHarnessReleasesCustomizeBodyChangeMax = 4000;
+
+export const simulateApiHarnessReleasesCustomizeBodyIdempotencyKeyMax = 255;
+
+export const SimulateApiHarnessReleasesCustomizeBody = zod.object({
+  suite_id: zod.string().uuid(),
+  name: zod.string().min(1).max(simulateApiHarnessReleasesCustomizeBodyNameMax),
+  change: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessReleasesCustomizeBodyChangeMax)
+    .describe("What should change in the copy, in the person's words."),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessReleasesCustomizeBodyIdempotencyKeyMax),
+});
+
+/**
+ * Continue a copy whose design paused on an unanswered question: it starts again from
+the workspace it paused in and asks that question again.
+ */
+export const SimulateApiHarnessReleasesCustomizeContinueCustomizationParams =
+  zod.object({
+    job_id: zod.string(),
+  });
+
+export const SimulateApiHarnessReleasesCustomizeContinueCustomizationBody =
+  zod.object({});
 
 /**
  * How a connected agent fits a release suite: its tools paired with the world's and

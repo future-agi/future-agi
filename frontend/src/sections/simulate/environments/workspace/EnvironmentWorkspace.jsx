@@ -40,6 +40,7 @@ import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import ReviewTheDesign from "./adaptation/ReviewTheDesign";
+import CustomizeTheCopy from "./customize/CustomizeTheCopy";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import AgentMoveBanner from "./AgentMoveBanner";
@@ -115,7 +116,7 @@ export default function EnvironmentWorkspace() {
   // The scenario count comes from the detail, not the client store
   // (seeded once, so it would stay at the first set of scenarios).
   const backedScenarioCount = backed
-    ? (evalDetailQuery.data?.overview?.scenario_count ?? undefined)
+    ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
     : undefined;
   // On a composition, a run of everything is the scenarios the agent can be scored on: the rest
   // need a tool no agent tool reaches, so running them costs a conversation and scores nothing.
@@ -333,6 +334,11 @@ export default function EnvironmentWorkspace() {
     !compositionId
   ) {
     return <ReviewTheDesign jobId={envId} job={jobQuery.data} chat={chat} />;
+  }
+  // A copy of a ready environment is designed in the chat and sealed as a ready environment
+  // of its own; it is followed here until then and has no environment details to load.
+  if (jobQuery.data?.job?.metadata?.customization) {
+    return <CustomizeTheCopy jobId={envId} job={jobQuery.data} chat={chat} />;
   }
 
   if (notFound) {

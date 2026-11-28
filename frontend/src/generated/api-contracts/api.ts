@@ -733,6 +733,7 @@ import type {
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
   HarnessReleaseAgentRequestApi,
+  HarnessReleaseCustomizeRequestApi,
   HarnessReleaseFitRequestApi,
   HarnessReleaseFitResponseApi,
   HarnessReleaseListResponseApi,
@@ -67442,6 +67443,146 @@ export const simulateApiHarnessReleasesList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessReleasesCustomizeResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessReleasesCustomizeResponse400 = {
+  data: ApiTextErrorResponseApi;
+  status: 400;
+};
+
+export type simulateApiHarnessReleasesCustomizeResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessReleasesCustomizeResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessReleasesCustomizeResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 400 | 403 | 404>;
+};
+
+export type simulateApiHarnessReleasesCustomizeResponseSuccess =
+  simulateApiHarnessReleasesCustomizeResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesCustomizeResponseError = (
+  | simulateApiHarnessReleasesCustomizeResponse400
+  | simulateApiHarnessReleasesCustomizeResponse403
+  | simulateApiHarnessReleasesCustomizeResponse404
+  | simulateApiHarnessReleasesCustomizeResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessReleasesCustomizeResponse =
+  | simulateApiHarnessReleasesCustomizeResponseSuccess
+  | simulateApiHarnessReleasesCustomizeResponseError;
+
+export const getSimulateApiHarnessReleasesCustomizeUrl = () => {
+  return `/simulate/api/harness-releases/customize/`;
+};
+
+/**
+ * Build a private copy of a ready environment with the person's change. The builder
+starts from the ready world; the copy is sealed as this organization's own release and
+the original stays as it was. The job is followed like any harness job.
+ */
+export const simulateApiHarnessReleasesCustomize = async (
+  harnessReleaseCustomizeRequestApi: HarnessReleaseCustomizeRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesCustomizeResponse> => {
+  return apiMutator<simulateApiHarnessReleasesCustomizeResponse>(
+    getSimulateApiHarnessReleasesCustomizeUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReleaseCustomizeRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse202 =
+  {
+    data: HarnessJobReadApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse404 =
+  {
+    data: ApiTextErrorResponseApi;
+    status: 404;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse409 =
+  {
+    data: ApiTextErrorResponseApi;
+    status: 409;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 409>;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponseSuccess =
+  simulateApiHarnessReleasesCustomizeContinueCustomizationResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponseError =
+  (
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponse403
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponse404
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponse409
+    | simulateApiHarnessReleasesCustomizeContinueCustomizationResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessReleasesCustomizeContinueCustomizationResponse =
+  | simulateApiHarnessReleasesCustomizeContinueCustomizationResponseSuccess
+  | simulateApiHarnessReleasesCustomizeContinueCustomizationResponseError;
+
+export const getSimulateApiHarnessReleasesCustomizeContinueCustomizationUrl = (
+  jobId: string,
+) => {
+  return `/simulate/api/harness-releases/customize/${jobId}/continue/`;
+};
+
+/**
+ * Continue a copy whose design paused on an unanswered question: it starts again from
+the workspace it paused in and asks that question again.
+ */
+export const simulateApiHarnessReleasesCustomizeContinueCustomization = async (
+  jobId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesCustomizeContinueCustomizationResponse> => {
+  return apiMutator<simulateApiHarnessReleasesCustomizeContinueCustomizationResponse>(
+    getSimulateApiHarnessReleasesCustomizeContinueCustomizationUrl(jobId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };

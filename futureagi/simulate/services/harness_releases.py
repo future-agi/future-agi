@@ -382,9 +382,37 @@ def list_releases(organization) -> list[dict[str, Any]]:
                 "catalogue": (environment.manifest.get("metadata") or {}).get(
                     "catalogue"
                 ),
+                "derived_from": _derived_from(organization, environment),
             }
         )
     return results
+
+
+def _lineage(environment: HarnessEnvironmentRelease) -> str:
+    """The `release:<digest>` a sealed copy names as its source: ALK seals it under the
+    manifest's provenance."""
+    provenance = (environment.manifest or {}).get("provenance") or {}
+    return str(provenance.get("derived_from") or "")
+
+
+def _derived_from(organization, environment: HarnessEnvironmentRelease):
+    """The ready environment a copy was made from, as its sealed manifest names it; None for
+    one that is no copy, or whose source this organization can't see."""
+    reference = _lineage(environment)
+    if not reference.startswith("release:"):
+        return None
+    source = _visible(
+        HarnessEnvironmentRelease, organization, reference.removeprefix("release:")
+    )
+    if source is None:
+        return None
+    return {
+        "digest": source.digest,
+        "name": source.name,
+        "title": ((source.manifest.get("metadata") or {}).get("catalogue") or {}).get(
+            "title"
+        ),
+    }
 
 
 def _check_entries(suite: dict[str, Any]) -> None:
@@ -1918,3 +1946,384 @@ def _run_measurable(job: HostedHarnessJob, composition_id: str) -> HostedHarness
     metadata["adaptation_result"] = {**metadata["adaptation_result"], **outcome}
     job.save(update_fields=["payload", "updated_at"])
     return job
+
+
+# --- customizing a ready environment ----------------------------------------------------------------
+
+# The builder designs in the conversation's workspace (agent-learning-kit `design hosted`), which
+# seals the copy into `design-output/environment` and `design-output/suite` there.
+AUTHORING_WORKSPACE = "/work/authoring"
+DESIGN_OUTPUT = f"{AUTHORING_WORKSPACE}/design-output"
+_DESIGN_NAME = re.compile(r"[^a-z0-9_]+")
+
+
+def customization_of(job: HostedHarnessJob) -> dict[str, Any] | None:
+    value = ((job.payload or {}).get("metadata") or {}).get("customization")
+    return value if isinstance(value, dict) else None
+
+
+def design_name(name: str, source: str, key: str) -> str:
+    """The copy's release name: the person's name as a slug, else the source's with `_copy`, and
+    a short tag from the request so two copies of one world are listed apart."""
+    slug = _DESIGN_NAME.sub("_", name.strip().lower()).strip("_")
+    if not slug or not slug[0].isalpha():
+        slug = f"{source}_copy"
+    tag = hashlib.sha256(key.encode()).hexdigest()[:6]
+    return f"{slug[:60]}_{tag}"
+
+
+# A design runs no agent, but every hosted job names one: this one is never called, and it brings
+# no provider, credentials, egress or agent version with it.
+DESIGNER_AGENT = {
+    "connector": HOSTED_AGENT,
+    "config": {
+        "name": "Environment designer",
+        "instructions": "Designs a copy of a ready environment; never run as an agent.",
+        "model": "vertex_ai/gemini-3.8-flash",
+    },
+}
+
+
+def copy_modality(environment: HarnessEnvironmentRelease) -> str:
+    """The copy's channel is its ready world's: voice when the catalogue says so, else chat."""
+    catalogue = ((environment.manifest or {}).get("metadata") or {}).get(
+        "catalogue"
+    ) or {}
+    return "voice" if catalogue.get("channel") == "voice" else "chat"
+
+
+def customization_payload(
+    organization,
+    *,
+    suite: HarnessSuiteRelease,
+    name: str,
+    change: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """The validated hosted job payload that builds a private copy of `suite`'s world with the
+    person's `change`. The builder starts from the ready world (`metadata.design.template`) and
+    the copy is sealed as this organization's own release; the original stays as it was. No
+    customer agent takes part: the copy is used with one once it is sealed."""
+    from simulate.serializers.harness_job import HarnessJobCreateSerializer
+
+    if suite.organization_id not in (None, organization.id):
+        raise _error("release_not_found", "suite release not found", 404)
+    change = change.strip()
+    if not change:
+        raise _error("customization_invalid", "say what should change in the copy")
+    chain = _chain(suite)
+    if len(chain) != 1:
+        raise _error(
+            "customization_unsupported",
+            "only a ready environment that extends no other can be customized",
+            422,
+        )
+    serializer = HarnessJobCreateSerializer(
+        data={
+            "agent": DESIGNER_AGENT,
+            "artifacts": {"level": "full"},
+            # A copy is designed, not run: the field only needs a count the job admits.
+            "scenario_count": max(len(suite.personas), 1),
+            "metadata": {"name": name},
+        },
+        context={"composition": True},
+    )
+    if not serializer.is_valid():
+        raise _error(
+            "customization_invalid", json.dumps(serializer.errors, default=str)
+        )
+    payload = serializer.validated_data
+    [environment] = chain
+    template = {
+        "environment": [
+            {
+                "digest": environment.digest,
+                "name": environment.name,
+                "object_key": environment.object_key,
+            }
+        ],
+        "suite": {
+            "digest": suite.digest,
+            "name": suite.name,
+            "object_key": suite.object_key,
+        },
+    }
+    payload["metadata"]["design"] = {
+        "name": design_name(name, environment.name, idempotency_key),
+        "requirements": change,
+        "modality": copy_modality(environment),
+        "template": template,
+    }
+    payload["metadata"]["customization"] = {
+        "source": {
+            "suite_id": str(suite.id),
+            "suite_digest": suite.digest,
+            "suite_name": suite.name,
+            "environment_id": str(environment.id),
+            "environment_digest": environment.digest,
+            "environment_name": environment.name,
+        },
+        "change": change,
+    }
+    document: dict[str, Any] = json.loads(json.dumps(payload, default=str))
+    return document
+
+
+def customization_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
+    """The releases a copy is designed from, and the design's control process."""
+    if customization_of(job) is None:
+        return None
+    template = ((job.payload or {}).get("metadata") or {})["design"]["template"]
+    uploads, prepare_command = _release_archives(
+        job.organization, template["environment"], template["suite"]
+    )
+    parked = parked_checkpoint(job)
+    if parked is not None:
+        # A continued copy starts from the workspace it paused in: the design, its records and
+        # the open question, put back before the control process opens the design.
+        uploads = [(DESIGN_CHECKPOINT_PATH, _download(parked["object_key"])), *uploads]
+        prepare_command = (
+            f"mkdir -p {AUTHORING_WORKSPACE} && "
+            f"tar -xzf {DESIGN_CHECKPOINT_PATH} -C {AUTHORING_WORKSPACE} && "
+            f"rm -f {DESIGN_CHECKPOINT_PATH} && {prepare_command}"
+        )
+    return AdaptationLaunch(
+        uploads=tuple(uploads),
+        prepare_command=prepare_command,
+        command=(
+            "python -m fi.alk.harness.design hosted --job /work/job.json "
+            f"--releases {RELEASES_ROOT} --workspace {AUTHORING_WORKSPACE}"
+        ),
+    )
+
+
+def customization_settled(job: HostedHarnessJob) -> bool:
+    """A copy whose attempt's outcome is recorded, ended or parked: how its sandbox ends no
+    longer changes it."""
+    return customization_of(job) is not None and (
+        job.state in _TERMINAL_STATES or job.state == HostedHarnessJob.State.PARKED
+    )
+
+
+# A design that paused on an unanswered question (agent-learning-kit `_park_design`).
+DESIGN_WAITING = "design_waiting"
+DESIGN_CHECKPOINT_PATH = "/work/design-checkpoint.tar.gz"
+
+
+def parked_checkpoint(job: HostedHarnessJob) -> dict[str, Any] | None:
+    value = ((job.payload or {}).get("metadata") or {}).get("customization_parked")
+    return value if isinstance(value, dict) and value.get("object_key") else None
+
+
+def design_waiting(output: Path | None) -> bool:
+    """Whether a copy's design output says it paused for an answer rather than ended."""
+    if output is None or not (Path(output) / "result.json").is_file():
+        return False
+    result = _read_object(Path(output), "result.json")
+    failure = result.get("failure")
+    return (
+        result.get("status") != "completed"
+        and isinstance(failure, dict)
+        and failure.get("code") == DESIGN_WAITING
+    )
+
+
+def park_customization(job: HostedHarnessJob, checkpoint: bytes) -> HostedHarnessJob:
+    """Keep a copy whose design paused on an unanswered question: its workspace is stored and the
+    job waits, not ended, until Continue starts it again from there. A copy cancelled meanwhile
+    ends as cancelled instead."""
+    from simulate.models import HostedHarnessConversation
+    from simulate.services.hosted_harness_conversation import (
+        WORKSPACE_MAX_BYTES,
+        _validate_workspace_archive,
+    )
+
+    if len(checkpoint) > WORKSPACE_MAX_BYTES:
+        raise _error("design_checkpoint_too_large", "the paused design is over 256 MiB")
+    _validate_workspace_archive(checkpoint)
+    digest = hashlib.sha256(checkpoint).hexdigest()
+    owner = job.organization_id
+    object_key = f"harness-customizations/{owner}/{job.id}/{digest}.tar.gz"
+    _upload(object_key, checkpoint)
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if customization_settled(locked):
+            return locked
+        if locked.cancel_requested_at or locked.deleted:
+            _settle_customization(locked, None)
+            return locked
+        now = timezone.now()
+        payload = dict(locked.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            "customization_parked": {
+                "object_key": object_key,
+                "digest": f"sha256:{digest}",
+                "size": len(checkpoint),
+                "parked_at": now.isoformat(),
+                "attempt_number": locked.current_attempt_number,
+            },
+        }
+        locked.payload = payload
+        locked.state = HostedHarnessJob.State.PARKED
+        locked.current_stage = HostedHarnessJob.State.PARKED
+        locked.failure = None
+        locked.content_updated_at = now
+        locked.save(
+            update_fields=[
+                "payload",
+                "state",
+                "current_stage",
+                "failure",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
+        # The open question's id belongs to the stopped sandbox; the resumed design asks again.
+        HostedHarnessConversation.no_workspace_objects.filter(job=locked).update(
+            blocking_input=None, updated_at=now
+        )
+    return locked
+
+
+def continue_customization(job: HostedHarnessJob) -> tuple[HostedHarnessJob, bool]:
+    """Queue a parked copy to start again from its stored workspace, and say whether it was
+    queued now. A copy already continuing is left as it is; an ended one can't continue."""
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if customization_of(locked) is None:
+            raise _error("customization_not_found", "copy not found", 404)
+        if locked.state != HostedHarnessJob.State.PARKED:
+            if locked.state in _TERMINAL_STATES or locked.cancel_requested_at:
+                raise _error(
+                    "customization_not_parked",
+                    "this copy has ended and can't be continued",
+                    409,
+                )
+            return locked, False
+        payload = dict(locked.payload)
+        metadata = dict(payload.get("metadata") or {})
+        metadata["design"] = {**metadata["design"], "resume_from": str(locked.id)}
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.state = HostedHarnessJob.State.QUEUED
+        locked.current_stage = HostedHarnessJob.State.QUEUED
+        locked.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    return locked, True
+
+
+def _customization_failure(code: str, message: str) -> dict[str, Any]:
+    return {
+        "domain": "environment",
+        "stage": "designing",
+        "code": code,
+        "message": message[:1000],
+    }
+
+
+def complete_customization(
+    job: HostedHarnessJob, output: Path | None
+) -> HostedHarnessJob:
+    """Finish a copy from its `design-output`: a completed design registers the sealed
+    environment and suite as the organization's own releases and records them in
+    `metadata.customization_result`; anything else fails the job with the reason."""
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if not customization_settled(locked):
+            _settle_customization(locked, output)
+    return locked
+
+
+def _check_copy_lineage(output: Path, source: dict[str, Any]) -> None:
+    """Refuse a sealed copy that doesn't name the ready environment and suite it was made from,
+    before anything of it is uploaded or registered."""
+    release = _verified(output / "environment", "release.json")
+    suite = _verified(output / "suite", "suite.json")
+    derived_from = str((release.get("provenance") or {}).get("derived_from") or "")
+    if derived_from != f"release:{source.get('environment_digest')}":
+        raise _error(
+            "customization_lineage_invalid",
+            "the sealed copy does not name the ready environment it was made from",
+        )
+    template_suite = (suite.get("metadata") or {}).get("template_suite")
+    if template_suite != source.get("suite_digest"):
+        raise _error(
+            "customization_lineage_invalid",
+            "the sealed copy's scenarios do not name the ready suite they were made from",
+        )
+
+
+def _customized(
+    job: HostedHarnessJob, output: Path
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The copy's registered releases, or why there are none."""
+    result = _read_object(output, "result.json")
+    if result.get("status") != "completed":
+        reported = result.get("failure")
+        failure: dict[str, Any] = reported if isinstance(reported, dict) else {}
+        return {}, _customization_failure(
+            str(failure.get("code") or "design_failed"),
+            str(failure.get("message") or "the design did not finish"),
+        )
+    _check_copy_lineage(output, (customization_of(job) or {}).get("source") or {})
+    environment, suite = register_release(
+        output / "environment", output / "suite", organization=job.organization
+    )
+    return {
+        "environment_release_id": str(environment.id),
+        "environment_name": environment.name,
+        "suite_release_id": str(suite.id),
+        "suite_name": suite.name,
+        "scenario_count": len(suite.manifest.get("scenarios") or []),
+    }, None
+
+
+def _settle_customization(job: HostedHarnessJob, output: Path | None) -> None:
+    """Record the outcome of a copy; the caller holds its row lock."""
+    from simulate.models import HostedHarnessConversation
+
+    result: dict[str, Any] = {}
+    failure: dict[str, Any] | None = None
+    canceled = bool(job.cancel_requested_at or job.deleted)
+    if not canceled:
+        if output is None or not (Path(output) / "result.json").is_file():
+            failure = _customization_failure(
+                "design_result_missing", "the design left no readable result.json"
+            )
+        else:
+            try:
+                result, failure = _customized(job, Path(output))
+            except HostedHarnessError as exc:
+                failure = _customization_failure(exc.code, exc.message)
+    now = timezone.now()
+    payload = dict(job.payload)
+    payload["metadata"] = {
+        **(payload.get("metadata") or {}),
+        "customization_result": result or None,
+    }
+    job.payload = payload
+    job.state = (
+        HostedHarnessJob.State.CANCELED
+        if canceled
+        else HostedHarnessJob.State.FAILED
+        if failure
+        else HostedHarnessJob.State.COMPLETED
+    )
+    job.current_stage = job.state
+    job.failure = failure
+    job.terminal_at = now
+    job.content_updated_at = now
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "current_stage",
+            "failure",
+            "terminal_at",
+            "content_updated_at",
+            "updated_at",
+        ]
+    )
+    HostedHarnessConversation.no_workspace_objects.filter(job=job).update(
+        blocking_input=None, updated_at=now
+    )
