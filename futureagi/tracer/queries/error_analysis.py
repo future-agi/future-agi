@@ -1352,20 +1352,24 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in ensure_all_projects_have_tasks: {str(e)}")
             return 0
 
-    def ingest_trace_error_embeddings(self, trace_id: str) -> int:
+    def ingest_trace_error_embeddings(
+        self, trace_id: str, *, project_id: str | None = None
+    ) -> int:
         """
         Generate and store embeddings for all errors from a single trace analysis.
         Called after trace analysis completes.
+
+        ``project_id`` (optional) picks that project's analysis: the same trace
+        id can be analysed in another project or organization.
 
         Returns number of embeddings created.
         """
         try:
             # Get the analysis and error details for this trace
-            analysis = (
-                TraceErrorAnalysis.objects.filter(trace_id=trace_id)
-                .select_related("project", "trace")
-                .first()
-            )
+            analyses = TraceErrorAnalysis.objects.filter(trace_id=trace_id)
+            if project_id:
+                analyses = analyses.filter(project_id=project_id)
+            analysis = analyses.select_related("project", "trace").first()
 
             if not analysis:
                 logger.warning(f"No analysis found for trace {trace_id}")

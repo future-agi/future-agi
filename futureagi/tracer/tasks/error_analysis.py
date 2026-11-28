@@ -179,7 +179,9 @@ def analyze_single_trace(
 
         if error_count > 0 and ingest_embeddings:
             error_analysis_db = TraceErrorAnalysisDB()
-            error_analysis_db.ingest_trace_error_embeddings(trace_id)
+            error_analysis_db.ingest_trace_error_embeddings(
+                trace_id, project_id=str(project.id)
+            )
 
         # Mark the API call as successful
         if api_call_log_row:

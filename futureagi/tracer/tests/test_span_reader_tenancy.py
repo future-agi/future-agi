@@ -312,6 +312,41 @@ def test_child_tree_rows_outside_the_scope_are_not_hydrated(settings, caplog):
     assert "trajectory_hydration_scope_violation" in caplog.text
 
 
+def test_org_scoped_dict_rows_from_another_org_are_not_hydrated(settings, caplog):
+    """An org-only read checks each dict row's ``org_id`` before hydrating."""
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    own_org, foreign_org = OWN, FOREIGN
+
+    def row(span_id, org_id, input_hash):
+        return {
+            "id": span_id,
+            "project_id": SCOPE_ID,
+            "org_id": org_id,
+            "input": "preview...",
+            "input_item_hashes": [input_hash],
+            "output_item_hashes": [],
+            "tool_def_hashes": [],
+            "item_scope_id": SCOPE_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": json.dumps({"v": 1, "in": {"f": "msg_array"}}),
+        }
+
+    client = _RecordingClient(
+        items=[(SCOPE_ID, "a" * 32, '{"role":"user","content":"own question"}')]
+    )
+    rows = [row("own", own_org, "a" * 32), row("foreign", foreign_org, "b" * 32)]
+    with caplog.at_level(logging.ERROR, logger=span_reader.__name__):
+        _reader(client)._hydrate_dict_rows(
+            rows, scope=span_reader._ReadScope.of(org_id=own_org)
+        )
+
+    assert json.loads(rows[0]["input"]) == [{"role": "user", "content": "own question"}]
+    assert rows[1]["input"] == "preview..."
+    item_reads = [p for sql, p, _ in client.calls if "FROM trajectory_items" in sql]
+    assert [list(p["traj_item_hashes"]) for p in item_reads] == [["a" * 32]]
+    assert "span_id=foreign" in caplog.text
+
+
 # ── every call site passes a scope ─────────────────────────────────────────────
 
 SCOPED_METHODS = frozenset(UNSCOPED_CALLS) - {"get"}
@@ -776,6 +811,8 @@ def test_queued_deep_analysis_without_a_project_reads_nothing(monkeypatch, proje
     kept = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=project)
     analyze = Mock()
     monkeypatch.setattr(task_module, "analyze_single_trace", analyze)
+    # The worker's DB-lifecycle hook would close the test transaction.
+    monkeypatch.setattr(task_module, "close_old_connections", lambda: None)
     deep_analysis_state.clear(trace_id)
     try:
         result = task_module.run_deep_analysis_on_demand._original_func(trace_id, True)
@@ -822,6 +859,8 @@ def test_error_analysis_reads_bills_and_stores_in_the_given_project(
 
     foreign = _foreign_org_project(project)
     trace_id = str(uuid.uuid4())
+    # The worker's DB-lifecycle hook would close the test transaction.
+    monkeypatch.setattr(task_module, "close_old_connections", lambda: None)
     reader = _RootIdReader(
         [("foreign-root", str(foreign.id)), ("own-root", str(project.id))]
     )

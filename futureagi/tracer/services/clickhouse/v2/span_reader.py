@@ -1405,7 +1405,7 @@ class CHSpanReader:
         )
         resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
         where = [f"{resolved_ts} = %(session_id)s", "is_deleted = 0"]
-        params = {"session_id": session_id}
+        params: dict[str, Any] = {"session_id": session_id}
         if project_id:
             where.append("spans.project_id = %(project_id)s")
             params["project_id"] = str(project_id)
